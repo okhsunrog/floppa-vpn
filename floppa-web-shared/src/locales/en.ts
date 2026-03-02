@@ -235,6 +235,14 @@ export default {
     androidOnly: 'Split tunneling is only available on Android',
     changesApplyOnReconnect: 'Changes apply on next connection',
   },
+  update: {
+    available: 'Update available: v{version}',
+    dismiss: 'Dismiss',
+    download: 'Update',
+    required: 'Update Required',
+    requiredDescription: 'Please update to version {version} or later to continue using the app.',
+    checkNow: 'Check for Updates',
+  },
   vpn: {
     connect: 'Connect',
     disconnect: 'Disconnect',

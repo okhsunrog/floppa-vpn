@@ -1,13 +1,23 @@
+import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import ui from '@nuxt/ui/vite'
+import JSON5 from 'json5'
 
 const host = process.env.TAURI_DEV_HOST
 const isProduction = process.env.NODE_ENV === 'production'
 
+// Read app version from tauri.conf.json5 (single source of truth)
+const tauriConf = JSON5.parse(readFileSync('./src-tauri/tauri.conf.json5', 'utf-8'))
+const appVersion: string = tauriConf.version ?? '0.0.0'
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
+
   plugins: [
     vue(),
     // WARNING: The autoImport config is critical! Nuxt UI's unplugin-auto-import registers

@@ -22,3 +22,6 @@ username = "YourBotUsername"  # Bot username for Telegram Login Widget (without 
 
 [auth]
 jwt_expiration_hours = 168  # 1 week (optional, default is 168)
+
+# Minimum client version (optional). Clients with older X-Client-Version get 426 Upgrade Required.
+# min_client_version = "0.2.0"

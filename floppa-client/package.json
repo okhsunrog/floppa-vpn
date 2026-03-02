@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "sync-version": "bun run scripts/sync-version.ts",
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
@@ -44,6 +45,7 @@
     "@vue/tsconfig": "^0.8.1",
     "eslint": "^10.0.2",
     "eslint-plugin-vue": "^10.8.0",
+    "json5": "^2.2.3",
     "prettier": "^3.8.1",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",

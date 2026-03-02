@@ -2,6 +2,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Redirect},
 };
 use chrono::{Duration, Utc};
@@ -85,6 +86,32 @@ pub fn build_openapi() -> utoipa::openapi::OpenApi {
     openapi
 }
 
+async fn version_check_middleware(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    // No X-Client-Version header = browser/admin panel, skip check
+    if let Some(min_version_str) = &state.config.min_client_version
+        && let Some(client_header) = request.headers().get("X-Client-Version")
+        && let Ok(client_str) = client_header.to_str()
+        && let Ok(min_ver) = semver::Version::parse(min_version_str)
+        && let Ok(client_ver) = semver::Version::parse(client_str)
+        && client_ver < min_ver
+    {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            Json(serde_json::json!({
+                "error": "upgrade_required",
+                "min_version": min_version_str,
+                "message": "Please update the app to continue"
+            })),
+        )
+            .into_response();
+    }
+    next.run(request).await
+}
+
 pub fn create_router(
     pool: DbPool,
     config: Config,
@@ -100,8 +127,11 @@ pub fn create_router(
         telegram_login_codes: Arc::new(RwLock::new(HashMap::new())),
     };
 
-    let (router, _openapi) = openapi_router().with_state(state).split_for_parts();
-    router
+    let (router, _openapi) = openapi_router().with_state(state.clone()).split_for_parts();
+    router.layer(middleware::from_fn_with_state(
+        state,
+        version_check_middleware,
+    ))
 }
 
 /// Resolve subscription expiration from request parameters.

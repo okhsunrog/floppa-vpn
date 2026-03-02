@@ -235,6 +235,14 @@ export default {
     androidOnly: 'Раздельное туннелирование доступно только на Android',
     changesApplyOnReconnect: 'Изменения применятся при следующем подключении',
   },
+  update: {
+    available: 'Доступно обновление: v{version}',
+    dismiss: 'Скрыть',
+    download: 'Обновить',
+    required: 'Требуется обновление',
+    requiredDescription: 'Обновите приложение до версии {version} или новее, чтобы продолжить.',
+    checkNow: 'Проверить обновления',
+  },
   vpn: {
     connect: 'Подключить',
     disconnect: 'Отключить',

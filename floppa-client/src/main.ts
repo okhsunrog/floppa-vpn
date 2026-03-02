@@ -8,6 +8,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { useAuthStore } from 'floppa-web-shared'
+import { useUpdateStore } from './stores/updateStore'
 import { commands } from './bindings'
 import { client } from 'floppa-web-shared/client/client.gen'
 import { exchangeTelegramLoginCode } from 'floppa-web-shared/client/sdk.gen'
@@ -92,6 +93,7 @@ const authStore = useAuthStore()
 client.setConfig({ baseUrl: API_URL })
 
 client.interceptors.request.use((request) => {
+  request.headers.set('X-Client-Version', __APP_VERSION__)
   const token = authStore.getToken()
   if (token) {
     request.headers.set('Authorization', `Bearer ${token}`)
@@ -99,9 +101,19 @@ client.interceptors.request.use((request) => {
   return request
 })
 
-client.interceptors.response.use((response) => {
+const updateStore = useUpdateStore()
+
+client.interceptors.response.use(async (response) => {
   if (response.status === 401) {
     authStore.logout()
+  }
+  if (response.status === 426) {
+    try {
+      const body = await response.clone().json()
+      updateStore.setForceUpdate({ minVersion: body.min_version, message: body.message })
+    } catch {
+      updateStore.setForceUpdate({ minVersion: 'unknown', message: 'Please update the app' })
+    }
   }
   return response
 })
@@ -234,3 +246,6 @@ if (isTauri()) {
 }
 
 app.mount('#app')
+
+// Check for voluntary updates (non-blocking)
+void updateStore.checkForUpdates()

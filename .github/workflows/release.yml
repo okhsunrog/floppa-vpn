@@ -3,6 +3,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -64,7 +65,7 @@ jobs:
 
       - name: Rename APK with version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
           APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
           mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
 
@@ -103,7 +104,7 @@ jobs:
 
       - name: Rename artifacts with version
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
           BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
           # AppImage
           if ls "$BUNDLE_DIR/appimage/"*.AppImage 1>/dev/null 2>&1; then
@@ -124,6 +125,7 @@ jobs:
 
   release:
     name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [android, linux]
     runs-on: ubuntu-latest
     steps:

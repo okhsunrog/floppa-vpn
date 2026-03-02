@@ -21,6 +21,9 @@ pub struct Config {
     /// Allowed CORS origins (e.g., ["https://vpn.example.com"]). Empty = permissive.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+    /// Minimum client version required (semver, e.g. "0.2.0"). Older clients get 426.
+    #[serde(default)]
+    pub min_client_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

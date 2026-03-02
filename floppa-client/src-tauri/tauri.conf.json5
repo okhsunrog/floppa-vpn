@@ -1,16 +1,16 @@
 {
   // JSON5 config for Tauri (comments allowed)
   productName: "Floppa VPN",
-  version: "0.1.0",
+  version: "0.2.0",
   identifier: "dev.okhsunrog.floppa-vpn",
 
   build: {
     // Dev config
-    beforeDevCommand: "bun run dev",
+    beforeDevCommand: "bun run sync-version && bun run dev",
     devUrl: "http://localhost:1420",
 
     // Build config
-    beforeBuildCommand: "bun run build",
+    beforeBuildCommand: "bun run sync-version && bun run build",
     frontendDist: "../dist",
   },
 
