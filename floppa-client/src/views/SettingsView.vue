@@ -10,6 +10,7 @@ const vpn = useVpnStore()
 const settings = useSettingsStore()
 
 const batteryOptDisabled = ref<boolean | null>(null)
+const notificationsEnabled = ref<boolean | null>(null)
 
 const searchQuery = ref('')
 const showSystemApps = ref(false)
@@ -30,8 +31,21 @@ async function checkBatteryOptimization() {
 async function requestBatteryOptimization() {
   try {
     await commands.requestDisableBatteryOptimization()
-    // Re-check after a short delay (user may have interacted with system dialog)
     setTimeout(checkBatteryOptimization, 1000)
+  } catch { /* ignore */ }
+}
+
+async function checkNotifications() {
+  try {
+    const result = await commands.areNotificationsEnabled()
+    if (result.status === 'ok') notificationsEnabled.value = result.data
+  } catch { /* ignore */ }
+}
+
+async function openNotificationSettings() {
+  try {
+    await commands.openNotificationSettings()
+    setTimeout(checkNotifications, 1000)
   } catch { /* ignore */ }
 }
 
@@ -39,6 +53,7 @@ onMounted(async () => {
   if (vpn.isAndroid) {
     await settings.loadApps()
     await checkBatteryOptimization()
+    await checkNotifications()
   }
 })
 
@@ -73,6 +88,40 @@ function selectMode(mode: SplitMode) {
 <template>
   <div class="max-w-3xl mx-auto">
     <h1 class="text-2xl font-bold mb-6">{{ t('settings.title') }}</h1>
+
+    <!-- Notifications (Android only) -->
+    <UCard v-if="vpn.isAndroid && notificationsEnabled !== null" class="mb-4">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-bell" class="size-5" />
+          <span class="font-semibold">{{ t('settings.notifications') }}</span>
+        </div>
+      </template>
+
+      <p class="text-sm text-[var(--ui-text-muted)] mb-4">
+        {{ t('settings.notificationsDescription') }}
+      </p>
+
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <UIcon
+            :name="notificationsEnabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'"
+            :class="notificationsEnabled ? 'text-green-500' : 'text-yellow-500'"
+            class="size-5"
+          />
+          <span class="text-sm">
+            {{ notificationsEnabled ? t('settings.notificationsOn') : t('settings.notificationsOff') }}
+          </span>
+        </div>
+        <UButton
+          v-if="!notificationsEnabled"
+          :label="t('settings.enableNotifications')"
+          color="warning"
+          size="sm"
+          @click="openNotificationSettings"
+        />
+      </div>
+    </UCard>
 
     <!-- Battery Optimization (Android only) -->
     <UCard v-if="vpn.isAndroid && batteryOptDisabled !== null" class="mb-4">

@@ -90,6 +90,21 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
+    /// Check if notifications are enabled for this app.
+    pub fn are_notifications_enabled(&self) -> Result<bool> {
+        self.0
+            .run_mobile_plugin::<NotificationsEnabledResponse>("areNotificationsEnabled", ())
+            .map(|r| r.enabled)
+            .map_err(Into::into)
+    }
+
+    /// Open the app's notification settings.
+    pub fn open_notification_settings(&self) -> Result<()> {
+        self.0
+            .run_mobile_plugin::<()>("openNotificationSettings", ())
+            .map_err(Into::into)
+    }
+
     /// Protect a socket from VPN routing (bypass the VPN tunnel).
     ///
     /// This must be called for UDP sockets used by WireGuard to communicate
@@ -112,6 +127,11 @@ impl<R: Runtime> Vpn<R> {
 #[derive(serde::Deserialize)]
 struct InstalledAppsResponse {
     apps: Vec<AppInfo>,
+}
+
+#[derive(serde::Deserialize)]
+struct NotificationsEnabledResponse {
+    enabled: bool,
 }
 
 #[derive(serde::Deserialize)]

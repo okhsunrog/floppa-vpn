@@ -134,6 +134,28 @@ async requestDisableBatteryOptimization() : Promise<Result<null, string>> {
 }
 },
 /**
+ * Check if notifications are enabled (Android only)
+ */
+async areNotificationsEnabled() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("are_notifications_enabled") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the app's notification settings (Android only)
+ */
+async openNotificationSettings() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("open_notification_settings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Get safe area insets (status bar, nav bar heights) in dp
  */
 async getSafeAreaInsets() : Promise<Result<SafeAreaInsets, string>> {

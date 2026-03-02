@@ -493,6 +493,48 @@ pub async fn request_disable_battery_optimization(
     }
 }
 
+/// Check if notifications are enabled (Android only)
+#[tauri::command]
+#[specta::specta]
+pub async fn are_notifications_enabled(
+    #[allow(unused_variables)] app: AppHandle,
+) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .are_notifications_enabled()
+            .map_err(|e| format!("Failed to check notifications: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(true)
+    }
+}
+
+/// Open the app's notification settings (Android only)
+#[tauri::command]
+#[specta::specta]
+pub async fn open_notification_settings(
+    #[allow(unused_variables)] app: AppHandle,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .open_notification_settings()
+            .map_err(|e| format!("Failed to open notification settings: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(())
+    }
+}
+
 /// Get safe area insets (status bar, nav bar heights) in dp
 #[tauri::command]
 #[specta::specta]

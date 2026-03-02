@@ -16,6 +16,7 @@ import android.util.Base64
 import android.util.Log
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
+import androidx.core.app.NotificationManagerCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -273,6 +274,33 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             Log.e("VpnPlugin", "requestDisableBatteryOptimization error", e)
             invoke.reject("Failed to request battery optimization: ${e.message}")
+        }
+    }
+
+    /**
+     * Check if notifications are enabled for this app.
+     */
+    @Command
+    fun areNotificationsEnabled(invoke: Invoke) {
+        val ret = JSObject()
+        ret.put("enabled", NotificationManagerCompat.from(activity).areNotificationsEnabled())
+        invoke.resolve(ret)
+    }
+
+    /**
+     * Open the app's notification settings.
+     */
+    @Command
+    fun openNotificationSettings(invoke: Invoke) {
+        try {
+            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+            }
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "openNotificationSettings error", e)
+            invoke.reject("Failed to open notification settings: ${e.message}")
         }
     }
 

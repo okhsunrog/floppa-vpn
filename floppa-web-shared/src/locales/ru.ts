@@ -240,6 +240,12 @@ export default {
     batteryEnabled: 'Оптимизация батареи активна',
     disableBatteryOptimization: 'Отключить',
     batteryPrompt: 'Отключить оптимизацию батареи для стабильной работы VPN в фоне?',
+    notifications: 'Уведомления',
+    notificationsDescription: 'Включите уведомления, чтобы видеть, когда VPN активен.',
+    notificationsOn: 'Уведомления включены',
+    notificationsOff: 'Уведомления отключены',
+    enableNotifications: 'Включить',
+    notificationPrompt: 'Включить уведомления для отображения статуса VPN?',
   },
   update: {
     available: 'Доступно обновление: v{version}',

@@ -33,6 +33,8 @@ pub fn run() {
             vpn::commands::get_installed_apps,
             vpn::commands::is_battery_optimization_disabled,
             vpn::commands::request_disable_battery_optimization,
+            vpn::commands::are_notifications_enabled,
+            vpn::commands::open_notification_settings,
             vpn::commands::get_safe_area_insets,
         ])
         .events(tauri_specta::collect_events![]);

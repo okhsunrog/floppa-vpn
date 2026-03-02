@@ -28,14 +28,27 @@ const setupError = computed<string | null>(() => {
 
 const showBatteryPrompt = ref(false)
 const batteryPromptDismissed = ref(localStorage.getItem('battery_prompt_dismissed') === 'true')
+const showNotificationPrompt = ref(false)
+const notificationPromptDismissed = ref(localStorage.getItem('notification_prompt_dismissed') === 'true')
 
-// Show battery optimization prompt after first successful connection on Android
+// Show prompts after first successful connection on Android
 watch(() => vpn.isConnected, async (connected, wasConnected) => {
-  if (connected && !wasConnected && vpn.isAndroid && !batteryPromptDismissed.value) {
+  if (!connected || wasConnected || !vpn.isAndroid) return
+
+  if (!batteryPromptDismissed.value) {
     try {
       const result = await commands.isBatteryOptimizationDisabled()
       if (result.status === 'ok' && !result.data) {
         showBatteryPrompt.value = true
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!notificationPromptDismissed.value) {
+    try {
+      const result = await commands.areNotificationsEnabled()
+      if (result.status === 'ok' && !result.data) {
+        showNotificationPrompt.value = true
       }
     } catch { /* ignore */ }
   }
@@ -54,6 +67,21 @@ function dismissBatteryPrompt() {
   showBatteryPrompt.value = false
   batteryPromptDismissed.value = true
   localStorage.setItem('battery_prompt_dismissed', 'true')
+}
+
+async function handleEnableNotifications() {
+  try {
+    await commands.openNotificationSettings()
+  } catch { /* ignore */ }
+  showNotificationPrompt.value = false
+  notificationPromptDismissed.value = true
+  localStorage.setItem('notification_prompt_dismissed', 'true')
+}
+
+function dismissNotificationPrompt() {
+  showNotificationPrompt.value = false
+  notificationPromptDismissed.value = true
+  localStorage.setItem('notification_prompt_dismissed', 'true')
 }
 
 let statusInterval: ReturnType<typeof setInterval> | null = null
@@ -288,6 +316,31 @@ function getConnectionDuration(): string {
           @click="handleConnect" />
 
       </template>
+    </div>
+  </UCard>
+
+  <!-- Notification Prompt -->
+  <UCard v-if="showNotificationPrompt" class="mb-4">
+    <div class="flex flex-col gap-3">
+      <div class="flex items-start gap-3">
+        <UIcon name="i-lucide-bell-off" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
+        <p class="text-sm">{{ t('settings.notificationPrompt') }}</p>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <UButton
+          :label="t('update.dismiss')"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          @click="dismissNotificationPrompt"
+        />
+        <UButton
+          :label="t('settings.enableNotifications')"
+          color="warning"
+          size="sm"
+          @click="handleEnableNotifications"
+        />
+      </div>
     </div>
   </UCard>
 
