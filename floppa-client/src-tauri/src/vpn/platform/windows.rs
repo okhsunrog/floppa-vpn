@@ -286,7 +286,7 @@ impl Platform for WindowsPlatform {
         let idx_str = if_index.to_string();
 
         // Separate IPv4 and IPv6 DNS servers
-        let (ipv4_servers, ipv6_servers): (Vec<_>, Vec<_>) =
+        let (ipv4_servers, ipv6_servers): (Vec<&IpAddr>, Vec<&IpAddr>) =
             servers.iter().partition(|s| s.is_ipv4());
 
         // Configure IPv4 DNS
