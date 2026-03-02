@@ -52,8 +52,10 @@ pub fn init_tracing() {
 
 /// Custom formatter that truncates webview targets to just "webview".
 /// e.g. `webview:error@http://localhost:1420/node_modules/...` → `webview`
+#[cfg(target_os = "android")]
 struct ShortTargetFormat;
 
+#[cfg(target_os = "android")]
 impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for ShortTargetFormat
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,

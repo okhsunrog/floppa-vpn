@@ -143,7 +143,7 @@ pub async fn connect(
     #[allow(unused_variables)] app: AppHandle,
     state: State<'_, Arc<VpnState>>,
     backend: State<'_, Arc<dyn VpnBackend>>,
-    platform: State<'_, Arc<PlatformImpl>>,
+    #[allow(unused_variables)] platform: State<'_, Arc<PlatformImpl>>,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {

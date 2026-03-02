@@ -18,7 +18,7 @@ use crate::vpn::state::{TrafficStats, WgConfig};
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 pub struct AndroidIpcBackend {
     socket_path: String,

@@ -147,7 +147,7 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|#[allow(unused_variables)] app_handle, event| {
+    app.run(|#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
         // Graceful VPN cleanup on desktop exit — restore DNS, routes, stop tunnel
         #[cfg(not(target_os = "android"))]
         if let tauri::RunEvent::Exit = event {
