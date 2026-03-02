@@ -55,6 +55,60 @@ graph TD
 - Deep-link authentication (Telegram Login Widget → JWT)
 - Two-process architecture on Android (VPN survives app swipe-close)
 
+## Client Architecture
+
+The client uses trait-based abstraction (`VpnBackend` + `Platform`) to share Tauri commands across platforms while handling OS differences underneath.
+
+### Desktop (Linux, Windows)
+
+```mermaid
+graph LR
+    subgraph "Single Process"
+        WebView["Vue WebView"]
+        Commands["Tauri Commands"]
+        Backend["InProcessBackend"]
+        Tunnel["gotatun tunnel<br/>(Mullvad WireGuard)"]
+        Platform["Platform trait<br/>Linux: pkexec + helper script<br/>Windows: netsh"]
+    end
+
+    WebView -- "tauri-specta" --> Commands
+    Commands --> Backend
+    Backend --> Tunnel
+    Commands --> Platform
+    Platform -- "routes, DNS,<br/>TUN device" --> OS["OS Network Stack"]
+```
+
+Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a polkit helper script for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI). Graceful cleanup on exit restores DNS and routes.
+
+### Android
+
+```mermaid
+graph LR
+    subgraph "UI Process"
+        WebView["Vue WebView"]
+        Commands["Tauri Commands"]
+        Plugin["tauri-plugin-vpn<br/>(Kotlin ↔ Rust)"]
+        IPC_Client["tarpc client"]
+    end
+
+    subgraph ":vpn Process"
+        Service["FloppaVpnService<br/>(foreground service)"]
+        JNI["JNI bridge"]
+        Tunnel["gotatun tunnel"]
+        IPC_Server["tarpc server"]
+    end
+
+    WebView -- "tauri-specta" --> Commands
+    Commands --> Plugin
+    Plugin -- "startService()" --> Service
+    Service -- "TUN fd" --> JNI
+    JNI --> Tunnel
+    IPC_Client <-- "Unix socket<br/>(stats, stop)" --> IPC_Server
+    Tunnel -- "protectSocket()<br/>via JNI" --> Service
+```
+
+Two-process model so the VPN survives app swipe-close. The custom `tauri-plugin-vpn` bridges Kotlin and Rust — it launches `FloppaVpnService` as a foreground service in a separate `:vpn` process, which creates the TUN device and passes the fd to gotatun via JNI. The UI process communicates with the VPN process over a tarpc Unix socket for stats and stop commands. `protectSocket()` calls back into Kotlin via JNI to prevent WireGuard's UDP packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
+
 ## Tech Stack
 
 | Layer | Tech |
@@ -62,7 +116,7 @@ graph TD
 | Server | Rust, Axum, teloxide, sqlx, utoipa (OpenAPI), memory-serve |
 | Daemon | Rust, WireGuard (`wg`), Linux tc, sqlx |
 | Frontend | Vue 3, Nuxt UI v4, Pinia Colada, Tailwind v4 |
-| Client | Tauri 2, gotatun (Mullvad WireGuard), tauri-specta (type-safe bindings) |
+| Client | Tauri 2, gotatun (Mullvad WireGuard), tauri-specta (type-safe bindings), custom tauri-plugin-vpn |
 | Database | PostgreSQL with LISTEN/NOTIFY |
 | Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), JWT |
 
