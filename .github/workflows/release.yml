@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Set up keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          KEYSTORE_PATH="${{ github.workspace }}/floppa-client/src-tauri/gen/android/upload-keystore.jks"
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          cat > floppa-client/src-tauri/gen/android/keystore.properties <<EOF
+          password=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=$KEYSTORE_PATH
+          EOF
+
+      - name: Build Android APK
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: cd floppa-client && bun tauri android build --apk --target aarch64
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/floppa-vpn-*-android-arm64.apk
+
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build Linux client
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: cd floppa-client && bun tauri build
+
+      - name: Rename artifacts with version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
+          # AppImage
+          if ls "$BUNDLE_DIR/appimage/"*.AppImage 1>/dev/null 2>&1; then
+            mv "$BUNDLE_DIR/appimage/"*.AppImage "$BUNDLE_DIR/appimage/floppa-vpn-${VERSION}-linux-x86_64.AppImage"
+          fi
+          # deb
+          if ls "$BUNDLE_DIR/deb/"*.deb 1>/dev/null 2>&1; then
+            mv "$BUNDLE_DIR/deb/"*.deb "$BUNDLE_DIR/deb/floppa-vpn-${VERSION}-linux-x86_64.deb"
+          fi
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: |
+            floppa-client/src-tauri/target/release/bundle/appimage/floppa-vpn-*.AppImage
+            floppa-client/src-tauri/target/release/bundle/deb/floppa-vpn-*.deb
+
+  release:
+    name: Create GitHub Release
+    needs: [android, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find release-artifacts -type f | sort
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            release-artifacts/**/*.apk
+            release-artifacts/**/*.AppImage
+            release-artifacts/**/*.deb
