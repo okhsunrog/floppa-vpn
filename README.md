@@ -109,6 +109,35 @@ graph LR
 
 Two-process model so the VPN survives app swipe-close. The custom `tauri-plugin-vpn` bridges Kotlin and Rust — it launches `FloppaVpnService` as a foreground service in a separate `:vpn` process, which creates the TUN device and passes the fd to gotatun via JNI. The UI process communicates with the VPN process over a tarpc Unix socket for stats and stop commands. `protectSocket()` calls back into Kotlin via JNI to prevent WireGuard's UDP packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
 
+## Frontend Sharing
+
+Three apps — admin panel (`floppa-face`), Tauri client (`floppa-client`), and Telegram Mini App — share a single codebase via the `floppa-web-shared` package in a Bun workspace.
+
+```mermaid
+graph TD
+    Shared["<b>floppa-web-shared</b><br/>Views · Components · Router · Stores<br/>OpenAPI client · i18n · Utils"]
+
+    Face["<b>floppa-face</b><br/>Admin panel<br/>Uses shared routes as-is"]
+    Client["<b>floppa-client</b><br/>Tauri app<br/>Overrides login + dashboard"]
+    MiniApp["<b>Telegram Mini App</b><br/>Same as admin panel<br/>Auto-login via initData"]
+
+    Shared --> Face
+    Shared --> Client
+    Shared --> MiniApp
+```
+
+**How it works:**
+
+- **Shared router** — `createAppRoutes()` returns all routes, `installAuthGuard()` adds auth checks. The admin panel uses them as-is; the client app overrides `login` and `dashboard` routes with its own components
+- **Slot-based composition** — shared views expose named slots (e.g. `UserDashboardView` has a `#vpn-widget` slot). The client fills it with `VpnCard`, the admin panel leaves it empty
+- **Three auth flows, one component** — the shared `LoginView` handles all three via props:
+  - *Admin panel* — embedded Telegram Login Widget (JavaScript callback)
+  - *Tauri client* — opens browser for Telegram OAuth, server redirects to `floppa://auth?token=...`, Tauri captures via deep-link plugin
+  - *Mini App* — auto-login with `window.Telegram.WebApp.initData` (no user interaction, already authenticated inside Telegram)
+- **OpenAPI → Pinia Colada** — the server generates an OpenAPI spec via utoipa, `@hey-api/openapi-ts` generates a typed SDK + Pinia Colada query/mutation hooks. All apps share the same auto-generated API client
+- **Nuxt UI v4 without Nuxt** — used as a Vue plugin (`@nuxt/ui/vue-plugin`) for the component library without the full Nuxt framework
+- **Tailwind v4 cross-scanning** — each app's CSS includes `@source "../../floppa-web-shared/src"` so Tailwind picks up classes from shared components
+
 ## Tech Stack
 
 | Layer | Tech |
