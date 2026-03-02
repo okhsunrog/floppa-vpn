@@ -1,0 +1,25 @@
+{
+  // Windows-specific Tauri configuration
+  // This extends the base tauri.conf.json5
+
+  bundle: {
+    // Bundle wintun.dll with the application
+    // Download from: https://www.wintun.net/
+    resources: ["./wintun.dll"],
+
+    windows: {
+      // Embed WebView2 bootstrapper
+      webviewInstallMode: {
+        type: "embedBootstrapper",
+      },
+
+      // Request admin privileges (UAC)
+      // Required for TUN device creation
+      nsis: {
+        installerIcon: "icons/icon.ico",
+        headerImage: null,
+        sidebarImage: null,
+      },
+    },
+  },
+}

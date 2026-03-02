@@ -1,0 +1,52 @@
+{
+  "name": "floppa-web-shared",
+  "version": "0.1.0",
+  "main": "./src/index.ts",
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.93.1",
+    "@vitejs/plugin-vue": "^6.0.4",
+    "@vue/eslint-config-prettier": "^10.2.0",
+    "@vue/eslint-config-typescript": "^14.7.0",
+    "@vue/tsconfig": "^0.8.1",
+    "eslint": "^10.0.2",
+    "eslint-plugin-vue": "^10.8.0",
+    "pinia": "^3.0.4",
+    "typescript": "~5.9.3",
+    "vue": "^3.5.29",
+    "vue-tsc": "^3.2.5"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0",
+    "pinia": "^3.0.0",
+    "vue-router": "^5.0.3"
+  },
+  "scripts": {
+    "openapi-ts": "openapi-ts",
+    "type-check": "vue-tsc --build",
+    "lint": "eslint . --fix"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client/index.ts",
+    "./client/*": "./src/client/*",
+    "./stores": "./src/stores/index.ts",
+    "./components": "./src/components/index.ts",
+    "./utils": "./src/utils/index.ts",
+    "./types": "./src/types/index.ts",
+    "./views": "./src/views/index.ts",
+    "./views/*": "./src/views/*",
+    "./router": "./src/router/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@hey-api/client-fetch": "^0.13.1",
+    "@nuxt/ui": "^4.5.0",
+    "@pinia/colada": "^0.21.6",
+    "tailwindcss": "^4.2.1",
+    "vue-i18n": "^11.2.8"
+  }
+}

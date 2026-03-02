@@ -1,0 +1,80 @@
+{
+  // JSON5 config for Tauri (comments allowed)
+  productName: "Floppa VPN",
+  version: "0.1.0",
+  identifier: "dev.okhsunrog.floppa-vpn",
+
+  build: {
+    // Dev config
+    beforeDevCommand: "bun run dev",
+    devUrl: "http://localhost:1420",
+
+    // Build config
+    beforeBuildCommand: "bun run build",
+    frontendDist: "../dist",
+  },
+
+  app: {
+    windows: [
+      {
+        title: "Floppa VPN",
+        width: 400,
+        height: 600,
+        resizable: true,
+        fullscreen: false,
+        center: true,
+      },
+    ],
+    security: {},
+    trayIcon: {
+      iconPath: "icons/icon.png",
+      iconAsTemplate: true,
+    },
+  },
+
+  plugins: {
+    "deep-link": {
+      desktop: {
+        schemes: ["floppa"],
+      },
+      mobile: [
+        {
+          scheme: ["floppa"],
+          appLink: false,
+        },
+      ],
+    },
+  },
+
+  bundle: {
+    active: true,
+    targets: "all",
+
+    linux: {
+      appimage: {
+        bundleMediaFramework: false,
+      },
+    },
+
+    icon: [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png",
+      "icons/icon.svg",
+      "icons/Square30x30Logo.png",
+      "icons/Square44x44Logo.png",
+      "icons/Square71x71Logo.png",
+      "icons/Square89x89Logo.png",
+      "icons/Square107x107Logo.png",
+      "icons/Square142x142Logo.png",
+      "icons/Square150x150Logo.png",
+      "icons/Square284x284Logo.png",
+      "icons/Square310x310Logo.png",
+      "icons/StoreLogo.png",
+    ],
+  },
+}

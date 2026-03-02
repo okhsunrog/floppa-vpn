@@ -1,0 +1,8 @@
+export { default as LoginView } from './LoginView.vue'
+export { default as UserDashboardView } from './user/DashboardView.vue'
+export { default as UserPeersView } from './user/PeersView.vue'
+export { default as AdminDashboardView } from './admin/DashboardView.vue'
+export { default as AdminUsersView } from './admin/UsersView.vue'
+export { default as AdminUserDetailView } from './admin/UserDetailView.vue'
+export { default as AdminPeersView } from './admin/PeersView.vue'
+export { default as AdminPlansView } from './admin/PlansView.vue'

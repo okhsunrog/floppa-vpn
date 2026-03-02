@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-protect-socket"
+description = "Enables the protect_socket command without any pre-configured scope."
+commands.allow = ["protect_socket"]
+
+[[permission]]
+identifier = "deny-protect-socket"
+description = "Denies the protect_socket command without any pre-configured scope."
+commands.deny = ["protect_socket"]

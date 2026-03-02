@@ -1,0 +1,85 @@
+[package]
+name = "floppa-client"
+version = "0.1.0"
+description = "Floppa VPN Client"
+authors = ["you"]
+edition = "2024"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "floppa_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["config-json5"] }
+
+[dependencies]
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = ["config-json5", "specta", "tray-icon", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-log = { version = "2", features = ["colored"] }
+tauri-plugin-os = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-process = "2"
+tauri-plugin-shell = "2"
+specta = { version = "=2.0.0-rc.22", features = ["serde", "serde_json", "derive"] }
+specta-typescript = { version = "0.0.9" }
+tauri-specta = { git = "https://github.com/specta-rs/tauri-specta", rev = "6fe9532", features = ["typescript", "derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+dirs = "6"
+async-trait = "0.1"
+ipnetwork = "0.21"
+
+# gotatun - Mullvad's WireGuard implementation
+gotatun = { git = "https://github.com/mullvad/gotatun", rev = "3969d36", features = ["device", "tun"] }
+tun = { version = "0.8", features = ["async"] }
+
+# VPN plugin for mobile platforms
+tauri-plugin-vpn = { path = "../../tauri-plugin-vpn" }
+tauri-plugin-deep-link = "2"
+uuid = { version = "1.21.0", features = ["v4"] }
+hostname = "0.4.2"
+keyring = { version = "3.6.3", features = ["crypto-rust"] }
+tauri-plugin-opener = "2.5.3"
+tempfile = "3.26.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { version = "0.29", features = ["user", "net", "process"] }
+keyring = { version = "3.6.3", features = ["linux-native-async-persistent"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock"
+] }
+keyring = { version = "3.6.3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+futures = "0.3.32"
+jni = "0.22.2"
+tarpc = { version = "0.37.0", features = ["serde-transport", "tokio1", "unix"] }
+tokio-serde = { version = "0.9.0", features = ["bincode"] }
+tokio-util = { version = "0.7.18", features = ["codec"] }
+tracing-logcat = "0.1.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[profile.dev]
+incremental = true # Compile your binary in smaller steps.
+
+[profile.release]
+codegen-units = 1 # Allows LLVM to perform better optimization.
+lto = true        # Enables link-time-optimizations.
+opt-level = "s"   # Prioritizes small binary size. Use `3` if you prefer speed.
+panic = "abort"   # Higher performance by disabling panic handlers.
+strip = true      # Ensures debug symbols are removed.

@@ -1,0 +1,24 @@
+# Floppa VPN Configuration Example
+# Copy to /etc/floppa-vpn/config.toml (permissions: 0644)
+# Secrets go in secrets.toml (permissions: 0600)
+
+[wireguard]
+interface = "wg-floppa"
+endpoint = "vpn.example.com:51820"
+# listen_port = 51820  # Optional, parsed from endpoint if not set
+client_subnet = "10.100.0.0/24"
+# server_ip = "10.100.0.1"  # Optional, derived from subnet if not set
+dns = ["1.1.1.1", "8.8.8.8"]
+allowed_ips = "0.0.0.0/0, ::/0"
+
+# Rate limiting (optional, requires daemon to run as root)
+[wireguard.rate_limit]
+enabled = true
+total_bandwidth_mbps = 1000  # Total available bandwidth for all peers
+
+[bot]
+username = "YourBotUsername"  # Bot username for Telegram Login Widget (without @)
+# web_app_url = "https://vpn.example.com"  # Public URL for Telegram Mini App button (optional)
+
+[auth]
+jwt_expiration_hours = 168  # 1 week (optional, default is 168)

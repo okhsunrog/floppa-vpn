@@ -1,0 +1,9 @@
+{
+  "name": "floppa-vpn",
+  "private": true,
+  "workspaces": [
+    "floppa-web-shared",
+    "floppa-face",
+    "floppa-client"
+  ]
+}

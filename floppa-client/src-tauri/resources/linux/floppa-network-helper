@@ -1,0 +1,119 @@
+#!/bin/bash
+# floppa-network-helper - Privileged network configuration helper for Floppa VPN
+#
+# This script is run via pkexec. A polkit policy allows it to execute without
+# a password prompt for active desktop sessions.
+#
+# Only validated, specific network operations are permitted.
+
+set -euo pipefail
+
+ALLOWED_IFACE='^floppa[0-9]+$'
+# IPv4: digits and dots with optional /prefix
+# IPv6: hex digits, colons with optional /prefix
+IP_PATTERN='^[0-9a-fA-F.:]+(/[0-9]+)?$'
+
+validate_iface() {
+    if [[ ! "$1" =~ $ALLOWED_IFACE ]]; then
+        echo "Invalid interface name: $1" >&2
+        exit 1
+    fi
+}
+
+validate_ip() {
+    if [[ ! "$1" =~ $IP_PATTERN ]]; then
+        echo "Invalid IP/network: $1" >&2
+        exit 1
+    fi
+}
+
+case "${1:-}" in
+    configure)
+        # Usage: configure <iface> <ip/prefix>
+        [[ $# -eq 3 ]] || { echo "Usage: configure <iface> <ip/prefix>" >&2; exit 1; }
+        validate_iface "$2"
+        validate_ip "$3"
+        ip addr add "$3" dev "$2"
+        ip link set "$2" up
+        ;;
+
+    deconfigure)
+        # Usage: deconfigure <iface>
+        [[ $# -eq 2 ]] || { echo "Usage: deconfigure <iface>" >&2; exit 1; }
+        validate_iface "$2"
+        ip link set "$2" down 2>/dev/null || true
+        ip addr flush dev "$2" 2>/dev/null || true
+        ;;
+
+    add-route)
+        # Usage: add-route <destination> via <gateway>
+        [[ $# -eq 4 && "$3" == "via" ]] || { echo "Usage: add-route <dest> via <gateway>" >&2; exit 1; }
+        validate_ip "$2"
+        validate_ip "$4"
+        ip route add "$2" via "$4"
+        ;;
+
+    del-route)
+        # Usage: del-route <destination>
+        [[ $# -eq 2 ]] || { echo "Usage: del-route <dest>" >&2; exit 1; }
+        validate_ip "$2"
+        ip route del "$2" 2>/dev/null || true
+        ;;
+
+    add-routes)
+        # Usage: add-routes <iface> <dest1> [dest2 ...]
+        [[ $# -ge 3 ]] || { echo "Usage: add-routes <iface> <dest1> [dest2 ...]" >&2; exit 1; }
+        validate_iface "$2"
+        iface="$2"
+        shift 2
+        for dest in "$@"; do
+            validate_ip "$dest"
+            ip route add "$dest" dev "$iface"
+        done
+        ;;
+
+    del-routes)
+        # Usage: del-routes <iface> <dest1> [dest2 ...]
+        [[ $# -ge 3 ]] || { echo "Usage: del-routes <iface> <dest1> [dest2 ...]" >&2; exit 1; }
+        validate_iface "$2"
+        iface="$2"
+        shift 2
+        for dest in "$@"; do
+            validate_ip "$dest"
+            ip route del "$dest" dev "$iface" 2>/dev/null || true
+        done
+        ;;
+
+    set-dns)
+        # Usage: set-dns <iface> <server1> [server2 ...]
+        [[ $# -ge 3 ]] || { echo "Usage: set-dns <iface> <server1> [server2 ...]" >&2; exit 1; }
+        validate_iface "$2"
+        iface="$2"
+        shift 2
+        for s in "$@"; do validate_ip "$s"; done
+        resolvectl dns "$iface" "$@"
+        resolvectl default-route "$iface" true
+        ;;
+
+    revert-dns)
+        # Usage: revert-dns <iface>
+        [[ $# -eq 2 ]] || { echo "Usage: revert-dns <iface>" >&2; exit 1; }
+        validate_iface "$2"
+        resolvectl revert "$2" 2>/dev/null || true
+        ;;
+
+    set-resolv-conf)
+        # Usage: set-resolv-conf <temp-file>
+        # Only accepts files from /tmp/floppa-resolv*
+        [[ $# -eq 2 ]] || { echo "Usage: set-resolv-conf <file>" >&2; exit 1; }
+        [[ "$2" == /tmp/floppa-resolv* ]] || { echo "Invalid source path: $2" >&2; exit 1; }
+        [[ -f "$2" ]] || { echo "File not found: $2" >&2; exit 1; }
+        cp "$2" /etc/resolv.conf
+        ;;
+
+    *)
+        echo "Unknown command: ${1:-}" >&2
+        echo "Commands: configure, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf" >&2
+        exit 1
+        ;;
+esac

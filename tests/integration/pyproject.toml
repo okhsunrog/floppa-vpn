@@ -1,0 +1,14 @@
+[project]
+name = "floppa-vpn-integration-tests"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pytest>=8.0",
+    "python-dotenv>=1.2.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

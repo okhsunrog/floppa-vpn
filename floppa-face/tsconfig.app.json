@@ -1,0 +1,14 @@
+{
+  "extends": "@vue/tsconfig/tsconfig.dom.json",
+  "include": ["env.d.ts", "auto-imports.d.ts", "components.d.ts", "src/**/*", "src/**/*.vue", "../floppa-web-shared/src/**/*"],
+  "exclude": ["src/**/__tests__/*"],
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+
+    "paths": {
+      "@/*": ["./src/*"],
+      "floppa-web-shared": ["../floppa-web-shared/src/index.ts"],
+      "floppa-web-shared/*": ["../floppa-web-shared/src/*"]
+    }
+  }
+}

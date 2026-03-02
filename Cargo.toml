@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/floppa-core",
+    "crates/floppa-daemon",
+    "crates/floppa-server",
+]
+exclude = [
+    "floppa-client/src-tauri",
+    "tauri-plugin-vpn",
+    "crates/floppa-test-tunnel",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+rand = "0.9"
+
+# Auth (JWT + Telegram verification)
+jsonwebtoken = "9"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# Telegram bot
+teloxide = { version = "0.13", features = ["macros"] }
+
+# Database (PostgreSQL)
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"] }
+
+# Config
+toml = "0.8"
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Shared crate
+floppa-core = { path = "crates/floppa-core" }

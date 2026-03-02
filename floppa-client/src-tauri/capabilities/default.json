@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "shell:default",
+    "opener:default",
+    "os:default",
+    "log:default",
+    "fs:default",
+    "fs:allow-write-text-file",
+    "vpn:default",
+    "deep-link:default"
+  ]
+}

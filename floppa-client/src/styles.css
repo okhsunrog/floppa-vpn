@@ -1,0 +1,55 @@
+@import 'tailwindcss';
+@import '@nuxt/ui';
+
+@source "../../floppa-web-shared/src";
+
+:root {
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Safe area insets for Android notch/cutout */
+html {
+  padding-top: var(--safe-area-inset-top, 0px) !important;
+  padding-bottom: var(--safe-area-inset-bottom, 0px) !important;
+}
+
+/* Fixed overlays to mask scrolled content behind status bar / nav bar */
+html::before,
+html::after {
+  content: '';
+  position: fixed;
+  left: 0;
+  right: 0;
+  background: var(--ui-bg);
+  z-index: 40;
+  pointer-events: none;
+}
+
+html::before {
+  top: 0;
+  height: var(--safe-area-inset-top, 0px);
+}
+
+html::after {
+  bottom: 0;
+  height: var(--safe-area-inset-bottom, 0px);
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.2);
+}

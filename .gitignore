@@ -1,0 +1,38 @@
+# Claude Code project instructions (contains server-specific details)
+CLAUDE.md
+
+/target
+crates/floppa-test-tunnel/target/
+release/
+floppa-vpn-release.tar.gz
+
+# Python
+__pycache__/
+.venv/
+
+# Test artifacts
+test-results/
+
+# Integration test secrets (WireGuard configs with private keys)
+tests/integration/.secrets/
+tests/integration/.env
+
+# Config files with secrets (use config.example.toml as template)
+config.staging.toml
+config.prod.toml
+config.local.toml
+
+# Environment files (use .env.example as template)
+.env
+
+# Node.js
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
