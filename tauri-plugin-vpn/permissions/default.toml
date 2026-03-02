@@ -9,4 +9,9 @@ permissions = [
     "allow-protect-socket",
     "allow-get-safe-area-insets",
     "allow-register-listener",
+    "allow-is-battery-optimization-disabled",
+    "allow-request-disable-battery-optimization",
+    "allow-are-notifications-enabled",
+    "allow-open-notification-settings",
+    "allow-get-device-name",
 ]

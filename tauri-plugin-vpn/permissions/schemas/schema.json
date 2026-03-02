@@ -295,6 +295,30 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the are_notifications_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-are-notifications-enabled",
+          "markdownDescription": "Enables the are_notifications_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the are_notifications_enabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-are-notifications-enabled",
+          "markdownDescription": "Denies the are_notifications_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_device_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-get-device-name",
+          "markdownDescription": "Enables the get_device_name command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_device_name command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-get-device-name",
+          "markdownDescription": "Denies the get_device_name command without any pre-configured scope."
+        },
+        {
           "description": "Enables the get_installed_apps command without any pre-configured scope.",
           "type": "string",
           "const": "allow-get-installed-apps",
@@ -329,6 +353,30 @@
           "type": "string",
           "const": "deny-get-vpn-status",
           "markdownDescription": "Denies the get_vpn_status command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the is_battery_optimization_disabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-is-battery-optimization-disabled",
+          "markdownDescription": "Enables the is_battery_optimization_disabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the is_battery_optimization_disabled command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-is-battery-optimization-disabled",
+          "markdownDescription": "Denies the is_battery_optimization_disabled command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_notification_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-notification-settings",
+          "markdownDescription": "Enables the open_notification_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_notification_settings command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-notification-settings",
+          "markdownDescription": "Denies the open_notification_settings command without any pre-configured scope."
         },
         {
           "description": "Enables the prepare_vpn command without any pre-configured scope.",
@@ -367,6 +415,18 @@
           "markdownDescription": "Denies the register_listener command without any pre-configured scope."
         },
         {
+          "description": "Enables the request_disable_battery_optimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-request-disable-battery-optimization",
+          "markdownDescription": "Enables the request_disable_battery_optimization command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the request_disable_battery_optimization command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-request-disable-battery-optimization",
+          "markdownDescription": "Denies the request_disable_battery_optimization command without any pre-configured scope."
+        },
+        {
           "description": "Enables the start_vpn command without any pre-configured scope.",
           "type": "string",
           "const": "allow-start-vpn",
@@ -391,10 +451,10 @@
           "markdownDescription": "Denies the stop_vpn command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-vpn-status`\n- `allow-get-installed-apps`\n- `allow-protect-socket`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`",
+          "description": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-vpn-status`\n- `allow-get-installed-apps`\n- `allow-protect-socket`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-name`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-vpn-status`\n- `allow-get-installed-apps`\n- `allow-protect-socket`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`"
+          "markdownDescription": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-vpn-status`\n- `allow-get-installed-apps`\n- `allow-protect-socket`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-name`"
         }
       ]
     }

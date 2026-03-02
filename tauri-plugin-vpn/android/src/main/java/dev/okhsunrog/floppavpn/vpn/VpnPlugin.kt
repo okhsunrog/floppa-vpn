@@ -262,18 +262,18 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     /**
      * Request the user to disable battery optimization for this app.
+     * Shows a direct system dialog asking to allow unrestricted background usage.
      */
     @Command
     fun requestDisableBatteryOptimization(invoke: Invoke) {
         try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                data = Uri.parse("package:${activity.packageName}")
-            }
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = Uri.parse("package:${activity.packageName}")
             activity.startActivity(intent)
             invoke.resolve()
         } catch (e: Exception) {
             Log.e("VpnPlugin", "requestDisableBatteryOptimization error", e)
-            invoke.reject("Failed to request battery optimization: ${e.message}")
+            invoke.reject("Failed to open battery settings: ${e.message}")
         }
     }
 

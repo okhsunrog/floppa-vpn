@@ -12,6 +12,11 @@ Default permissions for VPN plugin
 - `allow-protect-socket`
 - `allow-get-safe-area-insets`
 - `allow-register-listener`
+- `allow-is-battery-optimization-disabled`
+- `allow-request-disable-battery-optimization`
+- `allow-are-notifications-enabled`
+- `allow-open-notification-settings`
+- `allow-get-device-name`
 
 ## Permission Table
 
@@ -21,6 +26,58 @@ Default permissions for VPN plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`vpn:allow-are-notifications-enabled`
+
+</td>
+<td>
+
+Enables the are_notifications_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-are-notifications-enabled`
+
+</td>
+<td>
+
+Denies the are_notifications_enabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:allow-get-device-name`
+
+</td>
+<td>
+
+Enables the get_device_name command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-get-device-name`
+
+</td>
+<td>
+
+Denies the get_device_name command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>
@@ -103,6 +160,58 @@ Denies the get_vpn_status command without any pre-configured scope.
 <tr>
 <td>
 
+`vpn:allow-is-battery-optimization-disabled`
+
+</td>
+<td>
+
+Enables the is_battery_optimization_disabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-is-battery-optimization-disabled`
+
+</td>
+<td>
+
+Denies the is_battery_optimization_disabled command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:allow-open-notification-settings`
+
+</td>
+<td>
+
+Enables the open_notification_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-open-notification-settings`
+
+</td>
+<td>
+
+Denies the open_notification_settings command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `vpn:allow-prepare-vpn`
 
 </td>
@@ -174,6 +283,32 @@ Enables the register_listener command without any pre-configured scope.
 <td>
 
 Denies the register_listener command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:allow-request-disable-battery-optimization`
+
+</td>
+<td>
+
+Enables the request_disable_battery_optimization command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-request-disable-battery-optimization`
+
+</td>
+<td>
+
+Denies the request_disable_battery_optimization command without any pre-configured scope.
 
 </td>
 </tr>
