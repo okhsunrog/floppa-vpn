@@ -3,10 +3,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
+import { commands } from '../bindings'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settings = useSettingsStore()
+
+const batteryOptDisabled = ref<boolean | null>(null)
 
 const searchQuery = ref('')
 const showSystemApps = ref(false)
@@ -17,9 +20,25 @@ const modeOptions = computed(() => [
   { label: t('settings.modeExclude'), value: 'exclude' as SplitMode, description: t('settings.modeExcludeDescription'), icon: 'i-lucide-shield-off' },
 ])
 
+async function checkBatteryOptimization() {
+  try {
+    const result = await commands.isBatteryOptimizationDisabled()
+    if (result.status === 'ok') batteryOptDisabled.value = result.data
+  } catch { /* ignore */ }
+}
+
+async function requestBatteryOptimization() {
+  try {
+    await commands.requestDisableBatteryOptimization()
+    // Re-check after a short delay (user may have interacted with system dialog)
+    setTimeout(checkBatteryOptimization, 1000)
+  } catch { /* ignore */ }
+}
+
 onMounted(async () => {
   if (vpn.isAndroid) {
     await settings.loadApps()
+    await checkBatteryOptimization()
   }
 })
 
@@ -54,6 +73,40 @@ function selectMode(mode: SplitMode) {
 <template>
   <div class="max-w-3xl mx-auto">
     <h1 class="text-2xl font-bold mb-6">{{ t('settings.title') }}</h1>
+
+    <!-- Battery Optimization (Android only) -->
+    <UCard v-if="vpn.isAndroid && batteryOptDisabled !== null" class="mb-4">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-battery" class="size-5" />
+          <span class="font-semibold">{{ t('settings.batteryOptimization') }}</span>
+        </div>
+      </template>
+
+      <p class="text-sm text-[var(--ui-text-muted)] mb-4">
+        {{ t('settings.batteryOptimizationDescription') }}
+      </p>
+
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <UIcon
+            :name="batteryOptDisabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'"
+            :class="batteryOptDisabled ? 'text-green-500' : 'text-yellow-500'"
+            class="size-5"
+          />
+          <span class="text-sm">
+            {{ batteryOptDisabled ? t('settings.batteryDisabled') : t('settings.batteryEnabled') }}
+          </span>
+        </div>
+        <UButton
+          v-if="!batteryOptDisabled"
+          :label="t('settings.disableBatteryOptimization')"
+          color="warning"
+          size="sm"
+          @click="requestBatteryOptimization"
+        />
+      </div>
+    </UCard>
 
     <!-- Split Tunneling (Android only) -->
     <UCard v-if="vpn.isAndroid">

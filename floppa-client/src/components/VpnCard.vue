@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
 import vpnConnectedImg from '../assets/vpn-connected.png'
 import vpnDisconnectedImg from '../assets/vpn-disconnected.png'
 import { useI18n } from 'vue-i18n'
@@ -8,6 +8,7 @@ import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pini
 import { getMyPeerByDevice, getMyPeerConfig } from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { useVpnStore } from '../stores/vpnStore'
+import { commands } from '../bindings'
 
 const SYNC_TIMEOUT_SECONDS = 5
 
@@ -24,6 +25,36 @@ const setupError = computed<string | null>(() => {
   if (setupErrorKey.value) return t(setupErrorKey.value)
   return setupErrorMsg.value
 })
+
+const showBatteryPrompt = ref(false)
+const batteryPromptDismissed = ref(localStorage.getItem('battery_prompt_dismissed') === 'true')
+
+// Show battery optimization prompt after first successful connection on Android
+watch(() => vpn.isConnected, async (connected, wasConnected) => {
+  if (connected && !wasConnected && vpn.isAndroid && !batteryPromptDismissed.value) {
+    try {
+      const result = await commands.isBatteryOptimizationDisabled()
+      if (result.status === 'ok' && !result.data) {
+        showBatteryPrompt.value = true
+      }
+    } catch { /* ignore */ }
+  }
+})
+
+async function handleBatteryOptimization() {
+  try {
+    await commands.requestDisableBatteryOptimization()
+  } catch { /* ignore */ }
+  showBatteryPrompt.value = false
+  batteryPromptDismissed.value = true
+  localStorage.setItem('battery_prompt_dismissed', 'true')
+}
+
+function dismissBatteryPrompt() {
+  showBatteryPrompt.value = false
+  batteryPromptDismissed.value = true
+  localStorage.setItem('battery_prompt_dismissed', 'true')
+}
 
 let statusInterval: ReturnType<typeof setInterval> | null = null
 
@@ -257,6 +288,31 @@ function getConnectionDuration(): string {
           @click="handleConnect" />
 
       </template>
+    </div>
+  </UCard>
+
+  <!-- Battery Optimization Prompt -->
+  <UCard v-if="showBatteryPrompt" class="mb-4">
+    <div class="flex flex-col gap-3">
+      <div class="flex items-start gap-3">
+        <UIcon name="i-lucide-battery-warning" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
+        <p class="text-sm">{{ t('settings.batteryPrompt') }}</p>
+      </div>
+      <div class="flex gap-2 justify-end">
+        <UButton
+          :label="t('update.dismiss')"
+          color="neutral"
+          variant="ghost"
+          size="sm"
+          @click="dismissBatteryPrompt"
+        />
+        <UButton
+          :label="t('settings.disableBatteryOptimization')"
+          color="warning"
+          size="sm"
+          @click="handleBatteryOptimization"
+        />
+      </div>
     </div>
   </UCard>
 

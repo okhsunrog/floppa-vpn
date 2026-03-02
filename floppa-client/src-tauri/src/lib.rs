@@ -31,6 +31,8 @@ pub fn run() {
             vpn::commands::disconnect,
             vpn::commands::get_connection_info,
             vpn::commands::get_installed_apps,
+            vpn::commands::is_battery_optimization_disabled,
+            vpn::commands::request_disable_battery_optimization,
             vpn::commands::get_safe_area_insets,
         ])
         .events(tauri_specta::collect_events![]);

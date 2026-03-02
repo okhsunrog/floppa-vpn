@@ -451,6 +451,48 @@ pub async fn get_installed_apps(
     }
 }
 
+/// Check if battery optimization is disabled (Android only)
+#[tauri::command]
+#[specta::specta]
+pub async fn is_battery_optimization_disabled(
+    #[allow(unused_variables)] app: AppHandle,
+) -> Result<bool, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .is_battery_optimization_disabled()
+            .map_err(|e| format!("Failed to check battery optimization: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(true) // Not applicable on desktop
+    }
+}
+
+/// Request the user to disable battery optimization (Android only)
+#[tauri::command]
+#[specta::specta]
+pub async fn request_disable_battery_optimization(
+    #[allow(unused_variables)] app: AppHandle,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .request_disable_battery_optimization()
+            .map_err(|e| format!("Failed to request battery optimization: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(()) // No-op on desktop
+    }
+}
+
 /// Get safe area insets (status bar, nav bar heights) in dp
 #[tauri::command]
 #[specta::specta]

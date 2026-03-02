@@ -234,6 +234,12 @@ export default {
     showSystemApps: 'Показать системные приложения',
     androidOnly: 'Раздельное туннелирование доступно только на Android',
     changesApplyOnReconnect: 'Изменения применятся при следующем подключении',
+    batteryOptimization: 'Оптимизация батареи',
+    batteryOptimizationDescription: 'Отключите оптимизацию батареи, чтобы Android не завершал VPN в фоне.',
+    batteryDisabled: 'Оптимизация батареи отключена',
+    batteryEnabled: 'Оптимизация батареи активна',
+    disableBatteryOptimization: 'Отключить',
+    batteryPrompt: 'Отключить оптимизацию батареи для стабильной работы VPN в фоне?',
   },
   update: {
     available: 'Доступно обновление: v{version}',

@@ -234,6 +234,12 @@ export default {
     showSystemApps: 'Show system apps',
     androidOnly: 'Split tunneling is only available on Android',
     changesApplyOnReconnect: 'Changes apply on next connection',
+    batteryOptimization: 'Battery Optimization',
+    batteryOptimizationDescription: 'Disable battery optimization so Android doesn\'t kill the VPN in the background.',
+    batteryDisabled: 'Battery optimization is disabled',
+    batteryEnabled: 'Battery optimization is active',
+    disableBatteryOptimization: 'Disable',
+    batteryPrompt: 'Disable battery optimization for reliable VPN in background?',
   },
   update: {
     available: 'Update available: v{version}',

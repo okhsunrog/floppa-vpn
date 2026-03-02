@@ -75,6 +75,21 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
+    /// Check if battery optimization is disabled for this app.
+    pub fn is_battery_optimization_disabled(&self) -> Result<bool> {
+        self.0
+            .run_mobile_plugin::<BatteryOptResponse>("isBatteryOptimizationDisabled", ())
+            .map(|r| r.disabled)
+            .map_err(Into::into)
+    }
+
+    /// Request the user to disable battery optimization for this app.
+    pub fn request_disable_battery_optimization(&self) -> Result<()> {
+        self.0
+            .run_mobile_plugin::<()>("requestDisableBatteryOptimization", ())
+            .map_err(Into::into)
+    }
+
     /// Protect a socket from VPN routing (bypass the VPN tunnel).
     ///
     /// This must be called for UDP sockets used by WireGuard to communicate
@@ -97,6 +112,11 @@ impl<R: Runtime> Vpn<R> {
 #[derive(serde::Deserialize)]
 struct InstalledAppsResponse {
     apps: Vec<AppInfo>,
+}
+
+#[derive(serde::Deserialize)]
+struct BatteryOptResponse {
+    disabled: bool,
 }
 
 #[derive(serde::Deserialize)]

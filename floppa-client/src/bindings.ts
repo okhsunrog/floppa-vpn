@@ -112,6 +112,28 @@ async getInstalledApps() : Promise<Result<AppInfo[], string>> {
 }
 },
 /**
+ * Check if battery optimization is disabled (Android only)
+ */
+async isBatteryOptimizationDisabled() : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("is_battery_optimization_disabled") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Request the user to disable battery optimization (Android only)
+ */
+async requestDisableBatteryOptimization() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("request_disable_battery_optimization") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Get safe area insets (status bar, nav bar heights) in dp
  */
 async getSafeAreaInsets() : Promise<Result<SafeAreaInsets, string>> {

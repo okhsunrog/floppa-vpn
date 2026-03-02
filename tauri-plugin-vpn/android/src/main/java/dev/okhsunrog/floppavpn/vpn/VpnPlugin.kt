@@ -7,8 +7,11 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
+import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.webkit.WebView
@@ -243,6 +246,34 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         val ret = JSObject()
         ret.put("name", name)
         invoke.resolve(ret)
+    }
+
+    /**
+     * Check if the app is excluded from battery optimization.
+     */
+    @Command
+    fun isBatteryOptimizationDisabled(invoke: Invoke) {
+        val pm = activity.getSystemService(Activity.POWER_SERVICE) as PowerManager
+        val ret = JSObject()
+        ret.put("disabled", pm.isIgnoringBatteryOptimizations(activity.packageName))
+        invoke.resolve(ret)
+    }
+
+    /**
+     * Request the user to disable battery optimization for this app.
+     */
+    @Command
+    fun requestDisableBatteryOptimization(invoke: Invoke) {
+        try {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                data = Uri.parse("package:${activity.packageName}")
+            }
+            activity.startActivity(intent)
+            invoke.resolve()
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "requestDisableBatteryOptimization error", e)
+            invoke.reject("Failed to request battery optimization: ${e.message}")
+        }
     }
 
     /**
