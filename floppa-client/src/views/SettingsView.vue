@@ -30,8 +30,8 @@ async function checkBatteryOptimization() {
 
 async function requestBatteryOptimization() {
   try {
-    await commands.requestDisableBatteryOptimization()
-    setTimeout(checkBatteryOptimization, 1000)
+    const result = await commands.requestDisableBatteryOptimization()
+    if (result.status === 'ok') batteryOptDisabled.value = result.data
   } catch { /* ignore */ }
 }
 
@@ -44,8 +44,8 @@ async function checkNotifications() {
 
 async function openNotificationSettings() {
   try {
-    await commands.openNotificationSettings()
-    setTimeout(checkNotifications, 1000)
+    const result = await commands.openNotificationSettings()
+    if (result.status === 'ok') notificationsEnabled.value = result.data
   } catch { /* ignore */ }
 }
 

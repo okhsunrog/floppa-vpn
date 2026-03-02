@@ -473,11 +473,12 @@ pub async fn is_battery_optimization_disabled(
 }
 
 /// Request the user to disable battery optimization (Android only)
+/// Returns whether battery optimization is now disabled after the user responds.
 #[tauri::command]
 #[specta::specta]
 pub async fn request_disable_battery_optimization(
     #[allow(unused_variables)] app: AppHandle,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
@@ -489,7 +490,7 @@ pub async fn request_disable_battery_optimization(
 
     #[cfg(not(target_os = "android"))]
     {
-        Ok(()) // No-op on desktop
+        Ok(true)
     }
 }
 
@@ -514,24 +515,25 @@ pub async fn are_notifications_enabled(
     }
 }
 
-/// Open the app's notification settings (Android only)
+/// Request notification permission (Android only)
+/// Returns whether notifications are now enabled after the user responds.
 #[tauri::command]
 #[specta::specta]
 pub async fn open_notification_settings(
     #[allow(unused_variables)] app: AppHandle,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
         return app
             .vpn()
             .open_notification_settings()
-            .map_err(|e| format!("Failed to open notification settings: {e}"));
+            .map_err(|e| format!("Failed to request notification permission: {e}"));
     }
 
     #[cfg(not(target_os = "android"))]
     {
-        Ok(())
+        Ok(true)
     }
 }
 

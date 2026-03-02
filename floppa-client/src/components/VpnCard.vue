@@ -63,6 +63,7 @@ async function handleBatteryOptimization() {
   localStorage.setItem('battery_prompt_dismissed', 'true')
 }
 
+
 function dismissBatteryPrompt() {
   showBatteryPrompt.value = false
   batteryPromptDismissed.value = true

@@ -124,8 +124,9 @@ async isBatteryOptimizationDisabled() : Promise<Result<boolean, string>> {
 },
 /**
  * Request the user to disable battery optimization (Android only)
+ * Returns whether battery optimization is now disabled after the user responds.
  */
-async requestDisableBatteryOptimization() : Promise<Result<null, string>> {
+async requestDisableBatteryOptimization() : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("request_disable_battery_optimization") };
 } catch (e) {
@@ -145,9 +146,10 @@ async areNotificationsEnabled() : Promise<Result<boolean, string>> {
 }
 },
 /**
- * Open the app's notification settings (Android only)
+ * Request notification permission (Android only)
+ * Returns whether notifications are now enabled after the user responds.
  */
-async openNotificationSettings() : Promise<Result<null, string>> {
+async openNotificationSettings() : Promise<Result<boolean, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("open_notification_settings") };
 } catch (e) {

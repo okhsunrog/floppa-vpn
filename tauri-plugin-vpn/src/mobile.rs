@@ -84,9 +84,11 @@ impl<R: Runtime> Vpn<R> {
     }
 
     /// Request the user to disable battery optimization for this app.
-    pub fn request_disable_battery_optimization(&self) -> Result<()> {
+    /// Returns whether battery optimization is now disabled after the user responds.
+    pub fn request_disable_battery_optimization(&self) -> Result<bool> {
         self.0
-            .run_mobile_plugin::<()>("requestDisableBatteryOptimization", ())
+            .run_mobile_plugin::<BatteryOptResponse>("requestDisableBatteryOptimization", ())
+            .map(|r| r.disabled)
             .map_err(Into::into)
     }
 
@@ -98,10 +100,11 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
-    /// Open the app's notification settings.
-    pub fn open_notification_settings(&self) -> Result<()> {
+    /// Request notification permission. Returns whether notifications are now enabled.
+    pub fn open_notification_settings(&self) -> Result<bool> {
         self.0
-            .run_mobile_plugin::<()>("openNotificationSettings", ())
+            .run_mobile_plugin::<NotificationsEnabledResponse>("openNotificationSettings", ())
+            .map(|r| r.enabled)
             .map_err(Into::into)
     }
 

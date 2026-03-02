@@ -1,5 +1,6 @@
 package dev.okhsunrog.floppavpn.vpn
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -20,6 +21,8 @@ import androidx.core.app.NotificationManagerCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
+import app.tauri.annotation.Permission
+import app.tauri.annotation.PermissionCallback
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSArray
@@ -45,8 +48,16 @@ class ProtectSocketArgs {
     var fd: Int = -1
 }
 
-@TauriPlugin
+@TauriPlugin(
+    permissions = [
+        Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification")
+    ]
+)
 class VpnPlugin(private val activity: Activity) : Plugin(activity) {
+
+    companion object {
+        private const val NOTIFICATION_ALIAS = "postNotification"
+    }
 
     override fun load(webView: WebView) {
         // In the two-process architecture, FloppaVpnService runs in :vpn process.
@@ -263,18 +274,28 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Request the user to disable battery optimization for this app.
      * Shows a direct system dialog asking to allow unrestricted background usage.
+     * Resolves with { "disabled": true/false } after the user responds.
      */
     @Command
     fun requestDisableBatteryOptimization(invoke: Invoke) {
         try {
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             intent.data = Uri.parse("package:${activity.packageName}")
-            activity.startActivity(intent)
-            invoke.resolve()
+            startActivityForResult(invoke, intent, "batteryOptimizationResult")
         } catch (e: Exception) {
             Log.e("VpnPlugin", "requestDisableBatteryOptimization error", e)
             invoke.reject("Failed to open battery settings: ${e.message}")
         }
+    }
+
+    @ActivityCallback
+    fun batteryOptimizationResult(invoke: Invoke, result: ActivityResult) {
+        val pm = activity.getSystemService(Activity.POWER_SERVICE) as PowerManager
+        val disabled = pm.isIgnoringBatteryOptimizations(activity.packageName)
+        Log.d("VpnPlugin", "batteryOptimizationResult: resultCode=${result.resultCode}, disabled=$disabled")
+        val ret = JSObject()
+        ret.put("disabled", disabled)
+        invoke.resolve(ret)
     }
 
     /**
@@ -288,20 +309,38 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Open the app's notification settings.
+     * Request notification permission.
+     * On Android 13+ shows a runtime permission dialog via Tauri's permission system.
+     * On older versions opens the app's notification settings page.
+     * Resolves with { "enabled": true/false } after the user responds.
      */
     @Command
     fun openNotificationSettings(invoke: Invoke) {
         try {
-            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                requestPermissionForAlias(NOTIFICATION_ALIAS, invoke, "notificationPermissionCallback")
+            } else {
+                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                }
+                activity.startActivity(intent)
+                val ret = JSObject()
+                ret.put("enabled", NotificationManagerCompat.from(activity).areNotificationsEnabled())
+                invoke.resolve(ret)
             }
-            activity.startActivity(intent)
-            invoke.resolve()
         } catch (e: Exception) {
             Log.e("VpnPlugin", "openNotificationSettings error", e)
-            invoke.reject("Failed to open notification settings: ${e.message}")
+            invoke.reject("Failed to request notification permission: ${e.message}")
         }
+    }
+
+    @PermissionCallback
+    fun notificationPermissionCallback(invoke: Invoke) {
+        val enabled = NotificationManagerCompat.from(activity).areNotificationsEnabled()
+        Log.d("VpnPlugin", "notificationPermissionCallback: enabled=$enabled")
+        val ret = JSObject()
+        ret.put("enabled", enabled)
+        invoke.resolve(ret)
     }
 
     /**
