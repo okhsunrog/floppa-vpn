@@ -107,7 +107,13 @@ graph LR
     Tunnel -- "protectSocket()<br/>via JNI" --> Service
 ```
 
-Two-process model so the VPN survives app swipe-close. The custom `tauri-plugin-vpn` bridges Kotlin and Rust — it launches `FloppaVpnService` as a foreground service in a separate `:vpn` process, which creates the TUN device and passes the fd to gotatun via JNI. The UI process communicates with the VPN process over a tarpc Unix socket for stats and stop commands. `protectSocket()` calls back into Kotlin via JNI to prevent WireGuard's UDP packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
+Two-process model so the VPN survives app swipe-close:
+
+**Single `.so`, two entry points, two processes** — Tauri compiles all Rust code into one `libfloppa_client_lib.so` with two entry points: the standard Tauri/JNI entry for the UI process, and `nativeInit` / `nativeStartTunnel` / `nativeStop` JNI exports for the VPN process. The Kotlin `FloppaVpnService` is declared with `android:process=":vpn"` in the manifest, so Android loads the same `.so` into a separate process. JNI statics (`JAVA_VM`, `TOKIO_RUNTIME`, `TUNNEL_MANAGER`) are per-process — each process gets its own isolated Rust state from the same binary.
+
+**Why tarpc?** Android's standard IPC (AIDL, Messenger) is Java/Kotlin-only — useless when both ends are Rust. gRPC adds HTTP/2 overhead. tarpc is pure Rust, async-native, and works directly over Unix domain sockets with bincode serialization. The UI process connects to `vpn.sock` in the app data directory to query stats or request stop.
+
+**The flow:** `tauri-plugin-vpn` (Kotlin) starts `FloppaVpnService` as a foreground service → service creates TUN via Android's `VpnService.Builder` → passes the raw fd to Rust via JNI (`nativeStartTunnel`) → gotatun starts the WireGuard tunnel using that fd → tarpc server begins listening. When gotatun creates UDP sockets, it calls back into Kotlin via JNI (`protectSocket`) to mark them as bypass — preventing WireGuard packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
 
 ## Frontend Sharing
 
