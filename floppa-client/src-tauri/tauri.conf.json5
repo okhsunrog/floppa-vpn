@@ -1,7 +1,7 @@
 {
   // JSON5 config for Tauri (comments allowed)
   productName: "Floppa VPN",
-  version: "0.2.2",
+  version: "0.2.3",
   identifier: "dev.okhsunrog.floppa-vpn",
 
   build: {
