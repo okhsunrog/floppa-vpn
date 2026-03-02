@@ -123,10 +123,54 @@ jobs:
             floppa-client/src-tauri/target/release/bundle/appimage/floppa-vpn-*.AppImage
             floppa-client/src-tauri/target/release/bundle/deb/floppa-vpn-*.deb
 
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build Windows client
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: cd floppa-client && bun tauri build
+
+      - name: Rename artifacts with version
+        shell: bash
+        run: |
+          VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
+          BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
+          # NSIS installer
+          if ls "$BUNDLE_DIR/nsis/"*.exe 1>/dev/null 2>&1; then
+            mv "$BUNDLE_DIR/nsis/"*.exe "$BUNDLE_DIR/nsis/floppa-vpn-${VERSION}-windows-x86_64.exe"
+          fi
+          # MSI
+          if ls "$BUNDLE_DIR/msi/"*.msi 1>/dev/null 2>&1; then
+            mv "$BUNDLE_DIR/msi/"*.msi "$BUNDLE_DIR/msi/floppa-vpn-${VERSION}-windows-x86_64.msi"
+          fi
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: |
+            floppa-client/src-tauri/target/release/bundle/nsis/floppa-vpn-*.exe
+            floppa-client/src-tauri/target/release/bundle/msi/floppa-vpn-*.msi
+
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, linux]
+    needs: [android, linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -149,3 +193,5 @@ jobs:
             release-artifacts/**/*.apk
             release-artifacts/**/*.AppImage
             release-artifacts/**/*.deb
+            release-artifacts/**/*.exe
+            release-artifacts/**/*.msi
