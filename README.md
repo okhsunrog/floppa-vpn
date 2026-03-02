@@ -133,7 +133,7 @@ just check
 
 # Dev servers
 cd floppa-face && bun dev        # Admin panel (proxies /api → :3000)
-cd floppa-client && bun dev      # Client app
+cd floppa-client && bun tauri dev      # Client app
 
 # Regenerate OpenAPI TypeScript client
 just openapi
