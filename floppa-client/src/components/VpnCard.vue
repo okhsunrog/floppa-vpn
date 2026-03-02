@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed } from 'vue'
+import vpnConnectedImg from '../assets/vpn-connected.png'
+import vpnDisconnectedImg from '../assets/vpn-disconnected.png'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pinia/colada.gen'
@@ -221,10 +223,10 @@ function getConnectionDuration(): string {
               connecting: vpn.connectionStatus === 'connecting' || vpn.connectionStatus === 'disconnecting',
             },
           ]">
-          <UIcon
-            :name="vpn.isConnected ? 'i-lucide-lock' : 'i-lucide-lock-open'"
-            class="text-4xl"
-            :class="vpn.isConnected ? 'text-green-500' : 'text-[var(--ui-text-muted)]'" />
+          <img
+            :src="vpn.isConnected ? vpnConnectedImg : vpnDisconnectedImg"
+            alt=""
+            class="size-20 object-contain transition-all duration-300" />
         </div>
 
         <ConnectionIndicator :status="vpn.connectionStatus" show-label class="text-xl font-semibold" />
@@ -292,8 +294,8 @@ function getConnectionDuration(): string {
 
 <style scoped>
 .status-circle {
-  width: 100px;
-  height: 100px;
+  width: 120px;
+  height: 120px;
   border-radius: 50%;
   display: flex;
   align-items: center;

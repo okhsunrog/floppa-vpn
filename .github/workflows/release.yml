@@ -65,7 +65,7 @@ jobs:
 
       - name: Rename APK with version
         run: |
-          VERSION=$(grep -oP 'version:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
+          VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
           APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
           mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
 
@@ -104,7 +104,7 @@ jobs:
 
       - name: Rename artifacts with version
         run: |
-          VERSION=$(grep -oP 'version:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
+          VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
           BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
           # AppImage
           if ls "$BUNDLE_DIR/appimage/"*.AppImage 1>/dev/null 2>&1; then
@@ -148,7 +148,7 @@ jobs:
       - name: Rename artifacts with version
         shell: bash
         run: |
-          VERSION=$(grep -oP 'version:\s*"\K[^"]+' floppa-client/src-tauri/tauri.conf.json5)
+          VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
           BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
           # NSIS installer
           if ls "$BUNDLE_DIR/nsis/"*.exe 1>/dev/null 2>&1; then
