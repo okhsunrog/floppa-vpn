@@ -23,7 +23,7 @@ import ClientDashboardView from './views/ClientDashboardView.vue'
 
 // Forward console.* to Tauri's plugin-log so all frontend logs
 // appear in tracing (logcat on Android, stdout on desktop).
-// See LOGGING.md for architecture details.
+// See docs/LOGGING.md for architecture details.
 const CONSOLE_FORWARDING_FLAG = '__floppa_console_forwarding_installed__'
 
 function setupConsoleForwarding() {
