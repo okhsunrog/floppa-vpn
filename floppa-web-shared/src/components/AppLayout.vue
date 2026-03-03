@@ -31,6 +31,7 @@ const mobileMenuOpen = ref(false)
 // Android back button closes sidebar via history API:
 // open → push state; back button → popstate → close; manual close → history.back()
 let menuHistoryPushed = false
+let closingFromNavigation = false
 
 watch(mobileMenuOpen, (open) => {
   if (open) {
@@ -38,7 +39,12 @@ watch(mobileMenuOpen, (open) => {
     menuHistoryPushed = true
   } else if (menuHistoryPushed) {
     menuHistoryPushed = false
-    history.back()
+    // Don't call history.back() when closing due to navigation —
+    // the router already pushed a new history entry
+    if (!closingFromNavigation) {
+      history.back()
+    }
+    closingFromNavigation = false
   }
 })
 
@@ -54,6 +60,7 @@ onUnmounted(() => window.removeEventListener('popstate', onPopState))
 
 // Auto-close mobile menu on navigation
 watch(() => route.path, () => {
+  closingFromNavigation = true
   mobileMenuOpen.value = false
 })
 
