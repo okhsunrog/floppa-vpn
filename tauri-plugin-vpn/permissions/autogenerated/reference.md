@@ -17,6 +17,7 @@ Default permissions for VPN plugin
 - `allow-are-notifications-enabled`
 - `allow-open-notification-settings`
 - `allow-get-device-name`
+- `allow-set-status-bar-style`
 
 ## Permission Table
 
@@ -309,6 +310,32 @@ Enables the request_disable_battery_optimization command without any pre-configu
 <td>
 
 Denies the request_disable_battery_optimization command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:allow-set-status-bar-style`
+
+</td>
+<td>
+
+Enables the set_status_bar_style command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-set-status-bar-style`
+
+</td>
+<td>
+
+Denies the set_status_bar_style command without any pre-configured scope.
 
 </td>
 </tr>

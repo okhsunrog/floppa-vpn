@@ -36,6 +36,7 @@ pub fn run() {
             vpn::commands::are_notifications_enabled,
             vpn::commands::open_notification_settings,
             vpn::commands::get_safe_area_insets,
+            vpn::commands::set_status_bar_style,
         ])
         .events(tauri_specta::collect_events![]);
 

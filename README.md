@@ -59,6 +59,12 @@ graph TD
 
 The client uses trait-based abstraction (`VpnBackend` + `Platform`) to share Tauri commands across platforms while handling OS differences underneath.
 
+**Language split:**
+
+- **Rust** — all VPN logic: WireGuard tunnel (gotatun), connection management, route/DNS/TUN setup, config persistence, IPC between processes, Tauri commands. The entire `VpnBackend` and `Platform` trait hierarchy is Rust
+- **TypeScript / Vue** — UI layer: connection controls, stats display, settings, split tunneling picker, update checks, theme management
+- **Kotlin** (Android only) — thin platform bridge via `tauri-plugin-vpn`: VPN service lifecycle, TUN fd creation, `VpnService.Builder` for split tunneling, foreground notification, system API access (battery optimization, notification permissions, status bar style, safe area insets, device name)
+
 ### Desktop (Linux, Windows)
 
 ```mermaid

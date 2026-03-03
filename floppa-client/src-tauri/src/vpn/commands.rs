@@ -543,6 +543,28 @@ pub async fn open_notification_settings(
     }
 }
 
+/// Set status bar icon style to match app theme (Android only)
+#[tauri::command]
+#[specta::specta]
+pub async fn set_status_bar_style(
+    #[allow(unused_variables)] app: AppHandle,
+    #[allow(unused_variables)] is_dark: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .set_status_bar_style(is_dark)
+            .map_err(|e| format!("Failed to set status bar style: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(())
+    }
+}
+
 /// Get safe area insets (status bar, nav bar heights) in dp
 #[tauri::command]
 #[specta::specta]

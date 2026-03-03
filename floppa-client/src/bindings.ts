@@ -167,6 +167,17 @@ async getSafeAreaInsets() : Promise<Result<SafeAreaInsets, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Set status bar icon style to match app theme (Android only)
+ */
+async setStatusBarStyle(isDark: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_status_bar_style", { isDark }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 

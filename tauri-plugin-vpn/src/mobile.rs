@@ -108,6 +108,18 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
+    /// Set status bar icon style to match app theme.
+    pub fn set_status_bar_style(&self, is_dark: bool) -> Result<()> {
+        #[derive(serde::Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Args {
+            is_dark: bool,
+        }
+        self.0
+            .run_mobile_plugin::<()>("setStatusBarStyle", Args { is_dark })
+            .map_err(Into::into)
+    }
+
     /// Protect a socket from VPN routing (bypass the VPN tunnel).
     ///
     /// This must be called for UDP sockets used by WireGuard to communicate

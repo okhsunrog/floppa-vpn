@@ -48,6 +48,11 @@ class ProtectSocketArgs {
     var fd: Int = -1
 }
 
+@InvokeArg
+class StatusBarStyleArgs {
+    var isDark: Boolean = false
+}
+
 @TauriPlugin(
     permissions = [
         Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification")
@@ -240,6 +245,38 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             ret.put("bottom", 0)
         }
         invoke.resolve(ret)
+    }
+
+    /**
+     * Set status bar style to match app theme.
+     * isDark=true → light icons (for dark backgrounds)
+     * isDark=false → dark icons (for light backgrounds)
+     */
+    @Command
+    fun setStatusBarStyle(invoke: Invoke) {
+        val args = invoke.parseArgs(StatusBarStyleArgs::class.java)
+        activity.runOnUiThread {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val controller = activity.window.insetsController
+                if (args.isDark) {
+                    controller?.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+                } else {
+                    controller?.setSystemBarsAppearance(
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                    )
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val flags = activity.window.decorView.systemUiVisibility
+                activity.window.decorView.systemUiVisibility = if (args.isDark) {
+                    flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+                } else {
+                    flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                }
+            }
+        }
+        invoke.resolve()
     }
 
     /**

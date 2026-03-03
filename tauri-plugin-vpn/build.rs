@@ -12,6 +12,7 @@ const COMMANDS: &[&str] = &[
     "are_notifications_enabled",
     "open_notification_settings",
     "get_device_name",
+    "set_status_bar_style",
 ];
 
 fn main() {

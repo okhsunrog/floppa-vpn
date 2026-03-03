@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
+import { useDark } from '@vueuse/core'
 import { AppLayout } from 'floppa-web-shared'
 import { useI18n } from 'vue-i18n'
 import { useUpdateStore } from './stores/updateStore'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { commands } from './bindings'
 
 const { t } = useI18n()
 const updateStore = useUpdateStore()
+const isDark = useDark()
+
+// Sync status bar icon color with app theme on Android
+watch(isDark, (dark) => {
+  commands.setStatusBarStyle(dark)
+}, { immediate: true })
 
 const forceUpdateOpen = computed({
   get: () => updateStore.forceUpdate !== null,
