@@ -1,6 +1,6 @@
 [package]
 name = "floppa-client"
-version = "0.2.3"
+version = "0.3.0"
 description = "Floppa VPN Client"
 authors = ["you"]
 edition = "2024"
