@@ -21,51 +21,41 @@ import App from './App.vue'
 import ClientLoginView from './views/ClientLoginView.vue'
 import ClientDashboardView from './views/ClientDashboardView.vue'
 
-// Console forwarding to Tauri logs
+// Forward console.* to Tauri's plugin-log so all frontend logs
+// appear in tracing (logcat on Android, stdout on desktop).
+// See LOGGING.md for architecture details.
 const CONSOLE_FORWARDING_FLAG = '__floppa_console_forwarding_installed__'
 
 function setupConsoleForwarding() {
   const globalObj = window as Window & { [CONSOLE_FORWARDING_FLAG]?: boolean }
-  if (globalObj[CONSOLE_FORWARDING_FLAG]) {
-    return
-  }
+  if (globalObj[CONSOLE_FORWARDING_FLAG]) return
   globalObj[CONSOLE_FORWARDING_FLAG] = true
 
-  const setupForwarder = (
+  const forward = (
     fnName: 'log' | 'debug' | 'info' | 'warn' | 'error',
     logger: (message: string) => Promise<void>,
   ) => {
     const original = console[fnName]
     console[fnName] = (...args: unknown[]) => {
       original(...args)
-
       const message = args
         .map((arg) => {
-          if (arg instanceof Error) {
-            return `${arg.name}: ${arg.message}\nStack: ${arg.stack || 'No stack trace available'}`
-          }
-
+          if (arg instanceof Error) return `${arg.name}: ${arg.message}\nStack: ${arg.stack || 'N/A'}`
           if (typeof arg === 'object' && arg !== null) {
-            try {
-              return JSON.stringify(arg)
-            } catch {
-              return '[Object]'
-            }
+            try { return JSON.stringify(arg) } catch { return '[Object]' }
           }
-
           return String(arg)
         })
         .join(' ')
-
       logger(message).catch(() => {})
     }
   }
 
-  setupForwarder('log', trace)
-  setupForwarder('debug', debug)
-  setupForwarder('info', info)
-  setupForwarder('warn', warn)
-  setupForwarder('error', error)
+  forward('log', trace)
+  forward('debug', debug)
+  forward('info', info)
+  forward('warn', warn)
+  forward('error', error)
 }
 
 setupConsoleForwarding()

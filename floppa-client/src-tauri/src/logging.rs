@@ -13,6 +13,8 @@ pub fn init_tracing() {
     #[cfg(not(debug_assertions))]
     let filter = filter
         .add_directive("floppa_client_lib=debug".parse().unwrap())
+        .add_directive("webview=info".parse().unwrap())
+        .add_directive("log=info".parse().unwrap())
         .add_directive("gotatun=info".parse().unwrap())
         .add_directive("tarpc=warn".parse().unwrap())
         .add_directive("warn".parse().unwrap());
@@ -28,7 +30,6 @@ pub fn init_tracing() {
             .with_target(true)
             .with_file(false)
             .with_line_number(false)
-            .event_format(ShortTargetFormat)
             .with_writer(logcat_writer);
 
         tracing_subscriber::registry()
@@ -41,6 +42,7 @@ pub fn init_tracing() {
     {
         let stdout_layer = tracing_subscriber::fmt::layer()
             .with_ansi(true)
+            .event_format(ShortTargetFormat)
             .with_writer(std::io::stdout);
 
         tracing_subscriber::registry()
@@ -50,12 +52,14 @@ pub fn init_tracing() {
     }
 }
 
-/// Custom formatter that truncates webview targets to just "webview".
+/// Custom formatter that strips noisy URL suffixes from webview targets.
 /// e.g. `webview:error@http://localhost:1420/node_modules/...` → `webview`
-#[cfg(target_os = "android")]
+/// Other targets (floppa_client_lib, keyring, etc.) are left unchanged.
+/// Only needed on desktop — on Android the target is already short.
+#[cfg(not(target_os = "android"))]
 struct ShortTargetFormat;
 
-#[cfg(target_os = "android")]
+#[cfg(not(target_os = "android"))]
 impl<S, N> tracing_subscriber::fmt::FormatEvent<S, N> for ShortTargetFormat
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
@@ -71,14 +75,24 @@ where
         let level = meta.level();
         let target = meta.target();
 
-        // Shorten webview targets: "webview:error@http://..." → "webview"
-        let short_target = if target.starts_with("webview") {
+        // Plugin-log events have target "log", Tauri's WebView interception
+        // has target "webview:LEVEL@http://...". Both → "webview".
+        let short_target = if target == "log" || target.starts_with("webview") {
             "webview"
         } else {
             target
         };
 
-        write!(writer, " {level} {short_target}: ")?;
+        // ANSI colors for log levels
+        let (color, level_str) = match *level {
+            tracing::Level::ERROR => ("\x1b[31m", "ERROR"),
+            tracing::Level::WARN => ("\x1b[33m", " WARN"),
+            tracing::Level::INFO => ("\x1b[32m", " INFO"),
+            tracing::Level::DEBUG => ("\x1b[34m", "DEBUG"),
+            tracing::Level::TRACE => ("\x1b[35m", "TRACE"),
+        };
+
+        write!(writer, " {color}{level_str}\x1b[0m \x1b[2m{short_target}\x1b[0m: ")?;
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }
