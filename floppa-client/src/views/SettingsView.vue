@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
@@ -79,6 +79,29 @@ const filteredApps = computed(() => {
 })
 
 const selectedCount = computed(() => settings.selectedApps.length)
+
+// Track whether split tunneling settings changed while VPN is connected
+const splitDirty = ref(false)
+const reconnecting = ref(false)
+
+watch([() => settings.splitMode, () => settings.selectedApps], () => {
+  if (vpn.isConnected) splitDirty.value = true
+}, { deep: true })
+
+// Clear dirty flag when VPN disconnects
+watch(() => vpn.isConnected, (connected) => {
+  if (!connected) splitDirty.value = false
+})
+
+async function reconnectVpn() {
+  reconnecting.value = true
+  splitDirty.value = false
+  try {
+    await vpn.reconnect()
+  } finally {
+    reconnecting.value = false
+  }
+}
 
 function selectMode(mode: SplitMode) {
   settings.splitMode = mode
@@ -190,11 +213,22 @@ function selectMode(mode: SplitMode) {
       <!-- App list (shown for include/exclude modes) -->
       <template v-if="settings.splitMode !== 'all'">
         <UAlert
-          v-if="vpn.isConnected"
+          v-if="splitDirty"
           color="warning"
           :title="t('settings.changesApplyOnReconnect')"
           class="mb-4"
-        />
+        >
+          <template #actions>
+            <UButton
+              :label="t('settings.reconnect')"
+              color="warning"
+              variant="outline"
+              size="sm"
+              :loading="reconnecting"
+              @click="reconnectVpn"
+            />
+          </template>
+        </UAlert>
 
         <div v-if="selectedCount > 0" class="mb-4">
           <UBadge color="primary" variant="subtle">

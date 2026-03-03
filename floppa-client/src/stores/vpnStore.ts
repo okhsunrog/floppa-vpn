@@ -157,6 +157,11 @@ export const useVpnStore = defineStore(
       }
     }
 
+    async function reconnect() {
+      await disconnect()
+      await connect()
+    }
+
     async function disconnect() {
       isLoading.value = true
       error.value = null
@@ -248,6 +253,7 @@ export const useVpnStore = defineStore(
       clearConfig,
       connect,
       disconnect,
+      reconnect,
       refreshStatus,
     }
   },
