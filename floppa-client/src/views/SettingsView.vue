@@ -66,8 +66,8 @@ const filteredApps = computed(() => {
   }
 
   if (searchQuery.value) {
-    const q = searchQuery.value.toLowerCase()
-    list = list.filter((a) => a.label.toLowerCase().includes(q) || a.package_name.toLowerCase().includes(q))
+    const q = searchQuery.value.toLowerCase().replace(/\s+/g, '')
+    list = list.filter((a) => a.label.toLowerCase().replace(/\s+/g, '').includes(q) || a.package_name.toLowerCase().includes(q))
   }
 
   // Selected apps first, then alphabetical
@@ -216,6 +216,7 @@ function selectMode(mode: SplitMode) {
         <UAlert
           v-if="splitDirty"
           color="warning"
+          variant="soft"
           :title="t('settings.changesApplyOnReconnect')"
           class="mb-4"
         >
