@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { useColorMode } from '@vueuse/core'
 import { useAuthStore } from '../stores'
+import ColorModeButton from './ColorModeButton.vue'
 
 const props = withDefaults(defineProps<{
   extraNavItems?: { label: string; icon: string; to: string }[]
@@ -36,10 +38,27 @@ function logout() {
   router.push('/login')
 }
 
-function toggleLocale() {
-  locale.value = locale.value === 'ru' ? 'en' : 'ru'
-  localStorage.setItem('locale', locale.value)
+const { store: colorModeStore } = useColorMode()
+
+function setLocale(lang: string) {
+  locale.value = lang
+  localStorage.setItem('locale', lang)
 }
+
+function toggleLocale() {
+  setLocale(locale.value === 'ru' ? 'en' : 'ru')
+}
+
+const colorModes = [
+  { value: 'light', icon: 'i-lucide-sun' },
+  { value: 'dark', icon: 'i-lucide-moon' },
+  { value: 'auto', icon: 'i-lucide-monitor' },
+] as const
+
+const locales = [
+  { value: 'en', label: 'English' },
+  { value: 'ru', label: 'Русский' },
+] as const
 
 const navItems = computed(() => {
   if (!auth.isAuthenticated) return []
@@ -115,17 +134,15 @@ const mobileNavItems = computed(() => {
             <UNavigationMenu :items="navItems" />
           </nav>
         </div>
-        <div class="flex items-center gap-1 sm:gap-2">
-          <div class="hidden sm:flex items-center gap-2">
-            <UAvatar
-              :src="auth.user?.photo_url ?? undefined"
-              :alt="navLabel"
-              icon="i-lucide-user"
-              size="xs"
-            />
-            <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
-          </div>
-          <UColorModeButton />
+        <div class="hidden md:flex items-center gap-2">
+          <UAvatar
+            :src="auth.user?.photo_url ?? undefined"
+            :alt="navLabel"
+            icon="i-lucide-user"
+            size="xs"
+          />
+          <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
+          <ColorModeButton />
           <UButton
             :label="locale === 'ru' ? 'EN' : 'RU'"
             color="neutral"
@@ -140,16 +157,6 @@ const mobileNavItems = computed(() => {
             color="neutral"
             variant="ghost"
             size="sm"
-            class="hidden sm:inline-flex"
-            @click="logout"
-          />
-          <UButton
-            v-if="!isMiniApp"
-            icon="i-lucide-log-out"
-            color="neutral"
-            variant="ghost"
-            size="sm"
-            class="sm:hidden"
             @click="logout"
           />
         </div>
@@ -197,25 +204,38 @@ const mobileNavItems = computed(() => {
             </template>
           </nav>
 
-          <div class="mt-auto pt-4 border-t border-[var(--ui-border)]">
-            <div class="flex items-center gap-2 px-3 py-2 text-sm text-[var(--ui-text-muted)]">
+          <div class="mt-auto pt-4 border-t border-[var(--ui-border)] flex flex-col gap-3 px-3 pb-2">
+            <UFieldGroup>
+              <UButton
+                v-for="mode in colorModes"
+                :key="mode.value"
+                :icon="mode.icon"
+                :label="t(`nav.theme.${mode.value}`)"
+                :color="colorModeStore === mode.value ? 'primary' : 'neutral'"
+                :variant="colorModeStore === mode.value ? 'subtle' : 'ghost'"
+                size="sm"
+                @click="colorModeStore = mode.value"
+              />
+            </UFieldGroup>
+            <UFieldGroup>
+              <UButton
+                v-for="lang in locales"
+                :key="lang.value"
+                :label="lang.label"
+                :color="locale === lang.value ? 'primary' : 'neutral'"
+                :variant="locale === lang.value ? 'subtle' : 'ghost'"
+                size="sm"
+                @click="setLocale(lang.value)"
+              />
+            </UFieldGroup>
+            <div class="flex items-center gap-2">
               <UAvatar
                 :src="auth.user?.photo_url ?? undefined"
                 :alt="navLabel"
                 icon="i-lucide-user"
                 size="2xs"
               />
-              {{ navLabel }}
-            </div>
-            <div class="flex items-center gap-2 px-3 py-2">
-              <UColorModeButton />
-              <UButton
-                :label="locale === 'ru' ? 'EN' : 'RU'"
-                color="neutral"
-                variant="ghost"
-                size="sm"
-                @click="toggleLocale"
-              />
+              <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
               <UButton
                 v-if="!isMiniApp"
                 icon="i-lucide-log-out"
@@ -223,6 +243,7 @@ const mobileNavItems = computed(() => {
                 color="neutral"
                 variant="ghost"
                 size="sm"
+                class="ml-auto"
                 @click="logout"
               />
             </div>

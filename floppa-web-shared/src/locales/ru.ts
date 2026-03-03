@@ -50,6 +50,11 @@ export default {
     plans: 'Тарифы',
     logout: 'Выйти',
     settings: 'Настройки',
+    theme: {
+      light: 'Светлая',
+      dark: 'Тёмная',
+      auto: 'Авто',
+    },
   },
   login: {
     title: 'Floppa VPN',

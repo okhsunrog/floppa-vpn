@@ -50,6 +50,11 @@ export default {
     plans: 'Plans',
     logout: 'Logout',
     settings: 'Settings',
+    theme: {
+      light: 'Light',
+      dark: 'Dark',
+      auto: 'System',
+    },
   },
   login: {
     title: 'Floppa VPN',

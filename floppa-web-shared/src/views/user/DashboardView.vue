@@ -42,7 +42,7 @@ const daysRemaining = computed(() => {
 
 <template>
   <div class="max-w-3xl mx-auto">
-    <h1 class="text-2xl font-bold mb-6">{{ t('userDashboard.title') }}</h1>
+    <h1 class="hidden md:block text-2xl font-bold mb-6">{{ t('userDashboard.title') }}</h1>
 
     <slot name="vpn-widget" />
 
