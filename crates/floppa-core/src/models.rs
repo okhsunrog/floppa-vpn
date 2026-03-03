@@ -53,6 +53,8 @@ pub struct Peer {
     pub device_name: Option<String>,
     /// Unique device UUID, set by client app (NULL for bot/web-created peers)
     pub device_id: Option<String>,
+    /// Client app version (from X-Client-Version header)
+    pub client_version: Option<String>,
 }
 
 /// Subscription plan definition

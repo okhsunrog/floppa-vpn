@@ -96,6 +96,7 @@ export default {
     deleteConfirm: 'Удалить пир {ip}? Он будет удалён из WireGuard.',
     peerDeleted: 'Пир удалён',
     deleteFailed: 'Не удалось удалить пир',
+    version: 'Версия',
   },
   adminUsers: {
     title: 'Пользователи',

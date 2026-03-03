@@ -5,7 +5,7 @@ use anyhow::Result;
 use axum::Router;
 use floppa_core::{Config, Secrets, db};
 use std::net::SocketAddr;
-use teloxide::prelude::*;
+use teloxide::{prelude::*, types::BotCommand, utils::command::BotCommands};
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
@@ -53,6 +53,18 @@ async fn main() -> Result<()> {
     // Build teloxide bot (shared between Axum and dispatcher)
     let bot = Bot::new(&bot_secrets.token);
     tracing::info!("Bot initialized");
+
+    // Register bot commands so Telegram shows the menu button
+    bot.set_my_commands(bot::handlers::Command::bot_commands())
+        .await?;
+    bot.set_my_commands(vec![
+        BotCommand::new("start", "Запустить бота"),
+        BotCommand::new("status", "Проверить подписку"),
+        BotCommand::new("lang", "Сменить язык"),
+    ])
+    .language_code("ru")
+    .await?;
+    tracing::info!("Bot commands registered");
 
     // Build Axum router
     let api_router = admin::routes::create_router(

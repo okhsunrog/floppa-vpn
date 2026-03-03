@@ -40,11 +40,11 @@ async function openDownload(url: string) {
     <!-- Voluntary update banner -->
     <div
       v-if="updateStore.updateInfo && !updateStore.dismissed && !updateStore.forceUpdate"
-      class="flex items-center justify-between gap-2 rounded-lg bg-(--ui-bg-elevated) p-3 mb-4"
+      class="flex flex-wrap items-center gap-2 rounded-lg bg-(--ui-bg-elevated) p-3 mb-4"
     >
-      <div class="flex items-center gap-2 min-w-0">
+      <div class="flex items-center gap-2 shrink-0">
         <UIcon name="i-lucide-download" class="text-(--ui-primary) shrink-0" />
-        <span class="text-sm truncate">
+        <span class="text-sm whitespace-nowrap">
           {{ t('update.available', { version: updateStore.updateInfo.version }) }}
         </span>
       </div>

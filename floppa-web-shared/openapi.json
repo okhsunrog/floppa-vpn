@@ -1481,6 +1481,12 @@
           "assigned_ip": {
             "type": "string"
           },
+          "client_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "device_id": {
             "type": [
               "string",

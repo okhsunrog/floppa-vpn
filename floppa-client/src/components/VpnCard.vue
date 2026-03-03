@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
-import vpnConnectedImg from '../assets/vpn-connected.png'
-import vpnDisconnectedImg from '../assets/vpn-disconnected.png'
+import vpnConnectedImg from '../assets/vpn-connected.png?inline'
+import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pinia/colada.gen'

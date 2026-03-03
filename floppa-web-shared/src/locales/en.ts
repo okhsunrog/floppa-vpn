@@ -96,6 +96,7 @@ export default {
     deleteConfirm: 'Delete peer {ip}? This will remove it from WireGuard.',
     peerDeleted: 'Peer deleted',
     deleteFailed: 'Failed to delete peer',
+    version: 'Version',
   },
   adminUsers: {
     title: 'Users',

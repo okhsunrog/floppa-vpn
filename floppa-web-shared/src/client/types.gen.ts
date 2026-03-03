@@ -119,6 +119,7 @@ export type PeerDetail = {
 
 export type PeerSummary = {
     assigned_ip: string;
+    client_version?: string | null;
     device_id?: string | null;
     device_name?: string | null;
     id: number;

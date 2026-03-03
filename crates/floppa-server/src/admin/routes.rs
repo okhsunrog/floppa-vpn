@@ -739,8 +739,18 @@ struct MyPeer {
 )]
 async fn get_my_peers(
     auth: AuthUser,
+    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<MyPeer>>, StatusCode> {
+    // Update client_version for all user's peers from X-Client-Version header
+    if let Some(version) = headers.get("X-Client-Version").and_then(|v| v.to_str().ok()) {
+        let _ = sqlx::query("UPDATE peers SET client_version = $1 WHERE user_id = $2 AND sync_status != 'removed'")
+            .bind(version)
+            .bind(auth.user_id)
+            .execute(&state.pool)
+            .await;
+    }
+
     let peers: Vec<MyPeer> = sqlx::query_as(
         r#"
         SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
@@ -1570,6 +1580,7 @@ struct PeerSummary {
     last_handshake: Option<chrono::DateTime<Utc>>,
     device_name: Option<String>,
     device_id: Option<String>,
+    client_version: Option<String>,
 }
 
 /// List all peers (admin only)
@@ -1590,7 +1601,7 @@ async fn list_peers(
 ) -> Result<Json<Vec<PeerSummary>>, StatusCode> {
     let peers: Vec<PeerSummary> = sqlx::query_as(
         r#"
-        SELECT p.id, p.user_id, u.username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id
+        SELECT p.id, p.user_id, u.username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
         FROM peers p
         JOIN users u ON p.user_id = u.id
         WHERE p.sync_status != 'removed'

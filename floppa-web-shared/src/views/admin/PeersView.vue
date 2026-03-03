@@ -60,6 +60,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
   { accessorKey: 'assigned_ip', header: t('adminPeers.ip') },
   { accessorKey: 'username', header: t('adminPeers.user') },
   { accessorKey: 'device_name', header: t('adminPeers.device') },
+  { accessorKey: 'client_version', header: t('adminPeers.version') },
   { accessorKey: 'sync_status', header: t('adminPeers.status') },
   { accessorKey: 'tx_bytes', header: 'TX' },
   { accessorKey: 'rx_bytes', header: 'RX' },
@@ -99,6 +100,10 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
             <UIcon name="i-lucide-monitor-smartphone" class="size-4 text-[var(--ui-text-muted)]" />
             {{ row.original.device_name }}
           </span>
+          <span v-else class="text-[var(--ui-text-muted)]">-</span>
+        </template>
+        <template #client_version-cell="{ row }">
+          <span v-if="row.original.client_version" class="font-mono text-xs">{{ row.original.client_version }}</span>
           <span v-else class="text-[var(--ui-text-muted)]">-</span>
         </template>
         <template #sync_status-cell="{ row }">
@@ -158,9 +163,12 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
             />
           </div>
         </div>
-        <div v-if="peer.device_name" class="flex items-center gap-1.5 mt-1.5 text-sm text-[var(--ui-text-muted)]">
-          <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
-          {{ peer.device_name }}
+        <div v-if="peer.device_name || peer.client_version" class="flex items-center gap-3 mt-1.5 text-sm text-[var(--ui-text-muted)]">
+          <span v-if="peer.device_name" class="flex items-center gap-1.5">
+            <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
+            {{ peer.device_name }}
+          </span>
+          <span v-if="peer.client_version" class="font-mono text-xs">v{{ peer.client_version }}</span>
         </div>
         <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
           <span>TX: {{ formatBytes(peer.tx_bytes) }}</span>
