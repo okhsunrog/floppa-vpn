@@ -164,7 +164,7 @@ const mobileNavItems = computed(() => {
     </header>
 
     <!-- Mobile nav slideover -->
-    <USlideover v-model:open="mobileMenuOpen" side="left" :close="true" :ui="{ overlay: 'z-50', content: 'z-50 pt-[var(--safe-area-inset-top,0px)]' }">
+    <USlideover v-model:open="mobileMenuOpen" side="left" :close="true" :ui="{ overlay: 'z-50', content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]' }">
       <template #header>
         <div class="flex items-center justify-between w-full">
           <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
