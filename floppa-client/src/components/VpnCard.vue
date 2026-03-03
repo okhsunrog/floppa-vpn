@@ -11,17 +11,13 @@ import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { commands } from '../bindings'
 
-const SYNC_TIMEOUT_SECONDS = 5
-
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const setupErrorKey = ref<string | null>(null)
 const setupErrorMsg = ref<string | null>(null)
-const setupPhase = ref<'idle' | 'syncing' | 'offline'>('idle')
-const countdownSeconds = ref(0)
+const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
-let countdownIntervalId: ReturnType<typeof setInterval> | null = null
 
 const setupError = computed<string | null>(() => {
   if (setupErrorKey.value) return t(setupErrorKey.value)
@@ -89,7 +85,7 @@ function dismissNotificationPrompt() {
 
 let statusInterval: ReturnType<typeof setInterval> | null = null
 
-const { data: me, refresh: refreshMe } = useQuery(getMeQuery())
+const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
 const createPeerMut = useMutation(createMyPeerMutation())
 
 type SyncResult = { outcome: 'ok' } | { outcome: 'error'; errorKey: string } | { outcome: 'offline' }
@@ -97,6 +93,14 @@ type SyncResult = { outcome: 'ok' } | { outcome: 'error'; errorKey: string } | {
 async function doServerSync(): Promise<SyncResult> {
   try {
     await refreshMe()
+
+    // If the server is unreachable, refreshMe silently fails (Pinia Colada
+    // doesn't throw). Check query error before proceeding — otherwise
+    // getMyPeerByDevice returns { data: undefined } on network error,
+    // which looks identical to a 404 and would wrongly revoke cached config.
+    if (meQueryError.value) {
+      return { outcome: 'offline' }
+    }
 
     const { data: peer } = await getMyPeerByDevice({
       path: { device_id: vpn.deviceId! },
@@ -152,21 +156,13 @@ function applySyncResult(result: SyncResult) {
 }
 
 async function setupAutoPeer() {
-  setupPhase.value = 'syncing'
   setupErrorKey.value = null
   setupErrorMsg.value = null
-  countdownSeconds.value = SYNC_TIMEOUT_SECONDS
 
   const thisGeneration = ++syncGeneration
 
-  // Countdown timer (visual only)
-  if (countdownIntervalId) clearInterval(countdownIntervalId)
-  countdownIntervalId = setInterval(() => {
-    if (countdownSeconds.value > 0) countdownSeconds.value--
-  }, 1000)
-
   const timeoutPromise = new Promise<'timeout'>((resolve) =>
-    setTimeout(() => resolve('timeout'), SYNC_TIMEOUT_SECONDS * 1000),
+    setTimeout(() => resolve('timeout'), 5000),
   )
 
   const syncPromise = doServerSync()
@@ -174,11 +170,6 @@ async function setupAutoPeer() {
     syncPromise.then((result) => ({ type: 'sync' as const, result })),
     timeoutPromise.then(() => ({ type: 'timeout' as const })),
   ])
-
-  if (countdownIntervalId) {
-    clearInterval(countdownIntervalId)
-    countdownIntervalId = null
-  }
 
   // Stale guard — discard if a newer call was made
   if (thisGeneration !== syncGeneration) return
@@ -220,10 +211,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  if (countdownIntervalId) {
-    clearInterval(countdownIntervalId)
-    countdownIntervalId = null
-  }
   if (statusInterval) {
     clearInterval(statusInterval)
   }
@@ -249,19 +236,8 @@ function getConnectionDuration(): string {
   <!-- Connection Card -->
   <UCard class="mb-4">
     <div class="flex flex-col items-center text-center gap-3">
-      <!-- Syncing with countdown -->
-      <template v-if="setupPhase === 'syncing'">
-        <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
-        <p class="text-sm text-[var(--ui-text-muted)]">{{ t('vpn.settingUp') }}</p>
-        <p class="text-xs text-[var(--ui-text-dimmed)] tabular-nums">
-          {{ t('vpn.countdownHint', { seconds: countdownSeconds }) }}
-        </p>
-      </template>
-
-      <!-- Idle or Offline — normal connect UI -->
-      <template v-else>
-        <!-- Offline mode banner -->
-        <UAlert
+      <!-- Offline mode banner -->
+      <UAlert
           v-if="setupPhase === 'offline'"
           color="warning"
           icon="i-lucide-wifi-off"
@@ -321,8 +297,6 @@ function getConnectionDuration(): string {
           size="lg"
           class="w-full max-w-[200px] mt-2"
           @click="handleConnect" />
-
-      </template>
     </div>
   </UCard>
 

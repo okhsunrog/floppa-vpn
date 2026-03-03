@@ -17,6 +17,12 @@ const { data: peers, status: peersStatus, error: peersError, refresh: refreshPee
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
 const queryError = computed(() => meError.value || peersError.value)
+const queryErrorMessage = computed(() => {
+  const err = queryError.value
+  if (!err) return ''
+  if (err instanceof TypeError) return t('common.serverUnavailable')
+  return err.message
+})
 
 const createMut = useMutation(createMyPeerMutation())
 const deleteMut = useMutation(deleteMyPeerMutation())
@@ -144,7 +150,7 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
     <div v-if="loading" class="flex justify-center py-12">
       <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
     </div>
-    <UAlert v-else-if="queryError" color="error" :title="queryError.message" />
+    <UAlert v-else-if="queryError" color="error" :title="queryErrorMessage" />
     <template v-else>
       <!-- No subscription message -->
       <UCard v-if="!me?.subscription" class="max-w-sm mx-auto">

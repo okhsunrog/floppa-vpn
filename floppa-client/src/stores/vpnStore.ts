@@ -72,7 +72,6 @@ export const useVpnStore = defineStore(
 
     /** Set config from server API response and persist it */
     async function setActiveConfig(configStr: string) {
-      isLoading.value = true
       error.value = null
       try {
         const result = await commands.setActiveConfig(configStr)
@@ -83,8 +82,6 @@ export const useVpnStore = defineStore(
         await loadConfig()
       } catch (e) {
         error.value = String(e)
-      } finally {
-        isLoading.value = false
       }
     }
 

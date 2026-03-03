@@ -8,6 +8,10 @@ import { useAuthStore } from '../../stores'
 import { formatBytes } from '../../utils'
 import StatsCard from '../../components/StatsCard.vue'
 
+const props = withDefaults(defineProps<{ skipLoadingSpinner?: boolean }>(), {
+  skipLoadingSpinner: false,
+})
+
 const router = useRouter()
 const { t } = useI18n()
 const auth = useAuthStore()
@@ -46,11 +50,12 @@ const daysRemaining = computed(() => {
 
     <slot name="vpn-widget" />
 
-    <div v-if="loading" class="flex justify-center py-12">
+    <div v-if="loading && !props.skipLoadingSpinner" class="flex justify-center py-12">
       <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
     </div>
-    <UAlert v-else-if="error" color="error" :title="error.message" />
-    <template v-else-if="me">
+    <UAlert v-else-if="error && !props.skipLoadingSpinner" color="error" :title="error.message" />
+    <Transition v-else-if="me" name="fade" appear>
+      <div>
       <!-- User Info -->
       <UCard class="mb-4 bg-gradient-to-br from-[var(--ui-primary)] to-[var(--ui-primary)]/80">
         <div class="flex items-center gap-4 text-white">
@@ -130,6 +135,16 @@ const daysRemaining = computed(() => {
           @click="router.push('/admin')"
         />
       </div>
-    </template>
+      </div>
+    </Transition>
   </div>
 </template>
+
+<style scoped>
+.fade-enter-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from {
+  opacity: 0;
+}
+</style>

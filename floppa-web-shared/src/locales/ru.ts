@@ -36,6 +36,7 @@ export default {
     no: 'Нет',
     loading: 'Загрузка...',
     neverConnected: 'Нет подключений',
+    serverUnavailable: 'Сервер недоступен',
     admin: 'Админ',
     user: 'Пользователь',
     copied: 'Скопировано',
@@ -283,7 +284,7 @@ export default {
     countdownHint: 'Подключение к серверу... {seconds} сек.',
     offlineMode: 'Автономный режим',
     offlineModeHint: 'Сервер недоступен. Используется сохранённая конфигурация.',
-    offlineModeNoConfig: 'Сервер недоступен. Для настройки VPN необходимо подключение к интернету.',
+    offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
   },
 }

@@ -36,6 +36,7 @@ export default {
     no: 'No',
     loading: 'Loading...',
     neverConnected: 'Never connected',
+    serverUnavailable: 'Server unavailable',
     admin: 'Admin',
     user: 'User',
     copied: 'Copied',
@@ -283,7 +284,7 @@ export default {
     countdownHint: 'Connecting to server... {seconds}s',
     offlineMode: 'Offline mode',
     offlineModeHint: 'Server unreachable. Using saved configuration.',
-    offlineModeNoConfig: 'Server unreachable. Internet connection required to set up VPN.',
+    offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
   },
 }

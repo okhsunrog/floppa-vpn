@@ -4,7 +4,7 @@ import VpnCard from '../components/VpnCard.vue'
 </script>
 
 <template>
-  <UserDashboardView>
+  <UserDashboardView skip-loading-spinner>
     <template #vpn-widget>
       <VpnCard />
     </template>
