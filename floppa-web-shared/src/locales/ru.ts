@@ -59,6 +59,7 @@ export default {
     loginFailed: 'Ошибка входа',
     continueInBrowser: 'Продолжить в браузере',
     browserHint: 'Браузер откроет вход через Telegram и автоматически вернёт в приложение.',
+    vpnHint: 'Если вход не работает, попробуйте отключить активное VPN-соединение.',
     miniAppLoggingIn: 'Вход через Telegram...',
     miniAppFailed: 'Ошибка авторизации Mini App. Попробуйте перезагрузить.',
   },

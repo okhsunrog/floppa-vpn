@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useDark } from '@vueuse/core'
-import { AppLayout } from 'floppa-web-shared'
+import { AppLayout, useAuthStore } from 'floppa-web-shared'
 import { useI18n } from 'vue-i18n'
 import { useUpdateStore } from './stores/updateStore'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { commands } from './bindings'
 
 const { t } = useI18n()
+const authStore = useAuthStore()
 const updateStore = useUpdateStore()
 const isDark = useDark()
 
@@ -15,6 +16,13 @@ const isDark = useDark()
 watch(isDark, (dark) => {
   commands.setStatusBarStyle(dark)
 }, { immediate: true })
+
+// Stop VPN tunnel on logout
+watch(() => authStore.isAuthenticated, (authenticated, wasAuthenticated) => {
+  if (wasAuthenticated && !authenticated) {
+    commands.disconnect()
+  }
+})
 
 const forceUpdateOpen = computed({
   get: () => updateStore.forceUpdate !== null,

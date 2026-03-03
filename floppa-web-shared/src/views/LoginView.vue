@@ -116,6 +116,9 @@ function startDeepLinkLogin() {
             <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
               {{ t('login.browserHint') }}
             </p>
+            <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+              {{ t('login.vpnHint') }}
+            </p>
           </div>
 
           <!-- Widget mode (web) -->

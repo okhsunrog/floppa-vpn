@@ -59,6 +59,7 @@ export default {
     loginFailed: 'Login failed',
     continueInBrowser: 'Continue in browser',
     browserHint: 'The browser will open Telegram login and return to the app automatically.',
+    vpnHint: 'If login doesn\'t work, try disabling any active VPN connection first.',
     miniAppLoggingIn: 'Logging in via Telegram...',
     miniAppFailed: 'Mini App authentication failed. Try reloading.',
   },
