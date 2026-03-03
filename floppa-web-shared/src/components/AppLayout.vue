@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useColorMode } from '@vueuse/core'
@@ -27,6 +27,30 @@ const navLabel = computed(() => {
 
 const isMiniApp = Boolean((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData)
 const mobileMenuOpen = ref(false)
+
+// Android back button closes sidebar via history API:
+// open → push state; back button → popstate → close; manual close → history.back()
+let menuHistoryPushed = false
+
+watch(mobileMenuOpen, (open) => {
+  if (open) {
+    history.pushState({ mobileMenu: true }, '')
+    menuHistoryPushed = true
+  } else if (menuHistoryPushed) {
+    menuHistoryPushed = false
+    history.back()
+  }
+})
+
+function onPopState(_e: PopStateEvent) {
+  if (menuHistoryPushed && mobileMenuOpen.value) {
+    menuHistoryPushed = false
+    mobileMenuOpen.value = false
+  }
+}
+
+onMounted(() => window.addEventListener('popstate', onPopState))
+onUnmounted(() => window.removeEventListener('popstate', onPopState))
 
 // Auto-close mobile menu on navigation
 watch(() => route.path, () => {
@@ -164,18 +188,9 @@ const mobileNavItems = computed(() => {
     </header>
 
     <!-- Mobile nav slideover -->
-    <USlideover v-model:open="mobileMenuOpen" side="left" :close="true" :ui="{ overlay: 'z-50', content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]' }">
-      <template #header>
-        <div class="flex items-center justify-between w-full">
-          <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
-          <UButton
-            icon="i-lucide-x"
-            color="neutral"
-            variant="ghost"
-            size="sm"
-            @click="mobileMenuOpen = false"
-          />
-        </div>
+    <USlideover v-model:open="mobileMenuOpen" side="left" :close="true" description="Navigation" :ui="{ overlay: 'z-50', content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]' }">
+      <template #title>
+        <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
       </template>
       <template #body>
         <div class="flex flex-col h-full">
