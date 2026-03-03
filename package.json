@@ -8,5 +8,8 @@
   ],
   "dependencies": {
     "tauri-plugin-android-fs-api": "^27.0.0"
+  },
+  "devDependencies": {
+    "vite": "8.0.0-beta.16"
   }
 }

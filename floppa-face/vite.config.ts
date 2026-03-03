@@ -31,6 +31,7 @@ export default defineConfig({
       external: ['tauri-plugin-android-fs-api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-fs'],
       onwarn(warning, warn) {
         if (warning.code === 'SOURCEMAP_ERROR' && warning.message.includes("Can't resolve original location")) return
+        if (warning.code === 'INEFFECTIVE_DYNAMIC_IMPORT') return
         warn(warning)
       },
     },

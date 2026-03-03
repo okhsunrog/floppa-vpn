@@ -76,7 +76,13 @@ export default defineConfig({
   },
 
   build: {
-    chunkSizeWarningLimit: 1000, // size in kB
+    chunkSizeWarningLimit: 2000, // Tauri app — single bundle, no CDN concerns
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (warning.code === 'INEFFECTIVE_DYNAMIC_IMPORT') return
+        warn(warning)
+      },
+    },
   },
 
   // ensure proper resource paths in bundled app
