@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import type { RouteLocationNormalized } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useColorMode } from '@vueuse/core'
 import { useAuthStore } from '../stores'
@@ -28,40 +29,53 @@ const navLabel = computed(() => {
 const isMiniApp = Boolean((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData)
 const mobileMenuOpen = ref(false)
 
-// Android back button closes sidebar via history API:
-// open → push state; back button → popstate → close; manual close → history.back()
-let menuHistoryPushed = false
-let closingFromNavigation = false
+// Android back button support for sidebar via history API.
+//
+// Open: push history state so back button has an entry to pop.
+// Back button: popstate fires → close sidebar (entry already consumed).
+// Manual close (X/overlay): history.back() to remove the entry.
+// Navigation: beforeEach cancels nav, history.back() removes entry,
+//   then popstate re-navigates to the original destination.
+let closedByBackButton = false
+let pendingNavigation: RouteLocationNormalized | null = null
 
 watch(mobileMenuOpen, (open) => {
   if (open) {
     history.pushState({ mobileMenu: true }, '')
-    menuHistoryPushed = true
-  } else if (menuHistoryPushed) {
-    menuHistoryPushed = false
-    // Don't call history.back() when closing due to navigation —
-    // the router already pushed a new history entry
-    if (!closingFromNavigation) {
-      history.back()
-    }
-    closingFromNavigation = false
+  } else if (!closedByBackButton) {
+    history.back()
   }
+  closedByBackButton = false
 })
 
-function onPopState(_e: PopStateEvent) {
-  if (menuHistoryPushed && mobileMenuOpen.value) {
-    menuHistoryPushed = false
+function onPopState() {
+  if (mobileMenuOpen.value) {
+    closedByBackButton = true
     mobileMenuOpen.value = false
+  }
+  if (pendingNavigation) {
+    const dest = pendingNavigation
+    pendingNavigation = null
+    nextTick(() => router.push(dest))
   }
 }
 
 onMounted(() => window.addEventListener('popstate', onPopState))
-onUnmounted(() => window.removeEventListener('popstate', onPopState))
+onUnmounted(() => {
+  window.removeEventListener('popstate', onPopState)
+  removeBeforeEach()
+})
 
-// Auto-close mobile menu on navigation
-watch(() => route.path, () => {
-  closingFromNavigation = true
-  mobileMenuOpen.value = false
+// Intercept navigation while sidebar is open: close sidebar first,
+// then re-navigate after the stale history entry is removed.
+const removeBeforeEach = router.beforeEach((to) => {
+  if (mobileMenuOpen.value) {
+    pendingNavigation = to
+    closedByBackButton = true
+    mobileMenuOpen.value = false
+    history.back()
+    return false
+  }
 })
 
 function logout() {
