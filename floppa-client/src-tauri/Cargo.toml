@@ -51,6 +51,7 @@ hostname = "0.4.2"
 keyring = { version = "3.6.3", features = ["crypto-rust"] }
 tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
+tauri-plugin-android-fs = "27.0.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.29", features = ["user", "net", "process"] }

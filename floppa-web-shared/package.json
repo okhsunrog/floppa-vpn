@@ -49,5 +49,10 @@
     "@vueuse/core": "^14.2.1",
     "tailwindcss": "^4.2.1",
     "vue-i18n": "^11.2.8"
+  },
+  "optionalDependencies": {
+    "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "tauri-plugin-android-fs-api": "^27.0.0"
   }
 }

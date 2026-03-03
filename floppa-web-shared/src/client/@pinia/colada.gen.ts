@@ -4,8 +4,8 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
-import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getPublicConfig, getStats, getUser, getVersion, listPeers, listPlans, listUsers, type Options, removePeer, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerResponse, CreatePlanData, CreatePlanResponse, CreateUserData, CreateUserResponse2, DeleteAdminPeerData, DeleteMyPeerData, DeletePlanData, DeletePlanResponse, DeleteSubscriptionData, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RemovePeerData, SetSubscriptionData, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanResponse } from '../types.gen';
+import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getPublicConfig, getStats, getUser, getVersion, listPeers, listPlans, listUsers, type Options, removePeer, sendMyPeerConfig, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan } from '../sdk.gen';
+import type { CreateMyPeerData, CreateMyPeerResponse, CreatePlanData, CreatePlanResponse, CreateUserData, CreateUserResponse2, DeleteAdminPeerData, DeleteMyPeerData, DeletePlanData, DeletePlanResponse, DeleteSubscriptionData, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RemovePeerData, SendMyPeerConfigData, SetSubscriptionData, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanResponse } from '../types.gen';
 
 /**
  * Authenticate via Telegram Login Widget
@@ -230,6 +230,20 @@ export const getMyPeerConfigQuery = defineQueryOptions((options: Options<GetMyPe
         return data;
     }
 }));
+
+/**
+ * Send WireGuard config to user via Telegram bot
+ */
+export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerConfigData>>): UseMutationOptions<unknown, Options<SendMyPeerConfigData>, Error> => ({
+    mutation: async (vars) => {
+        const { data } = await sendMyPeerConfig({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
 
 export const listPeersQueryKey = (options?: Options<ListPeersData>) => createQueryKey('listPeers', options);
 

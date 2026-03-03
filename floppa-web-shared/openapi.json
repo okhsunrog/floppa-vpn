@@ -426,6 +426,46 @@
         ]
       }
     },
+    "/me/peers/{id}/send-config": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Send WireGuard config to user via Telegram bot",
+        "operationId": "send_my_peer_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Peer ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Config sent via Telegram"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Peer not found"
+          },
+          "502": {
+            "description": "Failed to send via Telegram"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/peers": {
       "get": {
         "tags": [

@@ -534,6 +534,40 @@ export type GetMyPeerConfigResponses = {
 
 export type GetMyPeerConfigResponse = GetMyPeerConfigResponses[keyof GetMyPeerConfigResponses];
 
+export type SendMyPeerConfigData = {
+    body?: never;
+    path: {
+        /**
+         * Peer ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/me/peers/{id}/send-config';
+};
+
+export type SendMyPeerConfigErrors = {
+    /**
+     * Unauthorized
+     */
+    401: unknown;
+    /**
+     * Peer not found
+     */
+    404: unknown;
+    /**
+     * Failed to send via Telegram
+     */
+    502: unknown;
+};
+
+export type SendMyPeerConfigResponses = {
+    /**
+     * Config sent via Telegram
+     */
+    200: unknown;
+};
+
 export type ListPeersData = {
     body?: never;
     path?: never;

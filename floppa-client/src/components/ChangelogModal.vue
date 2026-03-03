@@ -22,7 +22,7 @@ const accordionItems = computed(() => {
       label: t(`changelog.${section.type}`),
       icon: sectionIcons[section.type],
       value: section.type,
-      content: true, // needed for UAccordion to render body slot
+      content: ' ', // non-empty string needed for UAccordion to render body slot
       section,
     }))
 })
@@ -93,8 +93,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
       <div class="flex justify-end gap-2">
         <UButton
           :label="t('common.close')"
-          color="neutral"
-          variant="outline"
+          color="primary"
           @click="updateStore.changelogModalOpen = false"
         />
         <UButton

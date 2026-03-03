@@ -1,6 +1,10 @@
-# Floppa VPN
+<p align="center">
+  <img src="branding/hack_floppy_banana1.png" width="200" alt="Floppa VPN" />
+</p>
 
-WireGuard VPN service built with Rust — daemon, Telegram bot, admin panel, and Tauri 2 client app.
+<h1 align="center">Floppa VPN</h1>
+
+<p align="center">WireGuard VPN service built with Rust — daemon, Telegram bot, admin panel, and Tauri 2 client app.</p>
 
 [![CI](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml)
 

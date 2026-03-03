@@ -226,6 +226,10 @@ export default {
     unknownDevice: 'Неизвестное устройство',
     createdAt: 'Создан: {date}',
     trafficUsed: '{used} / {limit} использовано',
+    configSaved: 'Конфиг сохранён в {path}',
+    sendToTelegram: 'Отправить в Telegram',
+    sentToTelegram: 'Конфиг отправлен в Telegram',
+    sendFailed: 'Не удалось отправить конфиг',
   },
   settings: {
     title: 'Настройки',

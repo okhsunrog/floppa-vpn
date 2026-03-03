@@ -14,6 +14,8 @@
     "log:default",
     "fs:default",
     "fs:allow-write-text-file",
+    "android-fs:default",
+    "android-fs:allow-write-text-file",
     "vpn:default",
     "deep-link:default"
   ]

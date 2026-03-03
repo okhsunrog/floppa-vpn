@@ -50,12 +50,17 @@ async fn main() -> Result<()> {
     // Derive WG public key for client configs
     let wg_public_key = secrets.wg_public_key()?;
 
+    // Build teloxide bot (shared between Axum and dispatcher)
+    let bot = Bot::new(&bot_secrets.token);
+    tracing::info!("Bot initialized");
+
     // Build Axum router
     let api_router = admin::routes::create_router(
         pool.clone(),
         config.clone(),
         secrets.clone(),
         wg_public_key.clone(),
+        bot.clone(),
     );
 
     let static_routes = memory_serve::load!()
@@ -97,9 +102,6 @@ async fn main() -> Result<()> {
     tracing::info!("Listening on {}", addr);
 
     // Build teloxide dispatcher
-    let bot = Bot::new(&bot_secrets.token);
-    tracing::info!("Bot initialized");
-
     let handler = bot::handlers::schema();
     let mut dispatcher = Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![pool, config, secrets, wg_public_key])

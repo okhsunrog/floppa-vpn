@@ -240,5 +240,12 @@ app.mount('#app')
 // Check for voluntary updates (non-blocking)
 void updateStore.checkForUpdates()
 
-// Show changelog on first launch after update
-void updateStore.checkPostUpdateChangelog()
+// Show changelog on first launch after update (only after user reaches an authenticated page)
+{
+  const removeHook = router.afterEach((to) => {
+    if (to.meta.requiresAuth && authStore.isAuthenticated) {
+      removeHook()
+      void updateStore.checkPostUpdateChangelog()
+    }
+  })
+}

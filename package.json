@@ -5,5 +5,8 @@
     "floppa-web-shared",
     "floppa-face",
     "floppa-client"
-  ]
+  ],
+  "dependencies": {
+    "tauri-plugin-android-fs-api": "^27.0.0"
+  }
 }

@@ -10,6 +10,7 @@ use floppa_core::{Config, DbPool, FloppaError, Secrets, decrypt_private_key, ser
 use rand::random;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
+use teloxide::{prelude::*, types::InputFile};
 use tokio::sync::RwLock;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -25,6 +26,7 @@ pub struct AppState {
     pub config: Config,
     pub secrets: Secrets,
     pub wg_public_key: String,
+    pub bot: Bot,
     telegram_login_states: Arc<RwLock<HashMap<String, PendingTelegramLoginState>>>,
     telegram_login_codes: Arc<RwLock<HashMap<String, PendingTelegramLoginCode>>>,
 }
@@ -66,6 +68,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(get_my_peers, create_my_peer))
     .routes(routes!(delete_my_peer))
     .routes(routes!(get_my_peer_config))
+    .routes(routes!(send_my_peer_config))
     .routes(routes!(get_my_peer_by_device))
     // Admin endpoints
     .routes(routes!(get_stats))
@@ -117,12 +120,14 @@ pub fn create_router(
     config: Config,
     secrets: Secrets,
     wg_public_key: String,
+    bot: Bot,
 ) -> axum::Router {
     let state = AppState {
         pool,
         config,
         secrets,
         wg_public_key,
+        bot,
         telegram_login_states: Arc::new(RwLock::new(HashMap::new())),
         telegram_login_codes: Arc::new(RwLock::new(HashMap::new())),
     };
@@ -929,6 +934,98 @@ async fn get_my_peer_config(
     let config =
         services::generate_wg_config(&private_key, &peer.1, &state.config, &state.wg_public_key);
     Ok(config)
+}
+
+/// Send WireGuard config to user via Telegram bot
+#[utoipa::path(
+    post,
+    path = "/me/peers/{id}/send-config",
+    tag = "user",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Peer ID")),
+    responses(
+        (status = 200, description = "Config sent via Telegram"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Peer not found"),
+        (status = 502, description = "Failed to send via Telegram"),
+    )
+)]
+async fn send_my_peer_config(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(peer_id): Path<i64>,
+) -> Result<StatusCode, StatusCode> {
+    // Get peer's encrypted key and IP
+    let peer: (String, String) = sqlx::query_as(
+        r#"
+        SELECT private_key_encrypted, assigned_ip
+        FROM peers
+        WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'
+        "#,
+    )
+    .bind(peer_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("DB error: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?
+    .ok_or(StatusCode::NOT_FOUND)?;
+
+    let assigned_ip = peer.1.clone();
+
+    // Decrypt and generate config
+    let encryption_key = state
+        .secrets
+        .auth
+        .as_ref()
+        .ok_or_else(|| {
+            tracing::error!("Auth secrets required for decryption");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+        .get_encryption_key()
+        .map_err(|e| {
+            tracing::error!("Invalid encryption key: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    let private_key = decrypt_private_key(&peer.0, &encryption_key).map_err(|e| {
+        tracing::error!("Decryption failed: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let config = services::generate_wg_config(
+        &private_key,
+        &assigned_ip,
+        &state.config,
+        &state.wg_public_key,
+    );
+
+    // Get user's telegram_id
+    let telegram_id: (i64,) = sqlx::query_as("SELECT telegram_id FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("DB error fetching telegram_id: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Send config as document via Telegram bot
+    let filename = format!("floppa-vpn-{assigned_ip}.conf");
+    let file = InputFile::memory(config.into_bytes()).file_name(filename);
+
+    state
+        .bot
+        .send_document(ChatId(telegram_id.0), file)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to send config via Telegram: {e}");
+            StatusCode::BAD_GATEWAY
+        })?;
+
+    Ok(StatusCode::OK)
 }
 
 /// Get a peer by device_id for the current user

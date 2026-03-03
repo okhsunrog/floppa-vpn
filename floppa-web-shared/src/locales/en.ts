@@ -226,6 +226,10 @@ export default {
     unknownDevice: 'Unknown device',
     createdAt: 'Created: {date}',
     trafficUsed: '{used} / {limit} used',
+    configSaved: 'Config saved to {path}',
+    sendToTelegram: 'Send to Telegram',
+    sentToTelegram: 'Config sent to Telegram',
+    sendFailed: 'Failed to send config',
   },
   settings: {
     title: 'Settings',

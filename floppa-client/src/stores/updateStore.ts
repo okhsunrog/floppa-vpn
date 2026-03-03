@@ -160,9 +160,13 @@ export const useUpdateStore = defineStore('update', () => {
     const lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY)
     const current = __APP_VERSION__
 
-    // First install — just record version, don't show modal
+    // No lastSeenVersion — first install or update from version without this feature.
+    // Show changelog either way so users see what's new.
     if (!lastSeen) {
       localStorage.setItem(LAST_SEEN_VERSION_KEY, current)
+      changelog.value = bundledChangelog as ChangelogData
+      changelogMode.value = 'current'
+      changelogModalOpen.value = true
       return
     }
 

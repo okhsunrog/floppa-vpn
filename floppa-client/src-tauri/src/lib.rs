@@ -92,6 +92,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_android_fs::init())
         .manage(vpn_state.clone())
         .manage(platform)
         .invoke_handler(specta_builder.invoke_handler());

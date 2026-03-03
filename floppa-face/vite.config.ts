@@ -26,6 +26,9 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      // Tauri-only modules used in shared views via dynamic import — mark external
+      // so Rollup doesn't try to resolve them in the admin panel build
+      external: ['tauri-plugin-android-fs-api', '@tauri-apps/plugin-dialog', '@tauri-apps/plugin-fs'],
       onwarn(warning, warn) {
         if (warning.code === 'SOURCEMAP_ERROR' && warning.message.includes("Can't resolve original location")) return
         warn(warning)

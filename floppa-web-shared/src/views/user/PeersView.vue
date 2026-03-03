@@ -3,7 +3,7 @@ import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import { getMeQuery, getMyPeersQuery, createMyPeerMutation, deleteMyPeerMutation } from '../../client/@pinia/colada.gen'
-import { getMyPeerConfig } from '../../client/sdk.gen'
+import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import { formatBytes } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
@@ -11,6 +11,8 @@ import type { PeerSyncStatus } from '../../types'
 
 const { t } = useI18n()
 const toast = useToast()
+
+const isMiniApp = Boolean((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData)
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
 const { data: peers, status: peersStatus, error: peersError, refresh: refreshPeers } = useQuery(getMyPeersQuery())
@@ -102,13 +104,60 @@ async function copyConfig() {
   }
 }
 
-function downloadConfig() {
+async function downloadConfig() {
   if (!currentConfig.value) return
-  const blob = new Blob([currentConfig.value.config], { type: 'text/plain' })
+  const { id, assigned_ip, config } = currentConfig.value
+  const filename = `floppa-vpn-${assigned_ip}.conf`
+
+  console.info('[download] downloadConfig called, isMiniApp:', isMiniApp, '__TAURI_INTERNALS__:', Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__), 'userAgent:', navigator.userAgent)
+
+  if (isMiniApp) {
+    try {
+      await sendMyPeerConfig({ path: { id }, throwOnError: true })
+      toast.add({ title: t('userPeers.sentToTelegram'), color: 'success' })
+    } catch {
+      toast.add({ title: t('userPeers.sendFailed'), color: 'error' })
+    }
+    return
+  }
+
+  // Tauri: platform-specific file saving
+  if ((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__) {
+    try {
+      if (navigator.userAgent.includes('Android')) {
+        // Android: save to Download/FloppaVPN/ via MediaStore
+        console.info('[download] Android detected, using android-fs plugin')
+        const { AndroidFs, AndroidPublicGeneralPurposeDir } = await import('tauri-plugin-android-fs-api')
+        console.info('[download] Creating public file...')
+        const uri = await AndroidFs.createNewPublicFile(
+          AndroidPublicGeneralPurposeDir.Download,
+          `FloppaVPN/${filename}`,
+          'text/plain',
+        )
+        console.info('[download] File created, uri:', JSON.stringify(uri))
+        await AndroidFs.writeTextFile(uri, config)
+        console.info('[download] File written successfully')
+        toast.add({ title: t('userPeers.configSaved', { path: `Download/FloppaVPN/${filename}` }), color: 'success' })
+      } else {
+        // Desktop: save dialog + write file
+        const { save } = await import('@tauri-apps/plugin-dialog')
+        const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+        const path = await save({ defaultPath: filename, filters: [{ name: 'WireGuard', extensions: ['conf'] }] })
+        if (path) await writeTextFile(path, config)
+      }
+    } catch (e) {
+      console.error('[download] Failed:', e)
+      toast.add({ title: t('common.error'), color: 'error' })
+    }
+    return
+  }
+
+  // Browser fallback
+  const blob = new Blob([config], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `floppa-vpn-${currentConfig.value.assigned_ip}.conf`
+  a.download = filename
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -240,7 +289,12 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
       </template>
       <template #footer>
         <UButton :label="t('common.copy')" icon="i-lucide-copy" @click="copyConfig" />
-        <UButton :label="t('common.download')" icon="i-lucide-download" color="success" @click="downloadConfig" />
+        <UButton
+          :label="isMiniApp ? t('userPeers.sendToTelegram') : t('common.download')"
+          :icon="isMiniApp ? 'i-lucide-send' : 'i-lucide-download'"
+          color="success"
+          @click="downloadConfig"
+        />
         <UButton :label="t('common.close')" color="neutral" variant="outline" @click="configDialog = false" />
       </template>
     </UModal>

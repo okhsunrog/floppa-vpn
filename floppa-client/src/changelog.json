@@ -10,6 +10,8 @@
     {
       "type": "added",
       "items": [
+        { "en": "Config download on Android — saves to Download/FloppaVPN/ with file path in notification", "ru": "Скачивание конфигов на Android — сохраняется в Download/FloppaVPN/ с указанием пути в уведомлении" },
+        { "en": "\"Send to Telegram\" button in Telegram Mini App — bot sends config file directly", "ru": "Кнопка «Отправить в Telegram» в Telegram Mini App — бот отправляет файл конфига напрямую" },
         { "en": "\"What's new\" changelog viewer — in Settings, on the update banner, and auto-shown after app update", "ru": "Просмотр «Что нового» — в настройках, на баннере обновления и автоматически после обновления" },
         { "en": "Three-way theme toggle (light / dark / system) and language picker", "ru": "Трёхпозиционный переключатель темы (светлая / тёмная / системная) и выбор языка" },
         { "en": "Retry button and browser change tips on login screen", "ru": "Кнопка повтора и подсказки о смене браузера на экране входа" },
