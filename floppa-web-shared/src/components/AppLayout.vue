@@ -136,7 +136,7 @@ const mobileNavItems = computed(() => {
         </div>
         <div class="hidden md:flex items-center gap-2">
           <UAvatar
-            :src="auth.user?.photo_url ?? undefined"
+            :src="auth.avatarUrl"
             :alt="navLabel"
             icon="i-lucide-user"
             size="xs"
@@ -230,7 +230,7 @@ const mobileNavItems = computed(() => {
             </UFieldGroup>
             <div class="flex items-center gap-2">
               <UAvatar
-                :src="auth.user?.photo_url ?? undefined"
+                :src="auth.avatarUrl"
                 :alt="navLabel"
                 icon="i-lucide-user"
                 size="2xs"

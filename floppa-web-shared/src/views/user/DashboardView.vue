@@ -55,7 +55,7 @@ const daysRemaining = computed(() => {
       <UCard class="mb-4 bg-gradient-to-br from-[var(--ui-primary)] to-[var(--ui-primary)]/80">
         <div class="flex items-center gap-4 text-white">
           <UAvatar
-            :src="me.photo_url ?? undefined"
+            :src="auth.avatarUrl ?? me.photo_url ?? undefined"
             :alt="me.first_name ?? me.username ?? undefined"
             icon="i-lucide-user"
             size="lg"
