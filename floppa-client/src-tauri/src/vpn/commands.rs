@@ -1,7 +1,7 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
-use super::state::{ConnectionInfo, ConnectionStatus, TrafficStats, VpnState, WgConfig};
+use super::state::{ConnectionInfo, ConnectionStatus, VpnState, WgConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -233,7 +233,7 @@ async fn connect_android(
     loop {
         tokio::time::sleep(poll_interval).await;
         poll_count += 1;
-        if backend.is_running().await {
+        if backend.get_all_info().await.is_some_and(|i| i.is_running) {
             info!("Tunnel ready after {poll_count} polls ({:.1}s)", start.elapsed().as_secs_f64());
             break;
         }
@@ -386,7 +386,8 @@ pub async fn get_connection_info(
 ) -> Result<ConnectionInfo, String> {
     let mut conn = state.connection.write().await;
 
-    let is_running = backend.is_running().await;
+    let info = backend.get_all_info().await;
+    let is_running = info.as_ref().is_some_and(|i| i.is_running);
 
     // On Android, the tunnel is started by the :vpn process (not via connect() command),
     // so we detect connection state from the backend directly.
@@ -394,11 +395,11 @@ pub async fn get_connection_info(
         let config = state.config.read().await;
         conn.status = ConnectionStatus::Connected;
         // Use the actual connection time from the :vpn process
-        let connected_at = if let Some(secs) = backend.get_connected_secs().await {
-            chrono::Utc::now().timestamp() - secs as i64
-        } else {
-            chrono::Utc::now().timestamp()
-        };
+        let connected_at = info
+            .as_ref()
+            .and_then(|i| i.connected_secs)
+            .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
+            .unwrap_or_else(|| chrono::Utc::now().timestamp());
         conn.connected_at = Some(connected_at);
         if let Some(cfg) = config.as_ref() {
             conn.server_endpoint = Some(cfg.peer_endpoint.clone());
@@ -411,17 +412,20 @@ pub async fn get_connection_info(
     if conn.status == ConnectionStatus::Connected && !is_running {
         *conn = ConnectionInfo::default();
     } else if conn.status == ConnectionStatus::Connected && is_running {
-        if let Some(raw_stats) = backend.get_stats().await {
-            let mut tracker = state.speed_tracker.write().await;
-            let (tx_speed, rx_speed) = tracker.update(raw_stats.tx_bytes, raw_stats.rx_bytes);
-            conn.stats = TrafficStats {
-                tx_bytes: raw_stats.tx_bytes,
-                rx_bytes: raw_stats.rx_bytes,
-                tx_bytes_per_sec: tx_speed,
-                rx_bytes_per_sec: rx_speed,
-            };
+        if let Some(ref info) = info {
+            if let Some(ref raw_stats) = info.stats {
+                let mut tracker = state.speed_tracker.write().await;
+                let (tx_speed, rx_speed) =
+                    tracker.update(raw_stats.tx_bytes, raw_stats.rx_bytes);
+                conn.stats = super::state::TrafficStats {
+                    tx_bytes: raw_stats.tx_bytes,
+                    rx_bytes: raw_stats.rx_bytes,
+                    tx_bytes_per_sec: tx_speed,
+                    rx_bytes_per_sec: rx_speed,
+                };
+            }
+            conn.last_handshake = info.last_handshake;
         }
-        conn.last_handshake = backend.get_last_handshake().await;
     }
 
     Ok(conn.clone())

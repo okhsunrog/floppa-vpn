@@ -1,11 +1,10 @@
 //! In-process VPN backend.
 //!
 //! The tunnel runs directly in the current process using gotatun.
-//! Used on desktop platforms (Linux, Windows, macOS) and currently on Android
-//! (until the two-process architecture is implemented).
+//! Used on desktop platforms (Linux, Windows, macOS).
 
-use super::VpnBackend;
-use crate::vpn::state::{TrafficStats, WgConfig};
+use super::{VpnBackend, VpnFullInfo};
+use crate::vpn::state::WgConfig;
 use crate::vpn::tunnel::TunnelManager;
 use async_trait::async_trait;
 
@@ -53,19 +52,12 @@ impl VpnBackend for InProcessBackend {
         self.tunnel_manager.stop().await
     }
 
-    async fn is_running(&self) -> bool {
-        self.tunnel_manager.is_running().await
-    }
-
-    async fn get_stats(&self) -> Option<TrafficStats> {
-        self.tunnel_manager.get_stats().await
-    }
-
-    async fn get_last_handshake(&self) -> Option<i64> {
-        self.tunnel_manager.get_last_handshake().await
-    }
-
-    async fn get_interface_name(&self) -> Option<String> {
-        self.tunnel_manager.get_interface_name().await
+    async fn get_all_info(&self) -> Option<VpnFullInfo> {
+        Some(VpnFullInfo {
+            is_running: self.tunnel_manager.is_running().await,
+            stats: self.tunnel_manager.get_stats().await,
+            last_handshake: self.tunnel_manager.get_last_handshake().await,
+            connected_secs: None,
+        })
     }
 }

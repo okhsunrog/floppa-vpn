@@ -12,10 +12,11 @@
 //! └──────────────────┘           └─────────────────────────────┘
 //! ```
 
-use super::VpnBackend;
+use super::{VpnBackend, VpnFullInfo};
 use crate::vpn::rpc::VpnRpcClient;
 use crate::vpn::state::{TrafficStats, WgConfig};
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, warn};
@@ -23,6 +24,9 @@ use tracing::{debug, warn};
 pub struct AndroidIpcBackend {
     socket_path: String,
     client: Mutex<Option<VpnRpcClient>>,
+    /// Tracks whether the last connection attempt failed, to suppress repeated log messages.
+    /// Only the first failure and recovery are logged.
+    last_connect_failed: AtomicBool,
 }
 
 impl AndroidIpcBackend {
@@ -30,6 +34,7 @@ impl AndroidIpcBackend {
         Self {
             socket_path,
             client: Mutex::new(None),
+            last_connect_failed: AtomicBool::new(false),
         }
     }
 
@@ -40,8 +45,6 @@ impl AndroidIpcBackend {
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
         }
-
-        debug!("Connecting to VPN service at {}", self.socket_path);
 
         let stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
@@ -59,7 +62,7 @@ impl AndroidIpcBackend {
         Ok(client)
     }
 
-    /// Invalidate the cached client (e.g. after an error).
+    /// Invalidate the cached client (e.g. after an RPC error).
     async fn invalidate_client(&self) {
         *self.client.lock().await = None;
     }
@@ -98,83 +101,40 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
-    async fn is_running(&self) -> bool {
+    async fn get_all_info(&self) -> Option<VpnFullInfo> {
         let client = match self.get_client().await {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Cannot reach :vpn process: {e}");
-                return false;
+            Ok(c) => {
+                // Log recovery if previously failing
+                if self.last_connect_failed.swap(false, Ordering::Relaxed) {
+                    debug!("Reconnected to :vpn process");
+                }
+                c
             }
-        };
-        match client.get_status(tarpc::context::current()).await {
-            Ok((is_running, _, _)) => is_running,
-            Err(e) => {
-                warn!("Failed to get VPN status via tarpc: {e}");
-                self.invalidate_client().await;
-                false
-            }
-        }
-    }
-
-    async fn get_stats(&self) -> Option<TrafficStats> {
-        let client = match self.get_client().await {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Cannot reach :vpn process for stats: {e}");
+            Err(_) => {
+                // Log only the first failure in a streak
+                if !self.last_connect_failed.swap(true, Ordering::Relaxed) {
+                    debug!("VPN service not running");
+                }
                 return None;
             }
         };
-        match client.get_stats(tarpc::context::current()).await {
-            Ok(Some((tx_bytes, rx_bytes))) => Some(TrafficStats {
-                tx_bytes,
-                rx_bytes,
-                ..Default::default()
+
+        match client.get_full_info(tarpc::context::current()).await {
+            Ok(info) => Some(VpnFullInfo {
+                is_running: info.is_running,
+                stats: match (info.tx_bytes, info.rx_bytes) {
+                    (Some(tx), Some(rx)) => Some(TrafficStats {
+                        tx_bytes: tx,
+                        rx_bytes: rx,
+                        ..Default::default()
+                    }),
+                    _ => None,
+                },
+                last_handshake: info.last_handshake,
+                connected_secs: info.connected_secs,
             }),
-            Ok(None) => None,
             Err(e) => {
-                warn!("Failed to get VPN stats via tarpc: {e}");
-                self.invalidate_client().await;
-                None
-            }
-        }
-    }
-
-    async fn get_last_handshake(&self) -> Option<i64> {
-        let client = match self.get_client().await {
-            Ok(c) => c,
-            Err(e) => {
-                debug!("Cannot reach :vpn process for handshake: {e}");
-                return None;
-            }
-        };
-        match client.get_status(tarpc::context::current()).await {
-            Ok((_, last_handshake, _)) => last_handshake,
-            Err(e) => {
-                warn!("Failed to get VPN status via tarpc: {e}");
-                self.invalidate_client().await;
-                None
-            }
-        }
-    }
-
-    async fn get_interface_name(&self) -> Option<String> {
-        // On Android, the interface name is always "tun0" (assigned by VpnService).
-        if self.is_running().await {
-            Some("tun0".to_string())
-        } else {
-            None
-        }
-    }
-
-    async fn get_connected_secs(&self) -> Option<u64> {
-        let client = match self.get_client().await {
-            Ok(c) => c,
-            Err(_) => return None,
-        };
-        match client.get_status(tarpc::context::current()).await {
-            Ok((_, _, connected_secs)) => connected_secs,
-            Err(e) => {
-                warn!("Failed to get connected_secs via tarpc: {e}");
+                warn!("RPC get_full_info failed: {e}");
                 self.invalidate_client().await;
                 None
             }

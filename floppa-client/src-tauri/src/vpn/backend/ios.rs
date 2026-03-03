@@ -37,8 +37,8 @@
 
 #![allow(dead_code)]
 
-use super::VpnBackend;
-use crate::vpn::state::{TrafficStats, WgConfig};
+use super::{VpnBackend, VpnFullInfo};
+use crate::vpn::state::WgConfig;
 use async_trait::async_trait;
 
 pub struct IosBackend {
@@ -112,34 +112,11 @@ impl VpnBackend for IosBackend {
         Err("IosBackend not yet implemented".into())
     }
 
-    async fn is_running(&self) -> bool {
-        // TODO: Check NEVPNConnection.status == .connected
-        // This works even if the UI was just launched — the OS tracks the VPN state.
-        false
-    }
-
-    async fn get_stats(&self) -> Option<TrafficStats> {
-        // TODO: Send GetStats command via sendProviderMessage():
-        //
-        // let cmd = VpnCommand::GetStats;
-        // let data = bincode::serialize(&cmd).ok()?;
-        // let response_data = manager.send_provider_message(data).await?;
-        // let response: VpnResponse = bincode::deserialize(&response_data).ok()?;
-        // match response {
-        //     VpnResponse::Stats { tx_bytes, rx_bytes } => Some(TrafficStats { tx_bytes, rx_bytes, .. }),
-        //     _ => None,
-        // }
-        None
-    }
-
-    async fn get_last_handshake(&self) -> Option<i64> {
-        // TODO: Send GetStatus command via sendProviderMessage()
-        None
-    }
-
-    async fn get_interface_name(&self) -> Option<String> {
-        // iOS tunnel interface is always utunN (assigned by the system).
-        // Could query via sendProviderMessage() if needed.
-        None
+    async fn get_all_info(&self) -> Option<VpnFullInfo> {
+        // TODO: Check NEVPNConnection.status and query stats via sendProviderMessage()
+        Some(VpnFullInfo {
+            is_running: false,
+            ..Default::default()
+        })
     }
 }

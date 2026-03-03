@@ -3,7 +3,7 @@
 //! Runs in the VPN service process, accepts connections from the UI process,
 //! and delegates RPC calls to the local TunnelManager.
 
-use super::rpc::VpnRpc;
+use super::rpc::{TunnelInfo, VpnRpc};
 use super::tunnel::TunnelManager;
 use std::sync::Arc;
 use tarpc::context::Context;
@@ -31,16 +31,18 @@ struct VpnRpcServer {
 }
 
 impl VpnRpc for VpnRpcServer {
-    async fn get_stats(self, _ctx: Context) -> Option<(u64, u64)> {
-        let stats = self.tunnel_manager.get_stats().await?;
-        Some((stats.tx_bytes, stats.rx_bytes))
-    }
-
-    async fn get_status(self, _ctx: Context) -> (bool, Option<i64>, Option<u64>) {
+    async fn get_full_info(self, _ctx: Context) -> TunnelInfo {
         let is_running = self.tunnel_manager.is_running().await;
         let last_handshake = self.tunnel_manager.get_last_handshake().await;
         let connected_secs = self.tunnel_manager.get_connection_duration().await.map(|d| d.as_secs());
-        (is_running, last_handshake, connected_secs)
+        let stats = self.tunnel_manager.get_stats().await;
+        TunnelInfo {
+            is_running,
+            last_handshake,
+            connected_secs,
+            tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
+            rx_bytes: stats.as_ref().map(|s| s.rx_bytes),
+        }
     }
 
     async fn stop(self, _ctx: Context) -> Result<(), String> {

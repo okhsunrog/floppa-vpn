@@ -18,11 +18,20 @@ use super::state::{TrafficStats, WgConfig};
 use async_trait::async_trait;
 use std::sync::Arc;
 
+/// All tunnel info returned by [`VpnBackend::get_all_info`].
+#[derive(Debug, Clone, Default)]
+pub struct VpnFullInfo {
+    pub is_running: bool,
+    pub stats: Option<TrafficStats>,
+    pub last_handshake: Option<i64>,
+    pub connected_secs: Option<u64>,
+}
+
 /// Backend for VPN tunnel management.
 ///
 /// Each platform implements this trait differently:
-/// - [`InProcessBackend`](in_process::InProcessBackend): tunnel runs in the current process (desktop, current Android)
-/// - [`AndroidIpcBackend`](android_ipc::AndroidIpcBackend): tunnel in separate `:vpn` process via tarpc (future)
+/// - [`InProcessBackend`](in_process::InProcessBackend): tunnel runs in the current process (desktop)
+/// - [`AndroidIpcBackend`](android_ipc::AndroidIpcBackend): tunnel in separate `:vpn` process via tarpc
 /// - [`IosBackend`](ios::IosBackend): tunnel in Network Extension via Apple IPC (future)
 #[async_trait]
 pub trait VpnBackend: Send + Sync {
@@ -45,23 +54,12 @@ pub trait VpnBackend: Send + Sync {
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), String>;
 
-    /// Check if the tunnel is currently running.
-    async fn is_running(&self) -> bool;
-
-    /// Get cumulative traffic statistics.
-    async fn get_stats(&self) -> Option<TrafficStats>;
-
-    /// Get time since last WireGuard handshake in seconds.
-    async fn get_last_handshake(&self) -> Option<i64>;
-
-    /// Get the tunnel interface name.
-    async fn get_interface_name(&self) -> Option<String>;
-
-    /// Get how many seconds the tunnel has been connected.
-    /// Used on Android to restore duration after app restart.
-    async fn get_connected_secs(&self) -> Option<u64> {
-        None
-    }
+    /// Get all tunnel info in a single call.
+    ///
+    /// Returns `None` if the backend is unreachable (e.g. `:vpn` service not running).
+    /// This is a **normal state**, not an error — callers should treat `None` as
+    /// "tunnel not available" without logging errors or retrying.
+    async fn get_all_info(&self) -> Option<VpnFullInfo>;
 }
 
 /// Create the appropriate VPN backend for the current platform.

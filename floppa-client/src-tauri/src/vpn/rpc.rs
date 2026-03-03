@@ -3,14 +3,21 @@
 //! Used for communication between the UI process (tarpc client) and the
 //! `:vpn` process (tarpc server) on Android.
 
+/// All tunnel info returned in a single RPC call.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TunnelInfo {
+    pub is_running: bool,
+    pub last_handshake: Option<i64>,
+    pub connected_secs: Option<u64>,
+    pub tx_bytes: Option<u64>,
+    pub rx_bytes: Option<u64>,
+}
+
 #[tarpc::service]
 pub trait VpnRpc {
-    /// Get traffic statistics: (tx_bytes, rx_bytes)
-    async fn get_stats() -> Option<(u64, u64)>;
+    /// Get all tunnel info in a single call.
+    async fn get_full_info() -> TunnelInfo;
 
-    /// Get tunnel status: (is_running, last_handshake_secs, connected_secs)
-    async fn get_status() -> (bool, Option<i64>, Option<u64>);
-
-    /// Stop the tunnel and VPN service
+    /// Stop the tunnel and VPN service.
     async fn stop() -> Result<(), String>;
 }
