@@ -187,9 +187,54 @@ openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
     cd floppa-web-shared && bun run openapi-ts
 
+android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+android_pkg := "dev.okhsunrog.floppa_vpn"
+
 # Build Android APK (release, aarch64)
 build-android:
     cd floppa-client && bun tauri android build --apk --target aarch64
+
+# Build and install Android APK on connected device
+deploy-android: build-android
+    adb install -r {{android_apk}}
+
+# Start the Android app
+app-start:
+    adb shell am start -n {{android_pkg}}/.MainActivity
+
+# Stop the Android app
+app-stop:
+    adb shell am force-stop {{android_pkg}}
+
+# Restart the Android app
+app-restart: app-stop app-start
+
+# Show app logs (FloppaVPN tag, filtered by app PID)
+app-logs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pid=$(adb shell pidof {{android_pkg}} 2>/dev/null || true)
+    if [ -z "$pid" ]; then
+        echo "App not running, showing recent logs..."
+        adb logcat -d -s FloppaVPN | tail -50
+    else
+        echo "App PID: $pid"
+        adb logcat -d --pid="$pid" -s FloppaVPN | tail -80
+    fi
+
+# Deploy, restart, and show logs
+deploy-android-test: deploy-android app-restart
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sleep 3
+    pid=$(adb shell pidof {{android_pkg}} 2>/dev/null || true)
+    if [ -z "$pid" ]; then
+        echo "App failed to start!"
+        adb logcat -d -s FloppaVPN | tail -30
+        exit 1
+    fi
+    echo "App PID: $pid"
+    adb logcat -d --pid="$pid" | grep "FloppaVPN" | tail -50
 
 # Build the gotatun test tunnel binary
 build-test-tunnel:
