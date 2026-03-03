@@ -165,54 +165,55 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
      */
     @Command
     fun getInstalledApps(invoke: Invoke) {
-        val pm = activity.packageManager
-        val apps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            pm.getInstalledApplications(0)
-        }
-
-        val ownPackage = activity.packageName
-        val result = JSObject()
-        val appList = JSArray()
-        val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
-
-        for (appInfo in apps) {
-            // Skip own app
-            if (appInfo.packageName == ownPackage) continue
-
-            val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-
-            val entry = JSObject()
-            entry.put("packageName", appInfo.packageName)
-            entry.put("label", appInfo.loadLabel(pm).toString())
-            entry.put("isSystem", isSystem)
-
-            // Load app icon as base64 PNG
-            try {
-                val drawable = appInfo.loadIcon(pm)
-                val bitmap = if (drawable is BitmapDrawable) {
-                    Bitmap.createScaledBitmap(drawable.bitmap, iconSize, iconSize, true)
-                } else {
-                    val bmp = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(bmp)
-                    drawable.setBounds(0, 0, iconSize, iconSize)
-                    drawable.draw(canvas)
-                    bmp
-                }
-                val stream = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
-                entry.put("icon", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP))
-            } catch (_: Exception) {
-                // Icon loading failed, leave null
+        // Run on background thread to avoid blocking the Android UI thread
+        Thread {
+            val pm = activity.packageManager
+            val apps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstalledApplications(0)
             }
 
-            appList.put(entry)
-        }
+            val ownPackage = activity.packageName
+            val result = JSObject()
+            val appList = JSArray()
+            val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
 
-        result.put("apps", appList)
-        invoke.resolve(result)
+            for (appInfo in apps) {
+                if (appInfo.packageName == ownPackage) continue
+
+                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+
+                val entry = JSObject()
+                entry.put("packageName", appInfo.packageName)
+                entry.put("label", appInfo.loadLabel(pm).toString())
+                entry.put("isSystem", isSystem)
+
+                try {
+                    val drawable = appInfo.loadIcon(pm)
+                    val bitmap = if (drawable is BitmapDrawable) {
+                        Bitmap.createScaledBitmap(drawable.bitmap, iconSize, iconSize, true)
+                    } else {
+                        val bmp = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bmp)
+                        drawable.setBounds(0, 0, iconSize, iconSize)
+                        drawable.draw(canvas)
+                        bmp
+                    }
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
+                    entry.put("icon", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP))
+                } catch (_: Exception) {
+                    // Icon loading failed, leave null
+                }
+
+                appList.put(entry)
+            }
+
+            result.put("apps", appList)
+            invoke.resolve(result)
+        }.start()
     }
 
     /**

@@ -8,12 +8,14 @@ import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pini
 import { getMyPeerByDevice, getMyPeerConfig } from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { useVpnStore } from '../stores/vpnStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { commands } from '../bindings'
 
 const SYNC_TIMEOUT_SECONDS = 5
 
 const { t } = useI18n()
 const vpn = useVpnStore()
+const settingsStore = useSettingsStore()
 const setupErrorKey = ref<string | null>(null)
 const setupErrorMsg = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'syncing' | 'offline'>('idle')
@@ -199,6 +201,10 @@ async function setupAutoPeer() {
 
 onMounted(async () => {
   await vpn.initPlatform()
+
+  // Preload app list for settings page (non-blocking)
+  if (vpn.isAndroid) settingsStore.loadApps()
+
   await vpn.loadConfig()
   await vpn.refreshStatus()
 

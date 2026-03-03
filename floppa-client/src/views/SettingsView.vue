@@ -49,11 +49,12 @@ async function openNotificationSettings() {
   } catch { /* ignore */ }
 }
 
-onMounted(async () => {
+onMounted(() => {
   if (vpn.isAndroid) {
-    await settings.loadApps()
-    await checkBatteryOptimization()
-    await checkNotifications()
+    checkBatteryOptimization()
+    checkNotifications()
+    // App list is preloaded at startup (VpnCard); this is a fallback
+    settings.loadApps()
   }
 })
 
@@ -250,6 +251,14 @@ function selectMode(mode: SplitMode) {
             size="sm"
             @click="showSystemApps = !showSystemApps"
           />
+          <UButton
+            icon="i-lucide-refresh-cw"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            :loading="settings.appsLoading"
+            @click="settings.reloadApps()"
+          />
         </div>
 
         <div v-if="settings.appsLoading" class="flex justify-center py-8">
@@ -266,6 +275,7 @@ function selectMode(mode: SplitMode) {
             :key="app.package_name"
             class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-[var(--ui-bg-elevated)]"
             :class="{ 'bg-[var(--ui-bg-elevated)]': settings.selectedApps.includes(app.package_name) }"
+            style="content-visibility: auto; contain-intrinsic-size: 0 48px"
           >
             <UCheckbox
               :model-value="settings.selectedApps.includes(app.package_name)"

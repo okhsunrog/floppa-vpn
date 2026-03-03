@@ -47,6 +47,11 @@ export const useSettingsStore = defineStore(
       }
     }
 
+    async function reloadApps(): Promise<AppInfo[]> {
+      cachedApps.value = null
+      return loadApps()
+    }
+
     return {
       splitMode,
       selectedApps,
@@ -55,6 +60,7 @@ export const useSettingsStore = defineStore(
       toggleApp,
       clearSelectedApps,
       loadApps,
+      reloadApps,
     }
   },
   {

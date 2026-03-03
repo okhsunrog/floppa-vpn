@@ -28,6 +28,7 @@ config.local.toml
 # Node.js
 node_modules/
 dist/
+*.tsbuildinfo
 
 # IDE
 .vscode/
