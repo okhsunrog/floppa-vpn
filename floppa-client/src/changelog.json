@@ -1,26 +1,31 @@
 {
-  "version": "0.2.3",
+  "version": "0.2.4",
   "sections": [
     {
       "type": "notes",
       "items": [
-        { "en": "We now have a Telegram channel! Follow project news, new features, and promotions: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)", "ru": "А ещё у нас появился Telegram-канал! Следите за новостями проекта, новыми фичами и акциями: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)" }
+        { "en": "Follow project news, new features, and promotions in our Telegram channel: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)", "ru": "Следите за новостями проекта, новыми фичами и акциями в нашем Telegram-канале: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)" }
       ]
     },
     {
       "type": "added",
       "items": [
-        { "en": "Split tunneling for Android — route only selected apps through VPN", "ru": "Раздельное туннелирование для Android — направлять через VPN только выбранные приложения" },
-        { "en": "Reconnect button when split tunneling settings change while connected", "ru": "Кнопка переподключения при изменении настроек раздельного туннелирования" },
-        { "en": "Battery optimization and notification permission prompts", "ru": "Запросы на отключение оптимизации батареи и разрешение уведомлений" },
-        { "en": "Changelog viewer in Settings", "ru": "Просмотр списка изменений в настройках" }
+        { "en": "\"What's new\" changelog viewer — in Settings, on the update banner, and auto-shown after app update", "ru": "Просмотр «Что нового» — в настройках, на баннере обновления и автоматически после обновления" },
+        { "en": "Three-way theme toggle (light / dark / system) and language picker", "ru": "Трёхпозиционный переключатель темы (светлая / тёмная / системная) и выбор языка" },
+        { "en": "Retry button and browser change tips on login screen", "ru": "Кнопка повтора и подсказки о смене браузера на экране входа" },
+        { "en": "VPN automatically stops on logout", "ru": "VPN автоматически останавливается при выходе из аккаунта" },
+        { "en": "VPN connection duration preserved across app restarts", "ru": "Время подключения VPN сохраняется при перезапуске приложения" }
       ]
     },
     {
       "type": "changed",
       "items": [
-        { "en": "Smoother dashboard startup — no more loading spinners", "ru": "Более плавный запуск — без индикаторов загрузки" },
-        { "en": "Reduced VPN status polling overhead (single RPC instead of four)", "ru": "Снижена нагрузка при опросе статуса VPN (один RPC вместо четырёх)" }
+        { "en": "Split tunneling now works correctly (was broken in previous release)", "ru": "Раздельное туннелирование теперь работает корректно (было сломано в предыдущей версии)" },
+        { "en": "Faster and smoother main screen startup", "ru": "Более быстрый и плавный запуск основного экрана приложения" },
+        { "en": "Reduced VPN status polling overhead (single request instead of four)", "ru": "Снижена нагрузка при опросе статуса VPN (один запрос вместо четырёх)" },
+        { "en": "Split tunneling app list loads faster — icons loaded in background", "ru": "Список приложений для раздельного туннелирования загружается быстрее — иконки загружаются в фоне" },
+        { "en": "User avatar cached locally for faster loading", "ru": "Аватар пользователя кэшируется локально для быстрой загрузки" },
+        { "en": "Android status bar icons synced with app theme", "ru": "Иконки строки состояния Android синхронизированы с темой приложения" }
       ]
     },
     {
@@ -28,9 +33,10 @@
       "items": [
         { "en": "Sidebar close button hidden behind Android status bar", "ru": "Кнопка закрытия боковой панели скрывалась за строкой состояния Android" },
         { "en": "Sidebar back button breaking navigation history", "ru": "Кнопка «Назад» в боковой панели ломала историю навигации" },
+        { "en": "Sidebar now closes with Android back button", "ru": "Боковая панель теперь закрывается кнопкой «Назад» на Android" },
         { "en": "Invisible buttons on warning banners", "ru": "Невидимые кнопки на предупреждающих баннерах" },
-        { "en": "Offline mode incorrectly revoking cached VPN config", "ru": "Автономный режим ошибочно отзывал сохранённую конфигурацию VPN" },
-        { "en": "Split tunneling app list on Android 11+", "ru": "Список приложений для раздельного туннелирования на Android 11+" }
+        { "en": "Offline banner now shows retry button and clears automatically on reconnect", "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи" },
+        { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" }
       ]
     }
   ]
