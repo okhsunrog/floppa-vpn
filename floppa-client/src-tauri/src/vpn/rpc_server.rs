@@ -36,10 +36,11 @@ impl VpnRpc for VpnRpcServer {
         Some((stats.tx_bytes, stats.rx_bytes))
     }
 
-    async fn get_status(self, _ctx: Context) -> (bool, Option<i64>) {
+    async fn get_status(self, _ctx: Context) -> (bool, Option<i64>, Option<u64>) {
         let is_running = self.tunnel_manager.is_running().await;
         let last_handshake = self.tunnel_manager.get_last_handshake().await;
-        (is_running, last_handshake)
+        let connected_secs = self.tunnel_manager.get_connection_duration().await.map(|d| d.as_secs());
+        (is_running, last_handshake, connected_secs)
     }
 
     async fn stop(self, _ctx: Context) -> Result<(), String> {

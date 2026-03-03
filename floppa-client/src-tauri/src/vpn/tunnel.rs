@@ -375,6 +375,11 @@ impl TunnelManager {
         }
     }
 
+    pub async fn get_connection_duration(&self) -> Option<Duration> {
+        let tunnel_guard = self.tunnel.read().await;
+        tunnel_guard.as_ref().and_then(|t| t.connection_duration())
+    }
+
     pub async fn get_interface_name(&self) -> Option<String> {
         let tunnel_guard = self.tunnel.read().await;
         tunnel_guard.as_ref().map(|t| t.interface_name().to_string())

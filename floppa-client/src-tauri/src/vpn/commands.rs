@@ -393,7 +393,13 @@ pub async fn get_connection_info(
     if conn.status != ConnectionStatus::Connected && is_running {
         let config = state.config.read().await;
         conn.status = ConnectionStatus::Connected;
-        conn.connected_at = Some(chrono::Utc::now().timestamp());
+        // Use the actual connection time from the :vpn process
+        let connected_at = if let Some(secs) = backend.get_connected_secs().await {
+            chrono::Utc::now().timestamp() - secs as i64
+        } else {
+            chrono::Utc::now().timestamp()
+        };
+        conn.connected_at = Some(connected_at);
         if let Some(cfg) = config.as_ref() {
             conn.server_endpoint = Some(cfg.peer_endpoint.clone());
             conn.assigned_ip = Some(cfg.address.clone());

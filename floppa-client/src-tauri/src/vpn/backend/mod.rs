@@ -56,6 +56,12 @@ pub trait VpnBackend: Send + Sync {
 
     /// Get the tunnel interface name.
     async fn get_interface_name(&self) -> Option<String>;
+
+    /// Get how many seconds the tunnel has been connected.
+    /// Used on Android to restore duration after app restart.
+    async fn get_connected_secs(&self) -> Option<u64> {
+        None
+    }
 }
 
 /// Create the appropriate VPN backend for the current platform.

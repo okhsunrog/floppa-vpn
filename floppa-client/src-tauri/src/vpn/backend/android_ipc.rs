@@ -107,7 +107,7 @@ impl VpnBackend for AndroidIpcBackend {
             }
         };
         match client.get_status(tarpc::context::current()).await {
-            Ok((is_running, _)) => is_running,
+            Ok((is_running, _, _)) => is_running,
             Err(e) => {
                 warn!("Failed to get VPN status via tarpc: {e}");
                 self.invalidate_client().await;
@@ -148,7 +148,7 @@ impl VpnBackend for AndroidIpcBackend {
             }
         };
         match client.get_status(tarpc::context::current()).await {
-            Ok((_, last_handshake)) => last_handshake,
+            Ok((_, last_handshake, _)) => last_handshake,
             Err(e) => {
                 warn!("Failed to get VPN status via tarpc: {e}");
                 self.invalidate_client().await;
@@ -163,6 +163,21 @@ impl VpnBackend for AndroidIpcBackend {
             Some("tun0".to_string())
         } else {
             None
+        }
+    }
+
+    async fn get_connected_secs(&self) -> Option<u64> {
+        let client = match self.get_client().await {
+            Ok(c) => c,
+            Err(_) => return None,
+        };
+        match client.get_status(tarpc::context::current()).await {
+            Ok((_, _, connected_secs)) => connected_secs,
+            Err(e) => {
+                warn!("Failed to get connected_secs via tarpc: {e}");
+                self.invalidate_client().await;
+                None
+            }
         }
     }
 }
