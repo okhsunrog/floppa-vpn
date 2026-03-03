@@ -244,25 +244,23 @@ function getConnectionDuration(): string {
   <UCard class="mb-4">
     <div class="flex flex-col items-center text-center gap-3">
       <!-- Offline mode banner -->
-      <UAlert
-          v-if="setupPhase === 'offline'"
+      <div v-if="setupPhase === 'offline'" class="w-full max-w-sm flex flex-col gap-2">
+        <UAlert
           color="warning"
           icon="i-lucide-wifi-off"
           :title="t('vpn.offlineMode')"
           :description="vpn.hasConfig ? t('vpn.offlineModeHint') : t('vpn.offlineModeNoConfig')"
-          class="w-full max-w-sm"
-        >
-          <template #actions>
-            <UButton
-              :label="t('vpn.retry')"
-              icon="i-lucide-refresh-cw"
-              color="warning"
-              variant="outline"
-              size="xs"
-              @click="setupAutoPeer()"
-            />
-          </template>
-        </UAlert>
+        />
+        <UButton
+          :label="t('vpn.retry')"
+          icon="i-lucide-refresh-cw"
+          color="warning"
+          variant="outline"
+          size="xs"
+          block
+          @click="setupAutoPeer()"
+        />
+      </div>
 
         <div
           :class="[
