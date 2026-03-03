@@ -182,10 +182,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             // Skip own app
             if (appInfo.packageName == ownPackage) continue
 
-            // Skip system apps without a launcher icon (background services, etc.)
             val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-            val hasLauncherIntent = pm.getLaunchIntentForPackage(appInfo.packageName) != null
-            if (isSystem && !hasLauncherIntent) continue
 
             val entry = JSObject()
             entry.put("packageName", appInfo.packageName)
