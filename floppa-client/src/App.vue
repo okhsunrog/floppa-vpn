@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useUpdateStore } from './stores/updateStore'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { commands } from './bindings'
+import ChangelogModal from './components/ChangelogModal.vue'
 
 const { t } = useI18n()
 const authStore = useAuthStore()
@@ -51,6 +52,9 @@ async function openDownload(url: string) {
         <UButton size="xs" variant="ghost" color="neutral" @click="updateStore.dismiss()">
           {{ t('update.dismiss') }}
         </UButton>
+        <UButton size="xs" variant="soft" @click="updateStore.openChangelogForUpdate()">
+          {{ t('changelog.whatsNew') }}
+        </UButton>
         <UButton size="xs" @click="openDownload(updateStore.updateInfo.downloadUrl)">
           {{ t('update.download') }}
         </UButton>
@@ -80,6 +84,7 @@ async function openDownload(url: string) {
       </template>
     </UModal>
 
+    <ChangelogModal />
     <RouterView />
   </AppLayout>
 </template>

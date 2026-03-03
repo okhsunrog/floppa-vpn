@@ -256,6 +256,8 @@ export default {
     notificationsOff: 'Notifications are disabled',
     enableNotifications: 'Enable',
     notificationPrompt: 'Enable notifications to see the VPN status indicator?',
+    about: 'About',
+    version: 'Version {version}',
   },
   update: {
     available: 'Update available: v{version}',
@@ -264,6 +266,15 @@ export default {
     required: 'Update Required',
     requiredDescription: 'Please update to version {version} or later to continue using the app.',
     checkNow: 'Check for Updates',
+  },
+  changelog: {
+    title: "What's new in v{version}",
+    whatsNew: "What's new",
+    notAvailable: 'Changelog not available',
+    added: 'Added',
+    fixed: 'Fixed',
+    changed: 'Changed',
+    notes: 'Notes',
   },
   vpn: {
     connect: 'Connect',

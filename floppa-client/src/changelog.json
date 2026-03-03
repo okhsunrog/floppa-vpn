@@ -1,0 +1,37 @@
+{
+  "version": "0.2.3",
+  "sections": [
+    {
+      "type": "notes",
+      "items": [
+        { "en": "We now have a Telegram channel! Follow project news, new features, and promotions: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)", "ru": "А ещё у нас появился Telegram-канал! Следите за новостями проекта, новыми фичами и акциями: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)" }
+      ]
+    },
+    {
+      "type": "added",
+      "items": [
+        { "en": "Split tunneling for Android — route only selected apps through VPN", "ru": "Раздельное туннелирование для Android — направлять через VPN только выбранные приложения" },
+        { "en": "Reconnect button when split tunneling settings change while connected", "ru": "Кнопка переподключения при изменении настроек раздельного туннелирования" },
+        { "en": "Battery optimization and notification permission prompts", "ru": "Запросы на отключение оптимизации батареи и разрешение уведомлений" },
+        { "en": "Changelog viewer in Settings", "ru": "Просмотр списка изменений в настройках" }
+      ]
+    },
+    {
+      "type": "changed",
+      "items": [
+        { "en": "Smoother dashboard startup — no more loading spinners", "ru": "Более плавный запуск — без индикаторов загрузки" },
+        { "en": "Reduced VPN status polling overhead (single RPC instead of four)", "ru": "Снижена нагрузка при опросе статуса VPN (один RPC вместо четырёх)" }
+      ]
+    },
+    {
+      "type": "fixed",
+      "items": [
+        { "en": "Sidebar close button hidden behind Android status bar", "ru": "Кнопка закрытия боковой панели скрывалась за строкой состояния Android" },
+        { "en": "Sidebar back button breaking navigation history", "ru": "Кнопка «Назад» в боковой панели ломала историю навигации" },
+        { "en": "Invisible buttons on warning banners", "ru": "Невидимые кнопки на предупреждающих баннерах" },
+        { "en": "Offline mode incorrectly revoking cached VPN config", "ru": "Автономный режим ошибочно отзывал сохранённую конфигурацию VPN" },
+        { "en": "Split tunneling app list on Android 11+", "ru": "Список приложений для раздельного туннелирования на Android 11+" }
+      ]
+    }
+  ]
+}

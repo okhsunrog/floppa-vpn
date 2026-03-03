@@ -195,3 +195,4 @@ jobs:
             release-artifacts/**/*.deb
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi
+            floppa-client/src/changelog.json

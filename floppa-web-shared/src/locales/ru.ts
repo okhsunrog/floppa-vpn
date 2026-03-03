@@ -256,6 +256,8 @@ export default {
     notificationsOff: 'Уведомления отключены',
     enableNotifications: 'Включить',
     notificationPrompt: 'Включить уведомления для отображения статуса VPN?',
+    about: 'О приложении',
+    version: 'Версия {version}',
   },
   update: {
     available: 'Доступно обновление: v{version}',
@@ -264,6 +266,15 @@ export default {
     required: 'Требуется обновление',
     requiredDescription: 'Обновите приложение до версии {version} или новее, чтобы продолжить.',
     checkNow: 'Проверить обновления',
+  },
+  changelog: {
+    title: 'Что нового в v{version}',
+    whatsNew: 'Что нового',
+    notAvailable: 'Список изменений недоступен',
+    added: 'Добавлено',
+    fixed: 'Исправлено',
+    changed: 'Изменено',
+    notes: 'Примечания',
   },
   vpn: {
     connect: 'Подключить',

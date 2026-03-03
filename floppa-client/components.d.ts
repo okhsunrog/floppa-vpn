@@ -11,8 +11,10 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    ChangelogModal: typeof import('./src/components/ChangelogModal.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    UAccordion: typeof import('./../node_modules/.bun/@nuxt+ui@4.5.0+09a2a9c570477cd9/node_modules/@nuxt/ui/dist/runtime/components/Accordion.vue')['default']
     UAlert: typeof import('./../node_modules/.bun/@nuxt+ui@4.5.0+09a2a9c570477cd9/node_modules/@nuxt/ui/dist/runtime/components/Alert.vue')['default']
     UApp: typeof import('./../node_modules/.bun/@nuxt+ui@4.5.0+09a2a9c570477cd9/node_modules/@nuxt/ui/dist/runtime/components/App.vue')['default']
     UAvatar: typeof import('./../node_modules/.bun/@nuxt+ui@4.5.0+09a2a9c570477cd9/node_modules/@nuxt/ui/dist/runtime/components/Avatar.vue')['default']

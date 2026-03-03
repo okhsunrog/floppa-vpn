@@ -239,3 +239,6 @@ app.mount('#app')
 
 // Check for voluntary updates (non-blocking)
 void updateStore.checkForUpdates()
+
+// Show changelog on first launch after update
+void updateStore.checkPostUpdateChangelog()
