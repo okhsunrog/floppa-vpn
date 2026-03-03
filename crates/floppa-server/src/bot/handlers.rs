@@ -30,8 +30,12 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
 
     let callback_handler = Update::filter_callback_query().endpoint(handle_callback);
 
+    let message_handler = Update::filter_message()
+        .branch(command_handler)
+        .endpoint(fallback);
+
     dptree::entry()
-        .branch(Update::filter_message().branch(command_handler))
+        .branch(message_handler)
         .branch(callback_handler)
 }
 
@@ -160,6 +164,12 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
         }
     }
 
+    Ok(())
+}
+
+async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
+    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
+    bot.send_message(msg.chat.id, msgs.unknown_message).await?;
     Ok(())
 }
 

@@ -19,6 +19,9 @@ pub struct Messages {
     pub lang_prompt: &'static str,
     pub lang_set: &'static str,
 
+    // fallback
+    pub unknown_message: &'static str,
+
     // errors
     pub error_generic: &'static str,
 }
@@ -38,6 +41,11 @@ static EN: Messages = Messages {
     lang_prompt: "Choose your language:",
     lang_set: "Language set to English",
 
+    unknown_message: "I only understand commands:\n\n\
+                      /start — open the app\n\
+                      /status — check subscription\n\
+                      /lang — change language",
+
     error_generic: "An error occurred. Please try again later.",
 };
 
@@ -55,6 +63,11 @@ static RU: Messages = Messages {
 
     lang_prompt: "Выберите язык:",
     lang_set: "Язык изменён на русский",
+
+    unknown_message: "Я понимаю только команды:\n\n\
+                      /start — открыть приложение\n\
+                      /status — проверить подписку\n\
+                      /lang — сменить язык",
 
     error_generic: "Произошла ошибка. Попробуйте позже.",
 };
