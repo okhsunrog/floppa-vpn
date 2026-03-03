@@ -113,12 +113,20 @@ function startDeepLinkLogin() {
             >
               {{ t('login.continueInBrowser') }}
             </UButton>
-            <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-              {{ t('login.browserHint') }}
-            </p>
-            <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-              {{ t('login.vpnHint') }}
-            </p>
+            <div class="flex flex-col gap-1.5 mt-1">
+              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+                {{ t('login.browserHint') }}
+              </p>
+              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+                {{ t('login.retryHint') }}
+              </p>
+              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+                {{ t('login.browserChangeHint') }}
+              </p>
+              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+                {{ t('login.vpnHint') }}
+              </p>
+            </div>
           </div>
 
           <!-- Widget mode (web) -->
