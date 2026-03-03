@@ -88,6 +88,13 @@ let statusInterval: ReturnType<typeof setInterval> | null = null
 const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
 const createPeerMut = useMutation(createMyPeerMutation())
 
+// Clear offline banner when server becomes reachable again
+watch(meQueryError, (err) => {
+  if (!err && setupPhase.value === 'offline') {
+    setupPhase.value = 'idle'
+  }
+})
+
 type SyncResult = { outcome: 'ok' } | { outcome: 'error'; errorKey: string } | { outcome: 'offline' }
 
 async function doServerSync(): Promise<SyncResult> {
