@@ -248,6 +248,14 @@ build-test-tunnel:
 test-integration: build-test-tunnel
     cd tests/integration && uv run pytest -v
 
+# Run speed limit integration tests (requires Docker, runs locally)
+test-speed-limit:
+    cd tests/integration && uv run pytest test_speed_limit.py -v -s
+
+# Build floppa-cli
+build-cli:
+    cargo build --release --manifest-path crates/floppa-cli/Cargo.toml
+
 # Deploy to Moscow VPS via Ansible (builds, packages, then deploys)
 deploy: package
     cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa

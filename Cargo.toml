@@ -9,6 +9,7 @@ exclude = [
     "floppa-client/src-tauri",
     "tauri-plugin-vpn",
     "crates/floppa-test-tunnel",
+    "crates/floppa-cli",
 ]
 
 [workspace.package]

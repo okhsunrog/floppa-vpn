@@ -260,7 +260,7 @@ fn generate_nonce() -> String {
 }
 
 fn is_allowed_redirect_uri(uri: &str) -> bool {
-    uri.starts_with("floppa://")
+    uri.starts_with("floppa://") || uri.starts_with("http://127.0.0.1:")
 }
 
 fn detect_request_origin(headers: &HeaderMap) -> Option<String> {
