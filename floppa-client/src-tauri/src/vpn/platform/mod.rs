@@ -12,6 +12,12 @@ use std::net::IpAddr;
 /// Platform-specific VPN operations
 #[async_trait]
 pub trait Platform: Send + Sync {
+    /// Prepare TUN interface before tunnel startup.
+    ///
+    /// On Linux, this may invoke a privileged helper to create a persistent
+    /// TUN owned by the current user. Other platforms may no-op.
+    async fn prepare_tun(&self, iface: &str) -> Result<(), String>;
+
     /// Configure IP address on TUN interface
     async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String>;
 
@@ -71,6 +77,10 @@ impl PlatformImpl {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "android")))]
 #[async_trait]
 impl Platform for PlatformImpl {
+    async fn prepare_tun(&self, _iface: &str) -> Result<(), String> {
+        Err("Platform not supported".to_string())
+    }
+
     async fn configure_address(&self, _iface: &str, _addr: IpNetwork) -> Result<(), String> {
         Err("Platform not supported".to_string())
     }

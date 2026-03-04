@@ -316,11 +316,27 @@ async fn connect_desktop(
     let endpoint_ip = endpoint.ip();
 
     #[cfg(target_os = "linux")]
-    let fwmark = Some(FWMARK);
-    #[cfg(not(target_os = "linux"))]
-    let fwmark = None;
+    if let Err(e) = platform.prepare_tun(INTERFACE_NAME).await {
+        error!("Failed to prepare TUN interface: {e}");
+        let mut conn = state.connection.write().await;
+        conn.status = ConnectionStatus::Disconnected;
+        return Err(format!("Failed to prepare TUN interface: {e}"));
+    }
 
-    match backend.start(&config, INTERFACE_NAME, fwmark).await {
+    #[cfg(target_os = "linux")]
+    let start_result = match backend.start(&config, INTERFACE_NAME, Some(FWMARK)).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.contains("Operation not permitted") || e.contains("Permission denied") => {
+            warn!("Tunnel start with fwmark failed due permissions, retrying without fwmark");
+            backend.start(&config, INTERFACE_NAME, None).await
+        }
+        Err(e) => Err(e),
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let start_result = backend.start(&config, INTERFACE_NAME, None).await;
+
+    match start_result {
         Ok(()) => {
             let addr = config.address_network()?;
             if let Err(e) = platform.configure_address(INTERFACE_NAME, addr).await {

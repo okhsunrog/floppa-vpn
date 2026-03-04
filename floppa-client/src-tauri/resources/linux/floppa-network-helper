@@ -27,7 +27,24 @@ validate_ip() {
     fi
 }
 
+validate_uid() {
+    if [[ ! "$1" =~ ^[0-9]+$ ]]; then
+        echo "Invalid UID: $1" >&2
+        exit 1
+    fi
+}
+
 case "${1:-}" in
+    ensure-tun)
+        # Usage: ensure-tun <iface> <uid>
+        [[ $# -eq 3 ]] || { echo "Usage: ensure-tun <iface> <uid>" >&2; exit 1; }
+        validate_iface "$2"
+        validate_uid "$3"
+        if ! ip link show dev "$2" >/dev/null 2>&1; then
+            ip tuntap add dev "$2" mode tun user "$3"
+        fi
+        ;;
+
     configure)
         # Usage: configure <iface> <ip/prefix>
         [[ $# -eq 3 ]] || { echo "Usage: configure <iface> <ip/prefix>" >&2; exit 1; }
@@ -113,7 +130,7 @@ case "${1:-}" in
 
     *)
         echo "Unknown command: ${1:-}" >&2
-        echo "Commands: configure, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf" >&2
+        echo "Commands: ensure-tun, configure, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf" >&2
         exit 1
         ;;
 esac

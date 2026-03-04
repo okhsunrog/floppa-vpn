@@ -36,6 +36,12 @@ impl Default for AndroidPlatform {
 
 #[async_trait]
 impl Platform for AndroidPlatform {
+    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
+        // On Android, TUN is created by VpnService before Rust gets the fd.
+        debug!("Android: TUN prepared by VpnService for {}", iface);
+        Ok(())
+    }
+
     async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
         // On Android, address is configured by VpnService.Builder.addAddress()
         // in the Kotlin code before we receive the TUN fd
