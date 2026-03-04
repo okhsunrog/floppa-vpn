@@ -1,5 +1,5 @@
 {
-  "version": "0.3.1",
+  "version": "0.3.2",
   "sections": [
     {
       "type": "notes",
@@ -45,7 +45,8 @@
         { "en": "Offline banner now shows retry button and clears automatically on reconnect", "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи" },
         { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" },
         { "en": "VPN tunnel not stopping on Android in error scenarios (handshake failure, connection timeout)", "ru": "VPN-туннель не останавливался на Android при ошибках (неудачный handshake, таймаут подключения)" },
-        { "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode", "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»" }
+        { "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode", "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»" },
+        { "en": "\"What's new\" changelog not loading on update banner", "ru": "Список изменений не загружался при нажатии «Что нового» на баннере обновления" }
       ]
     }
   ]

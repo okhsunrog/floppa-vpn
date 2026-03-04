@@ -70,23 +70,10 @@ const changelogCache = new Map<string, ChangelogData>()
 async function fetchChangelogForVersion(version: string): Promise<ChangelogData | null> {
   if (changelogCache.has(version)) return changelogCache.get(version)!
   try {
-    const res = await fetch(
-      `https://api.github.com/repos/${GITHUB_REPO}/releases/tags/v${version}`,
-      { headers: { Accept: 'application/vnd.github+json' } },
-    )
-    if (!res.ok) return null
-    const release: GitHubRelease = await res.json()
-    return await extractChangelog(release)
-  } catch {
-    return null
-  }
-}
-
-async function extractChangelog(release: GitHubRelease): Promise<ChangelogData | null> {
-  const asset = release.assets.find((a) => a.name === 'changelog.json')
-  if (!asset) return null
-  try {
-    const res = await fetch(asset.browser_download_url)
+    // Fetch directly from raw GitHub content — release download URLs
+    // redirect to objects.githubusercontent.com which fails in Android WebView
+    const url = `https://raw.githubusercontent.com/${GITHUB_REPO}/v${version}/floppa-client/src/changelog.json`
+    const res = await fetch(url)
     if (!res.ok) return null
     const data: ChangelogData = await res.json()
     changelogCache.set(data.version, data)
@@ -132,7 +119,7 @@ export const useUpdateStore = defineStore('update', () => {
       }
 
       // Pre-fetch changelog for the available update
-      extractChangelog(release)
+      fetchChangelogForVersion(remoteVersion)
     } catch {
       // Silently ignore — update check is best-effort
     }
