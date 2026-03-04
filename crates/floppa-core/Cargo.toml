@@ -16,3 +16,4 @@ rand.workspace = true
 toml.workspace = true
 chacha20poly1305 = "0.10.1"
 x25519-dalek = { version = "2.0.1", features = ["static_secrets"] }
+ipnetwork = "0.21.1"

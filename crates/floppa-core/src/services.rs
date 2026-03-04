@@ -3,7 +3,9 @@
 use crate::error::{FloppaError, Result};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{Duration, Utc};
+use ipnetwork::Ipv4Network;
 use std::collections::HashSet;
+use std::net::Ipv4Addr;
 
 /// Result of user upsert operation.
 pub struct UpsertResult {
@@ -218,40 +220,30 @@ async fn allocate_ip_tx(
     allocate_ip_inner(&mut **tx, subnet).await
 }
 
-// Kept as runtime query_as because it uses a generic executor (pool or transaction)
+// Kept as runtime query because it uses a generic executor (pool or transaction)
 async fn allocate_ip_inner<'e, E>(executor: E, subnet: &str) -> Result<String>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    let parts: Vec<&str> = subnet.split('/').collect();
-    if parts.len() != 2 {
-        return Err(FloppaError::NoAvailableIps);
-    }
-
-    let base_ip: Vec<u8> = parts[0].split('.').filter_map(|s| s.parse().ok()).collect();
-    if base_ip.len() != 4 {
-        return Err(FloppaError::NoAvailableIps);
-    }
-
-    let prefix: u8 = parts[1].parse().map_err(|_| FloppaError::NoAvailableIps)?;
-    let host_bits = 32 - prefix;
-    let max_hosts = (1u32 << host_bits) - 2; // Exclude network and broadcast
-
-    let base_u32 = u32::from_be_bytes([base_ip[0], base_ip[1], base_ip[2], base_ip[3]]);
+    let network: Ipv4Network = subnet.parse().map_err(|_| FloppaError::NoAvailableIps)?;
 
     let assigned: Vec<String> =
         sqlx::query_scalar("SELECT assigned_ip FROM peers WHERE sync_status != 'removed'")
             .fetch_all(executor)
             .await?;
 
-    let assigned_set: HashSet<String> = assigned.into_iter().collect();
+    let assigned_set: HashSet<Ipv4Addr> = assigned
+        .iter()
+        .filter_map(|ip| ip.parse().ok())
+        .collect();
 
-    // Find first available IP (starting from offset 2; offset 1 is gateway)
-    for i in 2..=max_hosts {
-        let octets = (base_u32 + i).to_be_bytes();
-        let ip = format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]);
+    // Skip network address and gateway (first two), exclude broadcast (last)
+    for ip in network.iter().skip(2) {
+        if ip == network.broadcast() {
+            break;
+        }
         if !assigned_set.contains(&ip) {
-            return Ok(ip);
+            return Ok(ip.to_string());
         }
     }
 
