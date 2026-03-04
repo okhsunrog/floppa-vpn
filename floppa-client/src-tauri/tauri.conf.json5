@@ -7,7 +7,7 @@
   build: {
     // Dev config
     beforeDevCommand: "bun run sync-version && bun run dev",
-    devUrl: "http://localhost:1420",
+    devUrl: "http://127.0.0.1:1420",
 
     // Build config
     beforeBuildCommand: "bun run sync-version && bun run build",
