@@ -41,6 +41,13 @@ jobs:
       - name: Tests
         run: cargo test
 
+      - name: Check OpenAPI client is up to date
+        run: |
+          cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
+          cd floppa-web-shared && bun run openapi-ts
+          git diff --exit-code floppa-web-shared/openapi.json floppa-web-shared/src/client/ \
+            || (echo "::error::OpenAPI client is stale. Run 'just openapi' and commit the changes." && exit 1)
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
