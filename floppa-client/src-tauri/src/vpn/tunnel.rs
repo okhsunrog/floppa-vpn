@@ -141,6 +141,13 @@ impl GotatunTunnel {
             tun_config.platform_config(|cfg| {
                 // Fixed GUID prevents Windows "new network detected" popup on every connect
                 cfg.device_guid(0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A00);
+                // Load wintun.dll from the exe's directory (cwd may differ, e.g. deep-link launches)
+                let exe_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+                if let Some(dir) = exe_dir {
+                    cfg.wintun_file(dir.join("wintun.dll"));
+                }
             });
         }
 

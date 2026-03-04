@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { platform, arch } from '@tauri-apps/plugin-os'
 import bundledChangelog from '../changelog.json'
 
 const GITHUB_REPO = 'okhsunrog/floppa-vpn'
@@ -59,10 +60,18 @@ function compareSemver(a: string, b: string): number {
 }
 
 function getPlatformAssetSuffix(): string {
-  if (navigator.userAgent.includes('Android')) return 'android-arm64.apk'
-  if (navigator.userAgent.includes('Linux')) return 'linux-x86_64.AppImage'
-  if (navigator.userAgent.includes('Windows')) return 'windows-x86_64.exe'
-  return ''
+  const os = platform()
+  const cpu = arch() === 'aarch64' ? 'arm64' : arch()
+  switch (os) {
+    case 'android':
+      return `android-${cpu}.apk`
+    case 'linux':
+      return `linux-${cpu}.AppImage`
+    case 'windows':
+      return `windows-${cpu}.exe`
+    default:
+      return ''
+  }
 }
 
 const changelogCache = new Map<string, ChangelogData>()
