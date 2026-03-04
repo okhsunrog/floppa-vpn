@@ -5,9 +5,9 @@ use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::{info, warn};
-use vpn::{PlatformImpl, VpnState, get_platform};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;
+use vpn::{PlatformImpl, VpnState, get_platform};
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Clone, serde::Serialize)]
@@ -141,7 +141,10 @@ pub fn run() {
             // On Android, create the tarpc IPC backend now that we have the real data dir
             #[cfg(target_os = "android")]
             {
-                let data_dir = app.path().app_data_dir().expect("Failed to get app data dir");
+                let data_dir = app
+                    .path()
+                    .app_data_dir()
+                    .expect("Failed to get app data dir");
                 let socket_path = data_dir.join("vpn.sock").to_string_lossy().to_string();
                 info!("Android tarpc socket path: {socket_path}");
                 let backend = vpn::create_backend(socket_path);
@@ -153,24 +156,26 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
-        // Graceful VPN cleanup on desktop exit — restore DNS, routes, stop tunnel
-        #[cfg(not(target_os = "android"))]
-        if let tauri::RunEvent::Exit = event {
-            use vpn::backend::VpnBackend;
-            use vpn::platform::Platform;
+    app.run(
+        |#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
+            // Graceful VPN cleanup on desktop exit — restore DNS, routes, stop tunnel
+            #[cfg(not(target_os = "android"))]
+            if let tauri::RunEvent::Exit = event {
+                use vpn::backend::VpnBackend;
+                use vpn::platform::Platform;
 
-            let backend = app_handle.state::<Arc<dyn VpnBackend>>();
-            let platform = app_handle.state::<Arc<PlatformImpl>>();
+                let backend = app_handle.state::<Arc<dyn VpnBackend>>();
+                let platform = app_handle.state::<Arc<PlatformImpl>>();
 
-            tauri::async_runtime::block_on(async {
-                if backend.get_all_info().await.is_some_and(|i| i.is_running) {
-                    info!("App exiting with active VPN tunnel — cleaning up");
-                    let _ = platform.cleanup("floppa0").await;
-                    let _ = backend.stop().await;
-                    info!("VPN cleanup complete");
-                }
-            });
-        }
-    });
+                tauri::async_runtime::block_on(async {
+                    if backend.get_all_info().await.is_some_and(|i| i.is_running) {
+                        info!("App exiting with active VPN tunnel — cleaning up");
+                        let _ = platform.cleanup("floppa0").await;
+                        let _ = backend.stop().await;
+                        info!("VPN cleanup complete");
+                    }
+                });
+            }
+        },
+    );
 }

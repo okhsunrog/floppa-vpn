@@ -2,11 +2,11 @@
 
 use serde::de::DeserializeOwned;
 use tauri::{
-    plugin::{PluginApi, PluginHandle},
     AppHandle, Runtime,
+    plugin::{PluginApi, PluginHandle},
 };
 
-use crate::{models::*, Result};
+use crate::{Result, models::*};
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "dev.okhsunrog.floppavpn.vpn";

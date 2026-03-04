@@ -15,8 +15,7 @@ pub fn set_dns(config: &WgConfig) -> Result<()> {
 
     // Backup current resolv.conf
     if Path::new(RESOLV_CONF).exists() && !Path::new(RESOLV_BACKUP).exists() {
-        fs::copy(RESOLV_CONF, RESOLV_BACKUP)
-            .context("Failed to backup /etc/resolv.conf")?;
+        fs::copy(RESOLV_CONF, RESOLV_BACKUP).context("Failed to backup /etc/resolv.conf")?;
     }
 
     let content: String = servers
@@ -34,8 +33,7 @@ pub fn set_dns(config: &WgConfig) -> Result<()> {
 
 pub fn restore_dns() -> Result<()> {
     if Path::new(RESOLV_BACKUP).exists() {
-        fs::copy(RESOLV_BACKUP, RESOLV_CONF)
-            .context("Failed to restore /etc/resolv.conf")?;
+        fs::copy(RESOLV_BACKUP, RESOLV_CONF).context("Failed to restore /etc/resolv.conf")?;
         fs::remove_file(RESOLV_BACKUP).ok();
         eprintln!("DNS restored.");
     }

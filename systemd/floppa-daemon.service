@@ -1,0 +1,19 @@
+[Unit]
+Description=Floppa VPN WireGuard Daemon
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/floppa-vpn
+ExecStart=/opt/floppa-vpn/bin/floppa-daemon
+Environment=FLOPPA_CONFIG=/etc/floppa-vpn/config.toml
+Environment=FLOPPA_SECRETS=/etc/floppa-vpn/secrets.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

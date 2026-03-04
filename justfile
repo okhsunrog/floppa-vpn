@@ -20,62 +20,12 @@ package: build
     rm -rf {{release_dir}}
     mkdir -p {{release_dir}}/{bin,migrations,systemd}
 
-    # Copy binaries
     cp target/release/floppa-daemon {{release_dir}}/bin/
     cp target/release/floppa-server {{release_dir}}/bin/
-
-    # Copy migrations
     cp -r migrations/* {{release_dir}}/migrations/
-
-    # Copy config example
     cp config.example.toml {{release_dir}}/
+    cp systemd/*.service {{release_dir}}/systemd/
 
-    # Create systemd service files
-    cat > {{release_dir}}/systemd/floppa-daemon.service << 'EOF'
-    [Unit]
-    Description=Floppa VPN WireGuard Daemon
-    After=network-online.target postgresql.service
-    Wants=network-online.target
-    Requires=postgresql.service
-    StartLimitIntervalSec=60
-    StartLimitBurst=5
-
-    [Service]
-    Type=simple
-    WorkingDirectory=/opt/floppa-vpn
-    ExecStart=/opt/floppa-vpn/bin/floppa-daemon
-    Environment=FLOPPA_CONFIG=/etc/floppa-vpn/config.toml
-    Environment=FLOPPA_SECRETS=/etc/floppa-vpn/secrets.toml
-    Restart=on-failure
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-
-    cat > {{release_dir}}/systemd/floppa-server.service << 'EOF'
-    [Unit]
-    Description=Floppa VPN Server (Bot + Admin API)
-    After=network-online.target postgresql.service
-    Wants=network-online.target
-    StartLimitIntervalSec=60
-    StartLimitBurst=5
-
-    [Service]
-    Type=simple
-    User=floppa
-    WorkingDirectory=/opt/floppa-vpn
-    ExecStart=/opt/floppa-vpn/bin/floppa-server
-    Environment=FLOPPA_CONFIG=/etc/floppa-vpn/config.toml
-    Environment=FLOPPA_SECRETS=/etc/floppa-vpn/secrets.toml
-    Restart=on-failure
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-
-    # Create archive
     tar -czvf floppa-vpn-release.tar.gz -C {{release_dir}} .
 
     echo "Created floppa-vpn-release.tar.gz"
@@ -90,62 +40,12 @@ package-target: build-target
     rm -rf {{release_dir}}
     mkdir -p {{release_dir}}/{bin,migrations,systemd}
 
-    # Copy binaries from target directory
     cp target/{{target}}/release/floppa-daemon {{release_dir}}/bin/
     cp target/{{target}}/release/floppa-server {{release_dir}}/bin/
-
-    # Copy migrations
     cp -r migrations/* {{release_dir}}/migrations/
-
-    # Copy config example
     cp config.example.toml {{release_dir}}/
+    cp systemd/*.service {{release_dir}}/systemd/
 
-    # Create systemd service files (same as package)
-    cat > {{release_dir}}/systemd/floppa-daemon.service << 'EOF'
-    [Unit]
-    Description=Floppa VPN WireGuard Daemon
-    After=network-online.target postgresql.service
-    Wants=network-online.target
-    Requires=postgresql.service
-    StartLimitIntervalSec=60
-    StartLimitBurst=5
-
-    [Service]
-    Type=simple
-    WorkingDirectory=/opt/floppa-vpn
-    ExecStart=/opt/floppa-vpn/bin/floppa-daemon
-    Environment=FLOPPA_CONFIG=/etc/floppa-vpn/config.toml
-    Environment=FLOPPA_SECRETS=/etc/floppa-vpn/secrets.toml
-    Restart=on-failure
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-
-    cat > {{release_dir}}/systemd/floppa-server.service << 'EOF'
-    [Unit]
-    Description=Floppa VPN Server (Bot + Admin API)
-    After=network-online.target postgresql.service
-    Wants=network-online.target
-    StartLimitIntervalSec=60
-    StartLimitBurst=5
-
-    [Service]
-    Type=simple
-    User=floppa
-    WorkingDirectory=/opt/floppa-vpn
-    ExecStart=/opt/floppa-vpn/bin/floppa-server
-    Environment=FLOPPA_CONFIG=/etc/floppa-vpn/config.toml
-    Environment=FLOPPA_SECRETS=/etc/floppa-vpn/secrets.toml
-    Restart=on-failure
-    RestartSec=5
-
-    [Install]
-    WantedBy=multi-user.target
-    EOF
-
-    # Create archive
     tar -czvf floppa-vpn-release.tar.gz -C {{release_dir}} .
 
     echo "Created floppa-vpn-release.tar.gz"
@@ -172,6 +72,10 @@ check-kotlin: ensure-ktfmt
 # Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
 check:
     cargo fmt --check
+    cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
+    cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
+    cargo fmt --check --manifest-path crates/floppa-cli/Cargo.toml
+    cargo fmt --check --manifest-path crates/floppa-test-tunnel/Cargo.toml
     cargo clippy -- -D warnings
     cargo test
     cd floppa-web-shared && bun run format:check && bun run type-check && bun run lint:check
@@ -182,6 +86,10 @@ check:
 # Format all code (Rust + frontend + Kotlin)
 fmt:
     cargo fmt
+    cargo fmt --manifest-path floppa-client/src-tauri/Cargo.toml
+    cargo fmt --manifest-path tauri-plugin-vpn/Cargo.toml
+    cargo fmt --manifest-path crates/floppa-cli/Cargo.toml
+    cargo fmt --manifest-path crates/floppa-test-tunnel/Cargo.toml
     cd floppa-web-shared && bun run format && bun run lint
     cd floppa-face && bun run format && bun run lint
     cd floppa-client && bun run format && bun run lint

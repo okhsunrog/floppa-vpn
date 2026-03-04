@@ -254,12 +254,13 @@ async fn main() {
         .or_else(|| std::env::var("WG_CONFIG").ok())
         .expect("Usage: floppa-test-tunnel <config.conf> (or set WG_CONFIG env var)");
 
-    let config_str =
-        std::fs::read_to_string(&config_path).expect("Failed to read config file");
+    let config_str = std::fs::read_to_string(&config_path).expect("Failed to read config file");
     let config = WgConfig::from_config_str(&config_str).expect("Failed to parse config");
 
     eprintln!("Creating gotatun tunnel on {INTERFACE_NAME}...");
-    let device = create_tunnel(&config).await.expect("Failed to create tunnel");
+    let device = create_tunnel(&config)
+        .await
+        .expect("Failed to create tunnel");
 
     eprintln!("Configuring networking...");
     configure_networking(&config)

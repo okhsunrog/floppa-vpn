@@ -58,7 +58,12 @@ jobs:
         run: cargo sqlx prepare --workspace --check
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: |
+          cargo fmt --check
+          cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
+          cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
+          cargo fmt --check --manifest-path crates/floppa-cli/Cargo.toml
+          cargo fmt --check --manifest-path crates/floppa-test-tunnel/Cargo.toml
 
       - name: Clippy
         run: cargo clippy -- -D warnings

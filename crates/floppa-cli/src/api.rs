@@ -155,9 +155,7 @@ impl ApiClient {
             bail!("GET /me/peers/{}/config failed: {}", peer_id, resp.status());
         }
 
-        resp.text()
-            .await
-            .context("Failed to read config response")
+        resp.text().await.context("Failed to read config response")
     }
 
     /// Find an existing active peer or create a new one. Returns the WG config string.
@@ -184,7 +182,10 @@ impl ApiClient {
     /// Exchange a one-time login code for a JWT token (no auth required).
     pub async fn exchange_code(base_url: &str, code: &str) -> Result<AuthResponse> {
         let client = reqwest::Client::new();
-        let url = format!("{}/auth/telegram/exchange-code", base_url.trim_end_matches('/'));
+        let url = format!(
+            "{}/auth/telegram/exchange-code",
+            base_url.trim_end_matches('/')
+        );
 
         let resp = client
             .post(&url)
@@ -202,17 +203,12 @@ impl ApiClient {
             bail!("Code exchange failed: {}", resp.status());
         }
 
-        resp.json()
-            .await
-            .context("Failed to parse auth response")
+        resp.json().await.context("Failed to parse auth response")
     }
 }
 
 fn hostname() -> String {
     std::env::var("HOSTNAME")
-        .or_else(|_| {
-            std::fs::read_to_string("/etc/hostname")
-                .map(|s| s.trim().to_string())
-        })
+        .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_string()))
         .unwrap_or_else(|_| "floppa-cli".to_string())
 }

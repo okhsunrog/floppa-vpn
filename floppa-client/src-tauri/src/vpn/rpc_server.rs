@@ -5,9 +5,9 @@
 
 use super::rpc::{TunnelInfo, VpnRpc};
 use super::tunnel::TunnelManager;
+use futures::StreamExt;
 use std::sync::Arc;
 use tarpc::context::Context;
-use futures::StreamExt;
 use tarpc::server::Channel;
 use tokio::net::UnixListener;
 use tokio::sync::watch;
@@ -34,7 +34,11 @@ impl VpnRpc for VpnRpcServer {
     async fn get_full_info(self, _ctx: Context) -> TunnelInfo {
         let is_running = self.tunnel_manager.is_running().await;
         let last_handshake = self.tunnel_manager.get_last_handshake().await;
-        let connected_secs = self.tunnel_manager.get_connection_duration().await.map(|d| d.as_secs());
+        let connected_secs = self
+            .tunnel_manager
+            .get_connection_duration()
+            .await
+            .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
         TunnelInfo {
             is_running,

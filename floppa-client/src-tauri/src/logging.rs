@@ -1,4 +1,4 @@
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 pub fn init_tracing() {
     let filter = EnvFilter::from_default_env();
@@ -92,7 +92,10 @@ where
             tracing::Level::TRACE => ("\x1b[35m", "TRACE"),
         };
 
-        write!(writer, " {color}{level_str}\x1b[0m \x1b[2m{short_target}\x1b[0m: ")?;
+        write!(
+            writer,
+            " {color}{level_str}\x1b[0m \x1b[2m{short_target}\x1b[0m: "
+        )?;
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }

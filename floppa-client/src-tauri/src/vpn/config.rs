@@ -40,8 +40,7 @@ fn get_config_dir() -> Result<PathBuf, String> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ =
-                std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o700));
+            let _ = std::fs::set_permissions(&config_dir, std::fs::Permissions::from_mode(0o700));
         }
     }
 
@@ -69,8 +68,7 @@ pub fn get_or_create_device_id() -> Result<String, String> {
     let json = serde_json::to_string_pretty(&identity)
         .map_err(|e| format!("Failed to serialize device identity: {e}"))?;
 
-    std::fs::write(&path, &json)
-        .map_err(|e| format!("Failed to write device identity: {e}"))?;
+    std::fs::write(&path, &json).map_err(|e| format!("Failed to write device identity: {e}"))?;
 
     #[cfg(unix)]
     {
@@ -89,7 +87,6 @@ pub fn get_device_name() -> String {
         .and_then(|h| h.into_string().ok())
         .unwrap_or_else(|| "unknown".to_string())
 }
-
 
 /// Save WireGuard config string to OS keyring (fallback to file on Android / keyring failure).
 pub fn save_wg_config(config_str: &str) {

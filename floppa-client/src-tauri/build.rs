@@ -13,8 +13,7 @@ fn main() {
 
         let wintun_dest = "wintun.dll";
         if std::path::Path::new(wintun_src).exists() {
-            std::fs::copy(wintun_src, wintun_dest)
-                .expect("Failed to copy wintun.dll for bundling");
+            std::fs::copy(wintun_src, wintun_dest).expect("Failed to copy wintun.dll for bundling");
             println!("cargo:rerun-if-changed={}", wintun_src);
         } else {
             panic!(

@@ -96,7 +96,12 @@ impl GotatunTunnel {
             .await
             .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
             .next()
-            .ok_or_else(|| format!("Endpoint '{}' resolved to no addresses", config.peer_endpoint))?;
+            .ok_or_else(|| {
+                format!(
+                    "Endpoint '{}' resolved to no addresses",
+                    config.peer_endpoint
+                )
+            })?;
         let allowed_ips = config.allowed_ips_networks();
 
         let public_key = x25519::PublicKey::from(peer_public_key);
@@ -115,7 +120,11 @@ impl GotatunTunnel {
 
     /// Create a new tunnel from WireGuard config (desktop platforms)
     #[cfg(not(target_os = "android"))]
-    pub async fn new(config: &WgConfig, interface_name: &str, fwmark: Option<u32>) -> Result<Self, String> {
+    pub async fn new(
+        config: &WgConfig,
+        interface_name: &str,
+        fwmark: Option<u32>,
+    ) -> Result<Self, String> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
 
         let private_key = config.private_key_bytes()?;
@@ -230,7 +239,11 @@ impl GotatunTunnel {
 
     /// Stub for Android - use from_fd instead
     #[cfg(target_os = "android")]
-    pub async fn new(_config: &WgConfig, _interface_name: &str, _fwmark: Option<u32>) -> Result<Self, String> {
+    pub async fn new(
+        _config: &WgConfig,
+        _interface_name: &str,
+        _fwmark: Option<u32>,
+    ) -> Result<Self, String> {
         Err("On Android, use from_fd() with the fd from VpnService".to_string())
     }
 
@@ -305,7 +318,12 @@ impl TunnelManager {
     ///
     /// `fwmark` is used on Linux for policy routing to ensure VPN packets bypass the VPN interface
     #[cfg(not(target_os = "android"))]
-    pub async fn start(&self, config: &WgConfig, interface_name: &str, fwmark: Option<u32>) -> Result<(), String> {
+    pub async fn start(
+        &self,
+        config: &WgConfig,
+        interface_name: &str,
+        fwmark: Option<u32>,
+    ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
 
         // Stop existing tunnel if any
@@ -322,7 +340,12 @@ impl TunnelManager {
 
     /// Start tunnel on Android using fd from VpnService
     #[cfg(target_os = "android")]
-    pub async fn start(&self, _config: &WgConfig, _interface_name: &str, _fwmark: Option<u32>) -> Result<(), String> {
+    pub async fn start(
+        &self,
+        _config: &WgConfig,
+        _interface_name: &str,
+        _fwmark: Option<u32>,
+    ) -> Result<(), String> {
         // On Android, we need to wait for the fd from VpnService
         // Use start_with_fd instead after receiving the fd
         Err("On Android, call start_with_fd() after receiving fd from VpnService".to_string())
@@ -382,7 +405,9 @@ impl TunnelManager {
 
     pub async fn get_interface_name(&self) -> Option<String> {
         let tunnel_guard = self.tunnel.read().await;
-        tunnel_guard.as_ref().map(|t| t.interface_name().to_string())
+        tunnel_guard
+            .as_ref()
+            .map(|t| t.interface_name().to_string())
     }
 }
 

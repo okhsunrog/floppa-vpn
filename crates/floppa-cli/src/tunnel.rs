@@ -91,19 +91,25 @@ impl WgConfig {
 
     fn private_key_bytes(&self) -> Result<[u8; 32]> {
         let bytes = BASE64.decode(&self.private_key)?;
-        bytes.try_into().map_err(|_| anyhow!("Private key must be 32 bytes"))
+        bytes
+            .try_into()
+            .map_err(|_| anyhow!("Private key must be 32 bytes"))
     }
 
     fn peer_public_key_bytes(&self) -> Result<[u8; 32]> {
         let bytes = BASE64.decode(&self.peer_public_key)?;
-        bytes.try_into().map_err(|_| anyhow!("Public key must be 32 bytes"))
+        bytes
+            .try_into()
+            .map_err(|_| anyhow!("Public key must be 32 bytes"))
     }
 
     fn peer_preshared_key_bytes(&self) -> Result<Option<[u8; 32]>> {
         match &self.peer_preshared_key {
             Some(psk) => {
                 let bytes = BASE64.decode(psk)?;
-                let arr: [u8; 32] = bytes.try_into().map_err(|_| anyhow!("PSK must be 32 bytes"))?;
+                let arr: [u8; 32] = bytes
+                    .try_into()
+                    .map_err(|_| anyhow!("PSK must be 32 bytes"))?;
                 Ok(Some(arr))
             }
             None => Ok(None),
@@ -137,9 +143,7 @@ impl WgConfig {
 }
 
 fn run_ip(args: &[&str]) -> Result<()> {
-    let output = Command::new("ip")
-        .args(args)
-        .output()?;
+    let output = Command::new("ip").args(args).output()?;
     if output.status.success() {
         Ok(())
     } else {

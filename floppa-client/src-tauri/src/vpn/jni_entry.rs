@@ -32,9 +32,7 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 }
 
 fn get_tunnel_manager() -> Arc<TunnelManager> {
-    TUNNEL_MANAGER
-        .get_or_init(|| TunnelManager::new())
-        .clone()
+    TUNNEL_MANAGER.get_or_init(|| TunnelManager::new()).clone()
 }
 
 /// Protect a socket fd using VpnService.protect() via JNI.
@@ -151,8 +149,8 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
         // Initialize logging via tracing-logcat
         {
             use tracing_logcat::{LogcatMakeWriter, LogcatTag};
-            use tracing_subscriber::prelude::*;
             use tracing_subscriber::EnvFilter;
+            use tracing_subscriber::prelude::*;
 
             let tag = LogcatTag::Fixed("FloppaVPN".to_owned());
             if let Ok(writer) = LogcatMakeWriter::new(tag) {
@@ -218,9 +216,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
         let wg_config_str: String = wg_config.mutf8_chars(env)?.to_string();
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
 
-        info!(
-            "nativeStartTunnel: fd={tun_fd}, socket={socket_path_str}"
-        );
+        info!("nativeStartTunnel: fd={tun_fd}, socket={socket_path_str}");
 
         // Set up socket protection callback (local JNI, no cross-process IPC)
         tunnel::set_socket_protect_callback(protect_socket_jni);

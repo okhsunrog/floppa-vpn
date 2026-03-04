@@ -51,10 +51,8 @@ impl AndroidIpcBackend {
             .map_err(|e| format!("Failed to connect to VPN socket: {e}"))?;
 
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
-        let transport = tarpc::serde_transport::new(
-            framed,
-            tokio_serde::formats::Bincode::default(),
-        );
+        let transport =
+            tarpc::serde_transport::new(framed, tokio_serde::formats::Bincode::default());
 
         let client = VpnRpcClient::new(tarpc::client::Config::default(), transport).spawn();
 
@@ -84,7 +82,10 @@ impl VpnBackend for AndroidIpcBackend {
 
     async fn start_with_fd(&self, _config: &WgConfig, _tun_fd: i32) -> Result<(), String> {
         // Same as start() — not used in two-process architecture.
-        Err("On Android, tunnel starts via VpnService JNI, not through backend.start_with_fd()".into())
+        Err(
+            "On Android, tunnel starts via VpnService JNI, not through backend.start_with_fd()"
+                .into(),
+        )
     }
 
     async fn stop(&self) -> Result<(), String> {

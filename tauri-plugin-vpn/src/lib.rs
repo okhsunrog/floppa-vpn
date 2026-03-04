@@ -6,8 +6,8 @@
 //! - Receiving TUN file descriptors for WireGuard integration
 
 use tauri::{
-    plugin::{Builder, TauriPlugin},
     Runtime,
+    plugin::{Builder, TauriPlugin},
 };
 
 #[cfg(mobile)]

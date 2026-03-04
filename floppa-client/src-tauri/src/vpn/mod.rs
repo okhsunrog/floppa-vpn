@@ -1,6 +1,8 @@
 pub mod backend;
 pub mod commands;
 pub mod config;
+#[cfg(target_os = "android")]
+pub mod jni_entry;
 pub mod platform;
 pub mod protocol;
 #[cfg(target_os = "android")]
@@ -9,9 +11,7 @@ pub mod rpc;
 pub mod rpc_server;
 pub mod state;
 pub mod tunnel;
-#[cfg(target_os = "android")]
-pub mod jni_entry;
 
 pub use backend::{VpnBackend, create_backend};
-pub use platform::{get_platform, Platform, PlatformImpl};
+pub use platform::{Platform, PlatformImpl, get_platform};
 pub use state::VpnState;

@@ -113,7 +113,11 @@ async fn wait_for_callback(listener: TcpListener) -> Result<String> {
             let query = path.split('?').nth(1)?;
             query.split('&').find_map(|param| {
                 let (k, v) = param.split_once('=')?;
-                if k == "code" { Some(v.to_string()) } else { None }
+                if k == "code" {
+                    Some(v.to_string())
+                } else {
+                    None
+                }
             })
         })
         .ok_or_else(|| anyhow!("No 'code' parameter in callback"))?;

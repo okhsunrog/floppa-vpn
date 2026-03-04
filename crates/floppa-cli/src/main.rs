@@ -57,14 +57,11 @@ async fn main() -> Result<()> {
         }
         Command::Connect { config, api_url } => {
             let config_str = match config {
-                Some(path) => {
-                    std::fs::read_to_string(&path)
-                        .with_context(|| format!("Failed to read config file: {path}"))?
-                }
+                Some(path) => std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read config file: {path}"))?,
                 None => {
-                    let token = auth::load_token()?.context(
-                        "Not logged in. Run `floppa-cli login` first.",
-                    )?;
+                    let token = auth::load_token()?
+                        .context("Not logged in. Run `floppa-cli login` first.")?;
                     let client = api::ApiClient::new(&api_url, &token);
                     let me = client.get_me().await?;
                     if let Some(ref sub) = me.subscription {
@@ -98,7 +95,8 @@ async fn main() -> Result<()> {
             eprintln!("Disconnected.");
         }
         Command::Peers { api_url } => {
-            let token = auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
+            let token =
+                auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
             let client = api::ApiClient::new(&api_url, &token);
             let peers = client.list_peers().await?;
             if peers.is_empty() {
@@ -117,7 +115,8 @@ async fn main() -> Result<()> {
             }
         }
         Command::Config { peer_id, api_url } => {
-            let token = auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
+            let token =
+                auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
             let client = api::ApiClient::new(&api_url, &token);
             let config = match peer_id {
                 Some(id) => client.get_peer_config(id).await?,
