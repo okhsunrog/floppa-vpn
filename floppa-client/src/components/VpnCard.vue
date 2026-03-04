@@ -9,11 +9,12 @@ import { getMyPeerByDevice, getMyPeerConfig } from 'floppa-web-shared/client/sdk
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore } from '../stores/settingsStore'
-import { commands } from '../bindings'
+import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
+const permissions = useAndroidPermissions()
 const setupErrorKey = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
@@ -23,76 +24,14 @@ const setupError = computed<string | null>(() => {
   return null
 })
 
-const showBatteryPrompt = ref(false)
-const batteryPromptDismissed = ref(localStorage.getItem('battery_prompt_dismissed') === 'true')
-const showNotificationPrompt = ref(false)
-const notificationPromptDismissed = ref(
-  localStorage.getItem('notification_prompt_dismissed') === 'true',
-)
-
 // Show prompts after first successful connection on Android
 watch(
   () => vpn.isConnected,
   async (connected, wasConnected) => {
     if (!connected || wasConnected || !vpn.isAndroid) return
-
-    if (!batteryPromptDismissed.value) {
-      try {
-        const result = await commands.isBatteryOptimizationDisabled()
-        if (result.status === 'ok' && !result.data) {
-          showBatteryPrompt.value = true
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-
-    if (!notificationPromptDismissed.value) {
-      try {
-        const result = await commands.areNotificationsEnabled()
-        if (result.status === 'ok' && !result.data) {
-          showNotificationPrompt.value = true
-        }
-      } catch {
-        /* ignore */
-      }
-    }
+    await permissions.checkPromptsAfterConnection()
   },
 )
-
-async function handleBatteryOptimization() {
-  try {
-    await commands.requestDisableBatteryOptimization()
-  } catch {
-    /* ignore */
-  }
-  showBatteryPrompt.value = false
-  batteryPromptDismissed.value = true
-  localStorage.setItem('battery_prompt_dismissed', 'true')
-}
-
-function dismissBatteryPrompt() {
-  showBatteryPrompt.value = false
-  batteryPromptDismissed.value = true
-  localStorage.setItem('battery_prompt_dismissed', 'true')
-}
-
-async function handleEnableNotifications() {
-  try {
-    await commands.openNotificationSettings()
-  } catch {
-    /* ignore */
-  }
-  showNotificationPrompt.value = false
-  notificationPromptDismissed.value = true
-  localStorage.setItem('notification_prompt_dismissed', 'true')
-}
-
-function dismissNotificationPrompt() {
-  showNotificationPrompt.value = false
-  notificationPromptDismissed.value = true
-  localStorage.setItem('notification_prompt_dismissed', 'true')
-}
 
 let statusInterval: ReturnType<typeof setInterval> | null = null
 
@@ -415,7 +354,7 @@ const handshakeDotClass = computed(() => {
   </UCard>
 
   <!-- Notification Prompt -->
-  <UCard v-if="showNotificationPrompt" class="mb-4">
+  <UCard v-if="permissions.showNotificationPrompt.value" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-bell-off" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
@@ -427,20 +366,20 @@ const handshakeDotClass = computed(() => {
           color="neutral"
           variant="ghost"
           size="sm"
-          @click="dismissNotificationPrompt"
+          @click="permissions.dismissNotificationPrompt"
         />
         <UButton
           :label="t('settings.enableNotifications')"
           color="warning"
           size="sm"
-          @click="handleEnableNotifications"
+          @click="permissions.handleNotificationPrompt"
         />
       </div>
     </div>
   </UCard>
 
   <!-- Battery Optimization Prompt -->
-  <UCard v-if="showBatteryPrompt" class="mb-4">
+  <UCard v-if="permissions.showBatteryPrompt.value" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-battery-warning" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
@@ -452,13 +391,13 @@ const handshakeDotClass = computed(() => {
           color="neutral"
           variant="ghost"
           size="sm"
-          @click="dismissBatteryPrompt"
+          @click="permissions.dismissBatteryPrompt"
         />
         <UButton
           :label="t('settings.disableBatteryOptimization')"
           color="warning"
           size="sm"
-          @click="handleBatteryOptimization"
+          @click="permissions.handleBatteryPrompt"
         />
       </div>
     </div>

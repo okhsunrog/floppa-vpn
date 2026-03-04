@@ -4,16 +4,14 @@ import { useI18n } from 'vue-i18n'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
-import { commands } from '../bindings'
+import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settings = useSettingsStore()
 const updateStore = useUpdateStore()
+const permissions = useAndroidPermissions()
 const appVersion = __APP_VERSION__
-
-const batteryOptDisabled = ref<boolean | null>(null)
-const notificationsEnabled = ref<boolean | null>(null)
 
 const searchQuery = ref('')
 const showSystemApps = ref(false)
@@ -39,46 +37,10 @@ const modeOptions = computed(() => [
   },
 ])
 
-async function checkBatteryOptimization() {
-  try {
-    const result = await commands.isBatteryOptimizationDisabled()
-    if (result.status === 'ok') batteryOptDisabled.value = result.data
-  } catch {
-    /* ignore */
-  }
-}
-
-async function requestBatteryOptimization() {
-  try {
-    const result = await commands.requestDisableBatteryOptimization()
-    if (result.status === 'ok') batteryOptDisabled.value = result.data
-  } catch {
-    /* ignore */
-  }
-}
-
-async function checkNotifications() {
-  try {
-    const result = await commands.areNotificationsEnabled()
-    if (result.status === 'ok') notificationsEnabled.value = result.data
-  } catch {
-    /* ignore */
-  }
-}
-
-async function openNotificationSettings() {
-  try {
-    const result = await commands.openNotificationSettings()
-    if (result.status === 'ok') notificationsEnabled.value = result.data
-  } catch {
-    /* ignore */
-  }
-}
-
 onMounted(() => {
   if (vpn.isAndroid) {
-    checkBatteryOptimization()
-    checkNotifications()
+    permissions.checkBatteryOptimization()
+    permissions.checkNotifications()
     // App list is preloaded at startup (VpnCard); this is a fallback
     settings.loadApps()
   }
@@ -151,7 +113,7 @@ function selectMode(mode: SplitMode) {
     <h1 class="text-2xl font-bold mb-6">{{ t('settings.title') }}</h1>
 
     <!-- Notifications (Android only) -->
-    <UCard v-if="vpn.isAndroid && notificationsEnabled !== null" class="mb-4">
+    <UCard v-if="vpn.isAndroid && permissions.notificationsEnabled.value !== null" class="mb-4">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-bell" class="size-5" />
@@ -166,28 +128,34 @@ function selectMode(mode: SplitMode) {
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <UIcon
-            :name="notificationsEnabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'"
-            :class="notificationsEnabled ? 'text-green-500' : 'text-yellow-500'"
+            :name="
+              permissions.notificationsEnabled.value
+                ? 'i-lucide-check-circle'
+                : 'i-lucide-alert-triangle'
+            "
+            :class="permissions.notificationsEnabled.value ? 'text-green-500' : 'text-yellow-500'"
             class="size-5"
           />
           <span class="text-sm">
             {{
-              notificationsEnabled ? t('settings.notificationsOn') : t('settings.notificationsOff')
+              permissions.notificationsEnabled.value
+                ? t('settings.notificationsOn')
+                : t('settings.notificationsOff')
             }}
           </span>
         </div>
         <UButton
-          v-if="!notificationsEnabled"
+          v-if="!permissions.notificationsEnabled.value"
           :label="t('settings.enableNotifications')"
           color="warning"
           size="sm"
-          @click="openNotificationSettings"
+          @click="permissions.openNotificationSettings"
         />
       </div>
     </UCard>
 
     <!-- Battery Optimization (Android only) -->
-    <UCard v-if="vpn.isAndroid && batteryOptDisabled !== null" class="mb-4">
+    <UCard v-if="vpn.isAndroid && permissions.batteryOptDisabled.value !== null" class="mb-4">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-battery" class="size-5" />
@@ -202,20 +170,28 @@ function selectMode(mode: SplitMode) {
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-2">
           <UIcon
-            :name="batteryOptDisabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'"
-            :class="batteryOptDisabled ? 'text-green-500' : 'text-yellow-500'"
+            :name="
+              permissions.batteryOptDisabled.value
+                ? 'i-lucide-check-circle'
+                : 'i-lucide-alert-triangle'
+            "
+            :class="permissions.batteryOptDisabled.value ? 'text-green-500' : 'text-yellow-500'"
             class="size-5"
           />
           <span class="text-sm">
-            {{ batteryOptDisabled ? t('settings.batteryDisabled') : t('settings.batteryEnabled') }}
+            {{
+              permissions.batteryOptDisabled.value
+                ? t('settings.batteryDisabled')
+                : t('settings.batteryEnabled')
+            }}
           </span>
         </div>
         <UButton
-          v-if="!batteryOptDisabled"
+          v-if="!permissions.batteryOptDisabled.value"
           :label="t('settings.disableBatteryOptimization')"
           color="warning"
           size="sm"
-          @click="requestBatteryOptimization"
+          @click="permissions.requestBatteryOptimization"
         />
       </div>
     </UCard>
