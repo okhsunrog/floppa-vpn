@@ -120,6 +120,7 @@ impl GotatunTunnel {
 
     /// Create a new tunnel from WireGuard config (desktop platforms)
     #[cfg(not(target_os = "android"))]
+    #[allow(unused_variables, unused_mut)]
     pub async fn new(
         config: &WgConfig,
         interface_name: &str,
