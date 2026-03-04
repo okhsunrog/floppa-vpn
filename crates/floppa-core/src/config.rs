@@ -6,6 +6,7 @@
 
 use serde::Deserialize;
 use std::path::Path;
+use veil::Redact;
 
 // =============================================================================
 // Public Configuration (config.toml)
@@ -130,11 +131,13 @@ impl Config {
 // Secrets (secrets.toml)
 // =============================================================================
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Redact, Clone, Deserialize)]
 pub struct Secrets {
     /// PostgreSQL connection URL
+    #[redact]
     pub database_url: String,
     /// WireGuard server private key (base64)
+    #[redact]
     pub wg_private_key: String,
     #[serde(default)]
     pub bot: Option<BotSecrets>,
@@ -142,17 +145,20 @@ pub struct Secrets {
     pub auth: Option<AuthSecrets>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Redact, Clone, Deserialize)]
 pub struct BotSecrets {
     /// Telegram bot token from @BotFather
+    #[redact]
     pub token: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Redact, Clone, Deserialize)]
 pub struct AuthSecrets {
     /// Secret key for signing JWT tokens (hex-encoded, 32 bytes)
+    #[redact]
     pub jwt_secret: String,
     /// Key for encrypting WireGuard private keys at rest (hex-encoded, 32 bytes)
+    #[redact]
     pub encryption_key: String,
     /// Telegram user IDs that are automatically admins
     #[serde(default)]
