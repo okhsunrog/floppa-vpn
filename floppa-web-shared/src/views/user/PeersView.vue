@@ -10,7 +10,7 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
-import { formatBytes } from '../../utils'
+import { formatBytes, formatDate, formatDateTime, formatTrafficLimit } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -211,20 +211,6 @@ async function downloadConfig() {
   a.click()
   URL.revokeObjectURL(url)
 }
-
-function formatDate(date: string): string {
-  return new Date(date).toLocaleString()
-}
-
-function formatShortDate(date: string): string {
-  return new Date(date).toLocaleDateString()
-}
-
-function formatTrafficLimit(bytes: number | null | undefined): string {
-  if (bytes == null) return t('common.unlimited')
-  const gb = bytes / (1024 * 1024 * 1024)
-  return `${gb.toFixed(1)} GB`
-}
 </script>
 
 <template>
@@ -309,16 +295,19 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
             <span>{{
               t('userPeers.trafficUsed', {
                 used: formatBytes(peer.traffic_used_bytes),
-                limit: formatTrafficLimit(me.subscription.traffic_limit_bytes),
+                limit: formatTrafficLimit(
+                  me.subscription.traffic_limit_bytes,
+                  t('common.unlimited'),
+                ),
               })
             }}</span>
           </div>
           <div class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)] mb-4">
             <span v-if="peer.last_handshake">{{
-              t('userPeers.lastSeen', { date: formatDate(peer.last_handshake) })
+              t('userPeers.lastSeen', { date: formatDateTime(peer.last_handshake) })
             }}</span>
             <span v-else>{{ t('common.neverConnected') }}</span>
-            <span>{{ t('userPeers.createdAt', { date: formatShortDate(peer.created_at) }) }}</span>
+            <span>{{ t('userPeers.createdAt', { date: formatDate(peer.created_at) }) }}</span>
           </div>
           <div class="flex gap-2">
             <UButton

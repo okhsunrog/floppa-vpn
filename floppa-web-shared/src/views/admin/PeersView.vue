@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import { listPeersQuery, deleteAdminPeerMutation } from '../../client/@pinia/colada.gen'
 import type { PeerSummary } from '../../client/types.gen'
-import { formatBytes } from '../../utils'
+import { formatBytes, formatDateTime } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import type { TableColumn } from '@nuxt/ui'
@@ -33,10 +33,6 @@ const filteredPeers = computed(() => {
       p.device_id?.toLowerCase().includes(q),
   )
 })
-
-function formatDate(date: string): string {
-  return new Date(date).toLocaleString()
-}
 
 function confirmDeletePeer(peerId: number, peerIp: string) {
   pendingPeerId.value = peerId
@@ -136,7 +132,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           </template>
           <template #last_handshake-cell="{ row }">
             <span v-if="row.original.last_handshake">{{
-              formatDate(row.original.last_handshake)
+              formatDateTime(row.original.last_handshake)
             }}</span>
             <span v-else class="text-[var(--ui-text-muted)]">{{ t('common.neverConnected') }}</span>
           </template>
@@ -201,7 +197,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
             <span>TX: {{ formatBytes(peer.tx_bytes) }}</span>
             <span>RX: {{ formatBytes(peer.rx_bytes) }}</span>
-            <span v-if="peer.last_handshake">{{ formatDate(peer.last_handshake) }}</span>
+            <span v-if="peer.last_handshake">{{ formatDateTime(peer.last_handshake) }}</span>
             <span v-else>{{ t('common.neverConnected') }}</span>
           </div>
         </UCard>

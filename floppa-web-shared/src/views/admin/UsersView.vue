@@ -6,6 +6,7 @@ import { useQuery, useMutation } from '@pinia/colada'
 import { listUsersQuery, listPlansQuery, createUserMutation } from '../../client/@pinia/colada.gen'
 import type { UserSummary } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
+import { formatDate } from '../../utils'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -30,10 +31,6 @@ const filteredUsers = computed(() => {
 function displayName(u: UserSummary): string {
   if (u.first_name) return u.last_name ? `${u.first_name} ${u.last_name}` : u.first_name
   return u.username || '-'
-}
-
-function formatDate(date: string): string {
-  return new Date(date).toLocaleDateString()
 }
 
 const columns = computed<TableColumn<UserSummary>[]>(() => [

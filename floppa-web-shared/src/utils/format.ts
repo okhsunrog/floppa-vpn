@@ -71,15 +71,21 @@ export function formatDuration(seconds: number): string {
 /**
  * Format speed limit (null = unlimited)
  */
-export function formatSpeedLimit(mbps: number | null): string {
-  return mbps === null ? 'Unlimited' : `${mbps} Mbps`
+export function formatSpeedLimit(
+  mbps: number | null | undefined,
+  unlimitedLabel = 'Unlimited',
+): string {
+  return mbps == null ? unlimitedLabel : `${mbps} Mbps`
 }
 
 /**
  * Format traffic limit (null = unlimited)
  */
-export function formatTrafficLimit(bytes: number | null): string {
-  if (bytes === null) return 'Unlimited'
+export function formatTrafficLimit(
+  bytes: number | null | undefined,
+  unlimitedLabel = 'Unlimited',
+): string {
+  if (bytes == null) return unlimitedLabel
   const gb = bytes / (1024 * 1024 * 1024)
   return `${gb.toFixed(1)} GB`
 }

@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery, getMyPeersQuery } from '../../client/@pinia/colada.gen'
 import { useAuthStore } from '../../stores'
-import { formatBytes } from '../../utils'
+import { formatBytes, formatDate } from '../../utils'
 import StatsCard from '../../components/StatsCard.vue'
 
 const props = withDefaults(defineProps<{ skipLoadingSpinner?: boolean }>(), {
@@ -20,10 +20,6 @@ const { data: peers, status: peersStatus, error: peersError } = useQuery(getMyPe
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
 const error = computed(() => meError.value || peersError.value)
-
-function formatDate(date: string): string {
-  return new Date(date).toLocaleDateString()
-}
 
 const totalTraffic = computed(() => {
   if (!peers.value) return 0

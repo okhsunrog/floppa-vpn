@@ -10,7 +10,7 @@ import {
   deleteSubscriptionMutation,
   deleteAdminPeerMutation,
 } from '../../client/@pinia/colada.gen'
-import { formatBytes } from '../../utils'
+import { formatBytes, formatDateTime, formatSpeedLimit, formatTrafficLimit } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -90,20 +90,6 @@ const historySubscriptions = computed(() => {
   if (!user.value) return []
   return user.value.subscriptions.filter((s) => !s.is_active)
 })
-
-function formatDate(date: string): string {
-  return new Date(date).toLocaleString()
-}
-
-function formatLimit(mbps: number | null | undefined): string {
-  return mbps == null ? t('common.unlimited') : `${mbps} Mbps`
-}
-
-function formatTrafficLimit(bytes: number | null | undefined): string {
-  if (bytes == null) return t('common.unlimited')
-  const gb = bytes / (1024 * 1024 * 1024)
-  return `${gb.toFixed(1)} GB`
-}
 
 function openSetSubDialog() {
   // Pre-fill with current subscription's plan if exists
@@ -268,7 +254,7 @@ async function doRemovePeer() {
             <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{
               t('adminUserDetail.created')
             }}</span>
-            <span class="font-medium">{{ formatDate(user.created_at) }}</span>
+            <span class="font-medium">{{ formatDateTime(user.created_at) }}</span>
           </div>
         </div>
       </UCard>
@@ -309,7 +295,7 @@ async function doRemovePeer() {
             </div>
             <div class="text-sm text-[var(--ui-text-muted)] mb-2">
               <span v-if="peer.last_handshake">{{
-                t('adminUserDetail.last', { date: formatDate(peer.last_handshake) })
+                t('adminUserDetail.last', { date: formatDateTime(peer.last_handshake) })
               }}</span>
               <span v-else>{{ t('common.neverConnected') }}</span>
             </div>
@@ -317,11 +303,22 @@ async function doRemovePeer() {
               v-if="activeSubscription"
               class="flex flex-col gap-1 p-2 bg-[var(--ui-bg)] rounded text-sm mb-3"
             >
-              <small>Speed: {{ formatLimit(activeSubscription.speed_limit_mbps) }}</small>
+              <small
+                >Speed:
+                {{
+                  formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
+                }}</small
+              >
               <small>
                 Traffic: {{ formatBytes(peer.traffic_used_bytes) }}
                 <template v-if="activeSubscription.traffic_limit_bytes">
-                  / {{ formatTrafficLimit(activeSubscription.traffic_limit_bytes) }}
+                  /
+                  {{
+                    formatTrafficLimit(
+                      activeSubscription.traffic_limit_bytes,
+                      t('common.unlimited'),
+                    )
+                  }}
                 </template>
               </small>
             </div>
@@ -391,12 +388,12 @@ async function doRemovePeer() {
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.starts') }}</span>
-                <span>{{ formatDate(activeSubscription.starts_at) }}</span>
+                <span>{{ formatDateTime(activeSubscription.starts_at) }}</span>
               </div>
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.expires') }}</span>
                 <span v-if="activeSubscription.expires_at">{{
-                  formatDate(activeSubscription.expires_at)
+                  formatDateTime(activeSubscription.expires_at)
                 }}</span>
                 <UBadge
                   v-else
@@ -408,11 +405,15 @@ async function doRemovePeer() {
               </div>
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.speed') }}</span>
-                <span>{{ formatLimit(activeSubscription.speed_limit_mbps) }}</span>
+                <span>{{
+                  formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
+                }}</span>
               </div>
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.traffic') }}</span>
-                <span>{{ formatTrafficLimit(activeSubscription.traffic_limit_bytes) }}</span>
+                <span>{{
+                  formatTrafficLimit(activeSubscription.traffic_limit_bytes, t('common.unlimited'))
+                }}</span>
               </div>
             </div>
           </div>
@@ -444,9 +445,11 @@ async function doRemovePeer() {
                   <span class="font-medium">{{ sub.plan_display_name }}</span>
                 </div>
                 <div class="text-[var(--ui-text-muted)]">
-                  {{ formatDate(sub.starts_at) }} &mdash;
+                  {{ formatDateTime(sub.starts_at) }} &mdash;
                   {{
-                    sub.expires_at ? formatDate(sub.expires_at) : t('userDashboard.permanentLabel')
+                    sub.expires_at
+                      ? formatDateTime(sub.expires_at)
+                      : t('userDashboard.permanentLabel')
                   }}
                 </div>
               </div>
