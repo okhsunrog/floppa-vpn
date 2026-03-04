@@ -1606,7 +1606,7 @@ async fn list_peers(
 ) -> Result<Json<Vec<PeerSummary>>, StatusCode> {
     let peers: Vec<PeerSummary> = sqlx::query_as(
         r#"
-        SELECT p.id, p.user_id, u.username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
+        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
         FROM peers p
         JOIN users u ON p.user_id = u.id
         WHERE p.sync_status != 'removed'

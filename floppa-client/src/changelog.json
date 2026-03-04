@@ -16,7 +16,10 @@
         { "en": "Three-way theme toggle (light / dark / system) and language picker", "ru": "Трёхпозиционный переключатель темы (светлая / тёмная / системная) и выбор языка" },
         { "en": "Retry button and browser change tips on login screen", "ru": "Кнопка повтора и подсказки о смене браузера на экране входа" },
         { "en": "VPN automatically stops on logout", "ru": "VPN автоматически останавливается при выходе из аккаунта" },
-        { "en": "VPN connection duration preserved across app restarts", "ru": "Время подключения VPN сохраняется при перезапуске приложения" }
+        { "en": "VPN connection duration preserved across app restarts", "ru": "Время подключения VPN сохраняется при перезапуске приложения" },
+        { "en": "WireGuard handshake verification — detects invalid configs before reporting connection success", "ru": "Проверка WireGuard handshake — определяет невалидные конфиги до подтверждения подключения" },
+        { "en": "Auto-recreate config when it's deleted on server — seamless reconnection without manual steps", "ru": "Автоматическое пересоздание конфига при удалении на сервере — бесшовное переподключение без ручных действий" },
+        { "en": "Connect button now shows current phase (Connecting → Verifying → Disconnect)", "ru": "Кнопка подключения теперь показывает текущую фазу (Подключение → Проверка → Отключить)" }
       ]
     },
     {
@@ -27,7 +30,8 @@
         { "en": "Reduced VPN status polling overhead (single request instead of four)", "ru": "Снижена нагрузка при опросе статуса VPN (один запрос вместо четырёх)" },
         { "en": "Split tunneling app list loads faster — icons loaded in background", "ru": "Список приложений для раздельного туннелирования загружается быстрее — иконки загружаются в фоне" },
         { "en": "User avatar cached locally for faster loading", "ru": "Аватар пользователя кэшируется локально для быстрой загрузки" },
-        { "en": "Android status bar icons synced with app theme", "ru": "Иконки строки состояния Android синхронизированы с темой приложения" }
+        { "en": "Android status bar icons synced with app theme", "ru": "Иконки строки состояния Android синхронизированы с темой приложения" },
+        { "en": "Proper VPN state machine — more reliable connection state tracking and auto-reconnection", "ru": "Полноценная машина состояний VPN — более надёжное отслеживание состояния подключения и автопереподключение" }
       ]
     },
     {
@@ -39,7 +43,9 @@
         { "en": "Invisible buttons on warning banners", "ru": "Невидимые кнопки на предупреждающих баннерах" },
         { "en": "Update banner buttons overflowing on small screens", "ru": "Кнопки баннера обновления не помещались на маленьких экранах" },
         { "en": "Offline banner now shows retry button and clears automatically on reconnect", "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи" },
-        { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" }
+        { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" },
+        { "en": "VPN tunnel not stopping on Android after handshake failure", "ru": "VPN-туннель не останавливался на Android после неудачного handshake" },
+        { "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode", "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»" }
       ]
     }
   ]
