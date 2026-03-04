@@ -22,21 +22,18 @@ export const useVpnStore = defineStore(
 
     // Auto-reconnect state
     const reconnectAttempts = ref(0)
-    const wasConnected = ref(false)
+    let userInitiatedDisconnect = false
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null
+    let onReconnectFailed: (() => void) | null = null
 
     const isConnected = computed(() => connectionInfo.value?.status === 'connected')
-    const isConnecting = computed(
-      () =>
-        connectionInfo.value?.status === 'connecting' ||
-        connectionInfo.value?.status === 'disconnecting',
-    )
     const hasConfig = computed(() => config.value !== null)
 
     const connectionStatus = computed(() => {
       if (isConnected.value) return 'connected' as const
-      if (connectionInfo.value?.status === 'connecting') return 'connecting' as const
-      if (connectionInfo.value?.status === 'disconnecting') return 'disconnecting' as const
+      const s = connectionInfo.value?.status
+      if (s === 'connecting' || s === 'verifying_handshake') return 'connecting' as const
+      if (s === 'disconnecting') return 'disconnecting' as const
       return 'disconnected' as const
     })
 
@@ -89,7 +86,7 @@ export const useVpnStore = defineStore(
     async function clearConfig() {
       isLoading.value = true
       error.value = null
-      wasConnected.value = false
+      userInitiatedDisconnect = true
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -133,6 +130,26 @@ export const useVpnStore = defineStore(
       isLoading.value = true
       error.value = null
 
+      // Optimistically set connecting status for instant UI feedback.
+      // TODO: consider replacing polling with Tauri events for real-time state sync:
+      // Rust side: app.emit("vpn-status", &conn_info) on each ConnectionStatus transition
+      // TS side: listen("vpn-status", (e) => { connectionInfo.value = e.payload })
+      // This would eliminate polling and give instant UI updates for all transitions
+      // (connecting → verifying_handshake → connected), but adds complexity
+      // (event setup, specta typing, dedup with refreshStatus). Current approach
+      // (optimistic status + 500ms poll) is good enough for now.
+      connectionInfo.value = {
+        status: 'connecting',
+        server_endpoint: null,
+        assigned_ip: null,
+        connected_at: null,
+        last_handshake: null,
+        stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
+      }
+
+      // Poll status during connect to show intermediate states (connecting → verifying_handshake)
+      const pollId = setInterval(() => refreshStatus(), 500)
+
       try {
         const settings = useSettingsStore()
         const splitMode = settings.splitMode !== 'all' ? settings.splitMode : null
@@ -143,13 +160,14 @@ export const useVpnStore = defineStore(
         if (result.status === 'error') {
           error.value = result.error
         } else {
-          wasConnected.value = true
+          userInitiatedDisconnect = false
           reconnectAttempts.value = 0
         }
         await refreshStatus()
       } catch (e) {
         error.value = String(e)
       } finally {
+        clearInterval(pollId)
         isLoading.value = false
       }
     }
@@ -163,7 +181,7 @@ export const useVpnStore = defineStore(
       isLoading.value = true
       error.value = null
 
-      wasConnected.value = false
+      userInitiatedDisconnect = true
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -193,7 +211,7 @@ export const useVpnStore = defineStore(
           if (
             prevStatus === 'connected' &&
             result.data.status === 'disconnected' &&
-            wasConnected.value
+            !userInitiatedDisconnect
           ) {
             handleUnexpectedDisconnect()
           }
@@ -205,15 +223,17 @@ export const useVpnStore = defineStore(
 
     function handleUnexpectedDisconnect() {
       if (!hasConfig.value) {
-        wasConnected.value = false
         reconnectAttempts.value = 0
         return
       }
 
       if (reconnectAttempts.value >= MAX_RECONNECT_ATTEMPTS) {
-        error.value = t('vpn.connectionLost')
-        wasConnected.value = false
         reconnectAttempts.value = 0
+        if (onReconnectFailed) {
+          onReconnectFailed()
+        } else {
+          error.value = t('vpn.connectionLost')
+        }
         return
       }
 
@@ -231,13 +251,16 @@ export const useVpnStore = defineStore(
       }, delay)
     }
 
+    function setOnReconnectFailed(cb: (() => void) | null) {
+      onReconnectFailed = cb
+    }
+
     return {
       config,
       connectionInfo,
       isLoading,
       error,
       isConnected,
-      isConnecting,
       hasConfig,
       isAndroid,
       deviceId,
@@ -252,6 +275,7 @@ export const useVpnStore = defineStore(
       disconnect,
       reconnect,
       refreshStatus,
+      setOnReconnectFailed,
     }
   },
   {

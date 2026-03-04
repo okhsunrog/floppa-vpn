@@ -7,10 +7,9 @@ export default {
     inactive: 'Неактивен',
     connected: 'Подключено',
     connecting: 'Подключение',
+    verifyingHandshake: 'Проверка соединения',
     disconnected: 'Отключено',
     disconnecting: 'Отключение',
-    error: 'Ошибка',
-    connectionError: 'Ошибка подключения',
   },
   traffic: {
     tx: 'TX',
@@ -283,7 +282,10 @@ export default {
   },
   vpn: {
     connect: 'Подключить',
+    connecting: 'Подключение...',
+    verifyingHandshake: 'Проверка...',
     disconnect: 'Отключить',
+    disconnecting: 'Отключение...',
     traffic: 'Трафик',
     configuration: 'Конфигурация',
     noConfigHint: 'Импортируйте или создайте конфиг для подключения',
@@ -296,11 +298,12 @@ export default {
     vpnPermissionDenied: 'Доступ к VPN отклонён',
     noActiveConfig: 'Конфиг не импортирован',
     backendUnavailable: 'Нет связи с сервером. Подключитесь к интернету и попробуйте снова.',
-    configRevoked: 'Ваш VPN-конфиг был отозван сервером.',
+
     countdownHint: 'Подключение к серверу... {seconds} сек.',
     offlineMode: 'Автономный режим',
     offlineModeHint: 'Сервер недоступен. Используется сохранённая конфигурация.',
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
+    handshakeFailed: 'Не удалось подключиться. Попробуйте позже.',
   },
 }

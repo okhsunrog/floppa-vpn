@@ -14,9 +14,9 @@ pub enum ConnectionStatus {
     #[default]
     Disconnected,
     Connecting,
+    VerifyingHandshake,
     Connected,
     Disconnecting,
-    Error,
 }
 
 /// WireGuard configuration
@@ -217,7 +217,6 @@ pub struct ConnectionInfo {
     pub assigned_ip: Option<String>,
     pub connected_at: Option<i64>, // Unix timestamp
     pub last_handshake: Option<i64>,
-    pub latency_ms: Option<u32>,
     pub stats: TrafficStats,
 }
 
@@ -229,7 +228,6 @@ impl Default for ConnectionInfo {
             assigned_ip: None,
             connected_at: None,
             last_handshake: None,
-            latency_ms: None,
             stats: TrafficStats::default(),
         }
     }

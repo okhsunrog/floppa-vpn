@@ -15,13 +15,12 @@ const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const setupErrorKey = ref<string | null>(null)
-const setupErrorMsg = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
 
 const setupError = computed<string | null>(() => {
   if (setupErrorKey.value) return t(setupErrorKey.value)
-  return setupErrorMsg.value
+  return null
 })
 
 const showBatteryPrompt = ref(false)
@@ -119,13 +118,12 @@ async function doServerSync(): Promise<SyncResult> {
       return { outcome: 'ok' }
     }
 
-    // Backend reachable but peer not found (404)
+    // Backend reachable but peer not found (404) — clear stale config and re-create
     if (vpn.hasConfig) {
       await vpn.clearConfig()
-      return { outcome: 'error', errorKey: 'vpn.configRevoked' }
     }
 
-    // No peer, no config — try to create
+    // No peer — try to create
     if (!me.value?.subscription) {
       return { outcome: 'error', errorKey: 'vpn.noSubscription' }
     }
@@ -164,7 +162,6 @@ function applySyncResult(result: SyncResult) {
 
 async function setupAutoPeer() {
   setupErrorKey.value = null
-  setupErrorMsg.value = null
 
   const thisGeneration = ++syncGeneration
 
@@ -197,11 +194,22 @@ async function setupAutoPeer() {
   }
 }
 
+async function handleReconnectFailed() {
+  if (!vpn.deviceId) return
+  await setupAutoPeer()
+  // If sync got us a new config, auto-connect
+  if (vpn.hasConfig) {
+    await vpn.connect()
+  }
+}
+
 onMounted(async () => {
   await vpn.initPlatform()
 
   // Preload app list for settings page (non-blocking)
   if (vpn.isAndroid) settingsStore.loadApps()
+
+  vpn.setOnReconnectFailed(handleReconnectFailed)
 
   await vpn.loadConfig()
   await vpn.refreshStatus()
@@ -221,16 +229,55 @@ onUnmounted(() => {
   if (statusInterval) {
     clearInterval(statusInterval)
   }
+  vpn.setOnReconnectFailed(null)
   vpn.cleanup()
 })
 
 async function handleConnect() {
   if (vpn.isConnected) {
     await vpn.disconnect()
-  } else {
-    await vpn.connect()
+    return
+  }
+
+  await vpn.connect()
+
+  // If handshake failed, check with server whether our peer still exists
+  if (vpn.error?.includes('handshake') && vpn.deviceId) {
+    // Keep UI in loading state while we check server and potentially recreate
+    vpn.error = null
+    vpn.isLoading = true
+    try {
+      console.info('[VpnCard] Handshake failed, checking peer with server...')
+      const { data: peer } = await getMyPeerByDevice({
+        path: { device_id: vpn.deviceId },
+      })
+      if (!peer) {
+        console.info('[VpnCard] Peer not found on server, recreating...')
+        await setupAutoPeer()
+        if (vpn.hasConfig) {
+          console.info('[VpnCard] New config obtained, reconnecting...')
+          await vpn.connect()
+        }
+      } else {
+        console.info('[VpnCard] Peer exists on server, handshake issue is elsewhere')
+        vpn.error = t('vpn.handshakeFailed')
+      }
+    } finally {
+      vpn.isLoading = false
+    }
   }
 }
+
+const buttonLabel = computed(() => {
+  const s = vpn.connectionInfo?.status
+  switch (s) {
+    case 'connecting': return t('vpn.connecting')
+    case 'verifying_handshake': return t('vpn.verifyingHandshake')
+    case 'disconnecting': return t('vpn.disconnecting')
+    case 'connected': return t('vpn.disconnect')
+    default: return t('vpn.connect')
+  }
+})
 
 function getConnectionDuration(): string {
   if (!vpn.connectionInfo?.connected_at) return '--'
@@ -297,7 +344,7 @@ function getConnectionDuration(): string {
         <UAlert v-else-if="setupError" color="warning" :title="setupError" class="mt-2 w-full max-w-sm" />
 
         <UButton
-          :label="vpn.isConnected ? t('vpn.disconnect') : t('vpn.connect')"
+          :label="buttonLabel"
           :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
           :color="vpn.isConnected ? 'error' : 'success'"
           :loading="vpn.isLoading"

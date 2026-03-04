@@ -18,9 +18,9 @@ const statusConfig: Record<string, { color: string; key: string }> = {
   // Connection statuses
   connected: { color: 'success', key: 'status.connected' },
   connecting: { color: 'warning', key: 'status.connecting' },
+  verifying_handshake: { color: 'warning', key: 'status.verifyingHandshake' },
   disconnected: { color: 'neutral', key: 'status.disconnected' },
   disconnecting: { color: 'warning', key: 'status.disconnecting' },
-  error: { color: 'error', key: 'status.error' },
 }
 
 const config = computed(() => {

@@ -743,12 +743,17 @@ async fn get_my_peers(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<MyPeer>>, StatusCode> {
     // Update client_version for all user's peers from X-Client-Version header
-    if let Some(version) = headers.get("X-Client-Version").and_then(|v| v.to_str().ok()) {
-        let _ = sqlx::query("UPDATE peers SET client_version = $1 WHERE user_id = $2 AND sync_status != 'removed'")
-            .bind(version)
-            .bind(auth.user_id)
-            .execute(&state.pool)
-            .await;
+    if let Some(version) = headers
+        .get("X-Client-Version")
+        .and_then(|v| v.to_str().ok())
+    {
+        let _ = sqlx::query(
+            "UPDATE peers SET client_version = $1 WHERE user_id = $2 AND sync_status != 'removed'",
+        )
+        .bind(version)
+        .bind(auth.user_id)
+        .execute(&state.pool)
+        .await;
     }
 
     let peers: Vec<MyPeer> = sqlx::query_as(

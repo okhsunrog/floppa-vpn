@@ -13,23 +13,25 @@ const { t } = useI18n()
 const statusKeys: Record<ConnectionStatus, string> = {
   connected: 'status.connected',
   connecting: 'status.connecting',
+  verifying_handshake: 'status.verifyingHandshake',
   disconnected: 'status.disconnected',
   disconnecting: 'status.disconnecting',
-  error: 'status.connectionError',
 }
 
 const dotClass = computed(() => {
   const classes: Record<ConnectionStatus, string> = {
     connected: 'bg-green-500',
     connecting: 'bg-yellow-500',
+    verifying_handshake: 'bg-yellow-500',
     disconnected: 'bg-neutral-400',
     disconnecting: 'bg-yellow-500',
-    error: 'bg-red-500',
   }
   return classes[props.status]
 })
 
-const isPulsing = computed(() => props.status === 'connecting' || props.status === 'disconnecting')
+const isPulsing = computed(() =>
+  props.status === 'connecting' || props.status === 'verifying_handshake' || props.status === 'disconnecting',
+)
 </script>
 
 <template>

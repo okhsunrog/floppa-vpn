@@ -214,27 +214,27 @@ function selectMode(mode: SplitMode) {
         </button>
       </div>
 
+      <UAlert
+        v-if="splitDirty"
+        color="warning"
+        variant="soft"
+        :title="t('settings.changesApplyOnReconnect')"
+        class="mb-4"
+      >
+        <template #actions>
+          <UButton
+            :label="t('settings.reconnect')"
+            color="warning"
+            variant="outline"
+            size="sm"
+            :loading="reconnecting"
+            @click="reconnectVpn"
+          />
+        </template>
+      </UAlert>
+
       <!-- App list (shown for include/exclude modes) -->
       <template v-if="settings.splitMode !== 'all'">
-        <UAlert
-          v-if="splitDirty"
-          color="warning"
-          variant="soft"
-          :title="t('settings.changesApplyOnReconnect')"
-          class="mb-4"
-        >
-          <template #actions>
-            <UButton
-              :label="t('settings.reconnect')"
-              color="warning"
-              variant="outline"
-              size="sm"
-              :loading="reconnecting"
-              @click="reconnectVpn"
-            />
-          </template>
-        </UAlert>
-
         <div v-if="selectedCount > 0" class="mb-4">
           <UBadge color="primary" variant="subtle">
             {{ t('settings.selectedApps', { count: selectedCount }, selectedCount) }}

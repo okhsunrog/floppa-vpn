@@ -7,10 +7,9 @@ export default {
     inactive: 'Inactive',
     connected: 'Connected',
     connecting: 'Connecting',
+    verifyingHandshake: 'Verifying connection',
     disconnected: 'Disconnected',
     disconnecting: 'Disconnecting',
-    error: 'Error',
-    connectionError: 'Connection Error',
   },
   traffic: {
     tx: 'TX',
@@ -283,7 +282,10 @@ export default {
   },
   vpn: {
     connect: 'Connect',
+    connecting: 'Connecting...',
+    verifyingHandshake: 'Verifying...',
     disconnect: 'Disconnect',
+    disconnecting: 'Disconnecting...',
     traffic: 'Traffic',
     configuration: 'Configuration',
     noConfigHint: 'Import or create a config to connect',
@@ -296,11 +298,12 @@ export default {
     vpnPermissionDenied: 'VPN permission denied',
     noActiveConfig: 'No config imported',
     backendUnavailable: 'Cannot reach server. Connect to the internet and try again.',
-    configRevoked: 'Your VPN config was revoked by the server.',
+
     countdownHint: 'Connecting to server... {seconds}s',
     offlineMode: 'Offline mode',
     offlineModeHint: 'Server unreachable. Using saved configuration.',
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
+    handshakeFailed: 'Connection failed. Please try again later.',
   },
 }

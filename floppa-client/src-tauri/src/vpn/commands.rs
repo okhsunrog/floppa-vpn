@@ -56,7 +56,7 @@ pub async fn clear_config(
     platform: State<'_, Arc<PlatformImpl>>,
 ) -> Result<(), String> {
     let status = state.connection.read().await.status;
-    if status == ConnectionStatus::Connected {
+    if status != ConnectionStatus::Disconnected {
         disconnect(app, state.clone(), backend, platform).await?;
     }
     *state.config.write().await = None;
@@ -149,14 +149,18 @@ pub async fn connect(
 ) -> Result<(), String> {
     info!("Connecting to VPN");
 
-    // Guard: reject if already connecting/connected/disconnecting
+    // Guard: only allow connect from Disconnected
     {
         let conn = state.connection.read().await;
         match conn.status {
-            ConnectionStatus::Connecting => return Err("Already connecting".to_string()),
+            ConnectionStatus::Disconnected => {}
+            ConnectionStatus::Connecting | ConnectionStatus::VerifyingHandshake => {
+                return Err("Already connecting".to_string())
+            }
             ConnectionStatus::Connected => return Err("Already connected".to_string()),
-            ConnectionStatus::Disconnecting => return Err("Disconnecting in progress".to_string()),
-            _ => {}
+            ConnectionStatus::Disconnecting => {
+                return Err("Disconnecting in progress".to_string())
+            }
         }
     }
 
@@ -221,7 +225,7 @@ async fn connect_android(
     if let Err(e) = app.vpn().start(vpn_config) {
         error!("VPN start failed: {e}");
         let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Error;
+        conn.status = ConnectionStatus::Disconnected;
         return Err(format!("VPN start failed: {e}"));
     }
 
@@ -240,9 +244,28 @@ async fn connect_android(
         if start.elapsed() > timeout {
             error!("Tunnel not ready after {poll_count} polls ({:.1}s)", start.elapsed().as_secs_f64());
             let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Error;
+            conn.status = ConnectionStatus::Disconnected;
             return Err("Connection timed out".to_string());
         }
+    }
+
+    {
+        let mut conn = state.connection.write().await;
+        conn.status = ConnectionStatus::VerifyingHandshake;
+    }
+    info!("Tunnel up on Android, verifying handshake...");
+
+    if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+        .await
+        .is_err()
+    {
+        info!("No handshake after 5s — peer likely invalid, stopping tunnel");
+        if let Err(e) = backend.stop().await {
+            error!("Failed to stop tunnel after handshake failure: {e}");
+        }
+        let mut conn = state.connection.write().await;
+        *conn = ConnectionInfo::default();
+        return Err("No WireGuard handshake — config may be invalid".to_string());
     }
 
     state.speed_tracker.write().await.reset();
@@ -283,7 +306,7 @@ async fn connect_desktop(
                 error!("Failed to configure address: {e}");
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Error;
+                conn.status = ConnectionStatus::Disconnected;
                 return Err(e);
             }
 
@@ -292,7 +315,7 @@ async fn connect_desktop(
                 let _ = platform.cleanup(INTERFACE_NAME).await;
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Error;
+                conn.status = ConnectionStatus::Disconnected;
                 return Err(e);
             }
 
@@ -302,7 +325,7 @@ async fn connect_desktop(
                 let _ = platform.cleanup(INTERFACE_NAME).await;
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Error;
+                conn.status = ConnectionStatus::Disconnected;
                 return Err(e);
             }
 
@@ -313,8 +336,25 @@ async fn connect_desktop(
                 error!("Failed to configure DNS: {e}");
             }
 
-            state.speed_tracker.write().await.reset();
+            {
+                let mut conn = state.connection.write().await;
+                conn.status = ConnectionStatus::VerifyingHandshake;
+            }
+            info!("Tunnel up, verifying handshake...");
 
+            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                .await
+                .is_err()
+            {
+                info!("No handshake after 5s — peer likely invalid, disconnecting");
+                let _ = platform.cleanup(INTERFACE_NAME).await;
+                let _ = backend.stop().await;
+                let mut conn = state.connection.write().await;
+                conn.status = ConnectionStatus::Disconnected;
+                return Err("No WireGuard handshake — config may be invalid".to_string());
+            }
+
+            state.speed_tracker.write().await.reset();
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Connected;
             conn.connected_at = Some(chrono::Utc::now().timestamp());
@@ -325,10 +365,34 @@ async fn connect_desktop(
         }
         Err(e) => {
             let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Error;
+            conn.status = ConnectionStatus::Disconnected;
             error!("Connection failed: {e}");
             Err(e)
         }
+    }
+}
+
+/// After tunnel is up, wait for the first WireGuard handshake to confirm
+/// the peer actually exists on the server. Returns Ok if handshake observed,
+/// Err if timed out (peer likely deleted/invalid).
+async fn wait_for_handshake(
+    backend: &Arc<dyn VpnBackend>,
+    timeout: std::time::Duration,
+) -> Result<(), ()> {
+    let poll_interval = std::time::Duration::from_millis(500);
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(info) = backend.get_all_info().await {
+            if let Some(secs) = info.last_handshake {
+                if secs < 10 {
+                    return Ok(());
+                }
+            }
+        }
+        if start.elapsed() > timeout {
+            return Err(());
+        }
+        tokio::time::sleep(poll_interval).await;
     }
 }
 
@@ -370,7 +434,7 @@ pub async fn disconnect(
         }
         Err(e) => {
             let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Error;
+            *conn = ConnectionInfo::default();
             error!("Disconnect failed: {e}");
             Err(e)
         }
@@ -388,44 +452,58 @@ pub async fn get_connection_info(
 
     let info = backend.get_all_info().await;
     let is_running = info.as_ref().is_some_and(|i| i.is_running);
+    let has_recent_handshake = info
+        .as_ref()
+        .and_then(|i| i.last_handshake)
+        .is_some_and(|secs| secs < 10);
 
-    // On Android, the tunnel is started by the :vpn process (not via connect() command),
-    // so we detect connection state from the backend directly.
-    if conn.status != ConnectionStatus::Connected && is_running {
-        let config = state.config.read().await;
-        conn.status = ConnectionStatus::Connected;
-        // Use the actual connection time from the :vpn process
-        let connected_at = info
-            .as_ref()
-            .and_then(|i| i.connected_secs)
-            .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
-            .unwrap_or_else(|| chrono::Utc::now().timestamp());
-        conn.connected_at = Some(connected_at);
-        if let Some(cfg) = config.as_ref() {
-            conn.server_endpoint = Some(cfg.peer_endpoint.clone());
-            conn.assigned_ip = Some(cfg.address.clone());
-        }
-        state.speed_tracker.write().await.reset();
-        info!("Detected running tunnel, updated status to Connected");
-    }
-
-    if conn.status == ConnectionStatus::Connected && !is_running {
-        *conn = ConnectionInfo::default();
-    } else if conn.status == ConnectionStatus::Connected && is_running {
-        if let Some(ref info) = info {
-            if let Some(ref raw_stats) = info.stats {
-                let mut tracker = state.speed_tracker.write().await;
-                let (tx_speed, rx_speed) =
-                    tracker.update(raw_stats.tx_bytes, raw_stats.rx_bytes);
-                conn.stats = super::state::TrafficStats {
-                    tx_bytes: raw_stats.tx_bytes,
-                    rx_bytes: raw_stats.rx_bytes,
-                    tx_bytes_per_sec: tx_speed,
-                    rx_bytes_per_sec: rx_speed,
-                };
+    match conn.status {
+        // Auto-detect: on Android the :vpn process can outlive the app.
+        // Only promote to Connected if the tunnel has a recent handshake,
+        // which proves it's a live connection (not a dying or invalid tunnel).
+        ConnectionStatus::Disconnected if is_running && has_recent_handshake => {
+            let config = state.config.read().await;
+            conn.status = ConnectionStatus::Connected;
+            let connected_at = info
+                .as_ref()
+                .and_then(|i| i.connected_secs)
+                .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
+                .unwrap_or_else(|| chrono::Utc::now().timestamp());
+            conn.connected_at = Some(connected_at);
+            if let Some(cfg) = config.as_ref() {
+                conn.server_endpoint = Some(cfg.peer_endpoint.clone());
+                conn.assigned_ip = Some(cfg.address.clone());
             }
-            conn.last_handshake = info.last_handshake;
+            state.speed_tracker.write().await.reset();
+            info!("Detected running tunnel with recent handshake, updated status to Connected");
         }
+        // Tunnel died during handshake verification
+        ConnectionStatus::VerifyingHandshake if !is_running => {
+            *conn = ConnectionInfo::default();
+            info!("Tunnel stopped during handshake verification, reset to Disconnected");
+        }
+        // Tunnel dropped while connected
+        ConnectionStatus::Connected if !is_running => {
+            *conn = ConnectionInfo::default();
+        }
+        // Normal connected state — update stats
+        ConnectionStatus::Connected if is_running => {
+            if let Some(ref info) = info {
+                if let Some(ref raw_stats) = info.stats {
+                    let mut tracker = state.speed_tracker.write().await;
+                    let (tx_speed, rx_speed) =
+                        tracker.update(raw_stats.tx_bytes, raw_stats.rx_bytes);
+                    conn.stats = super::state::TrafficStats {
+                        tx_bytes: raw_stats.tx_bytes,
+                        rx_bytes: raw_stats.rx_bytes,
+                        tx_bytes_per_sec: tx_speed,
+                        rx_bytes_per_sec: rx_speed,
+                    };
+                }
+                conn.last_handshake = info.last_handshake;
+            }
+        }
+        _ => {}
     }
 
     Ok(conn.clone())

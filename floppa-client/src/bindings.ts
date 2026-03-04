@@ -198,11 +198,11 @@ export type AppInfo = { package_name: string; label: string; is_system: boolean;
 /**
  * Connection information
  */
-export type ConnectionInfo = { status: ConnectionStatus; server_endpoint: string | null; assigned_ip: string | null; connected_at: number | null; last_handshake: number | null; latency_ms: number | null; stats: TrafficStats }
+export type ConnectionInfo = { status: ConnectionStatus; server_endpoint: string | null; assigned_ip: string | null; connected_at: number | null; last_handshake: number | null; stats: TrafficStats }
 /**
  * Connection status enum
  */
-export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "disconnecting" | "error"
+export type ConnectionStatus = "disconnected" | "connecting" | "verifying_handshake" | "connected" | "disconnecting"
 /**
  * Safe area insets (status bar, nav bar) in dp
  */
