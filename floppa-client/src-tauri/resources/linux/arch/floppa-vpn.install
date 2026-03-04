@@ -1,0 +1,21 @@
+_bin_path='/usr/bin/floppa-client'
+
+_setcap_floppa() {
+  if command -v setcap >/dev/null 2>&1 && [ -x "${_bin_path}" ]; then
+    setcap cap_net_admin+ep "${_bin_path}" || true
+  fi
+}
+
+post_install() {
+  _setcap_floppa
+}
+
+post_upgrade() {
+  _setcap_floppa
+}
+
+post_remove() {
+  if command -v setcap >/dev/null 2>&1 && [ -e "${_bin_path}" ]; then
+    setcap -r "${_bin_path}" || true
+  fi
+}
