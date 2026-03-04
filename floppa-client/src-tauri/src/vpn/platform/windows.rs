@@ -10,8 +10,11 @@ use super::Platform;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 use tracing::{debug, info, warn};
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Windows platform implementation
 pub struct WindowsPlatform {
@@ -35,6 +38,7 @@ impl WindowsPlatform {
 
         let output = Command::new("netsh")
             .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("Failed to run netsh: {}", e))?;
 
@@ -80,6 +84,7 @@ impl WindowsPlatform {
     fn get_default_gateway() -> Result<Option<String>, String> {
         let output = Command::new("cmd")
             .args(["/C", "route", "print", "0.0.0.0"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("Failed to get default route: {}", e))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -96,7 +101,11 @@ impl WindowsPlatform {
 
 /// Flush the Windows DNS resolver cache
 fn flush_dns_cache() {
-    match Command::new("ipconfig").arg("/flushdns").output() {
+    match Command::new("ipconfig")
+        .arg("/flushdns")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
         Ok(output) if output.status.success() => debug!("Flushed DNS cache"),
         Ok(output) => warn!(
             "ipconfig /flushdns failed: {}",
@@ -155,6 +164,7 @@ impl Platform for WindowsPlatform {
                 "255.255.255.255",
                 &gateway,
             ])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
             .map_err(|e| format!("Failed to add endpoint route: {}", e))?;
 
@@ -172,6 +182,7 @@ impl Platform for WindowsPlatform {
             info!("Removing endpoint route: {}", endpoint_ip);
             let _ = Command::new("route")
                 .args(["delete", &endpoint_ip.to_string()])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output();
         }
         Ok(())
