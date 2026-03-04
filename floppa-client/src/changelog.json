@@ -44,7 +44,7 @@
         { "en": "Update banner buttons overflowing on small screens", "ru": "Кнопки баннера обновления не помещались на маленьких экранах" },
         { "en": "Offline banner now shows retry button and clears automatically on reconnect", "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи" },
         { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" },
-        { "en": "VPN tunnel not stopping on Android after handshake failure", "ru": "VPN-туннель не останавливался на Android после неудачного handshake" },
+        { "en": "VPN tunnel not stopping on Android in error scenarios (handshake failure, connection timeout)", "ru": "VPN-туннель не останавливался на Android при ошибках (неудачный handshake, таймаут подключения)" },
         { "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode", "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»" }
       ]
     }
