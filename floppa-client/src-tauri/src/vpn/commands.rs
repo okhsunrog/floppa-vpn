@@ -243,8 +243,12 @@ async fn connect_android(
         }
         if start.elapsed() > timeout {
             error!("Tunnel not ready after {poll_count} polls ({:.1}s)", start.elapsed().as_secs_f64());
+            // IPC is likely down (that's why we timed out), so use Kotlin-side stop
+            if let Err(e) = app.vpn().stop() {
+                error!("Failed to stop VPN service after timeout: {e}");
+            }
             let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Disconnected;
+            *conn = ConnectionInfo::default();
             return Err("Connection timed out".to_string());
         }
     }
