@@ -8,6 +8,7 @@
         "tauri-plugin-android-fs-api": "^27.0.0",
       },
       "devDependencies": {
+        "prettier": "^3.8.1",
         "vite": "8.0.0-beta.16",
       },
     },
@@ -47,7 +48,6 @@
         "eslint": "^10.0.2",
         "eslint-plugin-vue": "^10.8.0",
         "json5": "^2.2.3",
-        "prettier": "^3.8.1",
         "tailwindcss": "^4.2.1",
         "typescript": "^5.9.3",
         "vite": "8.0.0-beta.16",
@@ -80,7 +80,6 @@
         "eslint-plugin-vue": "~10.8.0",
         "jiti": "^2.6.1",
         "npm-run-all2": "^8.0.4",
-        "prettier": "3.8.1",
         "typescript": "~5.9.3",
         "vite": "8.0.0-beta.16",
         "vite-plugin-vue-devtools": "^8.0.7",

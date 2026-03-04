@@ -40,9 +40,14 @@ function setupConsoleForwarding() {
       original(...args)
       const message = args
         .map((arg) => {
-          if (arg instanceof Error) return `${arg.name}: ${arg.message}\nStack: ${arg.stack || 'N/A'}`
+          if (arg instanceof Error)
+            return `${arg.name}: ${arg.message}\nStack: ${arg.stack || 'N/A'}`
           if (typeof arg === 'object' && arg !== null) {
-            try { return JSON.stringify(arg) } catch { return '[Object]' }
+            try {
+              return JSON.stringify(arg)
+            } catch {
+              return '[Object]'
+            }
           }
           return String(arg)
         })
@@ -175,7 +180,10 @@ async function handleDeepLinkUrls(urls: string[]) {
 
     processingDeepLinkCodes.add(code)
     try {
-      const { data: response } = await exchangeTelegramLoginCode({ body: { code }, throwOnError: true })
+      const { data: response } = await exchangeTelegramLoginCode({
+        body: { code },
+        throwOnError: true,
+      })
       authStore.setAuth(response.token, response.user)
       processedDeepLinkCodes.add(code)
       await router.push('/')
@@ -205,7 +213,9 @@ async function setupDeepLinkAuth() {
 
     await listen<SingleInstancePayload>('single-instance', (event) => {
       const urls =
-        event.payload?.args?.filter((arg) => typeof arg === 'string' && arg.startsWith('floppa://')) ?? []
+        event.payload?.args?.filter(
+          (arg) => typeof arg === 'string' && arg.startsWith('floppa://'),
+        ) ?? []
       if (urls.length === 0) {
         return
       }
@@ -229,7 +239,10 @@ if (isTauri()) {
     .then((result) => {
       if (result.status === 'ok') {
         document.documentElement.style.setProperty('--safe-area-inset-top', `${result.data.top}px`)
-        document.documentElement.style.setProperty('--safe-area-inset-bottom', `${result.data.bottom}px`)
+        document.documentElement.style.setProperty(
+          '--safe-area-inset-bottom',
+          `${result.data.bottom}px`,
+        )
       }
     })
     .catch(() => {})

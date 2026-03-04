@@ -13,7 +13,9 @@
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix --cache",
-    "format": "prettier --write --experimental-cli src/"
+    "lint:check": "eslint . --cache",
+    "format": "prettier --write --cache src/",
+    "format:check": "prettier --check src/"
   },
   "dependencies": {
     "@hey-api/client-fetch": "^0.13.1",
@@ -37,7 +39,6 @@
     "eslint-plugin-vue": "~10.8.0",
     "jiti": "^2.6.1",
     "npm-run-all2": "^8.0.4",
-    "prettier": "3.8.1",
     "typescript": "~5.9.3",
     "vite": "8.0.0-beta.16",
     "vite-plugin-vue-devtools": "^8.0.7",

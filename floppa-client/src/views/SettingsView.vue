@@ -19,37 +19,60 @@ const searchQuery = ref('')
 const showSystemApps = ref(false)
 
 const modeOptions = computed(() => [
-  { label: t('settings.modeAll'), value: 'all' as SplitMode, description: t('settings.modeAllDescription'), icon: 'i-lucide-globe' },
-  { label: t('settings.modeInclude'), value: 'include' as SplitMode, description: t('settings.modeIncludeDescription'), icon: 'i-lucide-shield-check' },
-  { label: t('settings.modeExclude'), value: 'exclude' as SplitMode, description: t('settings.modeExcludeDescription'), icon: 'i-lucide-shield-off' },
+  {
+    label: t('settings.modeAll'),
+    value: 'all' as SplitMode,
+    description: t('settings.modeAllDescription'),
+    icon: 'i-lucide-globe',
+  },
+  {
+    label: t('settings.modeInclude'),
+    value: 'include' as SplitMode,
+    description: t('settings.modeIncludeDescription'),
+    icon: 'i-lucide-shield-check',
+  },
+  {
+    label: t('settings.modeExclude'),
+    value: 'exclude' as SplitMode,
+    description: t('settings.modeExcludeDescription'),
+    icon: 'i-lucide-shield-off',
+  },
 ])
 
 async function checkBatteryOptimization() {
   try {
     const result = await commands.isBatteryOptimizationDisabled()
     if (result.status === 'ok') batteryOptDisabled.value = result.data
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function requestBatteryOptimization() {
   try {
     const result = await commands.requestDisableBatteryOptimization()
     if (result.status === 'ok') batteryOptDisabled.value = result.data
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function checkNotifications() {
   try {
     const result = await commands.areNotificationsEnabled()
     if (result.status === 'ok') notificationsEnabled.value = result.data
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function openNotificationSettings() {
   try {
     const result = await commands.openNotificationSettings()
     if (result.status === 'ok') notificationsEnabled.value = result.data
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 onMounted(() => {
@@ -70,7 +93,11 @@ const filteredApps = computed(() => {
 
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase().replace(/\s+/g, '')
-    list = list.filter((a) => a.label.toLowerCase().replace(/\s+/g, '').includes(q) || a.package_name.toLowerCase().includes(q))
+    list = list.filter(
+      (a) =>
+        a.label.toLowerCase().replace(/\s+/g, '').includes(q) ||
+        a.package_name.toLowerCase().includes(q),
+    )
   }
 
   // Selected apps first, then alphabetical
@@ -88,14 +115,21 @@ const selectedCount = computed(() => settings.selectedApps.length)
 const splitDirty = ref(false)
 const reconnecting = ref(false)
 
-watch([() => settings.splitMode, () => settings.selectedApps], () => {
-  if (vpn.isConnected) splitDirty.value = true
-}, { deep: true })
+watch(
+  [() => settings.splitMode, () => settings.selectedApps],
+  () => {
+    if (vpn.isConnected) splitDirty.value = true
+  },
+  { deep: true },
+)
 
 // Clear dirty flag when VPN disconnects
-watch(() => vpn.isConnected, (connected) => {
-  if (!connected) splitDirty.value = false
-})
+watch(
+  () => vpn.isConnected,
+  (connected) => {
+    if (!connected) splitDirty.value = false
+  },
+)
 
 async function reconnectVpn() {
   reconnecting.value = true
@@ -137,7 +171,9 @@ function selectMode(mode: SplitMode) {
             class="size-5"
           />
           <span class="text-sm">
-            {{ notificationsEnabled ? t('settings.notificationsOn') : t('settings.notificationsOff') }}
+            {{
+              notificationsEnabled ? t('settings.notificationsOn') : t('settings.notificationsOff')
+            }}
           </span>
         </div>
         <UButton
@@ -203,14 +239,26 @@ function selectMode(mode: SplitMode) {
           v-for="option in modeOptions"
           :key="option.value"
           class="flex flex-col items-center gap-1.5 p-3 rounded-lg border-2 transition-all text-center cursor-pointer"
-          :class="settings.splitMode === option.value
-            ? 'border-[var(--ui-primary)] bg-[var(--ui-primary)]/10'
-            : 'border-[var(--ui-border)] hover:border-[var(--ui-border-hover)]'"
+          :class="
+            settings.splitMode === option.value
+              ? 'border-[var(--ui-primary)] bg-[var(--ui-primary)]/10'
+              : 'border-[var(--ui-border)] hover:border-[var(--ui-border-hover)]'
+          "
           @click="selectMode(option.value)"
         >
-          <UIcon :name="option.icon" class="size-5" :class="settings.splitMode === option.value ? 'text-[var(--ui-primary)]' : 'text-[var(--ui-text-muted)]'" />
+          <UIcon
+            :name="option.icon"
+            class="size-5"
+            :class="
+              settings.splitMode === option.value
+                ? 'text-[var(--ui-primary)]'
+                : 'text-[var(--ui-text-muted)]'
+            "
+          />
           <span class="text-sm font-medium">{{ option.label }}</span>
-          <span class="text-xs text-[var(--ui-text-muted)] leading-tight">{{ option.description }}</span>
+          <span class="text-xs text-[var(--ui-text-muted)] leading-tight">{{
+            option.description
+          }}</span>
         </button>
       </div>
 
@@ -269,7 +317,10 @@ function selectMode(mode: SplitMode) {
           <div class="animate-spin i-lucide-loader-2 size-6 text-[var(--ui-primary)]" />
         </div>
 
-        <div v-else-if="filteredApps.length === 0" class="text-center py-8 text-[var(--ui-text-muted)]">
+        <div
+          v-else-if="filteredApps.length === 0"
+          class="text-center py-8 text-[var(--ui-text-muted)]"
+        >
           {{ t('settings.noApps') }}
         </div>
 
@@ -278,7 +329,9 @@ function selectMode(mode: SplitMode) {
             v-for="app in filteredApps"
             :key="app.package_name"
             class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-[var(--ui-bg-elevated)]"
-            :class="{ 'bg-[var(--ui-bg-elevated)]': settings.selectedApps.includes(app.package_name) }"
+            :class="{
+              'bg-[var(--ui-bg-elevated)]': settings.selectedApps.includes(app.package_name),
+            }"
             style="content-visibility: auto; contain-intrinsic-size: 0 48px"
           >
             <UCheckbox
@@ -291,7 +344,10 @@ function selectMode(mode: SplitMode) {
               :alt="app.label"
               class="size-8 rounded"
             />
-            <div v-else class="size-8 rounded bg-[var(--ui-bg-elevated)] flex items-center justify-center">
+            <div
+              v-else
+              class="size-8 rounded bg-[var(--ui-bg-elevated)] flex items-center justify-center"
+            >
               <UIcon name="i-lucide-box" class="size-4 text-[var(--ui-text-muted)]" />
             </div>
             <div class="min-w-0 flex-1">
@@ -324,7 +380,9 @@ function selectMode(mode: SplitMode) {
       <div class="flex items-center justify-between">
         <div>
           <p class="text-sm font-medium">Floppa VPN</p>
-          <p class="text-xs text-[var(--ui-text-muted)]">{{ t('settings.version', { version: appVersion }) }}</p>
+          <p class="text-xs text-[var(--ui-text-muted)]">
+            {{ t('settings.version', { version: appVersion }) }}
+          </p>
         </div>
         <UButton
           :label="t('changelog.whatsNew')"

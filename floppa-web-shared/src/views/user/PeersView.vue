@@ -2,7 +2,12 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { getMeQuery, getMyPeersQuery, createMyPeerMutation, deleteMyPeerMutation } from '../../client/@pinia/colada.gen'
+import {
+  getMeQuery,
+  getMyPeersQuery,
+  createMyPeerMutation,
+  deleteMyPeerMutation,
+} from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import { formatBytes } from '../../utils'
@@ -12,10 +17,17 @@ import type { PeerSyncStatus } from '../../types'
 const { t } = useI18n()
 const toast = useToast()
 
-const isMiniApp = Boolean((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData)
+const isMiniApp = Boolean(
+  (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData,
+)
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
-const { data: peers, status: peersStatus, error: peersError, refresh: refreshPeers } = useQuery(getMyPeersQuery())
+const {
+  data: peers,
+  status: peersStatus,
+  error: peersError,
+  refresh: refreshPeers,
+} = useQuery(getMyPeersQuery())
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
 const queryError = computed(() => meError.value || peersError.value)
@@ -40,14 +52,14 @@ const pendingDeletePeerId = ref<number | null>(null)
 const canCreatePeer = computed(() => {
   if (!me.value?.subscription) return false
   if (!peers.value) return false
-  const activePeers = peers.value.filter(p => p.sync_status !== 'pending_remove').length
+  const activePeers = peers.value.filter((p) => p.sync_status !== 'pending_remove').length
   return activePeers < me.value.subscription.max_peers
 })
 
 const peersRemaining = computed(() => {
   if (!me.value?.subscription) return 0
   if (!peers.value) return 0
-  const activePeers = peers.value.filter(p => p.sync_status !== 'pending_remove').length
+  const activePeers = peers.value.filter((p) => p.sync_status !== 'pending_remove').length
   return me.value.subscription.max_peers - activePeers
 })
 
@@ -58,9 +70,17 @@ async function createPeer() {
     currentConfig.value = response
     configDialog.value = true
     await refreshPeers()
-    toast.add({ title: t('userPeers.configCreated'), description: t('userPeers.configCreatedMessage'), color: 'success' })
+    toast.add({
+      title: t('userPeers.configCreated'),
+      description: t('userPeers.configCreatedMessage'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('userPeers.createFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('userPeers.createFailed'),
+      color: 'error',
+    })
   }
 }
 
@@ -75,9 +95,17 @@ async function doDeletePeer() {
   try {
     await deleteMut.mutateAsync({ path: { id: pendingDeletePeerId.value } })
     await refreshPeers()
-    toast.add({ title: t('userPeers.configDeleted'), description: t('userPeers.configDeletedMessage'), color: 'success' })
+    toast.add({
+      title: t('userPeers.configDeleted'),
+      description: t('userPeers.configDeletedMessage'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('userPeers.deleteFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('userPeers.deleteFailed'),
+      color: 'error',
+    })
   }
   confirmOpen.value = false
   pendingDeletePeerId.value = null
@@ -93,14 +121,22 @@ async function showConfig(peer: MyPeer) {
     }
     configDialog.value = true
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('userPeers.createFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('userPeers.createFailed'),
+      color: 'error',
+    })
   }
 }
 
 async function copyConfig() {
   if (currentConfig.value) {
     await navigator.clipboard.writeText(currentConfig.value.config)
-    toast.add({ title: t('common.copied'), description: t('userPeers.copiedMessage'), color: 'success' })
+    toast.add({
+      title: t('common.copied'),
+      description: t('userPeers.copiedMessage'),
+      color: 'success',
+    })
   }
 }
 
@@ -109,7 +145,14 @@ async function downloadConfig() {
   const { id, assigned_ip, config } = currentConfig.value
   const filename = `floppa-vpn-${assigned_ip}.conf`
 
-  console.info('[download] downloadConfig called, isMiniApp:', isMiniApp, '__TAURI_INTERNALS__:', Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__), 'userAgent:', navigator.userAgent)
+  console.info(
+    '[download] downloadConfig called, isMiniApp:',
+    isMiniApp,
+    '__TAURI_INTERNALS__:',
+    Boolean((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__),
+    'userAgent:',
+    navigator.userAgent,
+  )
 
   if (isMiniApp) {
     try {
@@ -127,7 +170,8 @@ async function downloadConfig() {
       if (navigator.userAgent.includes('Android')) {
         // Android: save to Download/FloppaVPN/ via MediaStore
         console.info('[download] Android detected, using android-fs plugin')
-        const { AndroidFs, AndroidPublicGeneralPurposeDir } = await import('tauri-plugin-android-fs-api')
+        const { AndroidFs, AndroidPublicGeneralPurposeDir } =
+          await import('tauri-plugin-android-fs-api')
         console.info('[download] Creating public file...')
         const uri = await AndroidFs.createNewPublicFile(
           AndroidPublicGeneralPurposeDir.Download,
@@ -137,12 +181,18 @@ async function downloadConfig() {
         console.info('[download] File created, uri:', JSON.stringify(uri))
         await AndroidFs.writeTextFile(uri, config)
         console.info('[download] File written successfully')
-        toast.add({ title: t('userPeers.configSaved', { path: `Download/FloppaVPN/${filename}` }), color: 'success' })
+        toast.add({
+          title: t('userPeers.configSaved', { path: `Download/FloppaVPN/${filename}` }),
+          color: 'success',
+        })
       } else {
         // Desktop: save dialog + write file
         const { save } = await import('@tauri-apps/plugin-dialog')
         const { writeTextFile } = await import('@tauri-apps/plugin-fs')
-        const path = await save({ defaultPath: filename, filters: [{ name: 'WireGuard', extensions: ['conf'] }] })
+        const path = await save({
+          defaultPath: filename,
+          filters: [{ name: 'WireGuard', extensions: ['conf'] }],
+        })
         if (path) await writeTextFile(path, config)
       }
     } catch (e) {
@@ -206,7 +256,9 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
         <div class="flex flex-col items-center text-center py-8">
           <UIcon name="i-lucide-lock" class="text-4xl text-[var(--ui-text-muted)] mb-4" />
           <p>{{ t('userPeers.noSubscription') }}</p>
-          <p class="text-sm text-[var(--ui-text-muted)] mt-1">{{ t('userPeers.contactSupport') }}</p>
+          <p class="text-sm text-[var(--ui-text-muted)] mt-1">
+            {{ t('userPeers.contactSupport') }}
+          </p>
         </div>
       </UCard>
 
@@ -226,7 +278,10 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
             <span class="font-mono text-lg font-semibold">{{ peer.assigned_ip }}</span>
             <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
           </div>
-          <div v-if="peer.device_name" class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]">
+          <div
+            v-if="peer.device_name"
+            class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]"
+          >
             <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
             <span>{{ t('userPeers.device', { name: peer.device_name }) }}</span>
           </div>
@@ -246,12 +301,22 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
               </div>
             </div>
           </div>
-          <div v-if="me?.subscription?.traffic_limit_bytes" class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]">
+          <div
+            v-if="me?.subscription?.traffic_limit_bytes"
+            class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]"
+          >
             <UIcon name="i-lucide-gauge" class="size-4" />
-            <span>{{ t('userPeers.trafficUsed', { used: formatBytes(peer.traffic_used_bytes), limit: formatTrafficLimit(me.subscription.traffic_limit_bytes) }) }}</span>
+            <span>{{
+              t('userPeers.trafficUsed', {
+                used: formatBytes(peer.traffic_used_bytes),
+                limit: formatTrafficLimit(me.subscription.traffic_limit_bytes),
+              })
+            }}</span>
           </div>
           <div class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)] mb-4">
-            <span v-if="peer.last_handshake">{{ t('userPeers.lastSeen', { date: formatDate(peer.last_handshake) }) }}</span>
+            <span v-if="peer.last_handshake">{{
+              t('userPeers.lastSeen', { date: formatDate(peer.last_handshake) })
+            }}</span>
             <span v-else>{{ t('common.neverConnected') }}</span>
             <span>{{ t('userPeers.createdAt', { date: formatShortDate(peer.created_at) }) }}</span>
           </div>
@@ -284,7 +349,10 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
             <UIcon name="i-lucide-globe" />
             {{ t('userPeers.ip', { ip: currentConfig.assigned_ip }) }}
           </p>
-          <pre class="bg-[var(--ui-bg-inverted)] text-[var(--ui-text-inverted)] p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap break-all">{{ currentConfig.config }}</pre>
+          <pre
+            class="bg-[var(--ui-bg-inverted)] text-[var(--ui-text-inverted)] p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap break-all"
+            >{{ currentConfig.config }}</pre
+          >
         </div>
       </template>
       <template #footer>
@@ -295,7 +363,12 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
           color="success"
           @click="downloadConfig"
         />
-        <UButton :label="t('common.close')" color="neutral" variant="outline" @click="configDialog = false" />
+        <UButton
+          :label="t('common.close')"
+          color="neutral"
+          variant="outline"
+          @click="configDialog = false"
+        />
       </template>
     </UModal>
 
@@ -305,8 +378,18 @@ function formatTrafficLimit(bytes: number | null | undefined): string {
         <p>{{ confirmMessage }}</p>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="confirmOpen = false" />
-        <UButton :label="t('common.delete')" color="error" :loading="deleteMut.asyncStatus.value === 'loading'" @click="doDeletePeer" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="confirmOpen = false"
+        />
+        <UButton
+          :label="t('common.delete')"
+          color="error"
+          :loading="deleteMut.asyncStatus.value === 'loading'"
+          @click="doDeletePeer"
+        />
       </template>
     </UModal>
   </div>

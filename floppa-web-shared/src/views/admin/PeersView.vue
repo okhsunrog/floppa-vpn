@@ -25,11 +25,12 @@ const filteredPeers = computed(() => {
   if (!peers.value) return []
   if (!search.value) return peers.value
   const q = search.value.toLowerCase()
-  return peers.value.filter(p =>
-    p.assigned_ip.includes(q) ||
-    p.username?.toLowerCase().includes(q) ||
-    p.device_name?.toLowerCase().includes(q) ||
-    p.device_id?.toLowerCase().includes(q)
+  return peers.value.filter(
+    (p) =>
+      p.assigned_ip.includes(q) ||
+      p.username?.toLowerCase().includes(q) ||
+      p.device_name?.toLowerCase().includes(q) ||
+      p.device_id?.toLowerCase().includes(q),
   )
 })
 
@@ -48,9 +49,17 @@ async function doDeletePeer() {
   try {
     await deleteMut.mutateAsync({ path: { id: pendingPeerId.value } })
     await refreshPeers()
-    toast.add({ title: t('common.success'), description: t('adminPeers.peerDeleted'), color: 'success' })
+    toast.add({
+      title: t('common.success'),
+      description: t('adminPeers.peerDeleted'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminPeers.deleteFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminPeers.deleteFailed'),
+      color: 'error',
+    })
   }
   confirmOpen.value = false
   pendingPeerId.value = null
@@ -73,7 +82,12 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
   <div class="max-w-6xl mx-auto">
     <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
       <h1 class="text-2xl font-bold">{{ t('adminPeers.title') }}</h1>
-      <UInput v-model="search" :placeholder="t('adminPeers.searchPlaceholder')" icon="i-lucide-search" class="w-full sm:w-64" />
+      <UInput
+        v-model="search"
+        :placeholder="t('adminPeers.searchPlaceholder')"
+        icon="i-lucide-search"
+        class="w-full sm:w-64"
+      />
     </div>
 
     <div v-if="status === 'pending'" class="flex justify-center py-12">
@@ -81,103 +95,117 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
     </div>
     <UAlert v-else-if="error" color="error" :title="error.message" />
     <template v-else>
-    <!-- Desktop table -->
-    <div class="hidden md:block">
-      <UTable
-        :data="filteredPeers"
-        :columns="columns"
-        class="[&_tbody_tr]:cursor-pointer"
-        @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
-      >
-        <template #assigned_ip-cell="{ row }">
-          <span class="font-mono font-medium">{{ row.original.assigned_ip }}</span>
-        </template>
-        <template #username-cell="{ row }">
-          {{ row.original.username || '-' }}
-        </template>
-        <template #device_name-cell="{ row }">
-          <span v-if="row.original.device_name" class="flex items-center gap-1.5">
-            <UIcon name="i-lucide-monitor-smartphone" class="size-4 text-[var(--ui-text-muted)]" />
-            {{ row.original.device_name }}
-          </span>
-          <span v-else class="text-[var(--ui-text-muted)]">-</span>
-        </template>
-        <template #client_version-cell="{ row }">
-          <span v-if="row.original.client_version" class="font-mono text-xs">{{ row.original.client_version }}</span>
-          <span v-else class="text-[var(--ui-text-muted)]">-</span>
-        </template>
-        <template #sync_status-cell="{ row }">
-          <StatusBadge :status="row.original.sync_status as PeerSyncStatus" />
-        </template>
-        <template #tx_bytes-cell="{ row }">
-          {{ formatBytes(row.original.tx_bytes) }}
-        </template>
-        <template #rx_bytes-cell="{ row }">
-          {{ formatBytes(row.original.rx_bytes) }}
-        </template>
-        <template #last_handshake-cell="{ row }">
-          <span v-if="row.original.last_handshake">{{ formatDate(row.original.last_handshake) }}</span>
-          <span v-else class="text-[var(--ui-text-muted)]">{{ t('common.neverConnected') }}</span>
-        </template>
-        <template #actions-cell="{ row }">
-          <UButton
-            v-if="row.original.sync_status === 'active'"
-            icon="i-lucide-trash-2"
-            color="error"
-            variant="ghost"
-            size="xs"
-            @click.stop="confirmDeletePeer(row.original.id, row.original.assigned_ip)"
-          />
-        </template>
-        <template #empty>
-          <div class="text-center py-8 text-[var(--ui-text-muted)]">{{ t('adminPeers.noPeers') }}</div>
-        </template>
-      </UTable>
-    </div>
-
-    <!-- Mobile cards -->
-    <div class="md:hidden flex flex-col gap-3">
-      <div v-if="filteredPeers.length === 0" class="text-center py-8 text-[var(--ui-text-muted)]">
-        {{ t('adminPeers.noPeers') }}
-      </div>
-      <UCard
-        v-for="peer in filteredPeers"
-        :key="peer.id"
-        class="cursor-pointer active:scale-[0.98] transition-transform"
-        @click="router.push(`/admin/users/${peer.user_id}`)"
-      >
-        <div class="flex justify-between items-start">
-          <div>
-            <span class="font-mono font-medium">{{ peer.assigned_ip }}</span>
-            <span class="block text-sm">{{ peer.username || '-' }}</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
+      <!-- Desktop table -->
+      <div class="hidden md:block">
+        <UTable
+          :data="filteredPeers"
+          :columns="columns"
+          class="[&_tbody_tr]:cursor-pointer"
+          @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
+        >
+          <template #assigned_ip-cell="{ row }">
+            <span class="font-mono font-medium">{{ row.original.assigned_ip }}</span>
+          </template>
+          <template #username-cell="{ row }">
+            {{ row.original.username || '-' }}
+          </template>
+          <template #device_name-cell="{ row }">
+            <span v-if="row.original.device_name" class="flex items-center gap-1.5">
+              <UIcon
+                name="i-lucide-monitor-smartphone"
+                class="size-4 text-[var(--ui-text-muted)]"
+              />
+              {{ row.original.device_name }}
+            </span>
+            <span v-else class="text-[var(--ui-text-muted)]">-</span>
+          </template>
+          <template #client_version-cell="{ row }">
+            <span v-if="row.original.client_version" class="font-mono text-xs">{{
+              row.original.client_version
+            }}</span>
+            <span v-else class="text-[var(--ui-text-muted)]">-</span>
+          </template>
+          <template #sync_status-cell="{ row }">
+            <StatusBadge :status="row.original.sync_status as PeerSyncStatus" />
+          </template>
+          <template #tx_bytes-cell="{ row }">
+            {{ formatBytes(row.original.tx_bytes) }}
+          </template>
+          <template #rx_bytes-cell="{ row }">
+            {{ formatBytes(row.original.rx_bytes) }}
+          </template>
+          <template #last_handshake-cell="{ row }">
+            <span v-if="row.original.last_handshake">{{
+              formatDate(row.original.last_handshake)
+            }}</span>
+            <span v-else class="text-[var(--ui-text-muted)]">{{ t('common.neverConnected') }}</span>
+          </template>
+          <template #actions-cell="{ row }">
             <UButton
-              v-if="peer.sync_status === 'active'"
+              v-if="row.original.sync_status === 'active'"
               icon="i-lucide-trash-2"
               color="error"
               variant="ghost"
               size="xs"
-              @click.stop="confirmDeletePeer(peer.id, peer.assigned_ip)"
+              @click.stop="confirmDeletePeer(row.original.id, row.original.assigned_ip)"
             />
+          </template>
+          <template #empty>
+            <div class="text-center py-8 text-[var(--ui-text-muted)]">
+              {{ t('adminPeers.noPeers') }}
+            </div>
+          </template>
+        </UTable>
+      </div>
+
+      <!-- Mobile cards -->
+      <div class="md:hidden flex flex-col gap-3">
+        <div v-if="filteredPeers.length === 0" class="text-center py-8 text-[var(--ui-text-muted)]">
+          {{ t('adminPeers.noPeers') }}
+        </div>
+        <UCard
+          v-for="peer in filteredPeers"
+          :key="peer.id"
+          class="cursor-pointer active:scale-[0.98] transition-transform"
+          @click="router.push(`/admin/users/${peer.user_id}`)"
+        >
+          <div class="flex justify-between items-start">
+            <div>
+              <span class="font-mono font-medium">{{ peer.assigned_ip }}</span>
+              <span class="block text-sm">{{ peer.username || '-' }}</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
+              <UButton
+                v-if="peer.sync_status === 'active'"
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="ghost"
+                size="xs"
+                @click.stop="confirmDeletePeer(peer.id, peer.assigned_ip)"
+              />
+            </div>
           </div>
-        </div>
-        <div v-if="peer.device_name || peer.client_version" class="flex items-center gap-3 mt-1.5 text-sm text-[var(--ui-text-muted)]">
-          <span v-if="peer.device_name" class="flex items-center gap-1.5">
-            <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
-            {{ peer.device_name }}
-          </span>
-          <span v-if="peer.client_version" class="font-mono text-xs">v{{ peer.client_version }}</span>
-        </div>
-        <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
-          <span>TX: {{ formatBytes(peer.tx_bytes) }}</span>
-          <span>RX: {{ formatBytes(peer.rx_bytes) }}</span>
-          <span v-if="peer.last_handshake">{{ formatDate(peer.last_handshake) }}</span>
-          <span v-else>{{ t('common.neverConnected') }}</span>
-        </div>
-      </UCard>
-    </div>
+          <div
+            v-if="peer.device_name || peer.client_version"
+            class="flex items-center gap-3 mt-1.5 text-sm text-[var(--ui-text-muted)]"
+          >
+            <span v-if="peer.device_name" class="flex items-center gap-1.5">
+              <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
+              {{ peer.device_name }}
+            </span>
+            <span v-if="peer.client_version" class="font-mono text-xs"
+              >v{{ peer.client_version }}</span
+            >
+          </div>
+          <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
+            <span>TX: {{ formatBytes(peer.tx_bytes) }}</span>
+            <span>RX: {{ formatBytes(peer.rx_bytes) }}</span>
+            <span v-if="peer.last_handshake">{{ formatDate(peer.last_handshake) }}</span>
+            <span v-else>{{ t('common.neverConnected') }}</span>
+          </div>
+        </UCard>
+      </div>
     </template>
 
     <!-- Confirm Delete Dialog -->
@@ -186,8 +214,18 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
         <p>{{ confirmMessage }}</p>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="confirmOpen = false" />
-        <UButton :label="t('common.delete')" color="error" :loading="deleteMut.asyncStatus.value === 'loading'" @click="doDeletePeer" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="confirmOpen = false"
+        />
+        <UButton
+          :label="t('common.delete')"
+          color="error"
+          :loading="deleteMut.asyncStatus.value === 'loading'"
+          @click="doDeletePeer"
+        />
       </template>
     </UModal>
   </div>

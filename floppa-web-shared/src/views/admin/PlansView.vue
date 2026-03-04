@@ -2,7 +2,12 @@
 import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { listPlansQuery, createPlanMutation, updatePlanMutation, deletePlanMutation } from '../../client/@pinia/colada.gen'
+import {
+  listPlansQuery,
+  createPlanMutation,
+  updatePlanMutation,
+  deletePlanMutation,
+} from '../../client/@pinia/colada.gen'
 import type { Plan, CreatePlanRequest, UpdatePlanRequest } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 
@@ -15,10 +20,11 @@ const createMut = useMutation(createPlanMutation())
 const updateMut = useMutation(updatePlanMutation())
 const deleteMut = useMutation(deletePlanMutation())
 
-const submitting = computed(() =>
-  createMut.asyncStatus.value === 'loading' ||
-  updateMut.asyncStatus.value === 'loading' ||
-  deleteMut.asyncStatus.value === 'loading'
+const submitting = computed(
+  () =>
+    createMut.asyncStatus.value === 'loading' ||
+    updateMut.asyncStatus.value === 'loading' ||
+    deleteMut.asyncStatus.value === 'loading',
 )
 
 const planDialog = ref(false)
@@ -74,7 +80,11 @@ function openEditPlanDialog(plan: Plan) {
 
 async function savePlan() {
   if (!planForm.value.name || !planForm.value.display_name) {
-    toast.add({ title: t('common.validation'), description: t('adminPlans.nameRequired'), color: 'warning' })
+    toast.add({
+      title: t('common.validation'),
+      description: t('adminPlans.nameRequired'),
+      color: 'warning',
+    })
     return
   }
   try {
@@ -91,21 +101,36 @@ async function savePlan() {
         clear_traffic_limit: planForm.value.default_traffic_limit_bytes == null,
         clear_trial_days: planForm.value.trial_days == null,
       }
-      const updated = await updateMut.mutateAsync({ path: { id: editingPlanId.value }, body: update })
+      const updated = await updateMut.mutateAsync({
+        path: { id: editingPlanId.value },
+        body: update,
+      })
       // Optimistically patch local data so table updates instantly (even for null fields)
       if (plans.value && updated) {
-        const idx = plans.value.findIndex(p => p.id === editingPlanId.value)
+        const idx = plans.value.findIndex((p) => p.id === editingPlanId.value)
         if (idx !== -1) plans.value[idx] = updated
       }
-      toast.add({ title: t('common.success'), description: t('adminPlans.planUpdated'), color: 'success' })
+      toast.add({
+        title: t('common.success'),
+        description: t('adminPlans.planUpdated'),
+        color: 'success',
+      })
     } else {
       await createMut.mutateAsync({ body: planForm.value })
-      toast.add({ title: t('common.success'), description: t('adminPlans.planCreated'), color: 'success' })
+      toast.add({
+        title: t('common.success'),
+        description: t('adminPlans.planCreated'),
+        color: 'success',
+      })
     }
     await refresh()
     planDialog.value = false
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminPlans.saveFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminPlans.saveFailed'),
+      color: 'error',
+    })
   }
 }
 
@@ -120,9 +145,17 @@ async function doDeletePlan() {
   try {
     await deleteMut.mutateAsync({ path: { id: pendingDeletePlan.value.id } })
     await refresh()
-    toast.add({ title: t('common.success'), description: t('adminPlans.planDeleted'), color: 'success' })
+    toast.add({
+      title: t('common.success'),
+      description: t('adminPlans.planDeleted'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminPlans.deleteFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminPlans.deleteFailed'),
+      color: 'error',
+    })
   }
   confirmOpen.value = false
   pendingDeletePlan.value = null
@@ -163,94 +196,147 @@ const columns = computed<TableColumn<Plan>[]>(() => [
     </div>
     <UAlert v-else-if="error" color="error" :title="error.message" />
     <template v-else>
-    <!-- Desktop table -->
-    <div class="hidden md:block">
-      <UTable :data="plans ?? []" :columns="columns">
-        <template #name-cell="{ row }">
-          <code class="bg-[var(--ui-bg-elevated)] px-1.5 py-0.5 rounded text-sm">{{ row.original.name }}</code>
-        </template>
-        <template #default_speed_limit_mbps-cell="{ row }">
-          {{ row.original.default_speed_limit_mbps ? `${row.original.default_speed_limit_mbps} Mbps` : t('common.unlimited') }}
-        </template>
-        <template #default_traffic_limit_bytes-cell="{ row }">
-          {{ formatTrafficGb(row.original.default_traffic_limit_bytes) }}
-        </template>
-        <template #price_rub-cell="{ row }">
-          {{ formatPrice(row.original.price_rub) }}
-        </template>
-        <template #trial_days-cell="{ row }">
-          {{ row.original.trial_days ? t('adminPlans.days', { n: row.original.trial_days }) : '-' }}
-        </template>
-        <template #is_public-cell="{ row }">
-          <UBadge
-            :color="row.original.is_public ? 'success' : 'neutral'"
-            :label="row.original.is_public ? t('common.yes') : t('common.no')"
-            variant="subtle"
-          />
-        </template>
-        <template #actions-cell="{ row }">
-          <div class="flex gap-1">
-            <UButton icon="i-lucide-pencil" color="neutral" variant="ghost" size="xs" @click="openEditPlanDialog(row.original)" />
-            <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="xs" @click="confirmDeletePlan(row.original)" />
-          </div>
-        </template>
-        <template #empty>
-          <div class="text-center py-8 text-[var(--ui-text-muted)]">{{ t('adminPlans.noPlans') }}</div>
-        </template>
-      </UTable>
-    </div>
-
-    <!-- Mobile cards -->
-    <div class="md:hidden flex flex-col gap-3">
-      <div v-if="!plans?.length" class="text-center py-8 text-[var(--ui-text-muted)]">
-        {{ t('adminPlans.noPlans') }}
+      <!-- Desktop table -->
+      <div class="hidden md:block">
+        <UTable :data="plans ?? []" :columns="columns">
+          <template #name-cell="{ row }">
+            <code class="bg-[var(--ui-bg-elevated)] px-1.5 py-0.5 rounded text-sm">{{
+              row.original.name
+            }}</code>
+          </template>
+          <template #default_speed_limit_mbps-cell="{ row }">
+            {{
+              row.original.default_speed_limit_mbps
+                ? `${row.original.default_speed_limit_mbps} Mbps`
+                : t('common.unlimited')
+            }}
+          </template>
+          <template #default_traffic_limit_bytes-cell="{ row }">
+            {{ formatTrafficGb(row.original.default_traffic_limit_bytes) }}
+          </template>
+          <template #price_rub-cell="{ row }">
+            {{ formatPrice(row.original.price_rub) }}
+          </template>
+          <template #trial_days-cell="{ row }">
+            {{
+              row.original.trial_days ? t('adminPlans.days', { n: row.original.trial_days }) : '-'
+            }}
+          </template>
+          <template #is_public-cell="{ row }">
+            <UBadge
+              :color="row.original.is_public ? 'success' : 'neutral'"
+              :label="row.original.is_public ? t('common.yes') : t('common.no')"
+              variant="subtle"
+            />
+          </template>
+          <template #actions-cell="{ row }">
+            <div class="flex gap-1">
+              <UButton
+                icon="i-lucide-pencil"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                @click="openEditPlanDialog(row.original)"
+              />
+              <UButton
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="ghost"
+                size="xs"
+                @click="confirmDeletePlan(row.original)"
+              />
+            </div>
+          </template>
+          <template #empty>
+            <div class="text-center py-8 text-[var(--ui-text-muted)]">
+              {{ t('adminPlans.noPlans') }}
+            </div>
+          </template>
+        </UTable>
       </div>
-      <UCard v-for="plan in (plans ?? [])" :key="plan.id">
-        <div class="flex justify-between items-start">
-          <div>
-            <span class="font-medium">{{ plan.display_name }}</span>
-            <code class="block text-xs bg-[var(--ui-bg-elevated)] px-1 py-0.5 rounded mt-0.5 w-fit">{{ plan.name }}</code>
+
+      <!-- Mobile cards -->
+      <div class="md:hidden flex flex-col gap-3">
+        <div v-if="!plans?.length" class="text-center py-8 text-[var(--ui-text-muted)]">
+          {{ t('adminPlans.noPlans') }}
+        </div>
+        <UCard v-for="plan in plans ?? []" :key="plan.id">
+          <div class="flex justify-between items-start">
+            <div>
+              <span class="font-medium">{{ plan.display_name }}</span>
+              <code
+                class="block text-xs bg-[var(--ui-bg-elevated)] px-1 py-0.5 rounded mt-0.5 w-fit"
+                >{{ plan.name }}</code
+              >
+            </div>
+            <div class="flex gap-1">
+              <UButton
+                icon="i-lucide-pencil"
+                color="neutral"
+                variant="ghost"
+                size="xs"
+                @click="openEditPlanDialog(plan)"
+              />
+              <UButton
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="ghost"
+                size="xs"
+                @click="confirmDeletePlan(plan)"
+              />
+            </div>
           </div>
-          <div class="flex gap-1">
-            <UButton icon="i-lucide-pencil" color="neutral" variant="ghost" size="xs" @click="openEditPlanDialog(plan)" />
-            <UButton icon="i-lucide-trash-2" color="error" variant="ghost" size="xs" @click="confirmDeletePlan(plan)" />
+          <div class="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-sm">
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.speed') }}</span>
+            <span>{{
+              plan.default_speed_limit_mbps
+                ? `${plan.default_speed_limit_mbps} Mbps`
+                : t('common.unlimited')
+            }}</span>
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.traffic') }}</span>
+            <span>{{ formatTrafficGb(plan.default_traffic_limit_bytes) }}</span>
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.maxPeers') }}</span>
+            <span>{{ plan.max_peers }}</span>
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.price') }}</span>
+            <span>{{ formatPrice(plan.price_rub) }}</span>
+            <span v-if="plan.trial_days" class="text-[var(--ui-text-muted)]">{{
+              t('adminPlans.trial')
+            }}</span>
+            <span v-if="plan.trial_days">{{ t('adminPlans.days', { n: plan.trial_days }) }}</span>
           </div>
-        </div>
-        <div class="grid grid-cols-2 gap-x-4 gap-y-1 mt-3 text-sm">
-          <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.speed') }}</span>
-          <span>{{ plan.default_speed_limit_mbps ? `${plan.default_speed_limit_mbps} Mbps` : t('common.unlimited') }}</span>
-          <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.traffic') }}</span>
-          <span>{{ formatTrafficGb(plan.default_traffic_limit_bytes) }}</span>
-          <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.maxPeers') }}</span>
-          <span>{{ plan.max_peers }}</span>
-          <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.price') }}</span>
-          <span>{{ formatPrice(plan.price_rub) }}</span>
-          <span v-if="plan.trial_days" class="text-[var(--ui-text-muted)]">{{ t('adminPlans.trial') }}</span>
-          <span v-if="plan.trial_days">{{ t('adminPlans.days', { n: plan.trial_days }) }}</span>
-        </div>
-        <div class="mt-2">
-          <UBadge
-            :color="plan.is_public ? 'success' : 'neutral'"
-            :label="plan.is_public ? t('common.yes') : t('common.no')"
-            variant="subtle"
-            size="sm"
-          />
-        </div>
-      </UCard>
-    </div>
+          <div class="mt-2">
+            <UBadge
+              :color="plan.is_public ? 'success' : 'neutral'"
+              :label="plan.is_public ? t('common.yes') : t('common.no')"
+              variant="subtle"
+              size="sm"
+            />
+          </div>
+        </UCard>
+      </div>
     </template>
 
     <!-- Plan Dialog -->
-    <UModal v-model:open="planDialog" :title="t(isEditing ? 'adminPlans.editPlan' : 'adminPlans.createPlan')">
+    <UModal
+      v-model:open="planDialog"
+      :title="t(isEditing ? 'adminPlans.editPlan' : 'adminPlans.createPlan')"
+    >
       <template #body>
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminPlans.internalName') }}</label>
-            <UInput v-model="planForm.name" :disabled="isEditing" :placeholder="t('adminPlans.internalNamePlaceholder')" />
+            <UInput
+              v-model="planForm.name"
+              :disabled="isEditing"
+              :placeholder="t('adminPlans.internalNamePlaceholder')"
+            />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminPlans.displayName') }}</label>
-            <UInput v-model="planForm.display_name" :placeholder="t('adminPlans.displayNamePlaceholder')" />
+            <UInput
+              v-model="planForm.display_name"
+              :placeholder="t('adminPlans.displayNamePlaceholder')"
+            />
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
@@ -258,7 +344,10 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.default_speed_limit_mbps?.toString()"
-                @update:model-value="(v: string | number) => planForm.default_speed_limit_mbps = v === '' ? null : Number(v)"
+                @update:model-value="
+                  (v: string | number) =>
+                    (planForm.default_speed_limit_mbps = v === '' ? null : Number(v))
+                "
                 :placeholder="t('common.unlimited')"
                 :min="1"
               />
@@ -270,7 +359,9 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
-              <label class="text-sm font-medium">{{ t('adminPlans.priceLabel', { currency: '₽' }) }}</label>
+              <label class="text-sm font-medium">{{
+                t('adminPlans.priceLabel', { currency: '₽' })
+              }}</label>
               <UInput type="number" v-model.number="planForm.price_rub" :min="0" />
             </div>
             <div class="flex flex-col gap-1.5">
@@ -278,7 +369,9 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.trial_days?.toString()"
-                @update:model-value="(v: string | number) => planForm.trial_days = v === '' ? null : Number(v)"
+                @update:model-value="
+                  (v: string | number) => (planForm.trial_days = v === '' ? null : Number(v))
+                "
                 :placeholder="t('adminPlans.notATrial')"
                 :min="1"
               />
@@ -288,8 +381,17 @@ const columns = computed<TableColumn<Plan>[]>(() => [
         </div>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="planDialog = false" />
-        <UButton :label="isEditing ? t('common.save') : t('common.create')" :loading="submitting" @click="savePlan" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="planDialog = false"
+        />
+        <UButton
+          :label="isEditing ? t('common.save') : t('common.create')"
+          :loading="submitting"
+          @click="savePlan"
+        />
       </template>
     </UModal>
 
@@ -299,8 +401,18 @@ const columns = computed<TableColumn<Plan>[]>(() => [
         <p>{{ confirmMessage }}</p>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="confirmOpen = false" />
-        <UButton :label="t('common.delete')" color="error" :loading="deleteMut.asyncStatus.value === 'loading'" @click="doDeletePlan" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="confirmOpen = false"
+        />
+        <UButton
+          :label="t('common.delete')"
+          color="error"
+          :loading="deleteMut.asyncStatus.value === 'loading'"
+          @click="doDeletePlan"
+        />
       </template>
     </UModal>
   </div>

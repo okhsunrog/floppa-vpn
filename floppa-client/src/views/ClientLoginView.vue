@@ -6,7 +6,7 @@ import { LoginView } from 'floppa-web-shared/views'
 
 const isTauriRuntime = isTauri()
 
-const authMode = computed(() => isTauriRuntime ? 'deep-link' as const : 'widget' as const)
+const authMode = computed(() => (isTauriRuntime ? ('deep-link' as const) : ('widget' as const)))
 
 const deepLinkLoginUrl = computed(() => {
   if (!isTauriRuntime) return undefined

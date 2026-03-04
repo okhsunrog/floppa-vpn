@@ -14,10 +14,9 @@ import androidx.core.app.NotificationCompat
 /**
  * Android VpnService implementation for Floppa VPN.
  *
- * Runs in a separate `:vpn` process (android:process=":vpn" in manifest).
- * Creates a TUN interface and delegates WireGuard tunnel management to Rust
- * via JNI. The Rust code runs a tarpc RPC server for the UI process to
- * query status, stats, and request disconnect.
+ * Runs in a separate `:vpn` process (android:process=":vpn" in manifest). Creates a TUN interface
+ * and delegates WireGuard tunnel management to Rust via JNI. The Rust code runs a tarpc RPC server
+ * for the UI process to query status, stats, and request disconnect.
  */
 class FloppaVpnService : VpnService() {
 
@@ -40,8 +39,7 @@ class FloppaVpnService : VpnService() {
         const val EXTRA_WG_CONFIG = "wg_config"
 
         // Singleton instance for local protectSocket() calls from JNI
-        @JvmField
-        var instance: FloppaVpnService? = null
+        @JvmField var instance: FloppaVpnService? = null
 
         init {
             System.loadLibrary("floppa_client_lib")
@@ -50,7 +48,9 @@ class FloppaVpnService : VpnService() {
 
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit()
+
     private external fun nativeStartTunnel(tunFd: Int, wgConfig: String, socketPath: String)
+
     private external fun nativeStop()
 
     private var tunInterface: ParcelFileDescriptor? = null
@@ -102,7 +102,6 @@ class FloppaVpnService : VpnService() {
             // Start the WireGuard tunnel and tarpc RPC server via JNI
             val socketPath = applicationInfo.dataDir + "/vpn.sock"
             nativeStartTunnel(fd, wgConfig, socketPath)
-
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN tunnel", e)
             stopSelf()
@@ -131,9 +130,9 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * Clean up Android-side resources (TUN, foreground notification) and stop the service.
-     * Called from Rust via JNI after the tunnel and RPC server are already stopped,
-     * and from onDestroy/onRevoke for system-initiated shutdowns.
+     * Clean up Android-side resources (TUN, foreground notification) and stop the service. Called
+     * from Rust via JNI after the tunnel and RPC server are already stopped, and from
+     * onDestroy/onRevoke for system-initiated shutdowns.
      */
     fun shutdownService() {
         Log.i(TAG, "shutdownService() called")
@@ -157,47 +156,48 @@ class FloppaVpnService : VpnService() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                "VPN Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows when VPN is active"
-            }
+            val channel =
+                NotificationChannel(
+                        NOTIFICATION_CHANNEL_ID,
+                        "VPN Service",
+                        NotificationManager.IMPORTANCE_LOW,
+                    )
+                    .apply { description = "Shows when VPN is active" }
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
     }
 
     private fun startVpnForeground() {
-        val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Floppa VPN")
-            .setContentText("Connected")
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setOngoing(true)
-            .setContentIntent(createOpenAppIntent())
-            .build()
+        val notification =
+            NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("Floppa VPN")
+                .setContentText("Connected")
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setOngoing(true)
+                .setContentIntent(createOpenAppIntent())
+                .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
-                NOTIFICATION_ID, notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED,
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
     }
 
-    /**
-     * Create a PendingIntent that opens the app when the notification is tapped.
-     */
+    /** Create a PendingIntent that opens the app when the notification is tapped. */
     private fun createOpenAppIntent(): PendingIntent {
-        val intent = packageManager.getLaunchIntentForPackage(packageName)
-            ?: Intent()
+        val intent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent()
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
         return PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
     }
 
@@ -210,12 +210,12 @@ class FloppaVpnService : VpnService() {
         val disallowedApps = intent.getStringArrayExtra(EXTRA_DISALLOWED_APPS) ?: emptyArray()
         val allowedApps = intent.getStringArrayExtra(EXTRA_ALLOWED_APPS) ?: emptyArray()
 
-        Log.i(TAG, "Creating TUN: ipv4=$ipv4Addr, ipv6=$ipv6Addr, mtu=$mtu, routes=${routes.size}, dns=$dns")
+        Log.i(
+            TAG,
+            "Creating TUN: ipv4=$ipv4Addr, ipv6=$ipv6Addr, mtu=$mtu, routes=${routes.size}, dns=$dns",
+        )
 
-        val builder = Builder()
-            .setSession("Floppa VPN")
-            .setMtu(mtu)
-            .setBlocking(false)
+        val builder = Builder().setSession("Floppa VPN").setMtu(mtu).setBlocking(false)
 
         // Add IPv4 address
         val (ipv4, prefix4) = parseAddress(ipv4Addr)
@@ -239,8 +239,10 @@ class FloppaVpnService : VpnService() {
 
         // Add DNS servers (may be comma-separated, e.g. "1.1.1.1, 8.8.8.8")
         dns?.let {
-            val servers = it.split(",").map { server -> server.trim() }
-                .filter { server -> server.isNotEmpty() }
+            val servers =
+                it.split(",")
+                    .map { server -> server.trim() }
+                    .filter { server -> server.isNotEmpty() }
             for (server in servers) {
                 try {
                     builder.addDnsServer(server)
@@ -289,8 +291,7 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * Protect a socket from VPN routing.
-     * Called from Rust JNI to ensure UDP sockets bypass the VPN,
+     * Protect a socket from VPN routing. Called from Rust JNI to ensure UDP sockets bypass the VPN,
      * preventing routing loops.
      */
     fun protectSocket(socket: Int): Boolean {

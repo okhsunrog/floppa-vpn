@@ -8,17 +8,19 @@ const AVATAR_KEY = 'floppa-avatar'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem(TOKEN_KEY))
-  const user = ref<AuthUserInfo | null>((() => {
-    const stored = localStorage.getItem(USER_KEY)
-    if (!stored) return null
-    try {
-      const parsed = JSON.parse(stored)
-      if (typeof parsed?.id !== 'number') return null
-      return parsed
-    } catch {
-      return null
-    }
-  })())
+  const user = ref<AuthUserInfo | null>(
+    (() => {
+      const stored = localStorage.getItem(USER_KEY)
+      if (!stored) return null
+      try {
+        const parsed = JSON.parse(stored)
+        if (typeof parsed?.id !== 'number') return null
+        return parsed
+      } catch {
+        return null
+      }
+    })(),
+  )
 
   const cachedAvatar = ref<string | null>(localStorage.getItem(AVATAR_KEY))
   const avatarUrl = computed(() => cachedAvatar.value ?? user.value?.photo_url ?? undefined)
@@ -28,11 +30,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   function cacheAvatar(url: string) {
     fetch(url, { mode: 'cors' })
-      .then(r => {
+      .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.blob()
       })
-      .then(blob => {
+      .then((blob) => {
         const reader = new FileReader()
         reader.onloadend = () => {
           const dataUrl = reader.result as string

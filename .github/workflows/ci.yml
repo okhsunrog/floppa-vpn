@@ -52,11 +52,43 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Format check (shared)
+        run: cd floppa-web-shared && bun run format:check
+
+      - name: Format check (admin)
+        run: cd floppa-face && bun run format:check
+
+      - name: Format check (client)
+        run: cd floppa-client && bun run format:check
+
       - name: Type-check & lint (shared)
-        run: cd floppa-web-shared && bun run type-check && bun run lint
+        run: cd floppa-web-shared && bun run type-check && bun run lint:check
 
       - name: Type-check & lint (admin)
-        run: cd floppa-face && bun run type-check && bun run lint
+        run: cd floppa-face && bun run type-check && bun run lint:check
 
       - name: Type-check & lint (client)
-        run: cd floppa-client && bun run type-check && bun run lint
+        run: cd floppa-client && bun run type-check && bun run lint:check
+
+      - name: Build client frontend
+        run: cd floppa-client && bun run build
+
+  kotlin:
+    name: Kotlin format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Download ktfmt
+        run: |
+          mkdir -p .cache
+          curl -sSL -o .cache/ktfmt-0.61-with-dependencies.jar \
+            https://repo1.maven.org/maven2/com/facebook/ktfmt/0.61/ktfmt-0.61-with-dependencies.jar
+
+      - name: Check Kotlin formatting
+        run: java -jar .cache/ktfmt-0.61-with-dependencies.jar --kotlinlang-style --set-exit-if-changed --dry-run tauri-plugin-vpn/android/src

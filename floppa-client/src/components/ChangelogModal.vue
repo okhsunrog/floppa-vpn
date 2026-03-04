@@ -27,9 +27,7 @@ const accordionItems = computed(() => {
     }))
 })
 
-const defaultOpen = computed(() =>
-  updateStore.changelog?.sections.map((s) => s.type) ?? [],
-)
+const defaultOpen = computed(() => updateStore.changelog?.sections.map((s) => s.type) ?? [])
 
 function getItemText(item: ChangelogItem): string {
   return locale.value === 'ru' ? item.ru : item.en
@@ -69,12 +67,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
         {{ t('changelog.notAvailable') }}
       </div>
 
-      <UAccordion
-        v-else
-        :items="accordionItems"
-        type="multiple"
-        :default-value="defaultOpen"
-      >
+      <UAccordion v-else :items="accordionItems" type="multiple" :default-value="defaultOpen">
         <template #body="{ item }">
           <!-- eslint-disable-next-line vue/no-v-html -->
           <div class="flex flex-col gap-2" @click="handleLinkClick">

@@ -9,12 +9,15 @@ import type { TelegramAuthData } from '../client/types.gen'
 import { useAuthStore } from '../stores'
 import TelegramLoginButton from '../components/TelegramLoginButton.vue'
 
-const props = withDefaults(defineProps<{
-  authMode?: 'widget' | 'deep-link'
-  deepLinkLoginUrl?: string
-}>(), {
-  authMode: 'widget',
-})
+const props = withDefaults(
+  defineProps<{
+    authMode?: 'widget' | 'deep-link'
+    deepLinkLoginUrl?: string
+  }>(),
+  {
+    authMode: 'widget',
+  },
+)
 
 const emit = defineEmits<{
   'deep-link-login': [url: string]
@@ -44,15 +47,21 @@ onMounted(async () => {
 
   // Signal to Telegram that the app is ready
   try {
-    const tg = (window as { Telegram?: { WebApp?: { ready?: () => void, expand?: () => void } } }).Telegram
+    const tg = (window as { Telegram?: { WebApp?: { ready?: () => void; expand?: () => void } } })
+      .Telegram
     tg?.WebApp?.ready?.()
     tg?.WebApp?.expand?.()
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 
   // Auto-login with Mini App initData
   miniAppLoading.value = true
   try {
-    const { data: response } = await telegramMiniAppAuth({ body: { init_data: initData }, throwOnError: true })
+    const { data: response } = await telegramMiniAppAuth({
+      body: { init_data: initData },
+      throwOnError: true,
+    })
     auth.setAuth(response.token, response.user)
     router.push('/')
   } catch {
@@ -88,7 +97,9 @@ function startDeepLinkLogin() {
           <UIcon name="i-lucide-shield" class="text-[var(--ui-primary)]" />
           <span>Floppa VPN</span>
         </div>
-        <p class="text-center text-sm text-[var(--ui-text-muted)] mt-1">{{ t('login.subtitle') }}</p>
+        <p class="text-center text-sm text-[var(--ui-text-muted)] mt-1">
+          {{ t('login.subtitle') }}
+        </p>
       </template>
 
       <div class="flex flex-col items-center gap-4 py-4">
@@ -99,18 +110,24 @@ function startDeepLinkLogin() {
         </template>
 
         <template v-else>
-          <div v-if="status === 'pending'" class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
+          <div
+            v-if="status === 'pending'"
+            class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]"
+          />
           <UAlert v-else-if="configError" color="error" :title="t('login.configError')" />
           <UAlert v-else-if="loginError" color="error" :title="loginError" />
-          <UAlert v-else-if="!config?.telegram_bot_username" color="warning" :title="t('login.botNotConfigured')" />
+          <UAlert
+            v-else-if="!config?.telegram_bot_username"
+            color="warning"
+            :title="t('login.botNotConfigured')"
+          />
 
           <!-- Deep-link mode (Tauri desktop/mobile) -->
-          <div v-else-if="authMode === 'deep-link' && deepLinkLoginUrl" class="flex flex-col items-center gap-3 w-full">
-            <UButton
-              color="primary"
-              icon="i-lucide-send"
-              @click="startDeepLinkLogin"
-            >
+          <div
+            v-else-if="authMode === 'deep-link' && deepLinkLoginUrl"
+            class="flex flex-col items-center gap-3 w-full"
+          >
+            <UButton color="primary" icon="i-lucide-send" @click="startDeepLinkLogin">
               {{ t('login.continueInBrowser') }}
             </UButton>
             <div class="flex flex-col gap-1.5 mt-1">
@@ -130,7 +147,11 @@ function startDeepLinkLogin() {
           </div>
 
           <!-- Widget mode (web) -->
-          <TelegramLoginButton v-else :bot-name="config.telegram_bot_username" @auth="handleTelegramAuth" />
+          <TelegramLoginButton
+            v-else
+            :bot-name="config.telegram_bot_username"
+            @auth="handleTelegramAuth"
+          />
         </template>
       </div>
     </UCard>

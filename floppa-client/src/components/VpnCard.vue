@@ -26,40 +26,50 @@ const setupError = computed<string | null>(() => {
 const showBatteryPrompt = ref(false)
 const batteryPromptDismissed = ref(localStorage.getItem('battery_prompt_dismissed') === 'true')
 const showNotificationPrompt = ref(false)
-const notificationPromptDismissed = ref(localStorage.getItem('notification_prompt_dismissed') === 'true')
+const notificationPromptDismissed = ref(
+  localStorage.getItem('notification_prompt_dismissed') === 'true',
+)
 
 // Show prompts after first successful connection on Android
-watch(() => vpn.isConnected, async (connected, wasConnected) => {
-  if (!connected || wasConnected || !vpn.isAndroid) return
+watch(
+  () => vpn.isConnected,
+  async (connected, wasConnected) => {
+    if (!connected || wasConnected || !vpn.isAndroid) return
 
-  if (!batteryPromptDismissed.value) {
-    try {
-      const result = await commands.isBatteryOptimizationDisabled()
-      if (result.status === 'ok' && !result.data) {
-        showBatteryPrompt.value = true
+    if (!batteryPromptDismissed.value) {
+      try {
+        const result = await commands.isBatteryOptimizationDisabled()
+        if (result.status === 'ok' && !result.data) {
+          showBatteryPrompt.value = true
+        }
+      } catch {
+        /* ignore */
       }
-    } catch { /* ignore */ }
-  }
+    }
 
-  if (!notificationPromptDismissed.value) {
-    try {
-      const result = await commands.areNotificationsEnabled()
-      if (result.status === 'ok' && !result.data) {
-        showNotificationPrompt.value = true
+    if (!notificationPromptDismissed.value) {
+      try {
+        const result = await commands.areNotificationsEnabled()
+        if (result.status === 'ok' && !result.data) {
+          showNotificationPrompt.value = true
+        }
+      } catch {
+        /* ignore */
       }
-    } catch { /* ignore */ }
-  }
-})
+    }
+  },
+)
 
 async function handleBatteryOptimization() {
   try {
     await commands.requestDisableBatteryOptimization()
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   showBatteryPrompt.value = false
   batteryPromptDismissed.value = true
   localStorage.setItem('battery_prompt_dismissed', 'true')
 }
-
 
 function dismissBatteryPrompt() {
   showBatteryPrompt.value = false
@@ -70,7 +80,9 @@ function dismissBatteryPrompt() {
 async function handleEnableNotifications() {
   try {
     await commands.openNotificationSettings()
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   showNotificationPrompt.value = false
   notificationPromptDismissed.value = true
   localStorage.setItem('notification_prompt_dismissed', 'true')
@@ -94,7 +106,10 @@ watch(meQueryError, (err) => {
   }
 })
 
-type SyncResult = { outcome: 'ok' } | { outcome: 'error'; errorKey: string } | { outcome: 'offline' }
+type SyncResult =
+  | { outcome: 'ok' }
+  | { outcome: 'error'; errorKey: string }
+  | { outcome: 'offline' }
 
 async function doServerSync(): Promise<SyncResult> {
   try {
@@ -113,7 +128,10 @@ async function doServerSync(): Promise<SyncResult> {
     })
 
     if (peer) {
-      const { data: configStr } = await getMyPeerConfig({ path: { id: peer.id }, throwOnError: true })
+      const { data: configStr } = await getMyPeerConfig({
+        path: { id: peer.id },
+        throwOnError: true,
+      })
       await vpn.setActiveConfig(configStr)
       return { outcome: 'ok' }
     }
@@ -273,11 +291,16 @@ async function handleConnect() {
 const buttonLabel = computed(() => {
   const s = vpn.connectionInfo?.status
   switch (s) {
-    case 'connecting': return t('vpn.connecting')
-    case 'verifying_handshake': return t('vpn.verifyingHandshake')
-    case 'disconnecting': return t('vpn.disconnecting')
-    case 'connected': return t('vpn.disconnect')
-    default: return t('vpn.connect')
+    case 'connecting':
+      return t('vpn.connecting')
+    case 'verifying_handshake':
+      return t('vpn.verifyingHandshake')
+    case 'disconnecting':
+      return t('vpn.disconnecting')
+    case 'connected':
+      return t('vpn.disconnect')
+    default:
+      return t('vpn.connect')
   }
 })
 
@@ -329,51 +352,65 @@ const handshakeDotClass = computed(() => {
         </template>
       </UAlert>
 
-        <div
-          :class="[
-            'status-circle',
-            {
-              connected: vpn.isConnected,
-              connecting: vpn.connectionStatus === 'connecting' || vpn.connectionStatus === 'disconnecting',
-            },
-          ]">
-          <img
-            :src="vpn.isConnected ? vpnConnectedImg : vpnDisconnectedImg"
-            alt=""
-            class="size-20 object-contain transition-all duration-300" />
-        </div>
+      <div
+        :class="[
+          'status-circle',
+          {
+            connected: vpn.isConnected,
+            connecting:
+              vpn.connectionStatus === 'connecting' || vpn.connectionStatus === 'disconnecting',
+          },
+        ]"
+      >
+        <img
+          :src="vpn.isConnected ? vpnConnectedImg : vpnDisconnectedImg"
+          alt=""
+          class="size-20 object-contain transition-all duration-300"
+        />
+      </div>
 
-        <ConnectionIndicator :status="vpn.connectionStatus" show-label class="text-xl font-semibold" />
+      <ConnectionIndicator
+        :status="vpn.connectionStatus"
+        show-label
+        class="text-xl font-semibold"
+      />
 
-        <div
-          v-if="vpn.isConnected && vpn.connectionInfo"
-          class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]">
-          <span v-if="vpn.connectionInfo.assigned_ip">
-            IP: {{ vpn.connectionInfo.assigned_ip }}
-          </span>
-          <span v-if="vpn.connectionInfo.server_endpoint">
-            Server: {{ vpn.connectionInfo.server_endpoint }}
-          </span>
-          <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
-          <span class="inline-flex items-center justify-center gap-1.5">
-            {{ t('vpn.handshake') }}:
-            <span class="size-2 rounded-full" :class="handshakeDotClass" />
-            {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
-          </span>
-        </div>
+      <div
+        v-if="vpn.isConnected && vpn.connectionInfo"
+        class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]"
+      >
+        <span v-if="vpn.connectionInfo.assigned_ip">
+          IP: {{ vpn.connectionInfo.assigned_ip }}
+        </span>
+        <span v-if="vpn.connectionInfo.server_endpoint">
+          Server: {{ vpn.connectionInfo.server_endpoint }}
+        </span>
+        <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
+        <span class="inline-flex items-center justify-center gap-1.5">
+          {{ t('vpn.handshake') }}:
+          <span class="size-2 rounded-full" :class="handshakeDotClass" />
+          {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
+        </span>
+      </div>
 
-        <UAlert v-if="vpn.error" color="error" :title="vpn.error" class="mt-2 w-full max-w-sm" />
-        <UAlert v-else-if="setupError" color="warning" :title="setupError" class="mt-2 w-full max-w-sm" />
+      <UAlert v-if="vpn.error" color="error" :title="vpn.error" class="mt-2 w-full max-w-sm" />
+      <UAlert
+        v-else-if="setupError"
+        color="warning"
+        :title="setupError"
+        class="mt-2 w-full max-w-sm"
+      />
 
-        <UButton
-          :label="buttonLabel"
-          :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
-          :color="vpn.isConnected ? 'error' : 'success'"
-          :loading="vpn.isLoading"
-          :disabled="!vpn.hasConfig"
-          size="lg"
-          class="w-full max-w-[200px] mt-2"
-          @click="handleConnect" />
+      <UButton
+        :label="buttonLabel"
+        :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
+        :color="vpn.isConnected ? 'error' : 'success'"
+        :loading="vpn.isLoading"
+        :disabled="!vpn.hasConfig"
+        size="lg"
+        class="w-full max-w-[200px] mt-2"
+        @click="handleConnect"
+      />
     </div>
   </UCard>
 

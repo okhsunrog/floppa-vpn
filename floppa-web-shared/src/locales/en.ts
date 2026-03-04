@@ -64,8 +64,9 @@ export default {
     loginFailed: 'Login failed',
     continueInBrowser: 'Continue in browser',
     browserHint: 'The browser will open Telegram login and return to the app automatically.',
-    retryHint: 'If it doesn\'t work the first time, try tapping the button again.',
-    browserChangeHint: 'Still not working? Try setting a different default browser in system settings.',
+    retryHint: "If it doesn't work the first time, try tapping the button again.",
+    browserChangeHint:
+      'Still not working? Try setting a different default browser in system settings.',
     vpnHint: 'Also make sure to disable any active VPN connection before logging in.',
     miniAppLoggingIn: 'Logging in via Telegram...',
     miniAppFailed: 'Mini App authentication failed. Try reloading.',
@@ -249,7 +250,8 @@ export default {
     changesApplyOnReconnect: 'Settings changed — reconnect to apply',
     reconnect: 'Reconnect',
     batteryOptimization: 'Battery Optimization',
-    batteryOptimizationDescription: 'Disable battery optimization so Android doesn\'t kill the VPN in the background.',
+    batteryOptimizationDescription:
+      "Disable battery optimization so Android doesn't kill the VPN in the background.",
     batteryDisabled: 'Battery optimization is disabled',
     batteryEnabled: 'Battery optimization is active',
     disableBatteryOptimization: 'Disable',
@@ -292,7 +294,8 @@ export default {
     noSubscription: 'No active subscription',
     configLimitReached: 'Config limit reached',
     settingUp: 'Setting up VPN...',
-    peerLimitReached: 'You have reached your config limit. Delete a config from "My Configs" to free up a slot.',
+    peerLimitReached:
+      'You have reached your config limit. Delete a config from "My Configs" to free up a slot.',
     connectionLost: 'Connection lost. Max reconnect attempts reached.',
     reconnecting: 'Connection lost. Reconnecting ({current}/{max})...',
     vpnPermissionDenied: 'VPN permission denied',

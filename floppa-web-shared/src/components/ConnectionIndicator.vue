@@ -29,8 +29,11 @@ const dotClass = computed(() => {
   return classes[props.status]
 })
 
-const isPulsing = computed(() =>
-  props.status === 'connecting' || props.status === 'verifying_handshake' || props.status === 'disconnecting',
+const isPulsing = computed(
+  () =>
+    props.status === 'connecting' ||
+    props.status === 'verifying_handshake' ||
+    props.status === 'disconnecting',
 )
 </script>
 

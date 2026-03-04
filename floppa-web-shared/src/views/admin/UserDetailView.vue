@@ -3,7 +3,13 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { getUserQuery, listPlansQuery, setSubscriptionMutation, deleteSubscriptionMutation, deleteAdminPeerMutation } from '../../client/@pinia/colada.gen'
+import {
+  getUserQuery,
+  listPlansQuery,
+  setSubscriptionMutation,
+  deleteSubscriptionMutation,
+  deleteAdminPeerMutation,
+} from '../../client/@pinia/colada.gen'
 import { formatBytes } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
@@ -15,7 +21,12 @@ const toast = useToast()
 
 const userId = Number(route.params.id)
 
-const { data: user, status: userStatus, error: userError, refresh: refreshUser } = useQuery(getUserQuery({ path: { id: userId } }))
+const {
+  data: user,
+  status: userStatus,
+  error: userError,
+  refresh: refreshUser,
+} = useQuery(getUserQuery({ path: { id: userId } }))
 const { data: plans, status: plansStatus, error: plansError } = useQuery(listPlansQuery())
 
 const loading = computed(() => userStatus.value === 'pending' || plansStatus.value === 'pending')
@@ -25,10 +36,11 @@ const setSubMut = useMutation(setSubscriptionMutation())
 const deleteSubMut = useMutation(deleteSubscriptionMutation())
 const deletePeerMut = useMutation(deleteAdminPeerMutation())
 
-const submitting = computed(() =>
-  setSubMut.asyncStatus.value === 'loading' ||
-  deleteSubMut.asyncStatus.value === 'loading' ||
-  deletePeerMut.asyncStatus.value === 'loading'
+const submitting = computed(
+  () =>
+    setSubMut.asyncStatus.value === 'loading' ||
+    deleteSubMut.asyncStatus.value === 'loading' ||
+    deletePeerMut.asyncStatus.value === 'loading',
 )
 
 // Subscription dialog (set/change)
@@ -51,7 +63,7 @@ const showHistory = ref(false)
 // Set default plan when plans load
 watch(plans, (plansData) => {
   if (plansData && plansData.length > 0 && subPlanId.value === undefined) {
-    const standardPlan = plansData.find(p => p.name === 'standard')
+    const standardPlan = plansData.find((p) => p.name === 'standard')
     subPlanId.value = standardPlan?.id ?? plansData[0]?.id
   }
 })
@@ -59,24 +71,24 @@ watch(plans, (plansData) => {
 // Auto-fill days from trial_days when a trial plan is selected
 watch(subPlanId, (planId) => {
   if (!planId || !plans.value) return
-  const plan = plans.value.find(p => p.id === planId)
+  const plan = plans.value.find((p) => p.id === planId)
   if (plan?.trial_days) {
     subDays.value = plan.trial_days
   }
 })
 
 const planItems = computed(() =>
-  (plans.value ?? []).map(p => ({ label: p.display_name, value: p.id }))
+  (plans.value ?? []).map((p) => ({ label: p.display_name, value: p.id })),
 )
 
 const activeSubscription = computed(() => {
   if (!user.value) return null
-  return user.value.subscriptions.find(s => s.is_active) ?? null
+  return user.value.subscriptions.find((s) => s.is_active) ?? null
 })
 
 const historySubscriptions = computed(() => {
   if (!user.value) return []
-  return user.value.subscriptions.filter(s => !s.is_active)
+  return user.value.subscriptions.filter((s) => !s.is_active)
 })
 
 function formatDate(date: string): string {
@@ -118,9 +130,17 @@ async function setSubscription() {
     })
     await refreshUser()
     subDialog.value = false
-    toast.add({ title: t('common.success'), description: t('adminUserDetail.subscriptionChanged'), color: 'success' })
+    toast.add({
+      title: t('common.success'),
+      description: t('adminUserDetail.subscriptionChanged'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminUserDetail.changeFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminUserDetail.changeFailed'),
+      color: 'error',
+    })
   }
 }
 
@@ -130,9 +150,17 @@ async function deleteSubscription() {
     await deleteSubMut.mutateAsync({ path: { id: user.value.id } })
     await refreshUser()
     deleteSubConfirm.value = false
-    toast.add({ title: t('common.success'), description: t('adminUserDetail.subscriptionDeleted'), color: 'success' })
+    toast.add({
+      title: t('common.success'),
+      description: t('adminUserDetail.subscriptionDeleted'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminUserDetail.deleteFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminUserDetail.deleteFailed'),
+      color: 'error',
+    })
   }
 }
 
@@ -147,9 +175,17 @@ async function doRemovePeer() {
   try {
     await deletePeerMut.mutateAsync({ path: { id: pendingPeerId.value } })
     await refreshUser()
-    toast.add({ title: t('common.success'), description: t('adminUserDetail.peerRemoved'), color: 'success' })
+    toast.add({
+      title: t('common.success'),
+      description: t('adminUserDetail.peerRemoved'),
+      color: 'success',
+    })
   } catch (e) {
-    toast.add({ title: t('common.error'), description: e instanceof Error ? e.message : t('adminUserDetail.removeFailed'), color: 'error' })
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminUserDetail.removeFailed'),
+      color: 'error',
+    })
   }
   confirmOpen.value = false
   pendingPeerId.value = null
@@ -182,16 +218,27 @@ async function doRemovePeer() {
         <div>
           <div class="flex items-center gap-3">
             <h1 class="text-2xl font-bold">
-              {{ user.first_name ? (user.last_name ? `${user.first_name} ${user.last_name}` : user.first_name) : (user.username || `User #${user.id}`) }}
+              {{
+                user.first_name
+                  ? user.last_name
+                    ? `${user.first_name} ${user.last_name}`
+                    : user.first_name
+                  : user.username || `User #${user.id}`
+              }}
             </h1>
-            <UBadge :color="user.is_admin ? 'info' : 'neutral'" :label="user.is_admin ? t('common.admin') : t('common.user')" variant="subtle" />
+            <UBadge
+              :color="user.is_admin ? 'info' : 'neutral'"
+              :label="user.is_admin ? t('common.admin') : t('common.user')"
+              variant="subtle"
+            />
           </div>
           <a
             v-if="user.username"
             :href="`https://t.me/${user.username}`"
             target="_blank"
             class="text-sm text-[var(--ui-text-muted)] hover:text-[var(--ui-primary)] underline"
-          >@{{ user.username }}</a>
+            >@{{ user.username }}</a
+          >
         </div>
       </div>
 
@@ -199,21 +246,28 @@ async function doRemovePeer() {
       <UCard class="mb-6">
         <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-6">
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{ t('adminUserDetail.id') }}</span>
+            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{
+              t('adminUserDetail.id')
+            }}</span>
             <span class="font-medium">{{ user.id }}</span>
           </div>
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{ t('adminUserDetail.telegramId') }}</span>
+            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{
+              t('adminUserDetail.telegramId')
+            }}</span>
             <a
               v-if="user.username"
               :href="`https://t.me/${user.username}`"
               target="_blank"
               class="font-medium text-[var(--ui-primary)] hover:underline"
-            >{{ user.telegram_id }}</a>
+              >{{ user.telegram_id }}</a
+            >
             <span v-else class="font-medium">{{ user.telegram_id }}</span>
           </div>
           <div class="flex flex-col gap-1">
-            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{ t('adminUserDetail.created') }}</span>
+            <span class="text-xs text-[var(--ui-text-muted)] uppercase">{{
+              t('adminUserDetail.created')
+            }}</span>
             <span class="font-medium">{{ formatDate(user.created_at) }}</span>
           </div>
         </div>
@@ -227,13 +281,19 @@ async function doRemovePeer() {
             {{ t('adminUserDetail.peers', { count: user.peers.length }) }}
           </div>
         </template>
-        <div v-if="user.peers.length" class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4">
+        <div
+          v-if="user.peers.length"
+          class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4"
+        >
           <UCard v-for="peer in user.peers" :key="peer.id" class="bg-[var(--ui-bg-elevated)]">
             <div class="flex justify-between items-center mb-2">
               <span class="font-mono font-semibold">{{ peer.assigned_ip }}</span>
               <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
             </div>
-            <div v-if="peer.device_name" class="flex items-center gap-1.5 mb-2 text-sm text-[var(--ui-text-muted)]">
+            <div
+              v-if="peer.device_name"
+              class="flex items-center gap-1.5 mb-2 text-sm text-[var(--ui-text-muted)]"
+            >
               <UIcon name="i-lucide-monitor-smartphone" class="size-3.5" />
               <span>{{ t('adminUserDetail.device', { name: peer.device_name }) }}</span>
             </div>
@@ -248,10 +308,15 @@ async function doRemovePeer() {
               </div>
             </div>
             <div class="text-sm text-[var(--ui-text-muted)] mb-2">
-              <span v-if="peer.last_handshake">{{ t('adminUserDetail.last', { date: formatDate(peer.last_handshake) }) }}</span>
+              <span v-if="peer.last_handshake">{{
+                t('adminUserDetail.last', { date: formatDate(peer.last_handshake) })
+              }}</span>
               <span v-else>{{ t('common.neverConnected') }}</span>
             </div>
-            <div v-if="activeSubscription" class="flex flex-col gap-1 p-2 bg-[var(--ui-bg)] rounded text-sm mb-3">
+            <div
+              v-if="activeSubscription"
+              class="flex flex-col gap-1 p-2 bg-[var(--ui-bg)] rounded text-sm mb-3"
+            >
               <small>Speed: {{ formatLimit(activeSubscription.speed_limit_mbps) }}</small>
               <small>
                 Traffic: {{ formatBytes(peer.traffic_used_bytes) }}
@@ -271,7 +336,9 @@ async function doRemovePeer() {
             />
           </UCard>
         </div>
-        <div v-else class="text-center py-8 text-[var(--ui-text-muted)]">{{ t('adminUserDetail.noPeers') }}</div>
+        <div v-else class="text-center py-8 text-[var(--ui-text-muted)]">
+          {{ t('adminUserDetail.noPeers') }}
+        </div>
       </UCard>
 
       <!-- Subscription Section -->
@@ -314,7 +381,12 @@ async function doRemovePeer() {
           <div class="p-4 rounded-lg border border-[var(--ui-border)] bg-[var(--ui-bg-elevated)]">
             <div class="flex items-center gap-3 mb-3">
               <span class="text-lg font-semibold">{{ activeSubscription.plan_display_name }}</span>
-              <UBadge v-if="!activeSubscription.expires_at" color="success" :label="t('userDashboard.permanentLabel')" variant="subtle" />
+              <UBadge
+                v-if="!activeSubscription.expires_at"
+                color="success"
+                :label="t('userDashboard.permanentLabel')"
+                variant="subtle"
+              />
             </div>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
               <div class="flex flex-col gap-0.5">
@@ -323,8 +395,16 @@ async function doRemovePeer() {
               </div>
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.expires') }}</span>
-                <span v-if="activeSubscription.expires_at">{{ formatDate(activeSubscription.expires_at) }}</span>
-                <UBadge v-else color="success" :label="t('userDashboard.permanentLabel')" variant="subtle" size="sm" />
+                <span v-if="activeSubscription.expires_at">{{
+                  formatDate(activeSubscription.expires_at)
+                }}</span>
+                <UBadge
+                  v-else
+                  color="success"
+                  :label="t('userDashboard.permanentLabel')"
+                  variant="subtle"
+                  size="sm"
+                />
               </div>
               <div class="flex flex-col gap-0.5">
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.speed') }}</span>
@@ -337,7 +417,9 @@ async function doRemovePeer() {
             </div>
           </div>
         </template>
-        <div v-else class="text-center py-8 text-[var(--ui-text-muted)]">{{ t('adminUserDetail.noActiveSubscription') }}</div>
+        <div v-else class="text-center py-8 text-[var(--ui-text-muted)]">
+          {{ t('adminUserDetail.noActiveSubscription') }}
+        </div>
 
         <!-- Subscription history -->
         <template v-if="historySubscriptions.length">
@@ -346,7 +428,10 @@ async function doRemovePeer() {
               class="text-sm text-[var(--ui-text-muted)] hover:text-[var(--ui-text)] flex items-center gap-1"
               @click="showHistory = !showHistory"
             >
-              <UIcon :name="showHistory ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="size-4" />
+              <UIcon
+                :name="showHistory ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                class="size-4"
+              />
               {{ t('adminUserDetail.subscriptionHistory') }} ({{ historySubscriptions.length }})
             </button>
             <div v-if="showHistory" class="mt-2 flex flex-col gap-2">
@@ -359,7 +444,10 @@ async function doRemovePeer() {
                   <span class="font-medium">{{ sub.plan_display_name }}</span>
                 </div>
                 <div class="text-[var(--ui-text-muted)]">
-                  {{ formatDate(sub.starts_at) }} &mdash; {{ sub.expires_at ? formatDate(sub.expires_at) : t('userDashboard.permanentLabel') }}
+                  {{ formatDate(sub.starts_at) }} &mdash;
+                  {{
+                    sub.expires_at ? formatDate(sub.expires_at) : t('userDashboard.permanentLabel')
+                  }}
                 </div>
               </div>
             </div>
@@ -369,12 +457,23 @@ async function doRemovePeer() {
     </template>
 
     <!-- Set Subscription Dialog -->
-    <UModal v-model:open="subDialog" :title="activeSubscription ? t('adminUserDetail.changeSubscription') : t('adminUserDetail.createSubscription')">
+    <UModal
+      v-model:open="subDialog"
+      :title="
+        activeSubscription
+          ? t('adminUserDetail.changeSubscription')
+          : t('adminUserDetail.createSubscription')
+      "
+    >
       <template #body>
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUserDetail.plan') }}</label>
-            <USelect v-model="subPlanId" :items="planItems" :placeholder="t('adminUserDetail.selectPlan')" />
+            <USelect
+              v-model="subPlanId"
+              :items="planItems"
+              :placeholder="t('adminUserDetail.selectPlan')"
+            />
           </div>
           <div class="flex items-center gap-2">
             <UCheckbox v-model="subPermanent" />
@@ -387,8 +486,18 @@ async function doRemovePeer() {
         </div>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="subDialog = false" />
-        <UButton :label="t('common.save')" :loading="submitting" :disabled="!subPlanId" @click="setSubscription" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="subDialog = false"
+        />
+        <UButton
+          :label="t('common.save')"
+          :loading="submitting"
+          :disabled="!subPlanId"
+          @click="setSubscription"
+        />
       </template>
     </UModal>
 
@@ -398,8 +507,18 @@ async function doRemovePeer() {
         <p>{{ t('adminUserDetail.deleteSubscriptionConfirm') }}</p>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="deleteSubConfirm = false" />
-        <UButton :label="t('common.delete')" color="error" :loading="deleteSubMut.asyncStatus.value === 'loading'" @click="deleteSubscription" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="deleteSubConfirm = false"
+        />
+        <UButton
+          :label="t('common.delete')"
+          color="error"
+          :loading="deleteSubMut.asyncStatus.value === 'loading'"
+          @click="deleteSubscription"
+        />
       </template>
     </UModal>
 
@@ -409,8 +528,18 @@ async function doRemovePeer() {
         <p>{{ confirmMessage }}</p>
       </template>
       <template #footer>
-        <UButton :label="t('common.cancel')" color="neutral" variant="outline" @click="confirmOpen = false" />
-        <UButton :label="t('common.remove')" color="error" :loading="deletePeerMut.asyncStatus.value === 'loading'" @click="doRemovePeer" />
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="confirmOpen = false"
+        />
+        <UButton
+          :label="t('common.remove')"
+          color="error"
+          :loading="deletePeerMut.asyncStatus.value === 'loading'"
+          @click="doRemovePeer"
+        />
       </template>
     </UModal>
   </div>

@@ -239,7 +239,10 @@ export const useVpnStore = defineStore(
 
       reconnectAttempts.value++
       const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value - 1), 10000)
-      error.value = t('vpn.reconnecting', { current: reconnectAttempts.value, max: MAX_RECONNECT_ATTEMPTS })
+      error.value = t('vpn.reconnecting', {
+        current: reconnectAttempts.value,
+        max: MAX_RECONNECT_ATTEMPTS,
+      })
 
       reconnectTimeoutId = setTimeout(async () => {
         reconnectTimeoutId = null

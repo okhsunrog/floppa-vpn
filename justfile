@@ -150,28 +150,49 @@ package-target: build-target
 
     echo "Created floppa-vpn-release.tar.gz"
 
-# Run all checks (fmt, clippy, tests, frontend type-check + lint)
+# ktfmt (Kotlin formatter) — auto-downloaded on first use
+ktfmt_version := "0.61"
+ktfmt_jar := ".cache/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
+ktfmt_url := "https://repo1.maven.org/maven2/com/facebook/ktfmt/" + ktfmt_version + "/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
+kotlin_sources := "tauri-plugin-vpn/android/src"
+
+[private]
+ensure-ktfmt:
+    @mkdir -p .cache
+    @[ -f {{ktfmt_jar}} ] || curl -sSL -o {{ktfmt_jar}} {{ktfmt_url}}
+
+# Format Kotlin files
+fmt-kotlin: ensure-ktfmt
+    java -jar {{ktfmt_jar}} --kotlinlang-style {{kotlin_sources}}
+
+# Check Kotlin formatting
+check-kotlin: ensure-ktfmt
+    java -jar {{ktfmt_jar}} --kotlinlang-style --set-exit-if-changed --dry-run {{kotlin_sources}}
+
+# Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
 check:
     cargo fmt --check
     cargo clippy -- -D warnings
     cargo test
-    cd floppa-web-shared && bun run type-check && bun run lint
-    cd floppa-face && bun run type-check && bun run lint
-    cd floppa-client && bun run type-check && bun run lint
+    cd floppa-web-shared && bun run format:check && bun run type-check && bun run lint:check
+    cd floppa-face && bun run format:check && bun run type-check && bun run lint:check
+    cd floppa-client && bun run format:check && bun run type-check && bun run lint:check && bun run build
+    just check-kotlin
 
-# Format code
+# Format all code (Rust + frontend + Kotlin)
 fmt:
     cargo fmt
-    cd floppa-web-shared && bun run lint
-    cd floppa-face && bun run lint
-    cd floppa-client && bun run lint
+    cd floppa-web-shared && bun run format && bun run lint
+    cd floppa-face && bun run format && bun run lint
+    cd floppa-client && bun run format && bun run lint
+    just fmt-kotlin
 
-# Lint
+# Lint (without auto-fix)
 lint:
     cargo clippy -- -D warnings
-    cd floppa-web-shared && bun run lint
-    cd floppa-face && bun run lint
-    cd floppa-client && bun run lint
+    cd floppa-web-shared && bun run lint:check
+    cd floppa-face && bun run lint:check
+    cd floppa-client && bun run lint:check
 
 # Clean build artifacts
 clean:

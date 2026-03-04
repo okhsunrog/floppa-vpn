@@ -7,11 +7,14 @@ import { useColorMode } from '@vueuse/core'
 import { useAuthStore } from '../stores'
 import ColorModeButton from './ColorModeButton.vue'
 
-const props = withDefaults(defineProps<{
-  extraNavItems?: { label: string; icon: string; to: string }[]
-}>(), {
-  extraNavItems: () => [],
-})
+const props = withDefaults(
+  defineProps<{
+    extraNavItems?: { label: string; icon: string; to: string }[]
+  }>(),
+  {
+    extraNavItems: () => [],
+  },
+)
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -26,7 +29,9 @@ const navLabel = computed(() => {
   return `User #${u.id}`
 })
 
-const isMiniApp = Boolean((window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData)
+const isMiniApp = Boolean(
+  (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData,
+)
 const mobileMenuOpen = ref(false)
 
 // Android back button support for sidebar via history API.
@@ -108,7 +113,12 @@ const locales = [
 const navItems = computed(() => {
   if (!auth.isAuthenticated) return []
 
-  const items: { label: string; icon: string; to?: string; children?: { label: string; icon: string; to: string }[] }[] = [
+  const items: {
+    label: string
+    icon: string
+    to?: string
+    children?: { label: string; icon: string; to: string }[]
+  }[] = [
     { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
     { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
   ]
@@ -161,7 +171,11 @@ const mobileNavItems = computed(() => {
 
 <template>
   <UApp>
-    <header v-if="auth.isAuthenticated" class="sticky z-40 border-b border-[var(--ui-border)] bg-[var(--ui-bg)]" :style="{ top: 'var(--safe-area-inset-top, 0px)' }">
+    <header
+      v-if="auth.isAuthenticated"
+      class="sticky z-40 border-b border-[var(--ui-border)] bg-[var(--ui-bg)]"
+      :style="{ top: 'var(--safe-area-inset-top, 0px)' }"
+    >
       <div class="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
         <div class="flex items-center gap-2 md:gap-4">
           <!-- Mobile hamburger -->
@@ -180,12 +194,7 @@ const mobileNavItems = computed(() => {
           </nav>
         </div>
         <div class="hidden md:flex items-center gap-2">
-          <UAvatar
-            :src="auth.avatarUrl"
-            :alt="navLabel"
-            icon="i-lucide-user"
-            size="xs"
-          />
+          <UAvatar :src="auth.avatarUrl" :alt="navLabel" icon="i-lucide-user" size="xs" />
           <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
           <ColorModeButton />
           <UButton
@@ -209,20 +218,39 @@ const mobileNavItems = computed(() => {
     </header>
 
     <!-- Mobile nav slideover -->
-    <USlideover v-model:open="mobileMenuOpen" side="left" :close="true" description="Navigation" :ui="{ overlay: 'z-50', content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]', close: 'top-[calc(1rem+var(--safe-area-inset-top,0px))]' }">
+    <USlideover
+      v-model:open="mobileMenuOpen"
+      side="left"
+      :close="true"
+      description="Navigation"
+      :ui="{
+        overlay: 'z-50',
+        content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]',
+        close: 'top-[calc(1rem+var(--safe-area-inset-top,0px))]',
+      }"
+    >
       <template #title>
         <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
       </template>
       <template #body>
         <div class="flex flex-col h-full">
           <nav class="flex flex-col gap-1">
-            <template v-for="section in (auth.isAdmin ? [
-              { items: mobileNavItems.slice(0, 2 + extraNavItems.length) },
-              { label: t('nav.admin'), items: mobileNavItems.slice(2 + extraNavItems.length) },
-            ] : [
-              { items: mobileNavItems },
-            ])" :key="section.label ?? 'main'">
-              <div v-if="section.label" class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--ui-text-muted)]">
+            <template
+              v-for="section in auth.isAdmin
+                ? [
+                    { items: mobileNavItems.slice(0, 2 + extraNavItems.length) },
+                    {
+                      label: t('nav.admin'),
+                      items: mobileNavItems.slice(2 + extraNavItems.length),
+                    },
+                  ]
+                : [{ items: mobileNavItems }]"
+              :key="section.label ?? 'main'"
+            >
+              <div
+                v-if="section.label"
+                class="px-3 pt-4 pb-1 text-xs font-semibold uppercase tracking-wider text-[var(--ui-text-muted)]"
+              >
                 {{ section.label }}
               </div>
               <RouterLink
@@ -230,9 +258,11 @@ const mobileNavItems = computed(() => {
                 :key="item.to"
                 :to="item.to"
                 class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                :class="route.path === item.to
-                  ? 'bg-[var(--ui-bg-elevated)] text-[var(--ui-primary)]'
-                  : 'text-[var(--ui-text)] hover:bg-[var(--ui-bg-elevated)]'"
+                :class="
+                  route.path === item.to
+                    ? 'bg-[var(--ui-bg-elevated)] text-[var(--ui-primary)]'
+                    : 'text-[var(--ui-text)] hover:bg-[var(--ui-bg-elevated)]'
+                "
               >
                 <UIcon :name="item.icon" class="size-5" />
                 {{ item.label }}
@@ -240,7 +270,9 @@ const mobileNavItems = computed(() => {
             </template>
           </nav>
 
-          <div class="mt-auto pt-4 border-t border-[var(--ui-border)] flex flex-col gap-3 px-3 pb-2">
+          <div
+            class="mt-auto pt-4 border-t border-[var(--ui-border)] flex flex-col gap-3 px-3 pb-2"
+          >
             <UFieldGroup>
               <UButton
                 v-for="mode in colorModes"
@@ -265,12 +297,7 @@ const mobileNavItems = computed(() => {
               />
             </UFieldGroup>
             <div class="flex items-center gap-2">
-              <UAvatar
-                :src="auth.avatarUrl"
-                :alt="navLabel"
-                icon="i-lucide-user"
-                size="2xs"
-              />
+              <UAvatar :src="auth.avatarUrl" :alt="navLabel" icon="i-lucide-user" size="2xs" />
               <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
               <UButton
                 v-if="!isMiniApp"

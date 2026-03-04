@@ -10,6 +10,7 @@
     "tauri-plugin-android-fs-api": "^27.0.0"
   },
   "devDependencies": {
+    "prettier": "^3.8.1",
     "vite": "8.0.0-beta.16"
   }
 }

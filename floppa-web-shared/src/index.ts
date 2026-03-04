@@ -1,21 +1,21 @@
 // Components
-export * from "./components";
+export * from './components'
 
 // Utilities
-export * from "./utils";
+export * from './utils'
 
 // Types
-export * from "./types";
+export * from './types'
 
 // Stores
-export * from "./stores";
+export * from './stores'
 
 // Views
-export * from "./views";
+export * from './views'
 
 // Router
-export * from "./router";
+export * from './router'
 
 // Locales
-export { default as sharedLocaleEn } from "./locales/en";
-export { default as sharedLocaleRu } from "./locales/ru";
+export { default as sharedLocaleEn } from './locales/en'
+export { default as sharedLocaleRu } from './locales/ru'

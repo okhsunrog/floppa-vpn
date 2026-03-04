@@ -18,7 +18,12 @@ export interface PeerInfo {
 /**
  * Connection status for client app
  */
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'verifying_handshake' | 'connected' | 'disconnecting'
+export type ConnectionStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'verifying_handshake'
+  | 'connected'
+  | 'disconnecting'
 
 /**
  * Real-time connection stats for client app

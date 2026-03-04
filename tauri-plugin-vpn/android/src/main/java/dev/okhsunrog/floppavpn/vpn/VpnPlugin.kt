@@ -54,9 +54,8 @@ class StatusBarStyleArgs {
 }
 
 @TauriPlugin(
-    permissions = [
-        Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification")
-    ]
+    permissions =
+        [Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "postNotification")]
 )
 class VpnPlugin(private val activity: Activity) : Plugin(activity) {
 
@@ -98,7 +97,10 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         try {
             Log.d("VpnPlugin", "startVpn called")
             val args = invoke.parseArgs(VpnConfigArgs::class.java)
-            Log.d("VpnPlugin", "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}")
+            Log.d(
+                "VpnPlugin",
+                "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}",
+            )
 
             if (args.wgConfig == null) {
                 invoke.reject("Missing wgConfig parameter")
@@ -116,16 +118,17 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             activity.stopService(Intent(activity, FloppaVpnService::class.java))
 
             // Start the VPN service in :vpn process
-            val intent = Intent(activity, FloppaVpnService::class.java).apply {
-                putExtra(FloppaVpnService.EXTRA_IPV4_ADDR, args.ipv4Addr)
-                putExtra(FloppaVpnService.EXTRA_IPV6_ADDR, args.ipv6Addr)
-                putExtra(FloppaVpnService.EXTRA_ROUTES, args.routes)
-                putExtra(FloppaVpnService.EXTRA_DNS, args.dns)
-                putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
-                putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
-                putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
-                putExtra(FloppaVpnService.EXTRA_WG_CONFIG, args.wgConfig)
-            }
+            val intent =
+                Intent(activity, FloppaVpnService::class.java).apply {
+                    putExtra(FloppaVpnService.EXTRA_IPV4_ADDR, args.ipv4Addr)
+                    putExtra(FloppaVpnService.EXTRA_IPV6_ADDR, args.ipv6Addr)
+                    putExtra(FloppaVpnService.EXTRA_ROUTES, args.routes)
+                    putExtra(FloppaVpnService.EXTRA_DNS, args.dns)
+                    putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
+                    putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
+                    putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
+                    putExtra(FloppaVpnService.EXTRA_WG_CONFIG, args.wgConfig)
+                }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 activity.startForegroundService(intent)
@@ -146,9 +149,10 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         // stopService() doesn't reliably trigger onDestroy() for a foreground VpnService
         // in a separate process, but startService() with a custom action IS delivered
         // to onStartCommand(), where the service calls nativeStop() + stopSelf().
-        val intent = Intent(activity, FloppaVpnService::class.java).apply {
-            action = FloppaVpnService.ACTION_STOP
-        }
+        val intent =
+            Intent(activity, FloppaVpnService::class.java).apply {
+                action = FloppaVpnService.ACTION_STOP
+            }
         try {
             activity.startService(intent)
             Log.i("VpnPlugin", "stopVpn: sent ACTION_STOP intent")
@@ -171,65 +175,69 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Get list of installed apps for split tunneling UI.
      *
-     * Returns non-system apps with their package names and display labels.
-     * The own app is excluded from the list.
+     * Returns non-system apps with their package names and display labels. The own app is excluded
+     * from the list.
      */
     @Command
     fun getInstalledApps(invoke: Invoke) {
         // Run on background thread to avoid blocking the Android UI thread
         Thread {
-            val pm = activity.packageManager
-            val apps = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getInstalledApplications(0)
-            }
-
-            val ownPackage = activity.packageName
-            val result = JSObject()
-            val appList = JSArray()
-            val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
-
-            for (appInfo in apps) {
-                if (appInfo.packageName == ownPackage) continue
-
-                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-
-                val entry = JSObject()
-                entry.put("packageName", appInfo.packageName)
-                entry.put("label", appInfo.loadLabel(pm).toString())
-                entry.put("isSystem", isSystem)
-
-                try {
-                    val drawable = appInfo.loadIcon(pm)
-                    val bitmap = if (drawable is BitmapDrawable) {
-                        Bitmap.createScaledBitmap(drawable.bitmap, iconSize, iconSize, true)
+                val pm = activity.packageManager
+                val apps =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
                     } else {
-                        val bmp = Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
-                        val canvas = Canvas(bmp)
-                        drawable.setBounds(0, 0, iconSize, iconSize)
-                        drawable.draw(canvas)
-                        bmp
+                        @Suppress("DEPRECATION") pm.getInstalledApplications(0)
                     }
-                    val stream = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
-                    entry.put("icon", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP))
-                } catch (_: Exception) {
-                    // Icon loading failed, leave null
+
+                val ownPackage = activity.packageName
+                val result = JSObject()
+                val appList = JSArray()
+                val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
+
+                for (appInfo in apps) {
+                    if (appInfo.packageName == ownPackage) continue
+
+                    val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+
+                    val entry = JSObject()
+                    entry.put("packageName", appInfo.packageName)
+                    entry.put("label", appInfo.loadLabel(pm).toString())
+                    entry.put("isSystem", isSystem)
+
+                    try {
+                        val drawable = appInfo.loadIcon(pm)
+                        val bitmap =
+                            if (drawable is BitmapDrawable) {
+                                Bitmap.createScaledBitmap(drawable.bitmap, iconSize, iconSize, true)
+                            } else {
+                                val bmp =
+                                    Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
+                                val canvas = Canvas(bmp)
+                                drawable.setBounds(0, 0, iconSize, iconSize)
+                                drawable.draw(canvas)
+                                bmp
+                            }
+                        val stream = ByteArrayOutputStream()
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
+                        entry.put(
+                            "icon",
+                            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP),
+                        )
+                    } catch (_: Exception) {
+                        // Icon loading failed, leave null
+                    }
+
+                    appList.put(entry)
                 }
 
-                appList.put(entry)
+                result.put("apps", appList)
+                invoke.resolve(result)
             }
-
-            result.put("apps", appList)
-            invoke.resolve(result)
-        }.start()
+            .start()
     }
 
-    /**
-     * Get safe area insets (status bar, navigation bar) in density-independent pixels.
-     */
+    /** Get safe area insets (status bar, navigation bar) in density-independent pixels. */
     @Command
     fun getSafeAreaInsets(invoke: Invoke) {
         val ret = JSObject()
@@ -257,8 +265,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Set status bar style to match app theme.
-     * isDark=true → light icons (for dark backgrounds)
+     * Set status bar style to match app theme. isDark=true → light icons (for dark backgrounds)
      * isDark=false → dark icons (for light backgrounds)
      */
     @Command
@@ -268,47 +275,47 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val controller = activity.window.insetsController
                 if (args.isDark) {
-                    controller?.setSystemBarsAppearance(0, android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+                    controller?.setSystemBarsAppearance(
+                        0,
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+                    )
                 } else {
                     controller?.setSystemBarsAppearance(
                         android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
-                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
                     )
                 }
             } else {
-                @Suppress("DEPRECATION")
-                val flags = activity.window.decorView.systemUiVisibility
-                activity.window.decorView.systemUiVisibility = if (args.isDark) {
-                    flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-                } else {
-                    flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                }
+                @Suppress("DEPRECATION") val flags = activity.window.decorView.systemUiVisibility
+                activity.window.decorView.systemUiVisibility =
+                    if (args.isDark) {
+                        flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+                    } else {
+                        flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+                    }
             }
         }
         invoke.resolve()
     }
 
-    /**
-     * Get device name (manufacturer + model) for peer identification.
-     */
+    /** Get device name (manufacturer + model) for peer identification. */
     @Command
     fun getDeviceName(invoke: Invoke) {
         val manufacturer = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
         val model = Build.MODEL
         // If model already starts with manufacturer, don't duplicate
-        val name = if (model.startsWith(manufacturer, ignoreCase = true)) {
-            model
-        } else {
-            "$manufacturer $model"
-        }
+        val name =
+            if (model.startsWith(manufacturer, ignoreCase = true)) {
+                model
+            } else {
+                "$manufacturer $model"
+            }
         val ret = JSObject()
         ret.put("name", name)
         invoke.resolve(ret)
     }
 
-    /**
-     * Check if the app is excluded from battery optimization.
-     */
+    /** Check if the app is excluded from battery optimization. */
     @Command
     fun isBatteryOptimizationDisabled(invoke: Invoke) {
         val pm = activity.getSystemService(Activity.POWER_SERVICE) as PowerManager
@@ -318,9 +325,9 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Request the user to disable battery optimization for this app.
-     * Shows a direct system dialog asking to allow unrestricted background usage.
-     * Resolves with { "disabled": true/false } after the user responds.
+     * Request the user to disable battery optimization for this app. Shows a direct system dialog
+     * asking to allow unrestricted background usage. Resolves with { "disabled": true/false } after
+     * the user responds.
      */
     @Command
     fun requestDisableBatteryOptimization(invoke: Invoke) {
@@ -338,15 +345,16 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     fun batteryOptimizationResult(invoke: Invoke, result: ActivityResult) {
         val pm = activity.getSystemService(Activity.POWER_SERVICE) as PowerManager
         val disabled = pm.isIgnoringBatteryOptimizations(activity.packageName)
-        Log.d("VpnPlugin", "batteryOptimizationResult: resultCode=${result.resultCode}, disabled=$disabled")
+        Log.d(
+            "VpnPlugin",
+            "batteryOptimizationResult: resultCode=${result.resultCode}, disabled=$disabled",
+        )
         val ret = JSObject()
         ret.put("disabled", disabled)
         invoke.resolve(ret)
     }
 
-    /**
-     * Check if notifications are enabled for this app.
-     */
+    /** Check if notifications are enabled for this app. */
     @Command
     fun areNotificationsEnabled(invoke: Invoke) {
         val ret = JSObject()
@@ -355,23 +363,30 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /**
-     * Request notification permission.
-     * On Android 13+ shows a runtime permission dialog via Tauri's permission system.
-     * On older versions opens the app's notification settings page.
-     * Resolves with { "enabled": true/false } after the user responds.
+     * Request notification permission. On Android 13+ shows a runtime permission dialog via Tauri's
+     * permission system. On older versions opens the app's notification settings page. Resolves
+     * with { "enabled": true/false } after the user responds.
      */
     @Command
     fun openNotificationSettings(invoke: Invoke) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                requestPermissionForAlias(NOTIFICATION_ALIAS, invoke, "notificationPermissionCallback")
+                requestPermissionForAlias(
+                    NOTIFICATION_ALIAS,
+                    invoke,
+                    "notificationPermissionCallback",
+                )
             } else {
-                val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
-                }
+                val intent =
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                    }
                 activity.startActivity(intent)
                 val ret = JSObject()
-                ret.put("enabled", NotificationManagerCompat.from(activity).areNotificationsEnabled())
+                ret.put(
+                    "enabled",
+                    NotificationManagerCompat.from(activity).areNotificationsEnabled(),
+                )
                 invoke.resolve(ret)
             }
         } catch (e: Exception) {
@@ -392,10 +407,9 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Protect a socket from VPN routing.
      *
-     * Note: In the two-process architecture, this is primarily used by Rust JNI
-     * in the :vpn process (calling FloppaVpnService.protectSocket directly).
-     * This Tauri command is kept for backwards compatibility but may not work
-     * cross-process.
+     * Note: In the two-process architecture, this is primarily used by Rust JNI in the :vpn process
+     * (calling FloppaVpnService.protectSocket directly). This Tauri command is kept for backwards
+     * compatibility but may not work cross-process.
      */
     @Command
     fun protectSocket(invoke: Invoke) {

@@ -65,7 +65,8 @@ export default {
     continueInBrowser: 'Продолжить в браузере',
     browserHint: 'Браузер откроет вход через Telegram и автоматически вернёт в приложение.',
     retryHint: 'Если не получилось с первого раза, попробуйте нажать кнопку ещё раз.',
-    browserChangeHint: 'Всё ещё не работает? Попробуйте сменить браузер по умолчанию в настройках системы.',
+    browserChangeHint:
+      'Всё ещё не работает? Попробуйте сменить браузер по умолчанию в настройках системы.',
     vpnHint: 'Также убедитесь, что отключены все активные VPN-соединения перед входом.',
     miniAppLoggingIn: 'Вход через Telegram...',
     miniAppFailed: 'Ошибка авторизации Mini App. Попробуйте перезагрузить.',
@@ -241,7 +242,8 @@ export default {
     modeIncludeDescription: 'Только выбранные приложения через VPN',
     modeExclude: 'Исключить выбранные',
     modeExcludeDescription: 'Все, кроме выбранных, через VPN',
-    selectedApps: '{count} приложение выбрано | {count} приложения выбрано | {count} приложений выбрано',
+    selectedApps:
+      '{count} приложение выбрано | {count} приложения выбрано | {count} приложений выбрано',
     searchApps: 'Поиск приложений...',
     noApps: 'Приложения не найдены',
     showSystemApps: 'Показать системные приложения',
@@ -249,7 +251,8 @@ export default {
     changesApplyOnReconnect: 'Настройки изменены — переподключитесь для применения',
     reconnect: 'Переподключиться',
     batteryOptimization: 'Оптимизация батареи',
-    batteryOptimizationDescription: 'Отключите оптимизацию батареи, чтобы Android не завершал VPN в фоне.',
+    batteryOptimizationDescription:
+      'Отключите оптимизацию батареи, чтобы Android не завершал VPN в фоне.',
     batteryDisabled: 'Оптимизация батареи отключена',
     batteryEnabled: 'Оптимизация батареи активна',
     disableBatteryOptimization: 'Отключить',
@@ -292,7 +295,8 @@ export default {
     noSubscription: 'Нет активной подписки',
     configLimitReached: 'Лимит конфигов достигнут',
     settingUp: 'Настройка VPN...',
-    peerLimitReached: 'Достигнут лимит конфигов. Удалите конфиг в «Мои конфиги», чтобы освободить место.',
+    peerLimitReached:
+      'Достигнут лимит конфигов. Удалите конфиг в «Мои конфиги», чтобы освободить место.',
     connectionLost: 'Соединение потеряно. Достигнуто максимальное число попыток.',
     reconnecting: 'Соединение потеряно. Переподключение ({current}/{max})...',
     vpnPermissionDenied: 'Доступ к VPN отклонён',

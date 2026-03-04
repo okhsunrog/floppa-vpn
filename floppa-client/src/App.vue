@@ -14,16 +14,23 @@ const updateStore = useUpdateStore()
 const isDark = useDark()
 
 // Sync status bar icon color with app theme on Android
-watch(isDark, (dark) => {
-  commands.setStatusBarStyle(dark)
-}, { immediate: true })
+watch(
+  isDark,
+  (dark) => {
+    commands.setStatusBarStyle(dark)
+  },
+  { immediate: true },
+)
 
 // Stop VPN tunnel on logout
-watch(() => authStore.isAuthenticated, (authenticated, wasAuthenticated) => {
-  if (wasAuthenticated && !authenticated) {
-    commands.disconnect()
-  }
-})
+watch(
+  () => authStore.isAuthenticated,
+  (authenticated, wasAuthenticated) => {
+    if (wasAuthenticated && !authenticated) {
+      commands.disconnect()
+    }
+  },
+)
 
 const forceUpdateOpen = computed({
   get: () => updateStore.forceUpdate !== null,
@@ -36,7 +43,11 @@ async function openDownload(url: string) {
 </script>
 
 <template>
-  <AppLayout :extra-nav-items="[{ label: t('nav.settings'), icon: 'i-lucide-sliders-horizontal', to: '/settings' }]">
+  <AppLayout
+    :extra-nav-items="[
+      { label: t('nav.settings'), icon: 'i-lucide-sliders-horizontal', to: '/settings' },
+    ]"
+  >
     <!-- Voluntary update banner -->
     <div
       v-if="updateStore.updateInfo && !updateStore.dismissed && !updateStore.forceUpdate"
