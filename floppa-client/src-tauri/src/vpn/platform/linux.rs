@@ -15,8 +15,7 @@ use tracing::{debug, info, warn};
 const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper";
 const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy";
 
-const HELPER_CONTENT: &str =
-    include_str!("../../../resources/linux/floppa-network-helper");
+const HELPER_CONTENT: &str = include_str!("../../../resources/linux/floppa-network-helper");
 const POLICY_CONTENT: &str =
     include_str!("../../../resources/linux/dev.okhsunrog.floppa-vpn.policy");
 
@@ -65,10 +64,8 @@ impl LinuxPlatform {
     /// Check if the polkit policy and helper are installed and up-to-date.
     /// If not, write them to temp files and use pkexec to install (one password prompt).
     fn ensure_polkit_installed() -> Result<(), String> {
-        let helper_ok = std::fs::read_to_string(HELPER_PATH)
-            .is_ok_and(|c| c == HELPER_CONTENT);
-        let policy_ok = std::fs::read_to_string(POLICY_PATH)
-            .is_ok_and(|c| c == POLICY_CONTENT);
+        let helper_ok = std::fs::read_to_string(HELPER_PATH).is_ok_and(|c| c == HELPER_CONTENT);
+        let policy_ok = std::fs::read_to_string(POLICY_PATH).is_ok_and(|c| c == POLICY_CONTENT);
 
         if helper_ok && policy_ok {
             debug!("Polkit policy and helper already installed");
@@ -97,8 +94,10 @@ impl LinuxPlatform {
             "mkdir -p /usr/lib/floppa-vpn && \
              install -m 755 {} {} && \
              install -m 644 {} {}",
-            tmp_helper.path().display(), HELPER_PATH,
-            tmp_policy.path().display(), POLICY_PATH,
+            tmp_helper.path().display(),
+            HELPER_PATH,
+            tmp_policy.path().display(),
+            POLICY_PATH,
         );
 
         let output = Command::new("pkexec")
@@ -142,11 +141,7 @@ impl LinuxPlatform {
     fn run_helper_ignore_errors(&self, args: &[&str]) {
         debug!("Running helper (ignore errors): {:?}", args);
 
-        match Command::new("pkexec")
-            .arg(HELPER_PATH)
-            .args(args)
-            .output()
-        {
+        match Command::new("pkexec").arg(HELPER_PATH).args(args).output() {
             Ok(output) if !output.status.success() => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 warn!("Helper command failed (ignored): {}", stderr);
@@ -187,8 +182,8 @@ impl Platform for LinuxPlatform {
     }
 
     async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
-        let gateway = Self::get_default_gateway()?
-            .ok_or_else(|| "No default gateway found".to_string())?;
+        let gateway =
+            Self::get_default_gateway()?.ok_or_else(|| "No default gateway found".to_string())?;
 
         let endpoint_route = format!("{}/32", endpoint_ip);
         info!("Adding endpoint route: {} via {}", endpoint_route, gateway);
@@ -211,7 +206,11 @@ impl Platform for LinuxPlatform {
     }
 
     async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        info!("Adding {} routes via interface {}", allowed_ips.len(), iface);
+        info!(
+            "Adding {} routes via interface {}",
+            allowed_ips.len(),
+            iface
+        );
 
         let mut routes = Vec::new();
         for network in allowed_ips {
@@ -240,7 +239,12 @@ impl Platform for LinuxPlatform {
     }
 
     async fn remove_routes(&self, iface: &str) -> Result<(), String> {
-        let routes = self.saved_routes.lock().unwrap().drain(..).collect::<Vec<_>>();
+        let routes = self
+            .saved_routes
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect::<Vec<_>>();
         if routes.is_empty() {
             info!("No saved routes to remove");
             return Ok(());

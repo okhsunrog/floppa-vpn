@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 /// Get the persistent device UUID (created on first call)
 #[tauri::command]
@@ -155,12 +155,10 @@ pub async fn connect(
         match conn.status {
             ConnectionStatus::Disconnected => {}
             ConnectionStatus::Connecting | ConnectionStatus::VerifyingHandshake => {
-                return Err("Already connecting".to_string())
+                return Err("Already connecting".to_string());
             }
             ConnectionStatus::Connected => return Err("Already connected".to_string()),
-            ConnectionStatus::Disconnecting => {
-                return Err("Disconnecting in progress".to_string())
-            }
+            ConnectionStatus::Disconnecting => return Err("Disconnecting in progress".to_string()),
         }
     }
 
@@ -176,7 +174,15 @@ pub async fn connect(
     let result = connect_android(&app, &state, &backend, config, split_mode, selected_apps).await;
 
     #[cfg(not(target_os = "android"))]
-    let result = connect_desktop(&state, &backend, &platform, config, split_mode, selected_apps).await;
+    let result = connect_desktop(
+        &state,
+        &backend,
+        &platform,
+        config,
+        split_mode,
+        selected_apps,
+    )
+    .await;
 
     result
 }
@@ -238,11 +244,17 @@ async fn connect_android(
         tokio::time::sleep(poll_interval).await;
         poll_count += 1;
         if backend.get_all_info().await.is_some_and(|i| i.is_running) {
-            info!("Tunnel ready after {poll_count} polls ({:.1}s)", start.elapsed().as_secs_f64());
+            info!(
+                "Tunnel ready after {poll_count} polls ({:.1}s)",
+                start.elapsed().as_secs_f64()
+            );
             break;
         }
         if start.elapsed() > timeout {
-            error!("Tunnel not ready after {poll_count} polls ({:.1}s)", start.elapsed().as_secs_f64());
+            error!(
+                "Tunnel not ready after {poll_count} polls ({:.1}s)",
+                start.elapsed().as_secs_f64()
+            );
             // IPC is likely down (that's why we timed out), so use Kotlin-side stop
             if let Err(e) = app.vpn().stop() {
                 error!("Failed to stop VPN service after timeout: {e}");
@@ -295,7 +307,12 @@ async fn connect_desktop(
         .await
         .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
         .next()
-        .ok_or_else(|| format!("Endpoint '{}' resolved to no addresses", config.peer_endpoint))?;
+        .ok_or_else(|| {
+            format!(
+                "Endpoint '{}' resolved to no addresses",
+                config.peer_endpoint
+            )
+        })?;
     let endpoint_ip = endpoint.ip();
 
     #[cfg(target_os = "linux")]
@@ -386,12 +403,11 @@ async fn wait_for_handshake(
     let poll_interval = std::time::Duration::from_millis(500);
     let start = std::time::Instant::now();
     loop {
-        if let Some(info) = backend.get_all_info().await {
-            if let Some(secs) = info.last_handshake {
-                if secs < 10 {
-                    return Ok(());
-                }
-            }
+        if let Some(info) = backend.get_all_info().await
+            && let Some(secs) = info.last_handshake
+            && secs < 10
+        {
+            return Ok(());
         }
         if start.elapsed() > timeout {
             return Err(());

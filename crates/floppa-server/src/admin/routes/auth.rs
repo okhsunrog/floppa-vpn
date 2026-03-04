@@ -1,18 +1,21 @@
 use axum::{
     Json,
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     response::{Html, Redirect},
 };
 use chrono::{Duration, Utc};
 use floppa_core::services;
 use rand::random;
 use serde::{Deserialize, Serialize};
-use tracing::{error, warn};
+use tracing::warn;
 use utoipa::ToSchema;
 
-use crate::admin::auth::{
-    MiniAppUser, TelegramAuthData, create_jwt, verify_telegram_auth, verify_telegram_mini_app,
+use crate::admin::{
+    auth::{
+        MiniAppUser, TelegramAuthData, create_jwt, verify_telegram_auth, verify_telegram_mini_app,
+    },
+    error::ApiError,
 };
 
 use super::AppState;
@@ -97,21 +100,19 @@ async fn upsert_and_create_jwt(
     telegram_id: i64,
     username: Option<&str>,
     profile: services::TelegramProfile<'_>,
-) -> Result<AuthResponse, StatusCode> {
-    let auth_secrets = state.secrets.auth.as_ref().ok_or_else(|| {
-        error!("Auth secrets not set");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+) -> Result<AuthResponse, ApiError> {
+    let auth_secrets = state
+        .secrets
+        .auth
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Auth secrets not set"))?;
 
     let is_config_admin = auth_secrets.admin_telegram_ids.contains(&telegram_id);
 
     let result =
         services::upsert_user(&state.pool, telegram_id, username, profile, is_config_admin)
             .await
-            .map_err(|e| {
-                error!("Failed to upsert user: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+            .map_err(|e| ApiError::internal(format!("Failed to upsert user: {e}")))?;
 
     let default_auth = floppa_core::AuthConfig::default();
     let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
@@ -123,10 +124,7 @@ async fn upsert_and_create_jwt(
         &auth_secrets.jwt_secret,
         auth_config.jwt_expiration_hours,
     )
-    .map_err(|e| {
-        error!("Failed to create JWT: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .map_err(|e| ApiError::internal(format!("Failed to create JWT: {e}")))?;
 
     Ok(AuthResponse {
         token,
@@ -144,19 +142,16 @@ async fn upsert_and_create_jwt(
 async fn authenticate_telegram_user(
     state: &AppState,
     auth_data: TelegramAuthData,
-) -> Result<AuthResponse, StatusCode> {
+) -> Result<AuthResponse, ApiError> {
     let bot_token = state
         .secrets
         .bot
         .as_ref()
         .map(|b| b.token.as_str())
-        .ok_or_else(|| {
-            error!("Bot token not configured in secrets");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .ok_or_else(|| ApiError::internal("Bot token not configured in secrets"))?;
 
     if !verify_telegram_auth(&auth_data, bot_token) {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(ApiError::unauthorized());
     }
 
     upsert_and_create_jwt(
@@ -182,21 +177,21 @@ async fn authenticate_telegram_user(
     ),
     responses(
         (status = 200, description = "HTML login page"),
-        (status = 400, description = "Invalid request"),
-        (status = 500, description = "Server misconfiguration"),
+        (status = 400, body = ApiError, description = "Invalid request"),
+        (status = 500, body = ApiError, description = "Server misconfiguration"),
     )
 )]
 pub(super) async fn start_telegram_deep_link_login(
     State(state): State<AppState>,
     Query(query): Query<TelegramDeepLinkStartQuery>,
     headers: HeaderMap,
-) -> Result<Html<String>, StatusCode> {
+) -> Result<Html<String>, ApiError> {
     if !is_allowed_redirect_uri(&query.redirect_uri) {
         warn!(
             "Rejected deep-link auth start with invalid redirect URI: {}",
             query.redirect_uri
         );
-        return Err(StatusCode::BAD_REQUEST);
+        return Err(ApiError::bad_request("Invalid redirect URI"));
     }
 
     let bot_username = state
@@ -204,14 +199,11 @@ pub(super) async fn start_telegram_deep_link_login(
         .bot
         .as_ref()
         .and_then(|b| b.username.as_ref())
-        .ok_or_else(|| {
-            error!("Bot username not configured in config.toml");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .ok_or_else(|| ApiError::internal("Bot username not configured in config.toml"))?;
 
     let request_origin = detect_request_origin(&headers).ok_or_else(|| {
         warn!("Missing host headers for deep-link auth start");
-        StatusCode::BAD_REQUEST
+        ApiError::bad_request("Missing host headers")
     })?;
 
     let now = Utc::now();
@@ -262,15 +254,15 @@ pub(super) async fn start_telegram_deep_link_login(
     tag = "auth",
     responses(
         (status = 307, description = "Redirect to deep link with temporary code"),
-        (status = 400, description = "Invalid or expired state"),
-        (status = 401, description = "Invalid Telegram auth payload"),
-        (status = 500, description = "Internal server error"),
+        (status = 400, body = ApiError, description = "Invalid or expired state"),
+        (status = 401, body = ApiError, description = "Invalid Telegram auth payload"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn telegram_deep_link_callback(
     State(state): State<AppState>,
     Query(query): Query<TelegramDeepLinkCallbackQuery>,
-) -> Result<Redirect, StatusCode> {
+) -> Result<Redirect, ApiError> {
     let now = Utc::now();
     let login_state = {
         let mut login_states = state.telegram_login_states.write().await;
@@ -279,7 +271,7 @@ pub(super) async fn telegram_deep_link_callback(
     }
     .ok_or_else(|| {
         warn!("Deep-link callback received with unknown or expired state");
-        StatusCode::BAD_REQUEST
+        ApiError::bad_request("Invalid or expired state")
     })?;
 
     let auth_data = TelegramAuthData {
@@ -326,23 +318,23 @@ pub(super) async fn telegram_deep_link_callback(
     request_body = ExchangeTelegramLoginCodeRequest,
     responses(
         (status = 200, body = AuthResponse),
-        (status = 401, description = "Invalid or expired code"),
+        (status = 401, body = ApiError, description = "Invalid or expired code"),
     )
 )]
 pub(super) async fn exchange_telegram_login_code(
     State(state): State<AppState>,
     Json(request): Json<ExchangeTelegramLoginCodeRequest>,
-) -> Result<Json<AuthResponse>, StatusCode> {
+) -> Result<Json<AuthResponse>, ApiError> {
     let now = Utc::now();
     let pending = {
         let mut login_codes = state.telegram_login_codes.write().await;
         login_codes.retain(|_, value| value.expires_at > now);
         login_codes.remove(&request.code)
     }
-    .ok_or(StatusCode::UNAUTHORIZED)?;
+    .ok_or_else(ApiError::unauthorized)?;
 
     if pending.expires_at <= now {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(ApiError::unauthorized());
     }
 
     Ok(Json(pending.auth_response))
@@ -356,14 +348,14 @@ pub(super) async fn exchange_telegram_login_code(
     request_body = TelegramAuthData,
     responses(
         (status = 200, body = AuthResponse),
-        (status = 401, description = "Invalid Telegram auth data"),
-        (status = 500, description = "Internal server error"),
+        (status = 401, body = ApiError, description = "Invalid Telegram auth data"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn telegram_login(
     State(state): State<AppState>,
     Json(auth_data): Json<TelegramAuthData>,
-) -> Result<Json<AuthResponse>, StatusCode> {
+) -> Result<Json<AuthResponse>, ApiError> {
     let auth_response = authenticate_telegram_user(&state, auth_data).await?;
     Ok(Json(auth_response))
 }
@@ -376,26 +368,23 @@ pub(super) async fn telegram_login(
     request_body = MiniAppAuthRequest,
     responses(
         (status = 200, body = AuthResponse),
-        (status = 401, description = "Invalid Mini App initData"),
-        (status = 500, description = "Internal server error"),
+        (status = 401, body = ApiError, description = "Invalid Mini App initData"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn telegram_mini_app_auth(
     State(state): State<AppState>,
     Json(request): Json<MiniAppAuthRequest>,
-) -> Result<Json<AuthResponse>, StatusCode> {
+) -> Result<Json<AuthResponse>, ApiError> {
     let bot_token = state
         .secrets
         .bot
         .as_ref()
         .map(|b| b.token.as_str())
-        .ok_or_else(|| {
-            error!("Bot token not configured in secrets");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .ok_or_else(|| ApiError::internal("Bot token not configured in secrets"))?;
 
-    let mini_app_user: MiniAppUser =
-        verify_telegram_mini_app(&request.init_data, bot_token).ok_or(StatusCode::UNAUTHORIZED)?;
+    let mini_app_user: MiniAppUser = verify_telegram_mini_app(&request.init_data, bot_token)
+        .ok_or_else(ApiError::unauthorized)?;
 
     let auth_response = upsert_and_create_jwt(
         &state,

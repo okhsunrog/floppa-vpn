@@ -48,7 +48,10 @@ impl Platform for AndroidPlatform {
 
     async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
         // On Android, routing is handled by VpnService
-        debug!("Android: endpoint routing handled by VpnService for {}", endpoint_ip);
+        debug!(
+            "Android: endpoint routing handled by VpnService for {}",
+            endpoint_ip
+        );
         Ok(())
     }
 

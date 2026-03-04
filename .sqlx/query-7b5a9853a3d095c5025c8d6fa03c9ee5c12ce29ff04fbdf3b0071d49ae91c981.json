@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET tx_bytes = tx_bytes + $1, rx_bytes = rx_bytes + $2, traffic_used_bytes = traffic_used_bytes + $1 + $2, last_handshake = $3 WHERE public_key = $4 AND sync_status = 'active'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7b5a9853a3d095c5025c8d6fa03c9ee5c12ce29ff04fbdf3b0071d49ae91c981"
+}

@@ -1,17 +1,16 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
 };
 use chrono::Utc;
-use floppa_core::{FloppaError, decrypt_private_key, services};
+use floppa_core::{decrypt_private_key, services};
 use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
-use tracing::error;
 use utoipa::ToSchema;
 
-use crate::admin::auth::AuthUser;
+use crate::admin::{auth::AuthUser, error::ApiError};
 
 use super::AppState;
 
@@ -75,23 +74,19 @@ pub struct CreatePeerRequest {
     security(("bearer" = [])),
     responses(
         (status = 200, body = MeResponse),
-        (status = 401, description = "Unauthorized"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
     )
 )]
 pub(super) async fn get_me(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> Result<Json<MeResponse>, StatusCode> {
+) -> Result<Json<MeResponse>, ApiError> {
     let user = sqlx::query!(
         "SELECT id, telegram_id, username, first_name, last_name, photo_url, is_admin FROM users WHERE id = $1",
         auth.user_id
     )
     .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     // Get active subscription with plan info
     let subscription = sqlx::query_as!(
@@ -113,11 +108,7 @@ pub(super) async fn get_me(
         auth.user_id
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(MeResponse {
         id: user.id,
@@ -139,28 +130,13 @@ pub(super) async fn get_me(
     security(("bearer" = [])),
     responses(
         (status = 200, body = Vec<MyPeer>),
-        (status = 401, description = "Unauthorized"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
     )
 )]
 pub(super) async fn get_my_peers(
     auth: AuthUser,
-    headers: axum::http::HeaderMap,
     State(state): State<AppState>,
-) -> Result<Json<Vec<MyPeer>>, StatusCode> {
-    // Update client_version for all user's peers from X-Client-Version header
-    if let Some(version) = headers
-        .get("X-Client-Version")
-        .and_then(|v| v.to_str().ok())
-    {
-        let _ = sqlx::query!(
-            "UPDATE peers SET client_version = $1 WHERE user_id = $2 AND sync_status != 'removed'",
-            version,
-            auth.user_id
-        )
-        .execute(&state.pool)
-        .await;
-    }
-
+) -> Result<Json<Vec<MyPeer>>, ApiError> {
     let peers: Vec<MyPeer> = sqlx::query_as!(
         MyPeer,
         r#"
@@ -172,11 +148,7 @@ pub(super) async fn get_my_peers(
         auth.user_id
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(peers))
 }
@@ -190,30 +162,24 @@ pub(super) async fn get_my_peers(
     request_body(content = Option<CreatePeerRequest>, content_type = "application/json"),
     responses(
         (status = 200, body = CreatePeerResponse),
-        (status = 401, description = "Unauthorized"),
-        (status = 402, description = "No active subscription"),
-        (status = 403, description = "Peer limit reached"),
-        (status = 500, description = "Internal server error"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 402, body = ApiError, description = "No active subscription"),
+        (status = 403, body = ApiError, description = "Peer limit reached"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn create_my_peer(
     auth: AuthUser,
     State(state): State<AppState>,
     body: Option<Json<CreatePeerRequest>>,
-) -> Result<Json<CreatePeerResponse>, StatusCode> {
+) -> Result<Json<CreatePeerResponse>, ApiError> {
     let encryption_key = state
         .secrets
         .auth
         .as_ref()
-        .ok_or_else(|| {
-            error!("Auth secrets required for encryption");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+        .ok_or_else(|| ApiError::internal("Auth secrets required for encryption"))?
         .get_encryption_key()
-        .map_err(|e| {
-            error!("Invalid encryption key: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
     let options = body.map(|Json(req)| services::CreatePeerOptions {
         device_name: req.device_name,
@@ -228,15 +194,7 @@ pub(super) async fn create_my_peer(
         &state.wg_public_key,
         options,
     )
-    .await
-    .map_err(|e| match e {
-        FloppaError::NoActiveSubscription => StatusCode::PAYMENT_REQUIRED,
-        FloppaError::PeerLimitReached { .. } => StatusCode::FORBIDDEN,
-        other => {
-            error!("Failed to create peer: {}", other);
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-    })?;
+    .await?;
 
     Ok(Json(CreatePeerResponse {
         id: result.id,
@@ -254,29 +212,25 @@ pub(super) async fn create_my_peer(
     params(("id" = i64, Path, description = "Peer ID")),
     responses(
         (status = 200, description = "Peer deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Peer not found"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 404, body = ApiError, description = "Peer not found"),
     )
 )]
 pub(super) async fn delete_my_peer(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     let result = sqlx::query!(
         "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND user_id = $2 AND sync_status = 'active'",
         peer_id,
         auth.user_id
     )
     .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::not_found("Peer not found"));
     }
 
     Ok(StatusCode::OK)
@@ -291,15 +245,15 @@ pub(super) async fn delete_my_peer(
     params(("id" = i64, Path, description = "Peer ID")),
     responses(
         (status = 200, description = "WireGuard config file", body = String),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Peer not found"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 404, body = ApiError, description = "Peer not found"),
     )
 )]
 pub(super) async fn get_my_peer_config(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
-) -> Result<String, StatusCode> {
+) -> Result<String, ApiError> {
     let peer = sqlx::query!(
         r#"
         SELECT private_key_encrypted, assigned_ip
@@ -310,36 +264,23 @@ pub(super) async fn get_my_peer_config(
         auth.user_id
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
     // Decrypt the private key using secrets
     let encryption_key = state
         .secrets
         .auth
         .as_ref()
-        .ok_or_else(|| {
-            error!("Auth secrets required for decryption");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
         .get_encryption_key()
-        .map_err(|e| {
-            error!("Invalid encryption key: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        error!("Peer {} has no encrypted private key", peer_id);
-        StatusCode::INTERNAL_SERVER_ERROR
+        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
     })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key).map_err(|e| {
-        error!("Decryption failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let private_key = decrypt_private_key(encrypted, &encryption_key)
+        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
 
     let config = services::generate_wg_config(
         &private_key,
@@ -359,16 +300,16 @@ pub(super) async fn get_my_peer_config(
     params(("id" = i64, Path, description = "Peer ID")),
     responses(
         (status = 200, description = "Config sent via Telegram"),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "Peer not found"),
-        (status = 502, description = "Failed to send via Telegram"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 404, body = ApiError, description = "Peer not found"),
+        (status = 502, body = ApiError, description = "Failed to send via Telegram"),
     )
 )]
 pub(super) async fn send_my_peer_config(
     auth: AuthUser,
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
-) -> Result<StatusCode, StatusCode> {
+) -> Result<StatusCode, ApiError> {
     // Get peer's encrypted key and IP
     let peer = sqlx::query!(
         r#"
@@ -380,12 +321,8 @@ pub(super) async fn send_my_peer_config(
         auth.user_id
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
     let assigned_ip = peer.assigned_ip.clone();
 
@@ -394,24 +331,15 @@ pub(super) async fn send_my_peer_config(
         .secrets
         .auth
         .as_ref()
-        .ok_or_else(|| {
-            error!("Auth secrets required for decryption");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?
+        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
         .get_encryption_key()
-        .map_err(|e| {
-            error!("Invalid encryption key: {}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        error!("Peer {} has no encrypted private key", peer_id);
-        StatusCode::INTERNAL_SERVER_ERROR
+        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
     })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key).map_err(|e| {
-        error!("Decryption failed: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let private_key = decrypt_private_key(encrypted, &encryption_key)
+        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
 
     let config = services::generate_wg_config(
         &private_key,
@@ -424,11 +352,7 @@ pub(super) async fn send_my_peer_config(
     let telegram_id =
         sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", auth.user_id)
             .fetch_one(&state.pool)
-            .await
-            .map_err(|e| {
-                error!("DB error fetching telegram_id: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+            .await?;
 
     // Send config as document via Telegram bot
     let filename = format!("floppa-vpn-{assigned_ip}.conf");
@@ -438,10 +362,7 @@ pub(super) async fn send_my_peer_config(
         .bot
         .send_document(ChatId(telegram_id), file)
         .await
-        .map_err(|e| {
-            error!("Failed to send config via Telegram: {e}");
-            StatusCode::BAD_GATEWAY
-        })?;
+        .map_err(|e| ApiError::bad_gateway(format!("Failed to send config via Telegram: {e}")))?;
 
     Ok(StatusCode::OK)
 }
@@ -455,15 +376,16 @@ pub(super) async fn send_my_peer_config(
     params(("device_id" = String, Path, description = "Device UUID")),
     responses(
         (status = 200, body = MyPeer),
-        (status = 401, description = "Unauthorized"),
-        (status = 404, description = "No peer for this device"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 404, body = ApiError, description = "No peer for this device"),
     )
 )]
 pub(super) async fn get_my_peer_by_device(
     auth: AuthUser,
+    headers: HeaderMap,
     State(state): State<AppState>,
     Path(device_id): Path<String>,
-) -> Result<Json<MyPeer>, StatusCode> {
+) -> Result<Json<MyPeer>, ApiError> {
     let peer: MyPeer = sqlx::query_as!(
         MyPeer,
         r#"
@@ -475,12 +397,22 @@ pub(super) async fn get_my_peer_by_device(
         &device_id
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_else(|| ApiError::not_found("No peer for this device"))?;
+
+    // Update client_version for this specific peer
+    if let Some(version) = headers
+        .get("X-Client-Version")
+        .and_then(|v| v.to_str().ok())
+    {
+        let _ = sqlx::query!(
+            "UPDATE peers SET client_version = $1 WHERE id = $2",
+            version,
+            peer.id
+        )
+        .execute(&state.pool)
+        .await;
+    }
 
     Ok(Json(peer))
 }

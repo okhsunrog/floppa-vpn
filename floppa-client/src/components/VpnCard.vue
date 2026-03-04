@@ -94,7 +94,11 @@ async function doServerSync(): Promise<SyncResult> {
       })
       await vpn.setActiveConfig(response.config)
       return { outcome: 'ok' }
-    } catch {
+    } catch (e: unknown) {
+      const errorCode = (e as Record<string, unknown>)?.error
+      if (errorCode === 'no_active_subscription' || errorCode === 'subscription_expired') {
+        return { outcome: 'error', errorKey: 'vpn.noSubscription' }
+      }
       return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
     }
   } catch {

@@ -108,6 +108,7 @@ export default {
     peers: 'Peers',
     admin: 'Admin',
     created: 'Created',
+    version: 'Version',
     noUsers: 'No users found',
     addUser: 'Add User',
     addUserTitle: 'Pre-register User',

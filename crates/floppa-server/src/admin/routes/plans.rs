@@ -5,10 +5,9 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
-use tracing::error;
 use utoipa::ToSchema;
 
-use crate::admin::auth::AdminUser;
+use crate::admin::{auth::AdminUser, error::ApiError};
 
 use super::AppState;
 
@@ -82,24 +81,20 @@ fn default_is_public() -> bool {
     security(("bearer" = [])),
     responses(
         (status = 200, body = Vec<Plan>),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn list_plans(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<Plan>>, StatusCode> {
+) -> Result<Json<Vec<Plan>>, ApiError> {
     let plans: Vec<Plan> = sqlx::query_as!(
         Plan,
         "SELECT id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days FROM plans ORDER BY id"
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(plans))
 }
@@ -113,16 +108,16 @@ pub(super) async fn list_plans(
     request_body = CreatePlanRequest,
     responses(
         (status = 200, body = Plan),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 500, description = "Internal server error"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn create_plan(
     _admin: AdminUser,
     State(state): State<AppState>,
     Json(req): Json<CreatePlanRequest>,
-) -> Result<Json<Plan>, StatusCode> {
+) -> Result<Json<Plan>, ApiError> {
     let plan: Plan = sqlx::query_as!(
         Plan,
         r#"
@@ -140,11 +135,7 @@ pub(super) async fn create_plan(
         req.trial_days
     )
     .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("Failed to create plan: {}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(plan))
 }
@@ -159,9 +150,9 @@ pub(super) async fn create_plan(
     request_body = UpdatePlanRequest,
     responses(
         (status = 200, body = Plan),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "Plan not found"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Plan not found"),
     )
 )]
 pub(super) async fn update_plan(
@@ -169,7 +160,7 @@ pub(super) async fn update_plan(
     State(state): State<AppState>,
     Path(id): Path<i32>,
     Json(req): Json<UpdatePlanRequest>,
-) -> Result<Json<Plan>, StatusCode> {
+) -> Result<Json<Plan>, ApiError> {
     let plan: Plan = sqlx::query_as!(
         Plan,
         r#"
@@ -197,12 +188,8 @@ pub(super) async fn update_plan(
         req.trial_days
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_else(|| ApiError::not_found("Plan not found"))?;
 
     Ok(Json(plan))
 }
@@ -216,40 +203,34 @@ pub(super) async fn update_plan(
     params(("id" = i32, Path, description = "Plan ID")),
     responses(
         (status = 204, description = "Plan deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "Plan not found"),
-        (status = 409, description = "Plan has existing subscriptions"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Plan not found"),
+        (status = 409, body = ApiError, description = "Plan has existing subscriptions"),
     )
 )]
 pub(super) async fn delete_plan(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(id): Path<i32>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     // Don't allow deleting plans that have subscriptions
     let has_subs = sqlx::query_scalar!("SELECT COUNT(*) FROM subscriptions WHERE plan_id = $1", id)
         .fetch_one(&state.pool)
-        .await
-        .map_err(|e| {
-            error!("DB error: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .await?;
 
     if has_subs.unwrap_or(0) > 0 {
-        return Err(StatusCode::CONFLICT);
+        return Err(ApiError::conflict(
+            "Plan has existing subscriptions and cannot be deleted",
+        ));
     }
 
     let result = sqlx::query!("DELETE FROM plans WHERE id = $1", id)
         .execute(&state.pool)
-        .await
-        .map_err(|e| {
-            error!("DB error: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::not_found("Plan not found"));
     }
 
     Ok(StatusCode::NO_CONTENT)

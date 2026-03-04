@@ -8,6 +8,7 @@ pub struct ApiClient {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct MeResponse {
     pub id: i64,
     pub username: Option<String>,
@@ -17,6 +18,7 @@ pub struct MeResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct SubscriptionInfo {
     pub plan_name: String,
     pub plan_display_name: String,
@@ -26,6 +28,7 @@ pub struct SubscriptionInfo {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct MyPeer {
     pub id: i64,
     pub assigned_ip: String,
@@ -54,6 +57,7 @@ pub struct AuthResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AuthUserInfo {
     pub id: i64,
     pub username: Option<String>,

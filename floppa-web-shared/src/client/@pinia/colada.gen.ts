@@ -5,12 +5,12 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
 import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getPublicConfig, getStats, getUser, getVersion, listPeers, listPlans, listUsers, type Options, removePeer, sendMyPeerConfig, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerResponse, CreatePlanData, CreatePlanResponse, CreateUserData, CreateUserResponse2, DeleteAdminPeerData, DeleteMyPeerData, DeletePlanData, DeletePlanResponse, DeleteSubscriptionData, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RemovePeerData, SendMyPeerConfigData, SetSubscriptionData, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanResponse } from '../types.gen';
+import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetSubscriptionData, SetSubscriptionError, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse } from '../types.gen';
 
 /**
  * Authenticate via Telegram Login Widget
  */
-export const telegramLoginMutation = (options?: Partial<Options<TelegramLoginData>>): UseMutationOptions<TelegramLoginResponse, Options<TelegramLoginData>, Error> => ({
+export const telegramLoginMutation = (options?: Partial<Options<TelegramLoginData>>): UseMutationOptions<TelegramLoginResponse, Options<TelegramLoginData>, TelegramLoginError> => ({
     mutation: async (vars) => {
         const { data } = await telegramLogin({
             ...options,
@@ -76,7 +76,7 @@ export const telegramDeepLinkCallbackQuery = defineQueryOptions((options?: Optio
 /**
  * Exchange one-time login code for JWT + user payload.
  */
-export const exchangeTelegramLoginCodeMutation = (options?: Partial<Options<ExchangeTelegramLoginCodeData>>): UseMutationOptions<ExchangeTelegramLoginCodeResponse, Options<ExchangeTelegramLoginCodeData>, Error> => ({
+export const exchangeTelegramLoginCodeMutation = (options?: Partial<Options<ExchangeTelegramLoginCodeData>>): UseMutationOptions<ExchangeTelegramLoginCodeResponse, Options<ExchangeTelegramLoginCodeData>, ExchangeTelegramLoginCodeError> => ({
     mutation: async (vars) => {
         const { data } = await exchangeTelegramLoginCode({
             ...options,
@@ -90,7 +90,7 @@ export const exchangeTelegramLoginCodeMutation = (options?: Partial<Options<Exch
 /**
  * Authenticate via Telegram Mini App initData
  */
-export const telegramMiniAppAuthMutation = (options?: Partial<Options<TelegramMiniAppAuthData>>): UseMutationOptions<TelegramMiniAppAuthResponse, Options<TelegramMiniAppAuthData>, Error> => ({
+export const telegramMiniAppAuthMutation = (options?: Partial<Options<TelegramMiniAppAuthData>>): UseMutationOptions<TelegramMiniAppAuthResponse, Options<TelegramMiniAppAuthData>, TelegramMiniAppAuthError> => ({
     mutation: async (vars) => {
         const { data } = await telegramMiniAppAuth({
             ...options,
@@ -172,7 +172,7 @@ export const getMyPeersQuery = defineQueryOptions((options?: Options<GetMyPeersD
 /**
  * Create a new WireGuard peer for the current user
  */
-export const createMyPeerMutation = (options?: Partial<Options<CreateMyPeerData>>): UseMutationOptions<CreateMyPeerResponse, Options<CreateMyPeerData>, Error> => ({
+export const createMyPeerMutation = (options?: Partial<Options<CreateMyPeerData>>): UseMutationOptions<CreateMyPeerResponse, Options<CreateMyPeerData>, CreateMyPeerError> => ({
     mutation: async (vars) => {
         const { data } = await createMyPeer({
             ...options,
@@ -203,7 +203,7 @@ export const getMyPeerByDeviceQuery = defineQueryOptions((options: Options<GetMy
 /**
  * Delete a peer owned by the current user
  */
-export const deleteMyPeerMutation = (options?: Partial<Options<DeleteMyPeerData>>): UseMutationOptions<unknown, Options<DeleteMyPeerData>, Error> => ({
+export const deleteMyPeerMutation = (options?: Partial<Options<DeleteMyPeerData>>): UseMutationOptions<unknown, Options<DeleteMyPeerData>, DeleteMyPeerError> => ({
     mutation: async (vars) => {
         const { data } = await deleteMyPeer({
             ...options,
@@ -234,7 +234,7 @@ export const getMyPeerConfigQuery = defineQueryOptions((options: Options<GetMyPe
 /**
  * Send WireGuard config to user via Telegram bot
  */
-export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerConfigData>>): UseMutationOptions<unknown, Options<SendMyPeerConfigData>, Error> => ({
+export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerConfigData>>): UseMutationOptions<unknown, Options<SendMyPeerConfigData>, SendMyPeerConfigError> => ({
     mutation: async (vars) => {
         const { data } = await sendMyPeerConfig({
             ...options,
@@ -265,7 +265,7 @@ export const listPeersQuery = defineQueryOptions((options?: Options<ListPeersDat
 /**
  * Delete a peer by ID (admin only)
  */
-export const deleteAdminPeerMutation = (options?: Partial<Options<DeleteAdminPeerData>>): UseMutationOptions<unknown, Options<DeleteAdminPeerData>, Error> => ({
+export const deleteAdminPeerMutation = (options?: Partial<Options<DeleteAdminPeerData>>): UseMutationOptions<unknown, Options<DeleteAdminPeerData>, DeleteAdminPeerError> => ({
     mutation: async (vars) => {
         const { data } = await deleteAdminPeer({
             ...options,
@@ -296,7 +296,7 @@ export const listPlansQuery = defineQueryOptions((options?: Options<ListPlansDat
 /**
  * Create a new plan (admin only)
  */
-export const createPlanMutation = (options?: Partial<Options<CreatePlanData>>): UseMutationOptions<CreatePlanResponse, Options<CreatePlanData>, Error> => ({
+export const createPlanMutation = (options?: Partial<Options<CreatePlanData>>): UseMutationOptions<CreatePlanResponse, Options<CreatePlanData>, CreatePlanError> => ({
     mutation: async (vars) => {
         const { data } = await createPlan({
             ...options,
@@ -310,7 +310,7 @@ export const createPlanMutation = (options?: Partial<Options<CreatePlanData>>): 
 /**
  * Delete a plan (admin only). Fails if plan has subscriptions.
  */
-export const deletePlanMutation = (options?: Partial<Options<DeletePlanData>>): UseMutationOptions<DeletePlanResponse, Options<DeletePlanData>, Error> => ({
+export const deletePlanMutation = (options?: Partial<Options<DeletePlanData>>): UseMutationOptions<DeletePlanResponse, Options<DeletePlanData>, DeletePlanError> => ({
     mutation: async (vars) => {
         const { data } = await deletePlan({
             ...options,
@@ -324,7 +324,7 @@ export const deletePlanMutation = (options?: Partial<Options<DeletePlanData>>): 
 /**
  * Update a plan (admin only)
  */
-export const updatePlanMutation = (options?: Partial<Options<UpdatePlanData>>): UseMutationOptions<UpdatePlanResponse, Options<UpdatePlanData>, Error> => ({
+export const updatePlanMutation = (options?: Partial<Options<UpdatePlanData>>): UseMutationOptions<UpdatePlanResponse, Options<UpdatePlanData>, UpdatePlanError> => ({
     mutation: async (vars) => {
         const { data } = await updatePlan({
             ...options,
@@ -373,7 +373,7 @@ export const listUsersQuery = defineQueryOptions((options?: Options<ListUsersDat
  * Pre-register a user by telegram_id and assign a subscription (admin only).
  * When the user later authenticates via Telegram, their account and subscription will be waiting.
  */
-export const createUserMutation = (options?: Partial<Options<CreateUserData>>): UseMutationOptions<CreateUserResponse2, Options<CreateUserData>, Error> => ({
+export const createUserMutation = (options?: Partial<Options<CreateUserData>>): UseMutationOptions<CreateUserResponse2, Options<CreateUserData>, CreateUserError> => ({
     mutation: async (vars) => {
         const { data } = await createUser({
             ...options,
@@ -404,7 +404,7 @@ export const getUserQuery = defineQueryOptions((options: Options<GetUserData>) =
 /**
  * Remove all active peers for a user (admin only)
  */
-export const removePeerMutation = (options?: Partial<Options<RemovePeerData>>): UseMutationOptions<unknown, Options<RemovePeerData>, Error> => ({
+export const removePeerMutation = (options?: Partial<Options<RemovePeerData>>): UseMutationOptions<unknown, Options<RemovePeerData>, RemovePeerError> => ({
     mutation: async (vars) => {
         const { data } = await removePeer({
             ...options,
@@ -418,7 +418,7 @@ export const removePeerMutation = (options?: Partial<Options<RemovePeerData>>): 
 /**
  * Delete (expire) a user's active subscription (admin only)
  */
-export const deleteSubscriptionMutation = (options?: Partial<Options<DeleteSubscriptionData>>): UseMutationOptions<unknown, Options<DeleteSubscriptionData>, Error> => ({
+export const deleteSubscriptionMutation = (options?: Partial<Options<DeleteSubscriptionData>>): UseMutationOptions<unknown, Options<DeleteSubscriptionData>, DeleteSubscriptionError> => ({
     mutation: async (vars) => {
         const { data } = await deleteSubscription({
             ...options,
@@ -433,7 +433,7 @@ export const deleteSubscriptionMutation = (options?: Partial<Options<DeleteSubsc
  * Set (create or replace) a user's subscription (admin only).
  * If the user already has an active subscription, it will be expired first.
  */
-export const setSubscriptionMutation = (options?: Partial<Options<SetSubscriptionData>>): UseMutationOptions<unknown, Options<SetSubscriptionData>, Error> => ({
+export const setSubscriptionMutation = (options?: Partial<Options<SetSubscriptionData>>): UseMutationOptions<unknown, Options<SetSubscriptionData>, SetSubscriptionError> => ({
     mutation: async (vars) => {
         const { data } = await setSubscription({
             ...options,
