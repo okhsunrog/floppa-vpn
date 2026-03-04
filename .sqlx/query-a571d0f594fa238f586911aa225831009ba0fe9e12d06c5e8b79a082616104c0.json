@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        WHERE p.sync_status != 'removed'\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "assigned_ip",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "sync_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "tx_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "rx_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_handshake",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "device_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "device_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "client_version",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "a571d0f594fa238f586911aa225831009ba0fe9e12d06c5e8b79a082616104c0"
+}

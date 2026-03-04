@@ -13,6 +13,22 @@ jobs:
   rust:
     name: Rust checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: floppa
+          POSTGRES_PASSWORD: floppa
+          POSTGRES_DB: floppa_vpn
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://floppa:floppa@localhost/floppa_vpn
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +47,15 @@ jobs:
 
       - name: Build frontend (needed for memory-serve embedding)
         run: cd floppa-face && bun run build
+
+      - name: Install sqlx-cli
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
+      - name: Run migrations
+        run: cargo sqlx migrate run
+
+      - name: Check sqlx cache is up to date
+        run: cargo sqlx prepare --workspace --check
 
       - name: Check formatting
         run: cargo fmt --check

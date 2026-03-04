@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.display_name as plan, s.expires_at\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        JOIN users u ON s.user_id = u.id\n        WHERE u.telegram_id = $1\n          AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ORDER BY s.expires_at DESC NULLS FIRST\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plan",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "233ba8397075560fc0ffc5c4083e61bc84b6d650e79bd8433005b7525286e553"
+}

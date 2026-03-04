@@ -87,15 +87,17 @@ pub async fn resolve_lang(
     telegram_lang: Option<&str>,
 ) -> &'static Messages {
     // Check DB preference first
-    let db_lang: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT language FROM users WHERE telegram_id = $1")
-            .bind(telegram_id)
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten();
+    let db_lang = sqlx::query_scalar!(
+        "SELECT language FROM users WHERE telegram_id = $1",
+        telegram_id
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
 
-    if let Some((Some(lang),)) = db_lang {
+    if let Some(lang) = db_lang {
         return for_lang(Some(&lang));
     }
 

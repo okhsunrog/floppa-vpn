@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET language = $1 WHERE telegram_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "84585d66a23c6e8c57b6207be8986124c465d0b8e71b81fd1a8a6930697bafe6"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND sync_status = 'active'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b1e2ba4c4b3b6e655d5a363e9383cfe8259ec564a969a5588a9a097bcc93a516"
+}

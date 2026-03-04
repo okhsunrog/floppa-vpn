@@ -258,18 +258,18 @@ impl FromRequestParts<AppState> for AdminUser {
         let user = AuthUser::from_request_parts(parts, state).await?;
 
         // Always verify admin status against DB (JWT may be stale)
-        let is_admin: Option<(bool,)> = sqlx::query_as("SELECT is_admin FROM users WHERE id = $1")
-            .bind(user.user_id)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to verify admin status: {}", e);
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+        let is_admin =
+            sqlx::query_scalar!("SELECT is_admin FROM users WHERE id = $1", user.user_id)
+                .fetch_optional(&state.pool)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to verify admin status: {}", e);
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
 
         match is_admin {
-            Some((true,)) => Ok(AdminUser(user)),
-            Some((false,)) => {
+            Some(true) => Ok(AdminUser(user)),
+            Some(false) => {
                 tracing::warn!(
                     "User {} has admin JWT but is_admin=false in DB",
                     user.user_id

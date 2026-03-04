@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, telegram_id, username, first_name, last_name, photo_url, is_admin, created_at FROM users WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "telegram_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "photo_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "01c596bfdcac3ba6e9b465465f21f650c483f745852eb6023e117a2715de3481"
+}

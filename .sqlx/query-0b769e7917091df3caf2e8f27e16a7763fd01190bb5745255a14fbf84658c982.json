@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id, s.plan_id, p.name as plan_name, p.display_name as plan_display_name,\n               s.starts_at, s.expires_at,\n               p.default_speed_limit_mbps as speed_limit_mbps,\n               p.default_traffic_limit_bytes as traffic_limit_bytes,\n               p.max_peers,\n               (s.expires_at IS NULL OR s.expires_at > NOW()) as \"is_active!\"\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1\n        ORDER BY s.starts_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "plan_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "plan_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "plan_display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "starts_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "speed_limit_mbps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "traffic_limit_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "max_peers",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "is_active!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      null
+    ]
+  },
+  "hash": "0b769e7917091df3caf2e8f27e16a7763fd01190bb5745255a14fbf84658c982"
+}

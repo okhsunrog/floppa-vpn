@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET sync_status = 'active' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1d23fe64e5dfaa43c45a86eaac123a17a3416b1025961224df80c0ec29e68c6f"
+}

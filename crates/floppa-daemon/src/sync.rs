@@ -138,7 +138,7 @@ async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    let peers: Vec<PeerWithNewLimit> = sqlx::query_as(
+    let peers = sqlx::query!(
         r#"
         SELECT p.id, p.assigned_ip,
                pl.default_speed_limit_mbps AS speed_limit_mbps
@@ -196,7 +196,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
         .unwrap_or(false);
 
     // Process pending additions
-    let pending_add: Vec<PendingPeerWithLimit> = sqlx::query_as(
+    let pending_add = sqlx::query!(
         r#"
         SELECT p.id, p.public_key, p.assigned_ip, p.user_id,
                pl.default_speed_limit_mbps AS speed_limit_mbps
@@ -232,10 +232,12 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                     }
                 }
 
-                sqlx::query("UPDATE peers SET sync_status = 'active' WHERE id = $1")
-                    .bind(peer.id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query!(
+                    "UPDATE peers SET sync_status = 'active' WHERE id = $1",
+                    peer.id
+                )
+                .execute(pool)
+                .await?;
                 tracing::info!(peer_id = peer.id, "Peer added successfully");
             }
             Err(e) => {
@@ -245,7 +247,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
     }
 
     // Process pending removals
-    let pending_remove: Vec<PendingPeer> = sqlx::query_as(
+    let pending_remove = sqlx::query!(
         "SELECT id, public_key, assigned_ip FROM peers WHERE sync_status = 'pending_remove'",
     )
     .fetch_all(pool)
@@ -261,10 +263,12 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
 
         match crate::wg::remove_peer(&config.wireguard.interface, &peer.public_key) {
             Ok(()) => {
-                sqlx::query("UPDATE peers SET sync_status = 'removed' WHERE id = $1")
-                    .bind(peer.id)
-                    .execute(pool)
-                    .await?;
+                sqlx::query!(
+                    "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
+                    peer.id
+                )
+                .execute(pool)
+                .await?;
                 tracing::info!(peer_id = peer.id, "Peer removed successfully");
             }
             Err(e) => {
@@ -297,7 +301,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
     }
 
     // Get all active peers and current speed limit from plan
-    let peers: Vec<PeerWithNewLimit> = sqlx::query_as(
+    let peers = sqlx::query!(
         r#"
         SELECT p.id, p.assigned_ip,
                pl.default_speed_limit_mbps AS speed_limit_mbps
@@ -307,8 +311,8 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
         LEFT JOIN plans pl ON s.plan_id = pl.id
         WHERE p.user_id = $1 AND p.sync_status = 'active'
         "#,
+        user_id,
     )
-    .bind(user_id)
     .fetch_all(pool)
     .await?;
 
@@ -366,14 +370,14 @@ async fn update_traffic_stats(pool: &DbPool, config: &Config) -> Result<()> {
     let stats = crate::wg::get_peer_stats(&config.wireguard.interface)?;
 
     for (public_key, tx, rx, last_handshake) in stats {
-        sqlx::query(
-            "UPDATE peers SET tx_bytes = $1, rx_bytes = $2, traffic_used_bytes = $1 + $2, last_handshake = $3
+        sqlx::query!(
+            "UPDATE peers SET tx_bytes = $1, rx_bytes = $2, traffic_used_bytes = $1::bigint + $2::bigint, last_handshake = $3
              WHERE public_key = $4 AND sync_status = 'active'",
+            tx as i64,
+            rx as i64,
+            last_handshake,
+            &public_key,
         )
-        .bind(tx as i64)
-        .bind(rx as i64)
-        .bind(last_handshake)
-        .bind(&public_key)
         .execute(pool)
         .await?;
     }
@@ -385,7 +389,7 @@ async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
     let now = Utc::now();
 
     // Find users with expired subscriptions and active peers
-    let expired: Vec<(i64,)> = sqlx::query_as(
+    let expired = sqlx::query_scalar!(
         r#"
         SELECT DISTINCT p.id
         FROM peers p
@@ -397,46 +401,24 @@ async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
             AND (s.expires_at IS NULL OR s.expires_at > $1)
         )
         "#,
+        now,
     )
-    .bind(now)
     .fetch_all(pool)
     .await?;
 
-    for (peer_id,) in expired {
+    for peer_id in expired {
         tracing::info!(
             peer_id = peer_id,
             "Marking peer for removal (subscription expired)"
         );
-        sqlx::query("UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1")
-            .bind(peer_id)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1",
+            peer_id
+        )
+        .execute(pool)
+        .await?;
         // This will trigger notification via the DB trigger
     }
 
     Ok(())
-}
-
-#[derive(sqlx::FromRow)]
-struct PendingPeer {
-    id: i64,
-    public_key: String,
-    assigned_ip: String,
-}
-
-#[derive(sqlx::FromRow)]
-struct PendingPeerWithLimit {
-    id: i64,
-    public_key: String,
-    assigned_ip: String,
-    #[allow(dead_code)]
-    user_id: i64,
-    speed_limit_mbps: Option<i32>,
-}
-
-#[derive(sqlx::FromRow)]
-struct PeerWithNewLimit {
-    id: i64,
-    assigned_ip: String,
-    speed_limit_mbps: Option<i32>,
 }

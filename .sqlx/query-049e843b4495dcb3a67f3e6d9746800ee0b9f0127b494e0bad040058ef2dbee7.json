@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            default_traffic_limit_bytes = CASE WHEN $5 THEN NULL ELSE COALESCE($6, default_traffic_limit_bytes) END,\n            max_peers = COALESCE($7, max_peers),\n            price_rub = COALESCE($8, price_rub),\n            is_public = COALESCE($9, is_public),\n            trial_days = CASE WHEN $10 THEN NULL ELSE COALESCE($11, trial_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "default_speed_limit_mbps",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "default_traffic_limit_bytes",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "max_peers",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "price_rub",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 7,
+        "name": "is_public",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 8,
+        "name": "trial_days",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Text",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Int8",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Bool",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "049e843b4495dcb3a67f3e6d9746800ee0b9f0127b494e0bad040058ef2dbee7"
+}

@@ -194,6 +194,14 @@ lint:
     cd floppa-face && bun run lint:check
     cd floppa-client && bun run lint:check
 
+# Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
+sqlx-prepare:
+    cargo sqlx prepare --workspace
+
+# Check sqlx cache matches the database (requires DATABASE_URL)
+sqlx-check:
+    cargo sqlx prepare --workspace --check
+
 # Clean build artifacts
 clean:
     cargo clean

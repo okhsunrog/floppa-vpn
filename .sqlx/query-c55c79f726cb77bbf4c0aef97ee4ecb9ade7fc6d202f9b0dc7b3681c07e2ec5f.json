@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO users (telegram_id, username, first_name, trial_used_at)\n        VALUES ($1, $2, $3, NOW())\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c55c79f726cb77bbf4c0aef97ee4ecb9ade7fc6d202f9b0dc7b3681c07e2ec5f"
+}

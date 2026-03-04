@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\"\n        FROM users u\n        ORDER BY u.created_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "telegram_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "first_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "photo_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "is_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "active_plan",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "peer_count!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "bd90e2aa1caf9e3ed7e355ae133d79341020c00b0191d744d66dd359d05bb830"
+}

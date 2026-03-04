@@ -92,7 +92,7 @@ async fn start(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerR
 async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
 
-    let sub: Option<SubInfo> = sqlx::query_as(
+    let sub = sqlx::query!(
         r#"
         SELECT p.display_name as plan, s.expires_at
         FROM subscriptions s
@@ -103,8 +103,8 @@ async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
         ORDER BY s.expires_at DESC NULLS FIRST
         LIMIT 1
         "#,
+        telegram_id,
     )
-    .bind(telegram_id)
     .fetch_optional(&pool)
     .await?;
 
@@ -148,11 +148,13 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
     if let Some(lang) = data.strip_prefix("lang:") {
         let telegram_id = q.from.id.0 as i64;
 
-        sqlx::query("UPDATE users SET language = $1 WHERE telegram_id = $2")
-            .bind(lang)
-            .bind(telegram_id)
-            .execute(&pool)
-            .await?;
+        sqlx::query!(
+            "UPDATE users SET language = $1 WHERE telegram_id = $2",
+            lang,
+            telegram_id
+        )
+        .execute(&pool)
+        .await?;
 
         let msgs = i18n::for_lang(Some(lang));
 
@@ -171,10 +173,4 @@ async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
     bot.send_message(msg.chat.id, msgs.unknown_message).await?;
     Ok(())
-}
-
-#[derive(sqlx::FromRow)]
-struct SubInfo {
-    plan: String,
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }

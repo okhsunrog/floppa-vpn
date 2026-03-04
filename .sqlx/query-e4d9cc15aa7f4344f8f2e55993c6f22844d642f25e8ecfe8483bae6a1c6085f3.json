@@ -1,0 +1,63 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)\n        VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (telegram_id) DO UPDATE SET\n            username = $2,\n            first_name = COALESCE($3, users.first_name),\n            last_name = COALESCE($4, users.last_name),\n            photo_url = COALESCE($5, users.photo_url),\n            is_admin = users.is_admin OR $6\n        RETURNING id, username, first_name, last_name, photo_url, is_admin, trial_used_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "first_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "last_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "photo_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "is_admin",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "trial_used_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Bool"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "e4d9cc15aa7f4344f8f2e55993c6f22844d642f25e8ecfe8483bae6a1c6085f3"
+}

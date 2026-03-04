@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.max_peers, (SELECT COUNT(*) FROM peers WHERE user_id = $1 AND sync_status != 'removed')::int AS current_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ORDER BY s.expires_at DESC NULLS FIRST\n        LIMIT 1\n        FOR UPDATE OF s\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max_peers",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "current_peers",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "1b7cc93affb7f4e143bc231831dc5702b6557f91587f423ff35d335d6f72873f"
+}

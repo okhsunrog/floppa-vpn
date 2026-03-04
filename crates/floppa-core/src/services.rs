@@ -36,18 +36,7 @@ pub async fn upsert_user(
     profile: TelegramProfile<'_>,
     is_admin_from_config: bool,
 ) -> Result<UpsertResult> {
-    #[derive(sqlx::FromRow)]
-    struct UpsertRow {
-        id: i64,
-        username: Option<String>,
-        first_name: Option<String>,
-        last_name: Option<String>,
-        photo_url: Option<String>,
-        is_admin: bool,
-        trial_used_at: Option<chrono::DateTime<Utc>>,
-    }
-
-    let row: UpsertRow = sqlx::query_as(
+    let row = sqlx::query!(
         r#"
         INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)
         VALUES ($1, $2, $3, $4, $5, $6)
@@ -59,13 +48,13 @@ pub async fn upsert_user(
             is_admin = users.is_admin OR $6
         RETURNING id, username, first_name, last_name, photo_url, is_admin, trial_used_at
         "#,
+        telegram_id,
+        username,
+        profile.first_name,
+        profile.last_name,
+        profile.photo_url,
+        is_admin_from_config,
     )
-    .bind(telegram_id)
-    .bind(username)
-    .bind(profile.first_name)
-    .bind(profile.last_name)
-    .bind(profile.photo_url)
-    .bind(is_admin_from_config)
     .fetch_one(pool)
     .await?;
 
@@ -73,31 +62,30 @@ pub async fn upsert_user(
 
     if row.trial_used_at.is_none() {
         // Atomically claim trial — only one concurrent request can succeed
-        let claimed = sqlx::query(
+        let claimed = sqlx::query!(
             "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
+            row.id,
         )
-        .bind(row.id)
         .execute(pool)
         .await?;
 
         if claimed.rows_affected() == 1 {
-            let basic_plan: Option<(i32, Option<i32>)> =
-                sqlx::query_as("SELECT id, trial_days FROM plans WHERE name = 'basic'")
-                    .fetch_optional(pool)
-                    .await?;
+            let basic_plan = sqlx::query!("SELECT id, trial_days FROM plans WHERE name = 'basic'")
+                .fetch_optional(pool)
+                .await?;
 
-            if let Some((plan_id, trial_days)) = basic_plan {
-                let days = trial_days.unwrap_or(7) as i64;
+            if let Some(plan) = basic_plan {
+                let days = plan.trial_days.unwrap_or(7) as i64;
                 let now = Utc::now();
                 let expires_at = now + Duration::days(days);
 
-                sqlx::query(
+                sqlx::query!(
                     "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, $3, $4)",
+                    row.id,
+                    plan.id,
+                    now,
+                    expires_at,
                 )
-                .bind(row.id)
-                .bind(plan_id)
-                .bind(now)
-                .bind(expires_at)
                 .execute(pool)
                 .await?;
 
@@ -160,9 +148,9 @@ pub async fn create_peer(
     let mut tx = pool.begin().await?;
 
     // Lock the subscription row to serialize concurrent peer creations for this user
-    let sub_info: Option<(i32, i32)> = sqlx::query_as(
+    let sub_info = sqlx::query!(
         r#"
-        SELECT p.max_peers, (SELECT COUNT(*) FROM peers WHERE user_id = $1 AND sync_status != 'removed')::int
+        SELECT p.max_peers, (SELECT COUNT(*) FROM peers WHERE user_id = $1 AND sync_status != 'removed')::int AS current_peers
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
         WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
@@ -170,12 +158,13 @@ pub async fn create_peer(
         LIMIT 1
         FOR UPDATE OF s
         "#,
+        user_id,
     )
-    .bind(user_id)
     .fetch_optional(&mut *tx)
     .await?;
 
-    let (max_peers, current_peers) = sub_info.ok_or(FloppaError::NoActiveSubscription)?;
+    let sub = sub_info.ok_or(FloppaError::NoActiveSubscription)?;
+    let (max_peers, current_peers) = (sub.max_peers, sub.current_peers.unwrap_or(0));
 
     if current_peers >= max_peers {
         return Err(FloppaError::PeerLimitReached {
@@ -187,19 +176,19 @@ pub async fn create_peer(
     // Allocate IP within the transaction
     let assigned_ip = allocate_ip_tx(&mut tx, &config.wireguard.client_subnet).await?;
 
-    let peer_id: (i64,) = sqlx::query_as(
+    let peer_id = sqlx::query_scalar!(
         r#"
         INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, device_name, device_id)
         VALUES ($1, $2, $3, $4, 'pending_add', $5, $6)
         RETURNING id
         "#,
+        user_id,
+        public_key.as_base64(),
+        &encrypted_private_key,
+        &assigned_ip,
+        device_name,
+        device_id,
     )
-    .bind(user_id)
-    .bind(public_key.as_base64())
-    .bind(&encrypted_private_key)
-    .bind(&assigned_ip)
-    .bind(device_name)
-    .bind(device_id)
     .fetch_one(&mut *tx)
     .await?;
 
@@ -209,7 +198,7 @@ pub async fn create_peer(
         generate_wg_config(private_key.as_base64(), &assigned_ip, config, wg_public_key);
 
     Ok(CreatePeerResult {
-        id: peer_id.0,
+        id: peer_id,
         assigned_ip,
         private_key_plaintext: private_key.as_base64().to_string(),
         config: wg_config,
@@ -229,6 +218,7 @@ async fn allocate_ip_tx(
     allocate_ip_inner(&mut **tx, subnet).await
 }
 
+// Kept as runtime query_as because it uses a generic executor (pool or transaction)
 async fn allocate_ip_inner<'e, E>(executor: E, subnet: &str) -> Result<String>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -249,12 +239,12 @@ where
 
     let base_u32 = u32::from_be_bytes([base_ip[0], base_ip[1], base_ip[2], base_ip[3]]);
 
-    let assigned: Vec<(String,)> =
-        sqlx::query_as("SELECT assigned_ip FROM peers WHERE sync_status != 'removed'")
+    let assigned: Vec<String> =
+        sqlx::query_scalar("SELECT assigned_ip FROM peers WHERE sync_status != 'removed'")
             .fetch_all(executor)
             .await?;
 
-    let assigned_set: HashSet<String> = assigned.into_iter().map(|r| r.0).collect();
+    let assigned_set: HashSet<String> = assigned.into_iter().collect();
 
     // Find first available IP (starting from offset 2; offset 1 is gateway)
     for i in 2..=max_hosts {
@@ -274,18 +264,18 @@ pub async fn find_peer_by_device_id(
     user_id: i64,
     device_id: &str,
 ) -> Result<Option<i64>> {
-    let peer: Option<(i64,)> = sqlx::query_as(
+    let peer_id = sqlx::query_scalar!(
         r#"
         SELECT id FROM peers
         WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')
         "#,
+        user_id,
+        device_id,
     )
-    .bind(user_id)
-    .bind(device_id)
     .fetch_optional(pool)
     .await?;
 
-    Ok(peer.map(|p| p.0))
+    Ok(peer_id)
 }
 
 /// Generate a WireGuard client configuration string.

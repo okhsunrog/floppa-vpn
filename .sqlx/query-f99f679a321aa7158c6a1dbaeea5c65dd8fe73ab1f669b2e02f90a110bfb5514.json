@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f99f679a321aa7158c6a1dbaeea5c65dd8fe73ab1f669b2e02f90a110bfb5514"
+}
