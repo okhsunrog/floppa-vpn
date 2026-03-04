@@ -284,6 +284,57 @@ def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
         _stop_container(name)
 
 
+def generate_wg_keypair(container: str) -> tuple[str, str]:
+    """Generate a WireGuard keypair inside a container. Returns (private_key, public_key)."""
+    result = docker_exec(container, ["sh", "-c", "wg genkey"])
+    private_key = result.stdout.strip()
+    result = docker_exec(container, ["sh", "-c", f"echo '{private_key}' | wg pubkey"])
+    public_key = result.stdout.strip()
+    return private_key, public_key
+
+
+def docker_network_create(name: str) -> str:
+    """Create a Docker bridge network."""
+    subprocess.run(
+        ["docker", "network", "create", name],
+        check=True,
+        capture_output=True,
+    )
+    return name
+
+
+def docker_network_remove(name: str) -> None:
+    """Remove a Docker network."""
+    subprocess.run(["docker", "network", "rm", name], capture_output=True)
+
+
+def _start_container_on_network(image: str, name: str, network: str) -> str:
+    """Start a Docker container with NET_ADMIN and TUN device on a specific network."""
+    subprocess.run(
+        [
+            "docker", "run", "-d",
+            "--name", name,
+            "--network", network,
+            "--cap-add", "NET_ADMIN",
+            "--device", "/dev/net/tun",
+            image,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return name
+
+
+def get_container_ip(container: str, network: str) -> str:
+    """Get the container's IP address on a given Docker network."""
+    result = subprocess.run(
+        ["docker", "inspect", "-f",
+         f'{{{{(index .NetworkSettings.Networks "{network}").IPAddress}}}}', container],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip()
+
+
 def _wait_for_handshake(container: str, iface: str, timeout: int = 15) -> None:
     """Wait for a WireGuard handshake to succeed."""
     deadline = time.time() + timeout
