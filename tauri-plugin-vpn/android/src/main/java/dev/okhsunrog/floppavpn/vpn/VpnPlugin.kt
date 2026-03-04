@@ -142,8 +142,19 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     @Command
     fun stopVpn(invoke: Invoke) {
-        // Send stopService intent to :vpn process — Android delivers it cross-process
-        activity.stopService(Intent(activity, FloppaVpnService::class.java))
+        // Send a START intent with ACTION_STOP to the :vpn process.
+        // stopService() doesn't reliably trigger onDestroy() for a foreground VpnService
+        // in a separate process, but startService() with a custom action IS delivered
+        // to onStartCommand(), where the service calls nativeStop() + stopSelf().
+        val intent = Intent(activity, FloppaVpnService::class.java).apply {
+            action = FloppaVpnService.ACTION_STOP
+        }
+        try {
+            activity.startService(intent)
+            Log.i("VpnPlugin", "stopVpn: sent ACTION_STOP intent")
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "stopVpn: failed to send stop intent", e)
+        }
         invoke.resolve()
     }
 

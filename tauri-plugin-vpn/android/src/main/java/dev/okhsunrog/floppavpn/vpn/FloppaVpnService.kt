@@ -26,6 +26,9 @@ class FloppaVpnService : VpnService() {
         private const val NOTIFICATION_CHANNEL_ID = "vpn_service"
         private const val NOTIFICATION_ID = 1
 
+        /** Action to stop the VPN service from another process (UI → :vpn) */
+        const val ACTION_STOP = "dev.okhsunrog.floppavpn.STOP_VPN"
+
         // Intent extras
         const val EXTRA_IPV4_ADDR = "ipv4_addr"
         const val EXTRA_IPV6_ADDR = "ipv6_addr"
@@ -61,10 +64,20 @@ class FloppaVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "VPN service starting")
+        Log.i(TAG, "onStartCommand: action=${intent?.action}")
 
         if (intent == null) {
             Log.w(TAG, "Null intent, stopping service")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // Handle stop request from UI process
+        if (intent.action == ACTION_STOP) {
+            Log.i(TAG, "Received STOP action, shutting down")
+            nativeStop()
+            cleanupAndroid()
+            instance = null
             stopSelf()
             return START_NOT_STICKY
         }

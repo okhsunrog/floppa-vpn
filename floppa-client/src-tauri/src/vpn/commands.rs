@@ -428,21 +428,24 @@ pub async fn disconnect(
 
     let _ = platform.cleanup(INTERFACE_NAME).await;
 
-    match backend.stop().await {
-        Ok(()) => {
-            let mut conn = state.connection.write().await;
-            *conn = ConnectionInfo::default();
-            state.speed_tracker.write().await.reset();
-            info!("Disconnected successfully");
-            Ok(())
-        }
-        Err(e) => {
-            let mut conn = state.connection.write().await;
-            *conn = ConnectionInfo::default();
-            error!("Disconnect failed: {e}");
-            Err(e)
+    if let Err(e) = backend.stop().await {
+        error!("Backend stop failed: {e}");
+        // IPC failed — fall back to Kotlin-side stop via ACTION_STOP intent
+        #[cfg(target_os = "android")]
+        {
+            use tauri_plugin_vpn::VpnExt;
+            info!("Falling back to Kotlin-side stop");
+            if let Err(e2) = app.vpn().stop() {
+                error!("Kotlin stop also failed: {e2}");
+            }
         }
     }
+
+    let mut conn = state.connection.write().await;
+    *conn = ConnectionInfo::default();
+    state.speed_tracker.write().await.reset();
+    info!("Disconnected");
+    Ok(())
 }
 
 /// Get current connection info with live traffic stats
