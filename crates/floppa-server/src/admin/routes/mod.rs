@@ -16,6 +16,7 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use teloxide::prelude::*;
 use tokio::sync::RwLock;
+use tracing::error;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -157,7 +158,7 @@ async fn resolve_subscription_expires(
             .fetch_optional(pool)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to fetch plan trial_days: {e}");
+                error!("Failed to fetch plan trial_days: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
         match plan_trial {

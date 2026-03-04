@@ -8,7 +8,7 @@ use gotatun::x25519;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "android")]
 use std::os::fd::RawFd;
@@ -65,15 +65,15 @@ impl UdpTransportFactory for AndroidUdpSocketFactory {
 
             // Protect IPv4 socket
             if !callback(udp_v4_tx.as_fd().as_raw_fd()) {
-                tracing::warn!("Failed to protect IPv4 UDP socket");
+                warn!("Failed to protect IPv4 UDP socket");
             }
 
             // Protect IPv6 socket
             if !callback(udp_v6_tx.as_fd().as_raw_fd()) {
-                tracing::warn!("Failed to protect IPv6 UDP socket");
+                warn!("Failed to protect IPv6 UDP socket");
             }
         } else {
-            tracing::error!("Socket protect callback not set! VPN may not work correctly.");
+            error!("Socket protect callback not set! VPN may not work correctly.");
         }
 
         Ok(((udp_v4_tx, udp_v4_rx), (udp_v6_tx, udp_v6_rx)))

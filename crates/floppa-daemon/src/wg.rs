@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use std::process::Command;
+use tracing::{debug, info};
 
 /// Peer statistics: (public_key, tx_bytes, rx_bytes, last_handshake)
 pub type PeerStats = Vec<(String, u64, u64, Option<DateTime<Utc>>)>;
@@ -24,11 +25,11 @@ pub fn ensure_interface(
     subnet: &str,
 ) -> Result<()> {
     if interface_exists(interface) {
-        tracing::debug!(interface, "WireGuard interface already exists");
+        debug!(interface, "WireGuard interface already exists");
         return Ok(());
     }
 
-    tracing::info!(interface, "Creating WireGuard interface");
+    info!(interface, "Creating WireGuard interface");
 
     // Create interface
     let status = Command::new("ip")
@@ -91,11 +92,9 @@ pub fn ensure_interface(
         return Err(anyhow!("ip link set up failed"));
     }
 
-    tracing::info!(
+    info!(
         interface,
-        address,
-        listen_port,
-        "WireGuard interface created"
+        address, listen_port, "WireGuard interface created"
     );
     Ok(())
 }

@@ -8,6 +8,7 @@ use chrono::{Duration, Utc};
 use floppa_core::services;
 use rand::random;
 use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
 use utoipa::ToSchema;
 
 use crate::admin::auth::{
@@ -98,7 +99,7 @@ async fn upsert_and_create_jwt(
     profile: services::TelegramProfile<'_>,
 ) -> Result<AuthResponse, StatusCode> {
     let auth_secrets = state.secrets.auth.as_ref().ok_or_else(|| {
-        tracing::error!("Auth secrets not set");
+        error!("Auth secrets not set");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -108,7 +109,7 @@ async fn upsert_and_create_jwt(
         services::upsert_user(&state.pool, telegram_id, username, profile, is_config_admin)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to upsert user: {}", e);
+                error!("Failed to upsert user: {}", e);
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
@@ -123,7 +124,7 @@ async fn upsert_and_create_jwt(
         auth_config.jwt_expiration_hours,
     )
     .map_err(|e| {
-        tracing::error!("Failed to create JWT: {}", e);
+        error!("Failed to create JWT: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -150,7 +151,7 @@ async fn authenticate_telegram_user(
         .as_ref()
         .map(|b| b.token.as_str())
         .ok_or_else(|| {
-            tracing::error!("Bot token not configured in secrets");
+            error!("Bot token not configured in secrets");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
@@ -191,7 +192,7 @@ pub(super) async fn start_telegram_deep_link_login(
     headers: HeaderMap,
 ) -> Result<Html<String>, StatusCode> {
     if !is_allowed_redirect_uri(&query.redirect_uri) {
-        tracing::warn!(
+        warn!(
             "Rejected deep-link auth start with invalid redirect URI: {}",
             query.redirect_uri
         );
@@ -204,12 +205,12 @@ pub(super) async fn start_telegram_deep_link_login(
         .as_ref()
         .and_then(|b| b.username.as_ref())
         .ok_or_else(|| {
-            tracing::error!("Bot username not configured in config.toml");
+            error!("Bot username not configured in config.toml");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     let request_origin = detect_request_origin(&headers).ok_or_else(|| {
-        tracing::warn!("Missing host headers for deep-link auth start");
+        warn!("Missing host headers for deep-link auth start");
         StatusCode::BAD_REQUEST
     })?;
 
@@ -277,7 +278,7 @@ pub(super) async fn telegram_deep_link_callback(
         login_states.remove(&query.state)
     }
     .ok_or_else(|| {
-        tracing::warn!("Deep-link callback received with unknown or expired state");
+        warn!("Deep-link callback received with unknown or expired state");
         StatusCode::BAD_REQUEST
     })?;
 
@@ -389,7 +390,7 @@ pub(super) async fn telegram_mini_app_auth(
         .as_ref()
         .map(|b| b.token.as_str())
         .ok_or_else(|| {
-            tracing::error!("Bot token not configured in secrets");
+            error!("Bot token not configured in secrets");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 

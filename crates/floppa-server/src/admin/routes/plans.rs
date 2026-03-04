@@ -5,6 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
+use tracing::error;
 use utoipa::ToSchema;
 
 use crate::admin::auth::AdminUser;
@@ -96,7 +97,7 @@ pub(super) async fn list_plans(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -141,7 +142,7 @@ pub(super) async fn create_plan(
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create plan: {}", e);
+        error!("Failed to create plan: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -198,7 +199,7 @@ pub(super) async fn update_plan(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;
@@ -231,7 +232,7 @@ pub(super) async fn delete_plan(
         .fetch_one(&state.pool)
         .await
         .map_err(|e| {
-            tracing::error!("DB error: {e}");
+            error!("DB error: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
@@ -243,7 +244,7 @@ pub(super) async fn delete_plan(
         .execute(&state.pool)
         .await
         .map_err(|e| {
-            tracing::error!("DB error: {e}");
+            error!("DB error: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 

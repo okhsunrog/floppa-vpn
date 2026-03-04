@@ -6,6 +6,7 @@
 
 use anyhow::{Context, Result, anyhow};
 use std::process::Command;
+use tracing::info;
 
 /// IFB device name for ingress traffic shaping
 fn ifb_device(interface: &str) -> String {
@@ -98,7 +99,7 @@ pub fn setup_tc(interface: &str, total_bandwidth_mbit: u32) -> Result<()> {
         &rate,
     ])?;
 
-    tracing::info!(
+    info!(
         interface,
         ifb = %ifb,
         total_bandwidth_mbit,
@@ -205,7 +206,7 @@ pub fn add_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Result<
         &classid_str,
     ])?;
 
-    tracing::info!(peer_ip, rate_mbit, class_id, "Added rate limit for peer");
+    info!(peer_ip, rate_mbit, class_id, "Added rate limit for peer");
 
     Ok(())
 }
@@ -251,7 +252,7 @@ pub fn remove_peer_limit(interface: &str, peer_ip: &str) -> Result<()> {
         &classid_str,
     ]);
 
-    tracing::info!(peer_ip, class_id, "Removed rate limit for peer");
+    info!(peer_ip, class_id, "Removed rate limit for peer");
 
     Ok(())
 }
@@ -302,7 +303,7 @@ pub fn update_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Resu
         &rate,
     ])?;
 
-    tracing::info!(peer_ip, rate_mbit, class_id, "Updated rate limit for peer");
+    info!(peer_ip, rate_mbit, class_id, "Updated rate limit for peer");
 
     Ok(())
 }
@@ -315,7 +316,7 @@ pub fn cleanup_tc(interface: &str) -> Result<()> {
     let _ = tc(&["qdisc", "del", "dev", interface, "ingress"]);
     let _ = Command::new("ip").args(["link", "del", &ifb]).status();
 
-    tracing::info!(interface, "Traffic control cleaned up");
+    info!(interface, "Traffic control cleaned up");
 
     Ok(())
 }

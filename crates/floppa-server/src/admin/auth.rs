@@ -9,6 +9,7 @@ use hmac::{Hmac, Mac};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use tracing::{error, warn};
 use utoipa::ToSchema;
 
 use crate::admin::routes::AppState;
@@ -47,7 +48,7 @@ pub fn verify_telegram_auth(data: &TelegramAuthData, bot_token: &str) -> bool {
     // Check auth_date is recent (within 24 hours)
     let now = Utc::now().timestamp();
     if now - data.auth_date > 86400 {
-        tracing::warn!("Telegram auth data expired: auth_date={}", data.auth_date);
+        warn!("Telegram auth data expired: auth_date={}", data.auth_date);
         return false;
     }
 
@@ -86,7 +87,7 @@ pub fn verify_telegram_auth(data: &TelegramAuthData, bot_token: &str) -> bool {
     let expected_hash = hex::encode(result.into_bytes());
 
     if expected_hash != data.hash {
-        tracing::warn!("Telegram auth hash mismatch");
+        warn!("Telegram auth hash mismatch");
         return false;
     }
 
@@ -138,7 +139,7 @@ pub fn verify_telegram_mini_app(init_data: &str, bot_token: &str) -> Option<Mini
     let computed_hash = hex::encode(mac.finalize().into_bytes());
 
     if computed_hash != hash {
-        tracing::warn!("Mini App initData hash mismatch");
+        warn!("Mini App initData hash mismatch");
         return None;
     }
 
@@ -151,7 +152,7 @@ pub fn verify_telegram_mini_app(init_data: &str, bot_token: &str) -> Option<Mini
         .ok()?;
     let now = Utc::now().timestamp();
     if now - auth_date > 86400 {
-        tracing::warn!("Mini App initData expired: auth_date={auth_date}");
+        warn!("Mini App initData expired: auth_date={auth_date}");
         return None;
     }
 
@@ -231,7 +232,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
         // Verify token
         let claims = verify_jwt(token, secret).map_err(|e| {
-            tracing::warn!("JWT verification failed: {}", e);
+            warn!("JWT verification failed: {}", e);
             StatusCode::UNAUTHORIZED
         })?;
 
@@ -263,21 +264,21 @@ impl FromRequestParts<AppState> for AdminUser {
                 .fetch_optional(&state.pool)
                 .await
                 .map_err(|e| {
-                    tracing::error!("Failed to verify admin status: {}", e);
+                    error!("Failed to verify admin status: {}", e);
                     StatusCode::INTERNAL_SERVER_ERROR
                 })?;
 
         match is_admin {
             Some(true) => Ok(AdminUser(user)),
             Some(false) => {
-                tracing::warn!(
+                warn!(
                     "User {} has admin JWT but is_admin=false in DB",
                     user.user_id
                 );
                 Err(StatusCode::FORBIDDEN)
             }
             None => {
-                tracing::warn!("User {} from JWT not found in DB", user.user_id);
+                warn!("User {} from JWT not found in DB", user.user_id);
                 Err(StatusCode::UNAUTHORIZED)
             }
         }

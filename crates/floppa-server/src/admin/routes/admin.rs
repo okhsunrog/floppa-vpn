@@ -6,6 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tracing::error;
 use utoipa::ToSchema;
 
 use crate::admin::auth::AdminUser;
@@ -50,7 +51,7 @@ pub(super) async fn get_stats(
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to fetch stats: {e}");
+        error!("Failed to fetch stats: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -114,7 +115,7 @@ pub(super) async fn list_users(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -187,7 +188,7 @@ pub(super) async fn create_user(
         {
             return StatusCode::CONFLICT;
         }
-        tracing::error!("Failed to create user: {e}");
+        error!("Failed to create user: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -206,7 +207,7 @@ pub(super) async fn create_user(
     .execute(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create subscription: {e}");
+        error!("Failed to create subscription: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -284,7 +285,7 @@ pub(super) async fn get_user(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;
@@ -301,7 +302,7 @@ pub(super) async fn get_user(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -324,7 +325,7 @@ pub(super) async fn get_user(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -385,7 +386,7 @@ pub(super) async fn set_subscription(
             .await?;
 
     let mut tx = state.pool.begin().await.map_err(|e| {
-        tracing::error!("Failed to begin transaction: {e}");
+        error!("Failed to begin transaction: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -397,7 +398,7 @@ pub(super) async fn set_subscription(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to expire old subscription: {e}");
+        error!("Failed to expire old subscription: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -412,12 +413,12 @@ pub(super) async fn set_subscription(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to create subscription: {e}");
+        error!("Failed to create subscription: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     tx.commit().await.map_err(|e| {
-        tracing::error!("Failed to commit transaction: {e}");
+        error!("Failed to commit transaction: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -450,7 +451,7 @@ pub(super) async fn delete_subscription(
     .execute(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("Failed to delete subscription: {e}");
+        error!("Failed to delete subscription: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -486,7 +487,7 @@ pub(super) async fn remove_peer(
     .execute(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -537,7 +538,7 @@ pub(super) async fn list_peers(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -569,7 +570,7 @@ pub(super) async fn delete_admin_peer(
     .execute(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 

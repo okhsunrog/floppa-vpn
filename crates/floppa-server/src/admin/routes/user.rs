@@ -8,6 +8,7 @@ use chrono::Utc;
 use floppa_core::{FloppaError, decrypt_private_key, services};
 use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
+use tracing::error;
 use utoipa::ToSchema;
 
 use crate::admin::auth::AuthUser;
@@ -88,7 +89,7 @@ pub(super) async fn get_me(
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -114,7 +115,7 @@ pub(super) async fn get_me(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -173,7 +174,7 @@ pub(super) async fn get_my_peers(
     .fetch_all(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -205,12 +206,12 @@ pub(super) async fn create_my_peer(
         .auth
         .as_ref()
         .ok_or_else(|| {
-            tracing::error!("Auth secrets required for encryption");
+            error!("Auth secrets required for encryption");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .get_encryption_key()
         .map_err(|e| {
-            tracing::error!("Invalid encryption key: {}", e);
+            error!("Invalid encryption key: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
@@ -232,7 +233,7 @@ pub(super) async fn create_my_peer(
         FloppaError::NoActiveSubscription => StatusCode::PAYMENT_REQUIRED,
         FloppaError::PeerLimitReached { .. } => StatusCode::FORBIDDEN,
         other => {
-            tracing::error!("Failed to create peer: {}", other);
+            error!("Failed to create peer: {}", other);
             StatusCode::INTERNAL_SERVER_ERROR
         }
     })?;
@@ -270,7 +271,7 @@ pub(super) async fn delete_my_peer(
     .execute(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -311,7 +312,7 @@ pub(super) async fn get_my_peer_config(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;
@@ -322,21 +323,21 @@ pub(super) async fn get_my_peer_config(
         .auth
         .as_ref()
         .ok_or_else(|| {
-            tracing::error!("Auth secrets required for decryption");
+            error!("Auth secrets required for decryption");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .get_encryption_key()
         .map_err(|e| {
-            tracing::error!("Invalid encryption key: {}", e);
+            error!("Invalid encryption key: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        tracing::error!("Peer {} has no encrypted private key", peer_id);
+        error!("Peer {} has no encrypted private key", peer_id);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let private_key = decrypt_private_key(encrypted, &encryption_key).map_err(|e| {
-        tracing::error!("Decryption failed: {}", e);
+        error!("Decryption failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -381,7 +382,7 @@ pub(super) async fn send_my_peer_config(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;
@@ -394,21 +395,21 @@ pub(super) async fn send_my_peer_config(
         .auth
         .as_ref()
         .ok_or_else(|| {
-            tracing::error!("Auth secrets required for decryption");
+            error!("Auth secrets required for decryption");
             StatusCode::INTERNAL_SERVER_ERROR
         })?
         .get_encryption_key()
         .map_err(|e| {
-            tracing::error!("Invalid encryption key: {}", e);
+            error!("Invalid encryption key: {}", e);
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        tracing::error!("Peer {} has no encrypted private key", peer_id);
+        error!("Peer {} has no encrypted private key", peer_id);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
     let private_key = decrypt_private_key(encrypted, &encryption_key).map_err(|e| {
-        tracing::error!("Decryption failed: {}", e);
+        error!("Decryption failed: {}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
@@ -425,7 +426,7 @@ pub(super) async fn send_my_peer_config(
             .fetch_one(&state.pool)
             .await
             .map_err(|e| {
-                tracing::error!("DB error fetching telegram_id: {e}");
+                error!("DB error fetching telegram_id: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
 
@@ -438,7 +439,7 @@ pub(super) async fn send_my_peer_config(
         .send_document(ChatId(telegram_id), file)
         .await
         .map_err(|e| {
-            tracing::error!("Failed to send config via Telegram: {e}");
+            error!("Failed to send config via Telegram: {e}");
             StatusCode::BAD_GATEWAY
         })?;
 
@@ -476,7 +477,7 @@ pub(super) async fn get_my_peer_by_device(
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
-        tracing::error!("DB error: {e}");
+        error!("DB error: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?
     .ok_or(StatusCode::NOT_FOUND)?;

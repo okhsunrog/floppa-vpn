@@ -12,7 +12,7 @@ use jni::sys::jint;
 use jni::{Env, EnvUnowned, JavaVM};
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Global state for the VPN process
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -76,9 +76,9 @@ fn protect_socket_jni(fd: RawFd) -> bool {
     match result {
         Ok(protected) => {
             if protected {
-                tracing::debug!("Protected socket fd {fd}");
+                debug!("Protected socket fd {fd}");
             } else {
-                tracing::warn!("Failed to protect socket fd {fd}");
+                warn!("Failed to protect socket fd {fd}");
             }
             protected
         }

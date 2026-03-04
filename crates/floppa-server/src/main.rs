@@ -10,6 +10,7 @@ use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
 };
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -29,11 +30,9 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    tracing::info!(
+    info!(
         "Starting floppa-server v{}-{} (built {})",
-        VERSION,
-        GIT_HASH,
-        BUILD_TIME
+        VERSION, GIT_HASH, BUILD_TIME
     );
 
     let config = Config::from_env()?;
@@ -45,14 +44,14 @@ async fn main() -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Bot secrets missing (bot.token)"))?;
 
     let pool = db::init_pool(&secrets.database_url).await?;
-    tracing::info!("Connected to database");
+    info!("Connected to database");
 
     // Derive WG public key for client configs
     let wg_public_key = secrets.wg_public_key()?;
 
     // Build teloxide bot (shared between Axum and dispatcher)
     let bot = Bot::new(&bot_secrets.token);
-    tracing::info!("Bot initialized");
+    info!("Bot initialized");
 
     // Register bot commands so Telegram shows the menu button
     bot.set_my_commands(bot::handlers::Command::bot_commands())
@@ -64,7 +63,7 @@ async fn main() -> Result<()> {
     ])
     .language_code("ru")
     .await?;
-    tracing::info!("Bot commands registered");
+    info!("Bot commands registered");
 
     // Build Axum router
     let api_router = admin::routes::create_router(
@@ -111,7 +110,7 @@ async fn main() -> Result<()> {
         .layer(cors);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    tracing::info!("Listening on {}", addr);
+    info!("Listening on {}", addr);
 
     // Build teloxide dispatcher
     let handler = bot::handlers::schema();
@@ -125,11 +124,11 @@ async fn main() -> Result<()> {
 
     tokio::select! {
         result = axum::serve(listener, app) => {
-            tracing::error!("Axum server exited: {:?}", result);
+            error!("Axum server exited: {:?}", result);
             result?;
         }
         () = dispatcher.dispatch() => {
-            tracing::error!("Bot dispatcher exited");
+            error!("Bot dispatcher exited");
         }
     }
 

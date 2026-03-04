@@ -3,6 +3,7 @@ use chrono::Utc;
 use floppa_core::{Config, DbPool};
 use sqlx::postgres::PgListener;
 use std::time::Duration;
+use tracing::{debug, error, info, warn};
 
 /// Main synchronization loop using PostgreSQL LISTEN/NOTIFY
 /// - Listens for 'peer_changed' notifications for immediate sync
@@ -12,12 +13,12 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     if let Some(ref rate_limit) = config.wireguard.rate_limit
         && rate_limit.enabled
     {
-        tracing::info!("Initializing traffic control");
+        info!("Initializing traffic control");
         crate::tc::setup_tc(&config.wireguard.interface, rate_limit.total_bandwidth_mbps)?;
     }
 
     // Initial sync on startup
-    tracing::info!("Running initial sync");
+    info!("Running initial sync");
     sync_peers(pool, config).await?;
 
     // Reapply rate limits for active peers (tc rules are ephemeral)
@@ -28,7 +29,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     let config_clone = config.clone();
     let listener_handle = tokio::spawn(async move {
         if let Err(e) = listen_for_changes(&pool_clone, &config_clone).await {
-            tracing::error!(error = %e, "Listener task failed");
+            error!(error = %e, "Listener task failed");
         }
     });
 
@@ -41,7 +42,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
             loop {
                 tokio::time::sleep(interval).await;
                 if let Err(e) = periodic_sync(&pool, &config).await {
-                    tracing::error!(error = %e, "Periodic sync failed");
+                    error!(error = %e, "Periodic sync failed");
                 }
             }
         }
@@ -50,10 +51,10 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     // Wait for either task to complete (they shouldn't under normal operation)
     tokio::select! {
         r = listener_handle => {
-            tracing::error!("Listener task exited unexpectedly: {:?}", r);
+            error!("Listener task exited unexpectedly: {:?}", r);
         }
         r = periodic_handle => {
-            tracing::error!("Periodic task exited unexpectedly: {:?}", r);
+            error!("Periodic task exited unexpectedly: {:?}", r);
         }
     }
 
@@ -65,12 +66,12 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
     let mut listener = PgListener::connect_with(pool).await?;
     listener.listen("peer_changed").await?;
     listener.listen("subscription_changed").await?;
-    tracing::info!("Listening for peer_changed and subscription_changed notifications");
+    info!("Listening for peer_changed and subscription_changed notifications");
 
     loop {
         match listener.recv().await {
             Ok(notification) => {
-                tracing::debug!(
+                debug!(
                     channel = notification.channel(),
                     payload = ?notification.payload(),
                     "Received notification"
@@ -79,7 +80,7 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
                 match notification.channel() {
                     "peer_changed" => {
                         if let Err(e) = sync_peers(pool, config).await {
-                            tracing::error!(error = %e, "Failed to sync peers");
+                            error!(error = %e, "Failed to sync peers");
                         }
                     }
                     "subscription_changed" => {
@@ -87,14 +88,14 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
                         if let Ok(user_id) = notification.payload().parse::<i64>()
                             && let Err(e) = update_user_rate_limit(pool, config, user_id).await
                         {
-                            tracing::error!(error = %e, user_id, "Failed to update rate limit");
+                            error!(error = %e, user_id, "Failed to update rate limit");
                         }
                     }
                     _ => {}
                 }
             }
             Err(e) => {
-                tracing::error!(error = %e, "Listener error, reconnecting...");
+                error!(error = %e, "Listener error, reconnecting...");
                 let mut backoff = Duration::from_secs(1);
                 loop {
                     tokio::time::sleep(backoff).await;
@@ -104,12 +105,12 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
                                 && new_listener.listen("subscription_changed").await.is_ok()
                             {
                                 listener = new_listener;
-                                tracing::info!("PgListener reconnected successfully");
+                                info!("PgListener reconnected successfully");
                                 break;
                             }
                         }
                         Err(e) => {
-                            tracing::warn!(
+                            warn!(
                                 error = %e,
                                 backoff_secs = backoff.as_secs(),
                                 "PgListener reconnect failed, retrying..."
@@ -170,14 +171,14 @@ async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
                 )
             });
             if let Err(e) = result {
-                tracing::error!(peer_id = peer.id, error = %e, "Failed to reapply rate limit");
+                error!(peer_id = peer.id, error = %e, "Failed to reapply rate limit");
             } else {
                 applied += 1;
             }
         }
     }
 
-    tracing::info!(
+    info!(
         total_active = peers.len(),
         rate_limited = applied,
         "Reapplied rate limits for active peers"
@@ -211,7 +212,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
     .await?;
 
     for peer in pending_add {
-        tracing::info!(peer_id = peer.id, ip = %peer.assigned_ip, "Adding peer to WireGuard");
+        info!(peer_id = peer.id, ip = %peer.assigned_ip, "Adding peer to WireGuard");
 
         match crate::wg::add_peer(
             &config.wireguard.interface,
@@ -226,9 +227,9 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                         &peer.assigned_ip,
                         speed_limit as u32,
                     ) {
-                        tracing::error!(peer_id = peer.id, error = %e, "Failed to apply rate limit");
+                        error!(peer_id = peer.id, error = %e, "Failed to apply rate limit");
                     } else {
-                        tracing::info!(peer_id = peer.id, speed_limit, "Rate limit applied");
+                        info!(peer_id = peer.id, speed_limit, "Rate limit applied");
                     }
                 }
 
@@ -238,10 +239,10 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                 )
                 .execute(pool)
                 .await?;
-                tracing::info!(peer_id = peer.id, "Peer added successfully");
+                info!(peer_id = peer.id, "Peer added successfully");
             }
             Err(e) => {
-                tracing::error!(peer_id = peer.id, error = %e, "Failed to add peer");
+                error!(peer_id = peer.id, error = %e, "Failed to add peer");
             }
         }
     }
@@ -254,7 +255,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
     .await?;
 
     for peer in pending_remove {
-        tracing::info!(peer_id = peer.id, "Removing peer from WireGuard");
+        info!(peer_id = peer.id, "Removing peer from WireGuard");
 
         // Remove rate limit first (ignore errors - might not have one)
         if rate_limit_enabled {
@@ -269,10 +270,10 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                 )
                 .execute(pool)
                 .await?;
-                tracing::info!(peer_id = peer.id, "Peer removed successfully");
+                info!(peer_id = peer.id, "Peer removed successfully");
             }
             Err(e) => {
-                tracing::error!(peer_id = peer.id, error = %e, "Failed to remove peer");
+                error!(peer_id = peer.id, error = %e, "Failed to remove peer");
             }
         }
     }
@@ -317,7 +318,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
     .await?;
 
     if peers.is_empty() {
-        tracing::debug!(
+        debug!(
             user_id,
             "No active peers for user, skipping rate limit update"
         );
@@ -343,7 +344,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
                         speed_limit as u32,
                     )?;
                 }
-                tracing::info!(
+                info!(
                     user_id,
                     peer_id = peer.id,
                     speed_limit,
@@ -354,7 +355,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
                 // No speed limit (plan is unlimited or no active subscription)
                 let _ =
                     crate::tc::remove_peer_limit(&config.wireguard.interface, &peer.assigned_ip);
-                tracing::info!(
+                info!(
                     user_id,
                     peer_id = peer.id,
                     "Removed rate limit (unlimited plan)"
@@ -407,7 +408,7 @@ async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
     .await?;
 
     for peer_id in expired {
-        tracing::info!(
+        info!(
             peer_id = peer_id,
             "Marking peer for removal (subscription expired)"
         );

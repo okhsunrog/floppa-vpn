@@ -4,7 +4,7 @@ pub mod vpn;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
-use tracing::info;
+use tracing::{info, warn};
 use vpn::{PlatformImpl, VpnState, get_platform};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;
@@ -73,7 +73,7 @@ pub fn run() {
             info!("Single-instance callback received: argv={argv:?}, cwd={cwd}");
             let payload = SingleInstancePayload { args: argv, cwd };
             if let Err(err) = app.emit("single-instance", payload) {
-                tracing::warn!("Failed to emit single-instance event: {err}");
+                warn!("Failed to emit single-instance event: {err}");
             }
         }));
     }
@@ -129,7 +129,7 @@ pub fn run() {
             {
                 match app.deep_link().register_all() {
                     Ok(()) => info!("Deep-link schemes registered."),
-                    Err(err) => tracing::warn!("Failed to register deep-link schemes: {err}"),
+                    Err(err) => warn!("Failed to register deep-link schemes: {err}"),
                 }
             }
 

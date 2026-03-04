@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Get the persistent device UUID (created on first call)
 #[tauri::command]
@@ -25,7 +25,7 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
         match app.vpn().get_device_name() {
             Ok(name) => return name,
             Err(e) => {
-                tracing::warn!("Failed to get Android device name: {e}");
+                warn!("Failed to get Android device name: {e}");
             }
         }
     }
