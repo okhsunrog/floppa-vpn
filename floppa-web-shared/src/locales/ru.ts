@@ -305,5 +305,7 @@ export default {
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
     handshakeFailed: 'Не удалось подключиться. Попробуйте позже.',
+    handshake: 'Хендшейк',
+    duration: 'Длительность',
   },
 }

@@ -459,16 +459,11 @@ pub async fn get_connection_info(
 
     let info = backend.get_all_info().await;
     let is_running = info.as_ref().is_some_and(|i| i.is_running);
-    let has_recent_handshake = info
-        .as_ref()
-        .and_then(|i| i.last_handshake)
-        .is_some_and(|secs| secs < 10);
 
     match conn.status {
         // Auto-detect: on Android the :vpn process can outlive the app.
-        // Only promote to Connected if the tunnel has a recent handshake,
-        // which proves it's a live connection (not a dying or invalid tunnel).
-        ConnectionStatus::Disconnected if is_running && has_recent_handshake => {
+        // If the tunnel is running, show Connected so the user can disconnect.
+        ConnectionStatus::Disconnected if is_running => {
             let config = state.config.read().await;
             conn.status = ConnectionStatus::Connected;
             let connected_at = info
@@ -477,12 +472,13 @@ pub async fn get_connection_info(
                 .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
                 .unwrap_or_else(|| chrono::Utc::now().timestamp());
             conn.connected_at = Some(connected_at);
+            conn.last_handshake = info.as_ref().and_then(|i| i.last_handshake);
             if let Some(cfg) = config.as_ref() {
                 conn.server_endpoint = Some(cfg.peer_endpoint.clone());
                 conn.assigned_ip = Some(cfg.address.clone());
             }
             state.speed_tracker.write().await.reset();
-            info!("Detected running tunnel with recent handshake, updated status to Connected");
+            info!("Detected running tunnel, updated status to Connected");
         }
         // Tunnel died during handshake verification
         ConnectionStatus::VerifyingHandshake if !is_running => {

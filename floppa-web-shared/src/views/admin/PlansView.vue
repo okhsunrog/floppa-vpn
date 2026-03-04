@@ -87,8 +87,16 @@ async function savePlan() {
         price_rub: planForm.value.price_rub,
         is_public: planForm.value.is_public,
         trial_days: planForm.value.trial_days,
+        clear_speed_limit: planForm.value.default_speed_limit_mbps == null,
+        clear_traffic_limit: planForm.value.default_traffic_limit_bytes == null,
+        clear_trial_days: planForm.value.trial_days == null,
       }
-      await updateMut.mutateAsync({ path: { id: editingPlanId.value }, body: update })
+      const updated = await updateMut.mutateAsync({ path: { id: editingPlanId.value }, body: update })
+      // Optimistically patch local data so table updates instantly (even for null fields)
+      if (plans.value && updated) {
+        const idx = plans.value.findIndex(p => p.id === editingPlanId.value)
+        if (idx !== -1) plans.value[idx] = updated
+      }
       toast.add({ title: t('common.success'), description: t('adminPlans.planUpdated'), color: 'success' })
     } else {
       await createMut.mutateAsync({ body: planForm.value })

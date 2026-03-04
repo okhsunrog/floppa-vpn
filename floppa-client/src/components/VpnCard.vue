@@ -219,10 +219,12 @@ onMounted(async () => {
   }
 
   statusInterval = setInterval(async () => {
-    if (vpn.isConnected) {
+    // Always poll on Android to detect surviving :vpn process after app kill.
+    // On desktop the UI process owns the tunnel, so only poll when connected.
+    if (vpn.isConnected || vpn.isAndroid) {
       await vpn.refreshStatus()
     }
-  }, 2000)
+  }, 1000)
 })
 
 onUnmounted(() => {
@@ -284,6 +286,21 @@ function getConnectionDuration(): string {
   const seconds = Math.floor(Date.now() / 1000 - vpn.connectionInfo.connected_at)
   return formatDuration(seconds)
 }
+
+function formatHandshake(secs: number | null | undefined): string {
+  if (secs == null || secs < 0) return '--'
+  if (secs < 60) return `${secs}s`
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return s > 0 ? `${m}m ${s}s` : `${m}m`
+}
+
+const handshakeDotClass = computed(() => {
+  const secs = vpn.connectionInfo?.last_handshake
+  if (secs == null || secs < 0 || secs > 180) return 'bg-red-500'
+  if (secs > 135) return 'bg-yellow-500'
+  return 'bg-green-500'
+})
 </script>
 
 <template>
@@ -337,7 +354,12 @@ function getConnectionDuration(): string {
           <span v-if="vpn.connectionInfo.server_endpoint">
             Server: {{ vpn.connectionInfo.server_endpoint }}
           </span>
-          <span>Duration: {{ getConnectionDuration() }}</span>
+          <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
+          <span class="inline-flex items-center justify-center gap-1.5">
+            {{ t('vpn.handshake') }}:
+            <span class="size-2 rounded-full" :class="handshakeDotClass" />
+            {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
+          </span>
         </div>
 
         <UAlert v-if="vpn.error" color="error" :title="vpn.error" class="mt-2 w-full max-w-sm" />

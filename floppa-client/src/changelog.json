@@ -1,5 +1,5 @@
 {
-  "version": "0.3.2",
+  "version": "0.3.3",
   "sections": [
     {
       "type": "notes",
@@ -10,6 +10,7 @@
     {
       "type": "added",
       "items": [
+        { "en": "Handshake indicator — shows WireGuard handshake age with color-coded status dot", "ru": "Индикатор хендшейка — показывает возраст WireGuard handshake с цветовым индикатором" },
         { "en": "Config download on Android — saves to Download/FloppaVPN/ with file path in notification", "ru": "Скачивание конфигов на Android — сохраняется в Download/FloppaVPN/ с указанием пути в уведомлении" },
         { "en": "\"Send to Telegram\" button in Telegram Mini App — bot sends config file directly", "ru": "Кнопка «Отправить в Telegram» в Telegram Mini App — бот отправляет файл конфига напрямую" },
         { "en": "\"What's new\" changelog viewer — in Settings, on the update banner, and auto-shown after app update", "ru": "Просмотр «Что нового» — в настройках, на баннере обновления и автоматически после обновления" },
@@ -46,7 +47,8 @@
         { "en": "Bottom safe area not respected in mobile panels", "ru": "Нижний безопасный отступ не учитывался в мобильных панелях" },
         { "en": "VPN tunnel not stopping on Android in error scenarios (handshake failure, connection timeout)", "ru": "VPN-туннель не останавливался на Android при ошибках (неудачный handshake, таймаут подключения)" },
         { "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode", "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»" },
-        { "en": "\"What's new\" changelog not loading on update banner", "ru": "Список изменений не загружался при нажатии «Что нового» на баннере обновления" }
+        { "en": "\"What's new\" changelog not loading on update banner", "ru": "Список изменений не загружался при нажатии «Что нового» на баннере обновления" },
+        { "en": "VPN showing \"Disconnected\" after app restart on Android when tunnel is still running", "ru": "VPN показывал «Отключено» после перезапуска приложения на Android, когда туннель ещё работает" }
       ]
     }
   ]

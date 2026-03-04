@@ -305,5 +305,7 @@ export default {
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
     handshakeFailed: 'Connection failed. Please try again later.',
+    handshake: 'Handshake',
+    duration: 'Duration',
   },
 }
