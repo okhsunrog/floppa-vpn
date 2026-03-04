@@ -136,6 +136,40 @@ const INTERFACE_NAME: &str = "floppa0";
 #[cfg(target_os = "linux")]
 const FWMARK: u32 = 0x666c6f70; // "flop" in hex
 
+/// Check whether the current process has effective CAP_NET_ADMIN.
+#[cfg(target_os = "linux")]
+fn has_cap_net_admin() -> bool {
+    const CAP_NET_ADMIN_BIT: u32 = 12;
+
+    let status = match std::fs::read_to_string("/proc/self/status") {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Failed to read /proc/self/status: {e}");
+            return false;
+        }
+    };
+
+    let cap_eff_hex = match status
+        .lines()
+        .find(|line| line.starts_with("CapEff:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+    {
+        Some(v) => v,
+        None => {
+            warn!("CapEff not found in /proc/self/status");
+            return false;
+        }
+    };
+
+    match u128::from_str_radix(cap_eff_hex, 16) {
+        Ok(bits) => (bits & (1u128 << CAP_NET_ADMIN_BIT)) != 0,
+        Err(e) => {
+            warn!("Failed to parse CapEff value '{cap_eff_hex}': {e}");
+            false
+        }
+    }
+}
+
 /// Connect to VPN
 #[tauri::command]
 #[specta::specta]
@@ -324,13 +358,23 @@ async fn connect_desktop(
     }
 
     #[cfg(target_os = "linux")]
-    let start_result = match backend.start(&config, INTERFACE_NAME, Some(FWMARK)).await {
-        Ok(()) => Ok(()),
-        Err(e) if e.contains("Operation not permitted") || e.contains("Permission denied") => {
+    let fwmark = if has_cap_net_admin() {
+        Some(FWMARK)
+    } else {
+        info!("CAP_NET_ADMIN not present, running without fwmark");
+        None
+    };
+
+    #[cfg(target_os = "linux")]
+    let start_result = match backend.start(&config, INTERFACE_NAME, fwmark).await {
+        Err(e)
+            if fwmark.is_some()
+                && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
+        {
             warn!("Tunnel start with fwmark failed due permissions, retrying without fwmark");
             backend.start(&config, INTERFACE_NAME, None).await
         }
-        Err(e) => Err(e),
+        result => result,
     };
 
     #[cfg(not(target_os = "linux"))]
