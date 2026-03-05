@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tracing::{error, info};
+#[allow(unused_imports)]
+use tracing::{error, info, warn};
 
 /// Get the persistent device UUID (created on first call)
 #[tauri::command]
@@ -135,6 +136,40 @@ const INTERFACE_NAME: &str = "floppa0";
 /// fwmark used on Linux for policy routing
 #[cfg(target_os = "linux")]
 const FWMARK: u32 = 0x666c6f70; // "flop" in hex
+
+/// Check whether the current process has effective CAP_NET_ADMIN.
+#[cfg(target_os = "linux")]
+fn has_cap_net_admin() -> bool {
+    const CAP_NET_ADMIN_BIT: u32 = 12;
+
+    let status = match std::fs::read_to_string("/proc/self/status") {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Failed to read /proc/self/status: {e}");
+            return false;
+        }
+    };
+
+    let cap_eff_hex = match status
+        .lines()
+        .find(|line| line.starts_with("CapEff:"))
+        .and_then(|line| line.split_whitespace().nth(1))
+    {
+        Some(v) => v,
+        None => {
+            warn!("CapEff not found in /proc/self/status");
+            return false;
+        }
+    };
+
+    match u128::from_str_radix(cap_eff_hex, 16) {
+        Ok(bits) => (bits & (1u128 << CAP_NET_ADMIN_BIT)) != 0,
+        Err(e) => {
+            warn!("Failed to parse CapEff value '{cap_eff_hex}': {e}");
+            false
+        }
+    }
+}
 
 /// Connect to VPN
 #[tauri::command]
@@ -316,11 +351,37 @@ async fn connect_desktop(
     let endpoint_ip = endpoint.ip();
 
     #[cfg(target_os = "linux")]
-    let fwmark = Some(FWMARK);
-    #[cfg(not(target_os = "linux"))]
-    let fwmark = None;
+    if let Err(e) = platform.prepare_tun(INTERFACE_NAME).await {
+        error!("Failed to prepare TUN interface: {e}");
+        let mut conn = state.connection.write().await;
+        conn.status = ConnectionStatus::Disconnected;
+        return Err(format!("Failed to prepare TUN interface: {e}"));
+    }
 
-    match backend.start(&config, INTERFACE_NAME, fwmark).await {
+    #[cfg(target_os = "linux")]
+    let fwmark = if has_cap_net_admin() {
+        Some(FWMARK)
+    } else {
+        info!("CAP_NET_ADMIN not present, running without fwmark");
+        None
+    };
+
+    #[cfg(target_os = "linux")]
+    let start_result = match backend.start(&config, INTERFACE_NAME, fwmark).await {
+        Err(e)
+            if fwmark.is_some()
+                && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
+        {
+            warn!("Tunnel start with fwmark failed due permissions, retrying without fwmark");
+            backend.start(&config, INTERFACE_NAME, None).await
+        }
+        result => result,
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let start_result = backend.start(&config, INTERFACE_NAME, None).await;
+
+    match start_result {
         Ok(()) => {
             let addr = config.address_network()?;
             if let Err(e) = platform.configure_address(INTERFACE_NAME, addr).await {

@@ -1,0 +1,62 @@
+# Maintainer: Floppa VPN Team <maintainers@floppa.okhsunrog.dev>
+
+pkgname=floppa-vpn
+pkgver=0.3.3
+pkgrel=1
+pkgdesc='WireGuard VPN desktop client built with Tauri'
+arch=('x86_64')
+url='https://github.com/okhsunrog/floppa-vpn'
+license=('GPL-3.0-or-later')
+install='floppa-vpn.install'
+options=(!lto)
+
+# Runtime dependencies are based on Tauri Linux packaging docs:
+# - https://v2.tauri.app/distribute/aur/
+# - https://v2.tauri.app/start/prerequisites/#linux
+# plus project-specific requirements for tray icon and setcap.
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup3'
+  'pango'
+  'webkit2gtk-4.1'
+  'libappindicator-gtk3'
+  'libcap'
+)
+
+makedepends=(
+  'bun'
+  'cargo'
+  'nodejs'
+  'rust'
+  'openssl'
+  'appmenu-gtk-module'
+  'librsvg'
+)
+
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/floppa-vpn-${pkgver}/floppa-client"
+
+  bun install --frozen-lockfile
+  bun tauri build --bundles deb --ci
+}
+
+package() {
+  cd "${srcdir}/floppa-vpn-${pkgver}/floppa-client/src-tauri/target/release/bundle/deb"
+
+  local deb_dir
+  deb_dir=$(find . -maxdepth 1 -type d -name "Floppa VPN_${pkgver}_*" | head -n 1)
+  if [[ -z "${deb_dir}" ]]; then
+    echo "Failed to find extracted deb bundle directory" >&2
+    return 1
+  fi
+
+  cp -a "${deb_dir}/data/." "${pkgdir}/"
+}

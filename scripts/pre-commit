@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Pre-commit hook: ensure version is consistent across
+# tauri.conf.json5, Cargo.toml, and changelog.json
+
+TAURI_CONF="floppa-client/src-tauri/tauri.conf.json5"
+CARGO_TOML="floppa-client/src-tauri/Cargo.toml"
+CHANGELOG="floppa-client/src/changelog.json"
+PKGBUILD="scripts/arch/PKGBUILD"
+
+# Extract versions
+tauri_ver=$(grep -oP '^\s*version:\s*"\K[^"]+' "$TAURI_CONF")
+cargo_ver=$(grep -oP '^version\s*=\s*"\K[^"]+' "$CARGO_TOML")
+changelog_ver=$(grep -oP '"version"\s*:\s*"\K[^"]+' "$CHANGELOG")
+pkgbuild_ver=$(grep -oP '^pkgver=\K.+' "$PKGBUILD")
+
+errors=()
+
+if [ -z "$tauri_ver" ]; then
+    errors+=("Could not read version from $TAURI_CONF")
+fi
+if [ -z "$cargo_ver" ]; then
+    errors+=("Could not read version from $CARGO_TOML")
+fi
+if [ -z "$changelog_ver" ]; then
+    errors+=("Could not read version from $CHANGELOG")
+fi
+if [ -z "$pkgbuild_ver" ]; then
+    errors+=("Could not read version from $PKGBUILD")
+fi
+
+if [ ${#errors[@]} -gt 0 ]; then
+    echo "Version check failed:"
+    for e in "${errors[@]}"; do echo "  - $e"; done
+    exit 1
+fi
+
+if [ "$tauri_ver" != "$cargo_ver" ] || [ "$tauri_ver" != "$changelog_ver" ] || [ "$tauri_ver" != "$pkgbuild_ver" ]; then
+    echo "Version mismatch detected!"
+    echo "  tauri.conf.json5: $tauri_ver"
+    echo "  Cargo.toml:       $cargo_ver"
+    echo "  changelog.json:   $changelog_ver"
+    echo "  PKGBUILD:         $pkgbuild_ver"
+    echo ""
+    echo "Run 'cd floppa-client && bun run sync-version' and update changelog.json and PKGBUILD"
+    exit 1
+fi

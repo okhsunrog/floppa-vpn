@@ -44,6 +44,11 @@ dist/
 .eslintcache
 node_modules/.cache/
 
+# makepkg (Arch packaging)
+scripts/arch/src/
+scripts/arch/pkg/
+scripts/arch/*.tar.zst
+
 # OS
 .DS_Store
 Thumbs.db

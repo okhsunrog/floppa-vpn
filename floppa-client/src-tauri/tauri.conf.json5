@@ -54,6 +54,16 @@
       appimage: {
         bundleMediaFramework: false,
       },
+      deb: {
+        depends: ["libcap2-bin"],
+        postInstallScript: "./scripts/linux-postinstall.sh",
+        postRemoveScript: "./scripts/linux-postremove.sh",
+      },
+      rpm: {
+        depends: ["libcap"],
+        postInstallScript: "./scripts/linux-postinstall.sh",
+        postRemoveScript: "./scripts/linux-postremove.sh",
+      },
     },
 
     icon: [

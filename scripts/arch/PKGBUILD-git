@@ -1,0 +1,67 @@
+# Maintainer: Floppa VPN Team <maintainers@floppa.okhsunrog.dev>
+
+pkgname=floppa-vpn-git
+pkgver=0.3.3
+pkgrel=1
+pkgdesc='WireGuard VPN desktop client built with Tauri (git version)'
+arch=('x86_64')
+url='https://github.com/okhsunrog/floppa-vpn'
+license=('GPL-3.0-or-later')
+install='floppa-vpn.install'
+options=(!lto)
+provides=('floppa-vpn')
+conflicts=('floppa-vpn')
+
+depends=(
+  'cairo'
+  'desktop-file-utils'
+  'gdk-pixbuf2'
+  'glib2'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libsoup3'
+  'pango'
+  'webkit2gtk-4.1'
+  'libappindicator-gtk3'
+  'libcap'
+)
+
+makedepends=(
+  'bun'
+  'cargo'
+  'git'
+  'nodejs'
+  'rust'
+  'openssl'
+  'appmenu-gtk-module'
+  'librsvg'
+)
+
+source=("${pkgname}::git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${srcdir}/${pkgname}"
+  git describe --long --tags 2>/dev/null | sed 's/^v//;s/-/.r/;s/-/./' \
+    || printf "0.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cd "${srcdir}/${pkgname}/floppa-client"
+
+  bun install --frozen-lockfile
+  bun tauri build --bundles deb --ci
+}
+
+package() {
+  cd "${srcdir}/${pkgname}/floppa-client/src-tauri/target/release/bundle/deb"
+
+  local deb_dir
+  deb_dir=$(find . -maxdepth 1 -type d -name "Floppa VPN_*" | head -n 1)
+  if [[ -z "${deb_dir}" ]]; then
+    echo "Failed to find extracted deb bundle directory" >&2
+    return 1
+  fi
+
+  cp -a "${deb_dir}/data/." "${pkgdir}/"
+}

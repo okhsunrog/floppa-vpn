@@ -1,4 +1,9 @@
 # Floppa VPN build and deployment helpers
+
+# Set up git hooks (run once after cloning)
+setup:
+    ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+
 # Default target architecture for VPS deployment
 
 target := "x86_64-unknown-linux-gnu"

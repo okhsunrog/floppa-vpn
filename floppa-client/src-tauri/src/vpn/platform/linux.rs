@@ -8,6 +8,7 @@ use super::Platform;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
+use std::os::unix::fs::MetadataExt;
 use std::process::Command;
 use tracing::{debug, info, warn};
 
@@ -165,6 +166,17 @@ impl LinuxPlatform {
             .nth(1)
             .map(|s| s.to_string()))
     }
+
+    /// Check if IPv6 is enabled in the kernel.
+    ///
+    /// If the procfs knob is unavailable, assume enabled to avoid silently
+    /// dropping IPv6 routes on non-standard systems.
+    fn is_ipv6_enabled() -> bool {
+        match std::fs::read_to_string("/proc/sys/net/ipv6/conf/all/disable_ipv6") {
+            Ok(v) => v.trim() != "1",
+            Err(_) => true,
+        }
+    }
 }
 
 impl Default for LinuxPlatform {
@@ -175,6 +187,15 @@ impl Default for LinuxPlatform {
 
 #[async_trait]
 impl Platform for LinuxPlatform {
+    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
+        // Create persistent TUN owned by the current user via pkexec helper.
+        // This allows unprivileged opening of the device from gotatun.
+        let uid = std::fs::metadata("/proc/self")
+            .map_err(|e| format!("Failed to read process metadata: {e}"))?
+            .uid();
+        self.run_helper(&["ensure-tun", iface, &uid.to_string()])
+    }
+
     async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
         info!("Configuring address {} on interface {}", addr, iface);
 
@@ -206,14 +227,18 @@ impl Platform for LinuxPlatform {
     }
 
     async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        info!(
-            "Adding {} routes via interface {}",
-            allowed_ips.len(),
-            iface
-        );
+        let ipv6_enabled = Self::is_ipv6_enabled();
+        if !ipv6_enabled {
+            info!("IPv6 is disabled on host, skipping IPv6 VPN routes");
+        }
 
         let mut routes = Vec::new();
         for network in allowed_ips {
+            if network.is_ipv6() && !ipv6_enabled {
+                debug!("Skipping IPv6 route because IPv6 is disabled: {}", network);
+                continue;
+            }
+
             if network.prefix() == 0 {
                 if network.is_ipv4() {
                     routes.push("0.0.0.0/1".to_string());
@@ -226,6 +251,8 @@ impl Platform for LinuxPlatform {
                 routes.push(network.to_string());
             }
         }
+
+        info!("Adding {} routes via interface {}", routes.len(), iface);
 
         if !routes.is_empty() {
             let mut args: Vec<&str> = vec!["add-routes", iface];

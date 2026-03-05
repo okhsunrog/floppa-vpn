@@ -123,6 +123,11 @@ impl Default for WindowsPlatform {
 
 #[async_trait]
 impl Platform for WindowsPlatform {
+    async fn prepare_tun(&self, _iface: &str) -> Result<(), String> {
+        // Windows tunnel creation is handled by Wintun in-process.
+        Ok(())
+    }
+
     async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
         info!("Configuring address {} on interface {}", addr, iface);
 
