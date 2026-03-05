@@ -161,17 +161,32 @@ impl Platform for WindowsPlatform {
 
         info!("Adding endpoint route: {} via {}", endpoint_ip, gateway);
 
-        let output = Command::new("route")
-            .args([
-                "add",
-                &endpoint_ip.to_string(),
-                "mask",
-                "255.255.255.255",
-                &gateway,
-            ])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| format!("Failed to add endpoint route: {}", e))?;
+        let output = if endpoint_ip.is_ipv4() {
+            Command::new("route")
+                .args([
+                    "add",
+                    &endpoint_ip.to_string(),
+                    "mask",
+                    "255.255.255.255",
+                    &gateway,
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+        } else {
+            // IPv6: netsh interface ipv6 add route <ip>/128 nexthop=<gateway>
+            Command::new("netsh")
+                .args([
+                    "interface",
+                    "ipv6",
+                    "add",
+                    "route",
+                    &format!("{}/128", endpoint_ip),
+                    &format!("nexthop={}", gateway),
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+        }
+        .map_err(|e| format!("Failed to add endpoint route: {}", e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -185,10 +200,23 @@ impl Platform for WindowsPlatform {
     async fn remove_endpoint_route(&self) -> Result<(), String> {
         if let Some(endpoint_ip) = self.saved_endpoint_ip.lock().unwrap().take() {
             info!("Removing endpoint route: {}", endpoint_ip);
-            let _ = Command::new("route")
-                .args(["delete", &endpoint_ip.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+            if endpoint_ip.is_ipv4() {
+                let _ = Command::new("route")
+                    .args(["delete", &endpoint_ip.to_string()])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            } else {
+                let _ = Command::new("netsh")
+                    .args([
+                        "interface",
+                        "ipv6",
+                        "delete",
+                        "route",
+                        &format!("{}/128", endpoint_ip),
+                    ])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output();
+            }
         }
         Ok(())
     }

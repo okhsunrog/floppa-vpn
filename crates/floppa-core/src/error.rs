@@ -29,9 +29,6 @@ pub enum FloppaError {
     #[error("Encryption error: {0}")]
     Encryption(String),
 
-    #[error("WireGuard error: {0}")]
-    WireGuard(String),
-
     #[error("Config error: {0}")]
     Config(#[from] crate::config::ConfigError),
 }

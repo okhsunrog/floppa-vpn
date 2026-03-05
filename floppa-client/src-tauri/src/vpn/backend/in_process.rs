@@ -27,9 +27,10 @@ impl VpnBackend for InProcessBackend {
         config: &WgConfig,
         interface_name: &str,
         fwmark: Option<u32>,
+        endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         self.tunnel_manager
-            .start(config, interface_name, fwmark)
+            .start(config, interface_name, fwmark, endpoint)
             .await
     }
 

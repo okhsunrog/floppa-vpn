@@ -68,6 +68,7 @@ impl VpnBackend for IosBackend {
         _config: &WgConfig,
         _interface_name: &str,
         _fwmark: Option<u32>,
+        _endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         // TODO: iOS connect flow:
         //

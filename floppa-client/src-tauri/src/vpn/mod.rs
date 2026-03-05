@@ -4,7 +4,6 @@ pub mod config;
 #[cfg(target_os = "android")]
 pub mod jni_entry;
 pub mod platform;
-pub mod protocol;
 #[cfg(target_os = "android")]
 pub mod rpc;
 #[cfg(target_os = "android")]

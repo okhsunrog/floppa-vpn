@@ -431,6 +431,7 @@ pub(super) async fn delete_subscription(
         (status = 200, description = "Peers removed"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "No active peers found"),
     )
 )]
 pub(super) async fn remove_peer(
@@ -438,12 +439,16 @@ pub(super) async fn remove_peer(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE peers SET sync_status = 'pending_remove' WHERE user_id = $1 AND sync_status = 'active'",
         id
     )
     .execute(&state.pool)
     .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("No active peers found for this user"));
+    }
 
     Ok(StatusCode::OK)
 }
@@ -506,6 +511,7 @@ pub(super) async fn list_peers(
         (status = 200, description = "Peer deleted"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Peer not found or not active"),
     )
 )]
 pub(super) async fn delete_admin_peer(
@@ -513,12 +519,16 @@ pub(super) async fn delete_admin_peer(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    sqlx::query!(
+    let result = sqlx::query!(
         "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND sync_status = 'active'",
         peer_id
     )
     .execute(&state.pool)
     .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("Peer not found or not active"));
+    }
 
     Ok(StatusCode::OK)
 }

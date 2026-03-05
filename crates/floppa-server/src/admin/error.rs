@@ -30,9 +30,10 @@ impl IntoResponse for ApiError {
 
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        error!("Database error: {e}");
         Self {
             error: "database_error".into(),
-            message: format!("Database error: {e}"),
+            message: "Internal database error".into(),
             status: StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -72,14 +73,13 @@ impl From<FloppaError> for ApiError {
                 message: "Subscription expired".into(),
                 status: StatusCode::PAYMENT_REQUIRED,
             },
-            FloppaError::Encryption(_)
-            | FloppaError::KeyGeneration(_)
-            | FloppaError::WireGuard(_)
-            | FloppaError::Config(_) => Self {
-                error: "internal_error".into(),
-                message: format!("{e}"),
-                status: StatusCode::INTERNAL_SERVER_ERROR,
-            },
+            FloppaError::Encryption(_) | FloppaError::KeyGeneration(_) | FloppaError::Config(_) => {
+                Self {
+                    error: "internal_error".into(),
+                    message: format!("{e}"),
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                }
+            }
         }
     }
 }

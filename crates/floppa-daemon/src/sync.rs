@@ -42,7 +42,14 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
             let interval = Duration::from_secs(30);
             // In-memory cache of last-seen WireGuard counters per public_key.
             // Used to compute deltas so that DB counters survive WireGuard restarts.
+            // Seed with current WG values so the first cycle computes a zero delta
+            // instead of treating all accumulated counters as new traffic.
             let mut prev_wg_counters: HashMap<String, (u64, u64)> = HashMap::new();
+            if let Ok(stats) = crate::wg::get_peer_stats(&config.wireguard.interface) {
+                for (public_key, tx, rx, _) in stats {
+                    prev_wg_counters.insert(public_key, (tx, rx));
+                }
+            }
             loop {
                 tokio::time::sleep(interval).await;
                 if let Err(e) = periodic_sync(&pool, &config, &mut prev_wg_counters).await {
@@ -110,6 +117,10 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
                             {
                                 listener = new_listener;
                                 info!("PgListener reconnected successfully");
+                                // Catch up on any notifications missed during disconnection
+                                if let Err(e) = sync_peers(pool, config).await {
+                                    error!(error = %e, "Failed to sync peers after reconnect");
+                                }
                                 break;
                             }
                         }

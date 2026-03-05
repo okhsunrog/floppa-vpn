@@ -206,7 +206,8 @@ impl Platform for LinuxPlatform {
         let gateway =
             Self::get_default_gateway()?.ok_or_else(|| "No default gateway found".to_string())?;
 
-        let endpoint_route = format!("{}/32", endpoint_ip);
+        let prefix_len = if endpoint_ip.is_ipv4() { 32 } else { 128 };
+        let endpoint_route = format!("{}/{}", endpoint_ip, prefix_len);
         info!("Adding endpoint route: {} via {}", endpoint_route, gateway);
 
         self.run_helper(&["add-route", &endpoint_route, "via", &gateway])?;
@@ -218,7 +219,8 @@ impl Platform for LinuxPlatform {
 
     async fn remove_endpoint_route(&self) -> Result<(), String> {
         if let Some(endpoint_ip) = self.saved_endpoint_ip.lock().unwrap().take() {
-            let endpoint_route = format!("{}/32", endpoint_ip);
+            let prefix_len = if endpoint_ip.is_ipv4() { 32 } else { 128 };
+            let endpoint_route = format!("{}/{}", endpoint_ip, prefix_len);
             info!("Removing endpoint route: {}", endpoint_route);
             self.run_helper_ignore_errors(&["del-route", &endpoint_route]);
         }
