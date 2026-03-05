@@ -75,6 +75,9 @@ tracing-logcat = "0.1.0"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
+[patch.crates-io]
+wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "ab1e808" }
+
 [profile.dev]
 incremental = true # Compile your binary in smaller steps.
 
