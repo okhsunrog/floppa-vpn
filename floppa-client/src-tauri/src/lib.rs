@@ -4,6 +4,7 @@ pub mod vpn;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
+#[allow(unused_imports)]
 use tracing::{info, warn};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;

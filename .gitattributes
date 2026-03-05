@@ -1,0 +1,10 @@
+# Normalize line endings to LF in the repo on all platforms
+* text=auto eol=lf
+
+# Binaries - no line ending conversion
+*.png binary
+*.jpg binary
+*.ico binary
+*.dll binary
+*.exe binary
+*.wasm binary
