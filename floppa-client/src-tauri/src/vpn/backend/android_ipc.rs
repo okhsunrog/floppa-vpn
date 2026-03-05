@@ -73,6 +73,7 @@ impl VpnBackend for AndroidIpcBackend {
         _config: &WgConfig,
         _interface_name: &str,
         _fwmark: Option<u32>,
+        _endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         // On Android, the tunnel starts via JNI in the :vpn process.
         // The Kotlin VpnPlugin.startVpn() launches FloppaVpnService which

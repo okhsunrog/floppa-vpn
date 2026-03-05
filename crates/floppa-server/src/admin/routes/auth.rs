@@ -333,10 +333,6 @@ pub(super) async fn exchange_telegram_login_code(
     }
     .ok_or_else(ApiError::unauthorized)?;
 
-    if pending.expires_at <= now {
-        return Err(ApiError::unauthorized());
-    }
-
     Ok(Json(pending.auth_response))
 }
 

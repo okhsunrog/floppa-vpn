@@ -10,7 +10,7 @@ use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
         .into_router();
 
     let cors = if config.allowed_origins.is_empty() {
+        warn!("No allowed_origins configured, using permissive CORS policy");
         CorsLayer::permissive()
     } else {
         let origins: Vec<_> = config
@@ -115,7 +116,7 @@ async fn main() -> Result<()> {
     // Build teloxide dispatcher
     let handler = bot::handlers::schema();
     let mut dispatcher = Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![pool, config, secrets, wg_public_key])
+        .dependencies(dptree::deps![pool, config, wg_public_key])
         .enable_ctrlc_handler()
         .build();
 

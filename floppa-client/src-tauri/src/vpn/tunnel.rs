@@ -89,20 +89,10 @@ pub struct GotatunTunnel {
 }
 
 impl GotatunTunnel {
-    /// Build a DevicePeer from WgConfig
-    async fn build_peer(config: &WgConfig) -> Result<DevicePeer, String> {
+    /// Build a DevicePeer from WgConfig using a pre-resolved endpoint address.
+    fn build_peer(config: &WgConfig, endpoint: std::net::SocketAddr) -> Result<DevicePeer, String> {
         let peer_public_key = config.peer_public_key_bytes()?;
         let preshared_key = config.peer_preshared_key_bytes()?;
-        let endpoint = tokio::net::lookup_host(&config.peer_endpoint)
-            .await
-            .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
-            .next()
-            .ok_or_else(|| {
-                format!(
-                    "Endpoint '{}' resolved to no addresses",
-                    config.peer_endpoint
-                )
-            })?;
         let allowed_ips = config.allowed_ips_networks();
 
         let public_key = x25519::PublicKey::from(peer_public_key);
@@ -119,18 +109,37 @@ impl GotatunTunnel {
         Ok(peer)
     }
 
-    /// Create a new tunnel from WireGuard config (desktop platforms)
+    /// Resolve the endpoint hostname to a `SocketAddr`.
+    #[cfg(target_os = "android")]
+    async fn resolve_endpoint(config: &WgConfig) -> Result<std::net::SocketAddr, String> {
+        tokio::net::lookup_host(&config.peer_endpoint)
+            .await
+            .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
+            .next()
+            .ok_or_else(|| {
+                format!(
+                    "Endpoint '{}' resolved to no addresses",
+                    config.peer_endpoint
+                )
+            })
+    }
+
+    /// Create a new tunnel from WireGuard config (desktop platforms).
+    ///
+    /// `endpoint` is the pre-resolved server address so the hostname is only
+    /// resolved once (in `connect_desktop`).
     #[cfg(not(target_os = "android"))]
     #[allow(unused_variables, unused_mut)]
     pub async fn new(
         config: &WgConfig,
         interface_name: &str,
         fwmark: Option<u32>,
+        endpoint: std::net::SocketAddr,
     ) -> Result<Self, String> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
 
         let private_key = config.private_key_bytes()?;
-        let peer = Self::build_peer(config).await?;
+        let peer = Self::build_peer(config, endpoint)?;
 
         // Create TUN device configuration
         let mut tun_config = tun::Configuration::default();
@@ -203,7 +212,8 @@ impl GotatunTunnel {
         info!("Creating gotatun tunnel from fd {}", tun_fd);
 
         let private_key = config.private_key_bytes()?;
-        let peer = Self::build_peer(config).await?;
+        let endpoint = Self::resolve_endpoint(config).await?;
+        let peer = Self::build_peer(config, endpoint)?;
 
         // Create TUN device from raw fd
         let mut tun_config = tun::Configuration::default();
@@ -332,6 +342,7 @@ impl TunnelManager {
         config: &WgConfig,
         interface_name: &str,
         fwmark: Option<u32>,
+        endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
 
@@ -341,7 +352,7 @@ impl TunnelManager {
         }
 
         // Create new tunnel
-        let tunnel = GotatunTunnel::new(config, interface_name, fwmark).await?;
+        let tunnel = GotatunTunnel::new(config, interface_name, fwmark, endpoint).await?;
         *tunnel_guard = Some(tunnel);
 
         Ok(())

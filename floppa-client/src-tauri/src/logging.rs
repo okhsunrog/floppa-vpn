@@ -32,10 +32,10 @@ pub fn init_tracing() {
             .with_line_number(false)
             .with_writer(logcat_writer);
 
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(filter)
             .with(logcat_layer)
-            .init();
+            .try_init();
     }
 
     #[cfg(not(target_os = "android"))]
@@ -45,10 +45,10 @@ pub fn init_tracing() {
             .event_format(ShortTargetFormat)
             .with_writer(std::io::stdout);
 
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(filter)
             .with(stdout_layer)
-            .init();
+            .try_init();
     }
 }
 

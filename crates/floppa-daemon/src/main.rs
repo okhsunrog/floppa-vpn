@@ -4,6 +4,7 @@ mod wg;
 
 use anyhow::Result;
 use floppa_core::{Config, Secrets, db};
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -50,6 +51,7 @@ async fn main() -> Result<()> {
 
     // Main sync loop with graceful shutdown on SIGTERM/SIGINT
     let config_for_shutdown = config.clone();
+    let mut sigterm = signal(SignalKind::terminate())?;
     tokio::select! {
         result = sync::run_sync_loop(&pool, &config) => {
             if let Err(e) = result {
@@ -57,7 +59,10 @@ async fn main() -> Result<()> {
             }
         }
         _ = tokio::signal::ctrl_c() => {
-            info!("Received shutdown signal");
+            info!("Received SIGINT, shutting down");
+        }
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, shutting down");
         }
     }
 

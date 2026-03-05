@@ -62,16 +62,8 @@ pub fn decrypt_private_key(
 /// Parse a hex-encoded 32-byte encryption key from config.
 pub fn parse_encryption_key(hex_key: &str) -> Result<[u8; 32], CryptoError> {
     let hex_key = hex_key.trim();
-    if hex_key.len() != 64 {
-        return Err(CryptoError::InvalidKeyLength);
-    }
-
-    let mut key = [0u8; 32];
-    for (i, chunk) in hex_key.as_bytes().chunks(2).enumerate() {
-        let hex_str = std::str::from_utf8(chunk).map_err(|_| CryptoError::InvalidFormat)?;
-        key[i] = u8::from_str_radix(hex_str, 16).map_err(|_| CryptoError::InvalidFormat)?;
-    }
-    Ok(key)
+    let bytes = hex::decode(hex_key).map_err(|_| CryptoError::InvalidFormat)?;
+    bytes.try_into().map_err(|_| CryptoError::InvalidKeyLength)
 }
 
 #[derive(Debug, thiserror::Error)]

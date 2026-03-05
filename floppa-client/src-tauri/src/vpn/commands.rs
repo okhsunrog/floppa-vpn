@@ -367,19 +367,22 @@ async fn connect_desktop(
     };
 
     #[cfg(target_os = "linux")]
-    let start_result = match backend.start(&config, INTERFACE_NAME, fwmark).await {
+    let start_result = match backend
+        .start(&config, INTERFACE_NAME, fwmark, endpoint)
+        .await
+    {
         Err(e)
             if fwmark.is_some()
                 && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
         {
             warn!("Tunnel start with fwmark failed due permissions, retrying without fwmark");
-            backend.start(&config, INTERFACE_NAME, None).await
+            backend.start(&config, INTERFACE_NAME, None, endpoint).await
         }
         result => result,
     };
 
     #[cfg(not(target_os = "linux"))]
-    let start_result = backend.start(&config, INTERFACE_NAME, None).await;
+    let start_result = backend.start(&config, INTERFACE_NAME, None, endpoint).await;
 
     match start_result {
         Ok(()) => {

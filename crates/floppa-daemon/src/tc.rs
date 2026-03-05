@@ -337,7 +337,7 @@ fn ip_to_class_id(ip: &str) -> Result<u32> {
     // This gives us unique IDs for a /16 subnet
     // Avoid 0 and 99 (default class)
     let class_id = third * 256 + fourth;
-    if class_id == 0 || class_id == 99 {
+    if class_id == 0 || class_id == 1 || class_id == 99 {
         return Err(anyhow!("Reserved class ID for IP: {}", ip));
     }
 
@@ -368,6 +368,7 @@ mod tests {
         assert_eq!(ip_to_class_id("10.100.0.5").unwrap(), 5);
         assert_eq!(ip_to_class_id("10.100.1.5").unwrap(), 261); // 1*256 + 5
         assert_eq!(ip_to_class_id("10.100.0.100").unwrap(), 100);
+        assert!(ip_to_class_id("10.100.0.1").is_err()); // class_id 1 collides with root HFSC class
         assert!(ip_to_class_id("invalid").is_err());
     }
 

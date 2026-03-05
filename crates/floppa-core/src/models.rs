@@ -93,13 +93,3 @@ pub struct Subscription {
     pub payment_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
-
-impl User {
-    /// Check if user has active subscription
-    pub fn has_active_subscription(&self, subscriptions: &[Subscription]) -> bool {
-        let now = Utc::now();
-        subscriptions.iter().any(|s| {
-            s.user_id == self.id && s.starts_at <= now && s.expires_at.is_none_or(|e| e > now)
-        })
-    }
-}

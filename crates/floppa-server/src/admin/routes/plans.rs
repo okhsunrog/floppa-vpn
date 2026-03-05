@@ -107,7 +107,7 @@ pub(super) async fn list_plans(
     security(("bearer" = [])),
     request_body = CreatePlanRequest,
     responses(
-        (status = 200, body = Plan),
+        (status = 201, body = Plan),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
         (status = 500, body = ApiError, description = "Internal server error"),
@@ -117,7 +117,7 @@ pub(super) async fn create_plan(
     _admin: AdminUser,
     State(state): State<AppState>,
     Json(req): Json<CreatePlanRequest>,
-) -> Result<Json<Plan>, ApiError> {
+) -> Result<(StatusCode, Json<Plan>), ApiError> {
     let plan: Plan = sqlx::query_as!(
         Plan,
         r#"
@@ -137,7 +137,7 @@ pub(super) async fn create_plan(
     .fetch_one(&state.pool)
     .await?;
 
-    Ok(Json(plan))
+    Ok((StatusCode::CREATED, Json(plan)))
 }
 
 /// Update a plan (admin only)

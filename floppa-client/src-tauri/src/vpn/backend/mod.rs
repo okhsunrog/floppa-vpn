@@ -16,6 +16,7 @@ mod ios;
 
 use super::state::{TrafficStats, WgConfig};
 use async_trait::async_trait;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 /// All tunnel info returned by [`VpnBackend::get_all_info`].
@@ -37,13 +38,15 @@ pub struct VpnFullInfo {
 pub trait VpnBackend: Send + Sync {
     /// Start tunnel by creating a TUN device (desktop platforms).
     ///
-    /// On Linux, `fwmark` is used for policy routing to prevent VPN packets
-    /// from being routed back through the VPN interface.
+    /// `endpoint` is the pre-resolved server address so the hostname is only
+    /// resolved once. On Linux, `fwmark` is used for policy routing to prevent
+    /// VPN packets from being routed back through the VPN interface.
     async fn start(
         &self,
         config: &WgConfig,
         interface_name: &str,
         fwmark: Option<u32>,
+        endpoint: SocketAddr,
     ) -> Result<(), String>;
 
     /// Start tunnel from a file descriptor provided by the platform VPN service.

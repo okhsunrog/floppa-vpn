@@ -9,8 +9,8 @@ const WG_KEY_LEN: usize = 32;
 const WG_KEY_BASE64_LEN: usize = 44; // 32 bytes -> 44 base64 chars
 
 /// A validated WireGuard private key.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrivateKey(String);
+#[derive(Clone, PartialEq, Eq, veil::Redact)]
+pub struct PrivateKey(#[redact] String);
 
 /// A validated WireGuard public key.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -83,10 +83,16 @@ pub fn verify_telegram_auth(data: &TelegramAuthData, bot_token: &str) -> bool {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(&secret_key).expect("HMAC can take key of any size");
     mac.update(data_check_string.as_bytes());
-    let result = mac.finalize();
-    let expected_hash = hex::encode(result.into_bytes());
 
-    if expected_hash != data.hash {
+    let provided_hash = match hex::decode(&data.hash) {
+        Ok(h) => h,
+        Err(_) => {
+            warn!("Telegram auth hash is not valid hex");
+            return false;
+        }
+    };
+
+    if mac.verify_slice(&provided_hash).is_err() {
         warn!("Telegram auth hash mismatch");
         return false;
     }
@@ -136,9 +142,9 @@ pub fn verify_telegram_mini_app(init_data: &str, bot_token: &str) -> Option<Mini
     let mut mac =
         Hmac::<Sha256>::new_from_slice(&secret_key).expect("HMAC can take key of any size");
     mac.update(data_check_string.as_bytes());
-    let computed_hash = hex::encode(mac.finalize().into_bytes());
 
-    if computed_hash != hash {
+    let provided_hash = hex::decode(&hash).ok()?;
+    if mac.verify_slice(&provided_hash).is_err() {
         warn!("Mini App initData hash mismatch");
         return None;
     }
