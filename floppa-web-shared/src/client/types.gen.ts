@@ -4,6 +4,11 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type ApiError = {
+    error: string;
+    message: string;
+};
+
 export type AuthResponse = {
     token: string;
     user: AuthUserInfo;
@@ -222,6 +227,7 @@ export type UserDetail = {
 
 export type UserSummary = {
     active_plan?: string | null;
+    client_version?: string | null;
     created_at: string;
     first_name?: string | null;
     id: number;
@@ -250,12 +256,14 @@ export type TelegramLoginErrors = {
     /**
      * Invalid Telegram auth data
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type TelegramLoginError = TelegramLoginErrors[keyof TelegramLoginErrors];
 
 export type TelegramLoginResponses = {
     200: AuthResponse;
@@ -274,16 +282,18 @@ export type TelegramDeepLinkCallbackErrors = {
     /**
      * Invalid or expired state
      */
-    400: unknown;
+    400: ApiError;
     /**
      * Invalid Telegram auth payload
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type TelegramDeepLinkCallbackError = TelegramDeepLinkCallbackErrors[keyof TelegramDeepLinkCallbackErrors];
 
 export type ExchangeTelegramLoginCodeData = {
     body: ExchangeTelegramLoginCodeRequest;
@@ -296,8 +306,10 @@ export type ExchangeTelegramLoginCodeErrors = {
     /**
      * Invalid or expired code
      */
-    401: unknown;
+    401: ApiError;
 };
+
+export type ExchangeTelegramLoginCodeError = ExchangeTelegramLoginCodeErrors[keyof ExchangeTelegramLoginCodeErrors];
 
 export type ExchangeTelegramLoginCodeResponses = {
     200: AuthResponse;
@@ -316,12 +328,14 @@ export type TelegramMiniAppAuthErrors = {
     /**
      * Invalid Mini App initData
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type TelegramMiniAppAuthError = TelegramMiniAppAuthErrors[keyof TelegramMiniAppAuthErrors];
 
 export type TelegramMiniAppAuthResponses = {
     200: AuthResponse;
@@ -345,12 +359,14 @@ export type StartTelegramDeepLinkLoginErrors = {
     /**
      * Invalid request
      */
-    400: unknown;
+    400: ApiError;
     /**
      * Server misconfiguration
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type StartTelegramDeepLinkLoginError = StartTelegramDeepLinkLoginErrors[keyof StartTelegramDeepLinkLoginErrors];
 
 export type StartTelegramDeepLinkLoginResponses = {
     /**
@@ -383,8 +399,10 @@ export type GetMeErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
 };
+
+export type GetMeError = GetMeErrors[keyof GetMeErrors];
 
 export type GetMeResponses = {
     200: MeResponse;
@@ -403,8 +421,10 @@ export type GetMyPeersErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
 };
+
+export type GetMyPeersError = GetMyPeersErrors[keyof GetMyPeersErrors];
 
 export type GetMyPeersResponses = {
     200: Array<MyPeer>;
@@ -423,20 +443,22 @@ export type CreateMyPeerErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * No active subscription
      */
-    402: unknown;
+    402: ApiError;
     /**
      * Peer limit reached
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type CreateMyPeerError = CreateMyPeerErrors[keyof CreateMyPeerErrors];
 
 export type CreateMyPeerResponses = {
     200: CreatePeerResponse;
@@ -460,12 +482,14 @@ export type GetMyPeerByDeviceErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * No peer for this device
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type GetMyPeerByDeviceError = GetMyPeerByDeviceErrors[keyof GetMyPeerByDeviceErrors];
 
 export type GetMyPeerByDeviceResponses = {
     200: MyPeer;
@@ -489,12 +513,14 @@ export type DeleteMyPeerErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Peer not found
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type DeleteMyPeerError = DeleteMyPeerErrors[keyof DeleteMyPeerErrors];
 
 export type DeleteMyPeerResponses = {
     /**
@@ -519,12 +545,14 @@ export type GetMyPeerConfigErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Peer not found
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type GetMyPeerConfigError = GetMyPeerConfigErrors[keyof GetMyPeerConfigErrors];
 
 export type GetMyPeerConfigResponses = {
     /**
@@ -551,16 +579,18 @@ export type SendMyPeerConfigErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Peer not found
      */
-    404: unknown;
+    404: ApiError;
     /**
      * Failed to send via Telegram
      */
-    502: unknown;
+    502: ApiError;
 };
+
+export type SendMyPeerConfigError = SendMyPeerConfigErrors[keyof SendMyPeerConfigErrors];
 
 export type SendMyPeerConfigResponses = {
     /**
@@ -580,12 +610,14 @@ export type ListPeersErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type ListPeersError = ListPeersErrors[keyof ListPeersErrors];
 
 export type ListPeersResponses = {
     200: Array<PeerSummary>;
@@ -609,12 +641,14 @@ export type DeleteAdminPeerErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type DeleteAdminPeerError = DeleteAdminPeerErrors[keyof DeleteAdminPeerErrors];
 
 export type DeleteAdminPeerResponses = {
     /**
@@ -634,12 +668,14 @@ export type ListPlansErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type ListPlansError = ListPlansErrors[keyof ListPlansErrors];
 
 export type ListPlansResponses = {
     200: Array<Plan>;
@@ -658,16 +694,18 @@ export type CreatePlanErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type CreatePlanError = CreatePlanErrors[keyof CreatePlanErrors];
 
 export type CreatePlanResponses = {
     200: Plan;
@@ -691,20 +729,22 @@ export type DeletePlanErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Plan not found
      */
-    404: unknown;
+    404: ApiError;
     /**
      * Plan has existing subscriptions
      */
-    409: unknown;
+    409: ApiError;
 };
+
+export type DeletePlanError = DeletePlanErrors[keyof DeletePlanErrors];
 
 export type DeletePlanResponses = {
     /**
@@ -731,16 +771,18 @@ export type UpdatePlanErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Plan not found
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type UpdatePlanError = UpdatePlanErrors[keyof UpdatePlanErrors];
 
 export type UpdatePlanResponses = {
     200: Plan;
@@ -759,12 +801,14 @@ export type GetStatsErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type GetStatsError = GetStatsErrors[keyof GetStatsErrors];
 
 export type GetStatsResponses = {
     200: Stats;
@@ -783,12 +827,14 @@ export type ListUsersErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type ListUsersError = ListUsersErrors[keyof ListUsersErrors];
 
 export type ListUsersResponses = {
     200: Array<UserSummary>;
@@ -807,28 +853,30 @@ export type CreateUserErrors = {
     /**
      * Days not specified and plan has no trial_days
      */
-    400: unknown;
+    400: ApiError;
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Plan not found
      */
-    404: unknown;
+    404: ApiError;
     /**
      * User with this telegram_id already exists
      */
-    409: unknown;
+    409: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type CreateUserError = CreateUserErrors[keyof CreateUserErrors];
 
 export type CreateUserResponses = {
     201: CreateUserResponse;
@@ -852,16 +900,18 @@ export type GetUserErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * User not found
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type GetUserError = GetUserErrors[keyof GetUserErrors];
 
 export type GetUserResponses = {
     200: UserDetail;
@@ -885,12 +935,14 @@ export type RemovePeerErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
 };
+
+export type RemovePeerError = RemovePeerErrors[keyof RemovePeerErrors];
 
 export type RemovePeerResponses = {
     /**
@@ -915,16 +967,18 @@ export type DeleteSubscriptionErrors = {
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * No active subscription found
      */
-    404: unknown;
+    404: ApiError;
 };
+
+export type DeleteSubscriptionError = DeleteSubscriptionErrors[keyof DeleteSubscriptionErrors];
 
 export type DeleteSubscriptionResponses = {
     /**
@@ -949,24 +1003,26 @@ export type SetSubscriptionErrors = {
     /**
      * Days not specified and plan has no trial_days
      */
-    400: unknown;
+    400: ApiError;
     /**
      * Unauthorized
      */
-    401: unknown;
+    401: ApiError;
     /**
      * Not an admin
      */
-    403: unknown;
+    403: ApiError;
     /**
      * Plan not found
      */
-    404: unknown;
+    404: ApiError;
     /**
      * Internal server error
      */
-    500: unknown;
+    500: ApiError;
 };
+
+export type SetSubscriptionError = SetSubscriptionErrors[keyof SetSubscriptionErrors];
 
 export type SetSubscriptionResponses = {
     /**

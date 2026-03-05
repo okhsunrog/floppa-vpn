@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
             if peers.is_empty() {
                 eprintln!("No peers found.");
             } else {
-                println!("{:<6} {:<18} {:<14} {}", "ID", "IP", "Status", "Device");
+                println!("{:<6} {:<18} {:<14} Device", "ID", "IP", "Status");
                 for p in &peers {
                     println!(
                         "{:<6} {:<18} {:<14} {}",

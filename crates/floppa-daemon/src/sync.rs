@@ -2,6 +2,7 @@ use anyhow::Result;
 use chrono::Utc;
 use floppa_core::{Config, DbPool};
 use sqlx::postgres::PgListener;
+use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -39,9 +40,12 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
         let config = config.clone();
         async move {
             let interval = Duration::from_secs(30);
+            // In-memory cache of last-seen WireGuard counters per public_key.
+            // Used to compute deltas so that DB counters survive WireGuard restarts.
+            let mut prev_wg_counters: HashMap<String, (u64, u64)> = HashMap::new();
             loop {
                 tokio::time::sleep(interval).await;
-                if let Err(e) = periodic_sync(&pool, &config).await {
+                if let Err(e) = periodic_sync(&pool, &config, &mut prev_wg_counters).await {
                     error!(error = %e, "Periodic sync failed");
                 }
             }
@@ -282,8 +286,12 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
 }
 
 /// Periodic tasks: update traffic stats, check expired subscriptions
-async fn periodic_sync(pool: &DbPool, config: &Config) -> Result<()> {
-    update_traffic_stats(pool, config).await?;
+async fn periodic_sync(
+    pool: &DbPool,
+    config: &Config,
+    prev_wg_counters: &mut HashMap<String, (u64, u64)>,
+) -> Result<()> {
+    update_traffic_stats(pool, config, prev_wg_counters).await?;
     check_expired_subscriptions(pool).await?;
     Ok(())
 }
@@ -367,17 +375,62 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
     Ok(())
 }
 
-async fn update_traffic_stats(pool: &DbPool, config: &Config) -> Result<()> {
+/// Update traffic counters using delta-based accumulation.
+///
+/// WireGuard counters (`wg show dump`) reset to 0 on interface restart.
+/// To keep DB counters as reliable lifetime totals, we track previous
+/// WireGuard values in memory and add only the delta each cycle.
+/// If new < old (counter reset), we treat the new value as the full delta.
+///
+/// - `tx_bytes` / `rx_bytes`: lifetime cumulative, useful for monitoring.
+/// - `traffic_used_bytes`: also cumulative for now; will diverge from tx+rx
+///   once billing-period resets are implemented (for enforcing plan traffic limits).
+async fn update_traffic_stats(
+    pool: &DbPool,
+    config: &Config,
+    prev_wg_counters: &mut HashMap<String, (u64, u64)>,
+) -> Result<()> {
     let stats = crate::wg::get_peer_stats(&config.wireguard.interface)?;
 
-    for (public_key, tx, rx, last_handshake) in stats {
+    for (public_key, wg_tx, wg_rx, last_handshake) in &stats {
+        let (prev_tx, prev_rx) = prev_wg_counters.get(public_key).copied().unwrap_or((0, 0));
+
+        // If wg counter < previous, the interface was restarted — treat current value as the delta
+        let delta_tx = if *wg_tx >= prev_tx {
+            *wg_tx - prev_tx
+        } else {
+            *wg_tx
+        };
+        let delta_rx = if *wg_rx >= prev_rx {
+            *wg_rx - prev_rx
+        } else {
+            *wg_rx
+        };
+
+        prev_wg_counters.insert(public_key.clone(), (*wg_tx, *wg_rx));
+
+        if delta_tx == 0 && delta_rx == 0 {
+            // Still update last_handshake even if no traffic
+            if last_handshake.is_some() {
+                sqlx::query!(
+                    "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
+                    *last_handshake,
+                    public_key,
+                )
+                .execute(pool)
+                .await?;
+            }
+            continue;
+        }
+
         sqlx::query!(
-            "UPDATE peers SET tx_bytes = $1, rx_bytes = $2, traffic_used_bytes = $1::bigint + $2::bigint, last_handshake = $3
+            "UPDATE peers SET tx_bytes = tx_bytes + $1, rx_bytes = rx_bytes + $2, \
+             traffic_used_bytes = traffic_used_bytes + $1 + $2, last_handshake = $3 \
              WHERE public_key = $4 AND sync_status = 'active'",
-            tx as i64,
-            rx as i64,
-            last_handshake,
-            &public_key,
+            delta_tx as i64,
+            delta_rx as i64,
+            *last_handshake,
+            public_key,
         )
         .execute(pool)
         .await?;

@@ -16,9 +16,10 @@ use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use teloxide::prelude::*;
 use tokio::sync::RwLock;
-use tracing::error;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
+
+pub(crate) use crate::admin::error::ApiError;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -147,7 +148,7 @@ async fn resolve_subscription_expires(
     days: Option<i64>,
     permanent: bool,
     now: chrono::DateTime<Utc>,
-) -> Result<Option<chrono::DateTime<Utc>>, StatusCode> {
+) -> Result<Option<chrono::DateTime<Utc>>, ApiError> {
     if permanent {
         return Ok(None);
     }
@@ -156,15 +157,15 @@ async fn resolve_subscription_expires(
     } else {
         let plan_trial = sqlx::query_scalar!("SELECT trial_days FROM plans WHERE id = $1", plan_id)
             .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                error!("Failed to fetch plan trial_days: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+            .await?;
         match plan_trial {
-            None => return Err(StatusCode::NOT_FOUND),
+            None => return Err(ApiError::not_found("Plan not found")),
             Some(Some(trial_days)) => trial_days as i64,
-            Some(None) => return Err(StatusCode::BAD_REQUEST),
+            Some(None) => {
+                return Err(ApiError::bad_request(
+                    "Days not specified and plan has no trial_days",
+                ));
+            }
         }
     };
     Ok(Some(now + Duration::days(days)))

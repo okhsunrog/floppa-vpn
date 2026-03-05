@@ -39,6 +39,7 @@ const columns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'telegram_id', header: t('adminUsers.telegramId') },
   { accessorKey: 'active_plan', header: t('adminUsers.plan') },
   { accessorKey: 'peer_count', header: t('adminUsers.peers') },
+  { accessorKey: 'client_version', header: t('adminUsers.version') },
   { accessorKey: 'is_admin', header: t('adminUsers.admin') },
   { accessorKey: 'created_at', header: t('adminUsers.created') },
 ])
@@ -101,9 +102,10 @@ async function addUser() {
       description: t('adminUsers.userCreated'),
       color: 'success',
     })
-  } catch (e) {
+  } catch (e: unknown) {
+    const errorCode = (e as Record<string, unknown>)?.error
     const msg =
-      e instanceof Error && e.message.includes('409')
+      errorCode === 'conflict'
         ? t('adminUsers.userExists')
         : e instanceof Error
           ? e.message
@@ -173,6 +175,12 @@ async function addUser() {
             />
             <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
           </template>
+          <template #client_version-cell="{ row }">
+            <span v-if="row.original.client_version" class="text-xs">{{
+              row.original.client_version
+            }}</span>
+            <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
+          </template>
           <template #is_admin-cell="{ row }">
             <UBadge
               v-if="row.original.is_admin"
@@ -237,6 +245,7 @@ async function addUser() {
           </div>
           <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
             <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
+            <span v-if="user.client_version">v{{ user.client_version }}</span>
             <span>{{ formatDate(user.created_at) }}</span>
           </div>
         </UCard>

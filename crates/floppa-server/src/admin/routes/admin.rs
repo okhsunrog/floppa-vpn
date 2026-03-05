@@ -6,10 +6,9 @@ use axum::{
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::error;
 use utoipa::ToSchema;
 
-use crate::admin::auth::AdminUser;
+use crate::admin::{auth::AdminUser, error::ApiError};
 
 use super::AppState;
 
@@ -30,14 +29,14 @@ pub struct Stats {
     security(("bearer" = [])),
     responses(
         (status = 200, body = Stats),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn get_stats(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<Stats>, StatusCode> {
+) -> Result<Json<Stats>, ApiError> {
     let stats = sqlx::query!(
         r#"
         SELECT
@@ -49,11 +48,7 @@ pub(super) async fn get_stats(
         "#,
     )
     .fetch_one(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("Failed to fetch stats: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(Stats {
         total_users: stats.total_users,
@@ -76,6 +71,7 @@ pub struct UserSummary {
     created_at: chrono::DateTime<Utc>,
     active_plan: Option<String>,
     peer_count: i64,
+    client_version: Option<String>,
 }
 
 /// List all users (admin only)
@@ -86,14 +82,14 @@ pub struct UserSummary {
     security(("bearer" = [])),
     responses(
         (status = 200, body = Vec<UserSummary>),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn list_users(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<UserSummary>>, StatusCode> {
+) -> Result<Json<Vec<UserSummary>>, ApiError> {
     let users: Vec<UserSummary> = sqlx::query_as!(
         UserSummary,
         r#"
@@ -107,17 +103,14 @@ pub(super) async fn list_users(
             u.is_admin,
             u.created_at,
             (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,
-            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!"
+            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!",
+            (SELECT MAX(p.client_version) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as client_version
         FROM users u
         ORDER BY u.created_at DESC
         "#,
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(users))
 }
@@ -154,19 +147,19 @@ pub struct CreateUserResponse {
     request_body = CreateUserRequest,
     responses(
         (status = 201, body = CreateUserResponse),
-        (status = 400, description = "Days not specified and plan has no trial_days"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "Plan not found"),
-        (status = 409, description = "User with this telegram_id already exists"),
-        (status = 500, description = "Internal server error"),
+        (status = 400, body = ApiError, description = "Days not specified and plan has no trial_days"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Plan not found"),
+        (status = 409, body = ApiError, description = "User with this telegram_id already exists"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn create_user(
     _admin: AdminUser,
     State(state): State<AppState>,
     Json(req): Json<CreateUserRequest>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     let now = Utc::now();
 
     // Insert user row (fail if telegram_id already exists)
@@ -186,10 +179,9 @@ pub(super) async fn create_user(
         if let sqlx::Error::Database(ref db_err) = e
             && db_err.constraint() == Some("users_telegram_id_key")
         {
-            return StatusCode::CONFLICT;
+            return ApiError::conflict("User with this telegram_id already exists");
         }
-        error!("Failed to create user: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
+        ApiError::from(e)
     })?;
 
     let expires_at =
@@ -205,11 +197,7 @@ pub(super) async fn create_user(
         expires_at
     )
     .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("Failed to create subscription: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -268,27 +256,23 @@ pub struct SubscriptionDetail {
     params(("id" = i64, Path, description = "User ID")),
     responses(
         (status = 200, body = UserDetail),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "User not found"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "User not found"),
     )
 )]
 pub(super) async fn get_user(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<Json<UserDetail>, StatusCode> {
+) -> Result<Json<UserDetail>, ApiError> {
     let user = sqlx::query!(
         "SELECT id, telegram_id, username, first_name, last_name, photo_url, is_admin, created_at FROM users WHERE id = $1",
         id
     )
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    .await?
+    .ok_or_else(|| ApiError::not_found("User not found"))?;
 
     let peers: Vec<PeerDetail> = sqlx::query_as!(
         PeerDetail,
@@ -300,11 +284,7 @@ pub(super) async fn get_user(
         id
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     let subscriptions: Vec<SubscriptionDetail> = sqlx::query_as!(
         SubscriptionDetail,
@@ -323,11 +303,7 @@ pub(super) async fn get_user(
         id
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(UserDetail {
         id: user.id,
@@ -366,11 +342,11 @@ pub struct SetSubscriptionRequest {
     request_body = SetSubscriptionRequest,
     responses(
         (status = 200, description = "Subscription set"),
-        (status = 400, description = "Days not specified and plan has no trial_days"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "Plan not found"),
-        (status = 500, description = "Internal server error"),
+        (status = 400, body = ApiError, description = "Days not specified and plan has no trial_days"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Plan not found"),
+        (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
 pub(super) async fn set_subscription(
@@ -378,17 +354,14 @@ pub(super) async fn set_subscription(
     State(state): State<AppState>,
     Path(id): Path<i64>,
     Json(req): Json<SetSubscriptionRequest>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     let now = Utc::now();
 
     let expires_at =
         super::resolve_subscription_expires(&state.pool, req.plan_id, req.days, req.permanent, now)
             .await?;
 
-    let mut tx = state.pool.begin().await.map_err(|e| {
-        error!("Failed to begin transaction: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let mut tx = state.pool.begin().await?;
 
     // Expire current active subscription (if any)
     sqlx::query!(
@@ -396,11 +369,7 @@ pub(super) async fn set_subscription(
         id
     )
     .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        error!("Failed to expire old subscription: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     // Insert new subscription
     sqlx::query!(
@@ -411,16 +380,9 @@ pub(super) async fn set_subscription(
         expires_at
     )
     .execute(&mut *tx)
-    .await
-    .map_err(|e| {
-        error!("Failed to create subscription: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
-    tx.commit().await.map_err(|e| {
-        error!("Failed to commit transaction: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    tx.commit().await?;
 
     Ok(StatusCode::OK)
 }
@@ -434,29 +396,25 @@ pub(super) async fn set_subscription(
     params(("id" = i64, Path, description = "User ID")),
     responses(
         (status = 200, description = "Subscription deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
-        (status = 404, description = "No active subscription found"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "No active subscription found"),
     )
 )]
 pub(super) async fn delete_subscription(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     let result = sqlx::query!(
         "UPDATE subscriptions SET expires_at = NOW() WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
         id
     )
     .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("Failed to delete subscription: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
+        return Err(ApiError::not_found("No active subscription found"));
     }
 
     Ok(StatusCode::OK)
@@ -471,25 +429,21 @@ pub(super) async fn delete_subscription(
     params(("id" = i64, Path, description = "User ID")),
     responses(
         (status = 200, description = "Peers removed"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn remove_peer(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(id): Path<i64>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     sqlx::query!(
         "UPDATE peers SET sync_status = 'pending_remove' WHERE user_id = $1 AND sync_status = 'active'",
         id
     )
     .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(StatusCode::OK)
 }
@@ -517,14 +471,14 @@ pub struct PeerSummary {
     security(("bearer" = [])),
     responses(
         (status = 200, body = Vec<PeerSummary>),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn list_peers(
     _admin: AdminUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<PeerSummary>>, StatusCode> {
+) -> Result<Json<Vec<PeerSummary>>, ApiError> {
     let peers: Vec<PeerSummary> = sqlx::query_as!(
         PeerSummary,
         r#"
@@ -536,11 +490,7 @@ pub(super) async fn list_peers(
         "#,
     )
     .fetch_all(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(Json(peers))
 }
@@ -554,25 +504,21 @@ pub(super) async fn list_peers(
     params(("id" = i64, Path, description = "Peer ID")),
     responses(
         (status = 200, description = "Peer deleted"),
-        (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Not an admin"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
     )
 )]
 pub(super) async fn delete_admin_peer(
     _admin: AdminUser,
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, ApiError> {
     sqlx::query!(
         "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND sync_status = 'active'",
         peer_id
     )
     .execute(&state.pool)
-    .await
-    .map_err(|e| {
-        error!("DB error: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    .await?;
 
     Ok(StatusCode::OK)
 }

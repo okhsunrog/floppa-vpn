@@ -108,6 +108,7 @@ export default {
     peers: 'Пиры',
     admin: 'Админ',
     created: 'Создан',
+    version: 'Версия',
     noUsers: 'Пользователи не найдены',
     addUser: 'Добавить',
     addUserTitle: 'Предрегистрация пользователя',

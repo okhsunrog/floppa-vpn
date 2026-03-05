@@ -57,7 +57,12 @@ jobs:
       - name: Check sqlx cache is up to date
         run: cargo sqlx prepare --workspace --check
 
-      - name: Check formatting
+      - name: Check justfile formatting
+        uses: extractions/setup-just@v3
+
+      - run: just --unstable --fmt --check
+
+      - name: Check Rust formatting
         run: |
           cargo fmt --check
           cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
@@ -65,8 +70,20 @@ jobs:
           cargo fmt --check --manifest-path crates/floppa-cli/Cargo.toml
           cargo fmt --check --manifest-path crates/floppa-test-tunnel/Cargo.toml
 
-      - name: Clippy
+      - name: Clippy (workspace)
         run: cargo clippy -- -D warnings
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - name: Clippy (excluded crates)
+        run: |
+          cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
+          cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+          cargo clippy --manifest-path crates/floppa-cli/Cargo.toml -- -D warnings
+          cargo clippy --manifest-path crates/floppa-test-tunnel/Cargo.toml -- -D warnings
 
       - name: Tests
         run: cargo test

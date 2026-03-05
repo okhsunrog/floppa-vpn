@@ -142,8 +142,8 @@ impl Platform for WindowsPlatform {
     }
 
     async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
-        let gateway = Self::get_default_gateway()?
-            .ok_or_else(|| "No default gateway found".to_string())?;
+        let gateway =
+            Self::get_default_gateway()?.ok_or_else(|| "No default gateway found".to_string())?;
 
         info!("Adding endpoint route: {} via {}", endpoint_ip, gateway);
 
@@ -178,7 +178,11 @@ impl Platform for WindowsPlatform {
     }
 
     async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        info!("Adding {} routes via interface {}", allowed_ips.len(), iface);
+        info!(
+            "Adding {} routes via interface {}",
+            allowed_ips.len(),
+            iface
+        );
 
         // Get interface index
         let if_index = self
@@ -258,8 +262,14 @@ impl Platform for WindowsPlatform {
             let idx_str = idx.to_string();
             // Remove split routes - ignore errors as they may not exist
             let _ = self.run_netsh(&["interface", "ip", "delete", "route", "0.0.0.0/1", &idx_str]);
-            let _ =
-                self.run_netsh(&["interface", "ip", "delete", "route", "128.0.0.0/1", &idx_str]);
+            let _ = self.run_netsh(&[
+                "interface",
+                "ip",
+                "delete",
+                "route",
+                "128.0.0.0/1",
+                &idx_str,
+            ]);
             let _ = self.run_netsh(&["interface", "ipv6", "delete", "route", "::/1", &idx_str]);
             let _ = self.run_netsh(&["interface", "ipv6", "delete", "route", "8000::/1", &idx_str]);
         }

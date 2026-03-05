@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1fa9e8058cd3f6d9a3056f69ac67588f519460c5db7e7cc86b2acda7c8461db1"
+}

@@ -44,10 +44,13 @@ pub struct Peer {
     pub created_at: DateTime<Utc>,
     /// Last WireGuard handshake time (updated by daemon)
     pub last_handshake: Option<DateTime<Utc>>,
-    /// Traffic counters (updated by daemon) - cumulative totals
+    /// Lifetime cumulative traffic counters (updated by daemon, never reset).
+    /// Useful for monitoring and analytics.
     pub tx_bytes: i64,
     pub rx_bytes: i64,
-    /// Traffic used in current billing period (reset monthly)
+    /// Traffic used in current billing period (updated by daemon).
+    /// Will be used for enforcing plan traffic limits once billing is implemented.
+    /// Currently tracks the same as tx + rx until period reset logic is added.
     pub traffic_used_bytes: i64,
     /// Human-readable device name (hostname), set by client app
     pub device_name: Option<String>,
@@ -78,7 +81,8 @@ pub struct Plan {
     pub created_at: DateTime<Utc>,
 }
 
-/// User subscription period
+/// User subscription period.
+/// Limits (speed, traffic, max_peers) come from the associated plan.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Subscription {
     pub id: i64,
@@ -88,10 +92,6 @@ pub struct Subscription {
     pub expires_at: Option<DateTime<Utc>>,
     pub payment_id: Option<String>,
     pub created_at: DateTime<Utc>,
-    /// Bandwidth limit in Mbps (None = use plan default)
-    pub speed_limit_mbps: Option<i32>,
-    /// Traffic limit in bytes (None = use plan default)
-    pub traffic_limit_bytes: Option<i64>,
 }
 
 impl User {
