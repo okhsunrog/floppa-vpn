@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
-use tracing::{error, info};
+#[allow(unused_imports)]
+use tracing::{error, info, warn};
 
 /// Get the persistent device UUID (created on first call)
 #[tauri::command]

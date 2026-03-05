@@ -5,7 +5,7 @@
 TAURI_CONF="floppa-client/src-tauri/tauri.conf.json5"
 CARGO_TOML="floppa-client/src-tauri/Cargo.toml"
 CHANGELOG="floppa-client/src/changelog.json"
-PKGBUILD="floppa-client/src-tauri/resources/linux/arch/PKGBUILD"
+PKGBUILD="scripts/arch/PKGBUILD"
 
 # Extract versions
 tauri_ver=$(grep -oP '^\s*version:\s*"\K[^"]+' "$TAURI_CONF")

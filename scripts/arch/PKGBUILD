@@ -8,6 +8,7 @@ arch=('x86_64')
 url='https://github.com/okhsunrog/floppa-vpn'
 license=('GPL-3.0-or-later')
 install='floppa-vpn.install'
+options=(!lto)
 
 # Runtime dependencies are based on Tauri Linux packaging docs:
 # - https://v2.tauri.app/distribute/aur/
