@@ -8,7 +8,8 @@ use gotatun::x25519;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+#[allow(unused_imports)]
+use tracing::{error, info, warn};
 
 #[cfg(target_os = "android")]
 use std::os::fd::RawFd;
