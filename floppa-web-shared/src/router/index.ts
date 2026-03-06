@@ -53,9 +53,30 @@ export function createAppRoutes(): RouteRecordRaw[] {
   ]
 }
 
+/** Parse Telegram user ID from Mini App initData (URL-encoded). */
+function getTelegramUserIdFromInitData(): number | null {
+  try {
+    const initData = (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp
+      ?.initData
+    if (!initData) return null
+    const userJson = new URLSearchParams(initData).get('user')
+    if (!userJson) return null
+    const id = JSON.parse(userJson).id
+    return typeof id === 'number' ? id : null
+  } catch {
+    return null
+  }
+}
+
 export function installAuthGuard(router: Router): void {
   router.beforeEach((to) => {
     const auth = useAuthStore()
+
+    // If in Mini App and a different Telegram account opened the app, force re-login
+    const tgUserId = getTelegramUserIdFromInitData()
+    if (tgUserId !== null && auth.isAuthenticated && auth.telegramId !== tgUserId) {
+      auth.logout()
+    }
 
     if (to.meta.requiresAuth && !auth.isAuthenticated) {
       return { name: 'login' }
