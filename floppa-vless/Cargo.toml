@@ -5,7 +5,9 @@ edition.workspace = true
 
 [dependencies]
 floppa-core = { path = "../floppa-core" }
-shoes-lite = { path = "../../../rust/shoes" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "30753c5" }
+# Uncomment for local development, comment out before commit/push:
+# shoes-lite = { version = "0.2.8", path = "../../../rust/shoes" }
 
 tokio.workspace = true
 tracing.workspace = true

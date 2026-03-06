@@ -14,8 +14,51 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  rust:
-    name: Rust checks
+  format:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - uses: extractions/setup-just@v3
+
+      - name: Check justfile formatting
+        run: just --unstable --fmt --check
+
+      - name: Check Rust formatting
+        run: |
+          cargo fmt --check
+          cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
+          cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Build frontend (needed for memory-serve embedding)
+        run: cd floppa-face && bun install && bun run build
+
+      - name: Clippy (workspace)
+        run: cargo clippy -- -D warnings
+
+  test:
+    name: Test & sqlx
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -37,20 +80,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Install frontend dependencies
-        run: bun install
-
       - name: Build frontend (needed for memory-serve embedding)
-        run: cd floppa-face && bun run build
+        run: cd floppa-face && bun install && bun run build
 
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --no-default-features --features postgres --locked
@@ -61,35 +97,7 @@ jobs:
       - name: Check sqlx cache is up to date
         run: cargo sqlx prepare --workspace --check
 
-      - name: Check justfile formatting
-        uses: extractions/setup-just@v3
-
-      - run: just --unstable --fmt --check
-
-      - name: Check Rust formatting
-        run: |
-          cargo fmt --check
-          cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
-          cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
-          cargo fmt --check --manifest-path crates/floppa-cli/Cargo.toml
-          cargo fmt --check --manifest-path crates/floppa-test-tunnel/Cargo.toml
-
-      - name: Clippy (workspace)
-        run: cargo clippy -- -D warnings
-
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
-
-      - name: Clippy (excluded crates)
-        run: |
-          cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
-          cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
-          cargo clippy --manifest-path crates/floppa-cli/Cargo.toml -- -D warnings
-          cargo clippy --manifest-path crates/floppa-test-tunnel/Cargo.toml -- -D warnings
-
-      - name: Tests
+      - name: Run tests
         run: cargo test
 
       - name: Check OpenAPI client is up to date
@@ -110,26 +118,45 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      - name: Format check (shared)
-        run: cd floppa-web-shared && bun run format:check
+      - name: Format check
+        run: |
+          cd floppa-web-shared && bun run format:check
+          cd ../floppa-face && bun run format:check
+          cd ../floppa-client && bun run format:check
 
-      - name: Format check (admin)
-        run: cd floppa-face && bun run format:check
-
-      - name: Format check (client)
-        run: cd floppa-client && bun run format:check
-
-      - name: Type-check & lint (shared)
-        run: cd floppa-web-shared && bun run type-check && bun run lint:check
-
-      - name: Type-check & lint (admin)
-        run: cd floppa-face && bun run type-check && bun run lint:check
-
-      - name: Type-check & lint (client)
-        run: cd floppa-client && bun run type-check && bun run lint:check
+      - name: Type-check & lint
+        run: |
+          cd floppa-web-shared && bun run type-check && bun run lint:check
+          cd ../floppa-face && bun run type-check && bun run lint:check
+          cd ../floppa-client && bun run type-check && bun run lint:check
 
       - name: Build client frontend
         run: cd floppa-client && bun run build
+
+  client:
+    name: Client checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+
+      - name: Clippy (client)
+        run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
+
+      - name: Clippy (vpn plugin)
+        run: cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
 
   kotlin:
     name: Kotlin format check
@@ -142,11 +169,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Download ktfmt
-        run: |
-          mkdir -p .cache
-          curl -sSL -o .cache/ktfmt-0.61-with-dependencies.jar \
-            https://repo1.maven.org/maven2/com/facebook/ktfmt/0.61/ktfmt-0.61-with-dependencies.jar
+      - uses: extractions/setup-just@v3
 
       - name: Check Kotlin formatting
-        run: java -jar .cache/ktfmt-0.61-with-dependencies.jar --kotlinlang-style --set-exit-if-changed --dry-run tauri-plugin-vpn/android/src
+        run: just check-kotlin

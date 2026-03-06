@@ -427,14 +427,14 @@ mod tests {
         .unwrap();
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_get_purchasable_plans_empty_by_default(pool: DbPool) {
         // No plans have price_stars set by default
         let plans = get_purchasable_plans(&pool).await.unwrap();
         assert!(plans.is_empty());
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_get_purchasable_plans_returns_configured(pool: DbPool) {
         make_plan_purchasable(&pool, "standard", 100, 30).await;
         make_plan_purchasable(&pool, "premium", 250, 30).await;
@@ -444,14 +444,14 @@ mod tests {
         assert!(plans[0].price_stars <= plans[1].price_stars); // ordered by price
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_get_current_subscription_none(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let sub = get_current_subscription(&pool, user_id).await.unwrap();
         assert!(sub.is_none());
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_get_current_subscription_exists(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(sub.unwrap().plan_id, plan_id);
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_complete_payment_creates_subscription(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
@@ -513,7 +513,7 @@ mod tests {
         assert_eq!(payment.credit_amount, 0);
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_complete_payment_idempotent(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
@@ -554,7 +554,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upgrade_expires_old_sub(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let standard_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(active_count, Some(1));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_credit_switch(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'premium'")
@@ -621,7 +621,7 @@ mod tests {
         assert_eq!(payment.status, "completed");
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_credit_switch_idempotent(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
         let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'premium'")
