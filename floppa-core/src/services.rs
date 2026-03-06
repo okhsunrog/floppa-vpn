@@ -165,10 +165,8 @@ pub async fn create_peer(
     }
 
     // For VLESS, verify server is configured and public key is provided
-    if protocol == "vless" {
-        if ctx.config.vless.is_none() || ctx.reality_public_key.is_none() {
-            return Err(FloppaError::VlessNotConfigured);
-        }
+    if protocol == "vless" && (ctx.config.vless.is_none() || ctx.reality_public_key.is_none()) {
+        return Err(FloppaError::VlessNotConfigured);
     }
 
     // Transaction: check limit + allocate resources + insert peer atomically
@@ -467,7 +465,7 @@ mod tests {
 
     // ── upsert_user ──
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upsert_new_user_grants_trial(pool: DbPool) {
         get_basic_plan_id(&pool).await;
 
@@ -501,7 +499,7 @@ mod tests {
         assert_eq!(sub_count, Some(1));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upsert_existing_user_no_trial(pool: DbPool) {
         get_basic_plan_id(&pool).await;
 
@@ -532,7 +530,7 @@ mod tests {
         assert_eq!(second.id, first.id);
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upsert_preserves_existing_profile_fields(pool: DbPool) {
         get_basic_plan_id(&pool).await;
 
@@ -566,7 +564,7 @@ mod tests {
         assert_eq!(result.photo_url.as_deref(), Some("https://photo.url"));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upsert_admin_flag_only_increases(pool: DbPool) {
         get_basic_plan_id(&pool).await;
 
@@ -587,7 +585,7 @@ mod tests {
         assert!(r3.is_admin);
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_upsert_no_basic_plan_no_trial(pool: DbPool) {
         // Remove migration-seeded basic plan
         sqlx::query!("DELETE FROM plans WHERE name = 'basic'")
@@ -603,13 +601,13 @@ mod tests {
 
     // ── allocate_ip ──
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_first_ip(pool: DbPool) {
         let ip = allocate_ip(&pool, "10.200.0.0/24").await.unwrap();
         assert_eq!(ip, "10.200.0.2"); // skips .0 (network) and .1 (gateway)
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_skips_assigned(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
@@ -626,7 +624,7 @@ mod tests {
         assert_eq!(ip, "10.200.0.3");
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_reuses_removed(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
@@ -642,7 +640,7 @@ mod tests {
         assert_eq!(ip, "10.200.0.2"); // removed peer's IP is reusable
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_subnet_full(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
@@ -659,7 +657,7 @@ mod tests {
         assert!(matches!(result, Err(FloppaError::NoAvailableIps)));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_invalid_subnet(pool: DbPool) {
         let result = allocate_ip(&pool, "not-a-subnet").await;
         assert!(matches!(result, Err(FloppaError::NoAvailableIps)));
@@ -678,7 +676,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_create_peer_success(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
@@ -704,7 +702,7 @@ mod tests {
         assert_eq!(status, "pending_add");
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_create_peer_no_subscription(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
@@ -714,7 +712,7 @@ mod tests {
         assert!(matches!(result, Err(FloppaError::NoActiveSubscription)));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_create_peer_limit_reached(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
@@ -741,7 +739,7 @@ mod tests {
         ));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_create_peer_with_device_info(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
@@ -772,7 +770,7 @@ mod tests {
 
     // ── find_peer_by_device_id ──
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_find_peer_by_device_id_found(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
@@ -790,7 +788,7 @@ mod tests {
         assert_eq!(result, Some(peer_id));
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_find_peer_by_device_id_not_found(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
@@ -800,7 +798,7 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    #[sqlx::test(migrations = "../../migrations")]
+    #[sqlx::test(migrations = "../migrations")]
     async fn test_find_peer_by_device_id_ignores_removed(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 

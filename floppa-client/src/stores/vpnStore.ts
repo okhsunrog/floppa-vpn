@@ -140,6 +140,7 @@ export const useVpnStore = defineStore(
       // (optimistic status + 500ms poll) is good enough for now.
       connectionInfo.value = {
         status: 'connecting',
+        protocol: null,
         server_endpoint: null,
         assigned_ip: null,
         connected_at: null,

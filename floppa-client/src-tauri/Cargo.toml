@@ -53,7 +53,7 @@ tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "27.0.0"
 # VLESS+REALITY protocol support
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "a79b07d" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "30753c5" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { version = "0.2.8", path = "../../../rust/shoes" }
 
@@ -81,13 +81,3 @@ tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [patch.crates-io]
 wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "ab1e808" }
-
-[profile.dev]
-incremental = true # Compile your binary in smaller steps.
-
-[profile.release]
-codegen-units = 1 # Allows LLVM to perform better optimization.
-lto = true        # Enables link-time-optimizations.
-opt-level = "s"   # Prioritizes small binary size. Use `3` if you prefer speed.
-panic = "abort"   # Higher performance by disabling panic handlers.
-strip = true      # Ensures debug symbols are removed.

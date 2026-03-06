@@ -1,16 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/floppa-core",
-    "crates/floppa-daemon",
-    "crates/floppa-server",
-    "crates/floppa-vless",
+    "floppa-core",
+    "floppa-daemon",
+    "floppa-server",
+    "floppa-vless",
+    "floppa-cli",
+    "floppa-test-tunnel",
 ]
 exclude = [
     "floppa-client/src-tauri",
     "tauri-plugin-vpn",
-    "crates/floppa-test-tunnel",
-    "crates/floppa-cli",
 ]
 
 [workspace.package]
@@ -50,4 +50,4 @@ axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Shared crate
-floppa-core = { path = "crates/floppa-core" }
+floppa-core = { path = "floppa-core" }

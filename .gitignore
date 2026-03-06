@@ -2,10 +2,8 @@
 CLAUDE.md
 
 /target
-crates/floppa-cli/target/
-crates/floppa-test-tunnel/target/
-floppa-client/src-tauri/target/
-tauri-plugin-vpn/target/
+floppa-client/src-tauri/target
+tauri-plugin-vpn/target
 release/
 floppa-vpn-release.tar.gz
 

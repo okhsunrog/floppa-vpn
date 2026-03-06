@@ -78,29 +78,29 @@ check-kotlin: ensure-ktfmt
 # Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
 check:
     just --unstable --fmt --check
+    just check-rust
+    just check-frontend
+    just check-kotlin
+
+# Rust: fmt + clippy + tests (workspace + excluded crates)
+check-rust:
     cargo fmt --check
     cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
-    cargo fmt --check --manifest-path crates/floppa-cli/Cargo.toml
-    cargo fmt --check --manifest-path crates/floppa-test-tunnel/Cargo.toml
     cargo clippy -- -D warnings
-    cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path crates/floppa-cli/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path crates/floppa-test-tunnel/Cargo.toml -- -D warnings
     cargo test
+
+# Frontend: format + type-check + lint + build
+check-frontend:
     cd floppa-web-shared && bun run format:check && bun run type-check && bun run lint:check
     cd floppa-face && bun run format:check && bun run type-check && bun run lint:check
     cd floppa-client && bun run format:check && bun run type-check && bun run lint:check && bun run build
-    just check-kotlin
 
 # Format all code (Rust + frontend + Kotlin)
 fmt:
     cargo fmt
     cargo fmt --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --manifest-path tauri-plugin-vpn/Cargo.toml
-    cargo fmt --manifest-path crates/floppa-cli/Cargo.toml
-    cargo fmt --manifest-path crates/floppa-test-tunnel/Cargo.toml
     cd floppa-web-shared && bun run format && bun run lint
     cd floppa-face && bun run format && bun run lint
     cd floppa-client && bun run format && bun run lint
@@ -109,10 +109,6 @@ fmt:
 # Lint (without auto-fix)
 lint:
     cargo clippy -- -D warnings
-    cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path crates/floppa-cli/Cargo.toml -- -D warnings
-    cargo clippy --manifest-path crates/floppa-test-tunnel/Cargo.toml -- -D warnings
     cd floppa-web-shared && bun run lint:check
     cd floppa-face && bun run lint:check
     cd floppa-client && bun run lint:check
@@ -196,7 +192,7 @@ deploy-android-test device="": (deploy-android device) (app-restart device)
 
 # Build the gotatun test tunnel binary
 build-test-tunnel:
-    cargo build --release --manifest-path crates/floppa-test-tunnel/Cargo.toml
+    cargo build --release -p floppa-test-tunnel
 
 # Run VPN integration tests (requires Docker + tests/integration/.env)
 test-integration: build-test-tunnel
@@ -208,7 +204,7 @@ test-speed-limit:
 
 # Build floppa-cli
 build-cli:
-    cargo build --release --manifest-path crates/floppa-cli/Cargo.toml
+    cargo build --release -p floppa-cli
 
 # Deploy to Moscow VPS via Ansible (builds, packages, then deploys)
 deploy: package
