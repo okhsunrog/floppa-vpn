@@ -27,6 +27,12 @@ enum Command {
         /// Use a WireGuard config file instead of fetching from API
         #[arg(long)]
         config: Option<String>,
+        /// TUN interface name
+        #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
+        interface: String,
+        /// Skip DNS configuration
+        #[arg(long)]
+        no_dns: bool,
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
@@ -55,7 +61,12 @@ async fn main() -> Result<()> {
         Command::Login { api_url } => {
             auth::login(&api_url).await?;
         }
-        Command::Connect { config, api_url } => {
+        Command::Connect {
+            config,
+            interface,
+            no_dns,
+            api_url,
+        } => {
             let config_str = match config {
                 Some(path) => std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?,
@@ -80,17 +91,25 @@ async fn main() -> Result<()> {
             };
 
             let wg_config = tunnel::WgConfig::from_config_str(&config_str)?;
-            eprintln!("Creating tunnel...");
-            let device = tunnel::create_tunnel(&wg_config).await?;
+            eprintln!("Creating tunnel on {interface}...");
+            let device = tunnel::create_tunnel(&wg_config, &interface).await?;
             eprintln!("Configuring networking...");
-            tunnel::configure_networking(&wg_config).await?;
-            dns::set_dns(&wg_config)?;
+            tunnel::configure_networking(&wg_config, &interface).await?;
+
+            if !no_dns {
+                dns::set_dns(&wg_config)?;
+            }
+
+            // Signal readiness (used by integration test harness)
+            println!("READY");
 
             eprintln!("Connected! Press Ctrl+C to disconnect.");
             tokio::signal::ctrl_c().await?;
 
             eprintln!("\nDisconnecting...");
-            dns::restore_dns()?;
+            if !no_dns {
+                dns::restore_dns()?;
+            }
             device.stop().await;
             eprintln!("Disconnected.");
         }

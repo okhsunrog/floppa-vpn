@@ -190,12 +190,8 @@ deploy-android-test device="": (deploy-android device) (app-restart device)
     echo "App PID: $pid"
     $ADB logcat -d --pid="$pid" | grep "FloppaVPN" | tail -50
 
-# Build the gotatun test tunnel binary
-build-test-tunnel:
-    cargo build --release -p floppa-test-tunnel
-
 # Run VPN integration tests (requires Docker + tests/integration/.env)
-test-integration: build-test-tunnel
+test-integration: build-cli
     cd tests/integration && uv run pytest -v
 
 # Run speed limit integration tests (requires Docker, runs locally)

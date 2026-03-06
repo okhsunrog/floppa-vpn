@@ -1207,17 +1207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "floppa-test-tunnel"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "gotatun",
- "ipnetwork",
- "tokio",
- "tun",
-]
-
-[[package]]
 name = "floppa-vless"
 version = "0.1.0"
 dependencies = [

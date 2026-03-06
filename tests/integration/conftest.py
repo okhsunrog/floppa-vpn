@@ -128,12 +128,12 @@ def docker_image() -> str:
 
 @pytest.fixture(scope="session")
 def tunnel_binary() -> str:
-    """Return path to the pre-built floppa-test-tunnel binary."""
-    binary = PROJECT_ROOT / "crates" / "floppa-test-tunnel" / "target" / "release" / "floppa-test-tunnel"
+    """Return path to the pre-built floppa-cli binary."""
+    binary = PROJECT_ROOT / "target" / "release" / "floppa-cli"
     if not binary.exists():
         pytest.skip(
-            f"floppa-test-tunnel binary not found at {binary}. "
-            "Build it first: cargo build --release --manifest-path crates/floppa-test-tunnel/Cargo.toml"
+            f"floppa-cli binary not found at {binary}. "
+            "Build it first: cargo build --release -p floppa-cli"
         )
     return str(binary)
 
@@ -248,18 +248,23 @@ def wg_go_container(docker_image, wg_config, wg_config_path, server_ip):
 
 @pytest.fixture(scope="module")
 def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
-    """Start a container with gotatun tunnel via floppa-test-tunnel binary."""
+    """Start a container with gotatun tunnel via floppa-cli."""
     name = f"floppa-gotatun-{uuid.uuid4().hex[:8]}"
     _start_container(docker_image, name)
 
     try:
         # Copy binary and config into container
-        docker_cp(tunnel_binary, name, "/test/floppa-test-tunnel")
-        docker_exec(name, ["chmod", "+x", "/test/floppa-test-tunnel"])
+        docker_cp(tunnel_binary, name, "/test/floppa-cli")
+        docker_exec(name, ["chmod", "+x", "/test/floppa-cli"])
         docker_cp(wg_config_path, name, "/test/wg0.conf")
 
         # Start the tunnel binary in the background
-        docker_exec_detach(name, ["/test/floppa-test-tunnel", "/test/wg0.conf"])
+        docker_exec_detach(name, [
+            "/test/floppa-cli", "connect",
+            "--config", "/test/wg0.conf",
+            "--interface", "floppa-test0",
+            "--no-dns",
+        ])
 
         # Wait for the tunnel interface to come up
         deadline = time.time() + 15
