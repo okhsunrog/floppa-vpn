@@ -58,11 +58,23 @@ onMounted(async () => {
   // Auto-login with Mini App initData
   miniAppLoading.value = true
   try {
+    // Extract Telegram user ID for account-switch detection
+    let telegramUserId: number | undefined
+    try {
+      const userJson = new URLSearchParams(initData).get('user')
+      if (userJson) {
+        const id = JSON.parse(userJson).id
+        if (typeof id === 'number') telegramUserId = id
+      }
+    } catch {
+      /* non-critical */
+    }
+
     const { data: response } = await telegramMiniAppAuth({
       body: { init_data: initData },
       throwOnError: true,
     })
-    auth.setAuth(response.token, response.user)
+    auth.setAuth(response.token, response.user, telegramUserId)
     router.push('/')
   } catch {
     loginError.value = t('login.miniAppFailed')
