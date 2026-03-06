@@ -14,7 +14,7 @@ mod android_ipc;
 // iOS backend — stub for future implementation
 mod ios;
 
-use super::state::{TrafficStats, WgConfig};
+use super::state::{ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -41,9 +41,10 @@ pub trait VpnBackend: Send + Sync {
     /// `endpoint` is the pre-resolved server address so the hostname is only
     /// resolved once. On Linux, `fwmark` is used for policy routing to prevent
     /// VPN packets from being routed back through the VPN interface.
+    /// For VLESS tunnels, `fwmark` and `endpoint` are ignored (VLESS resolves internally).
     async fn start(
         &self,
-        config: &WgConfig,
+        config: &ProtocolConfig,
         interface_name: &str,
         fwmark: Option<u32>,
         endpoint: SocketAddr,
@@ -52,7 +53,7 @@ pub trait VpnBackend: Send + Sync {
     /// Start tunnel from a file descriptor provided by the platform VPN service.
     ///
     /// Used on Android (fd from VpnService) and potentially iOS.
-    async fn start_with_fd(&self, config: &WgConfig, tun_fd: i32) -> Result<(), String>;
+    async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String>;
 
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), String>;

@@ -1,7 +1,7 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
-use super::state::{ConnectionInfo, ConnectionStatus, VpnState, WgConfig};
+use super::state::{ConnectionInfo, ConnectionStatus, ProtocolConfig, VpnState};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -33,7 +33,7 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
     vpn_config::get_device_name()
 }
 
-/// Parse a WireGuard config string, set it as the active config, and persist it.
+/// Parse a VPN config string (WireGuard config or VLESS URI), set as active, and persist.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_config(
@@ -41,9 +41,9 @@ pub async fn set_active_config(
     state: State<'_, Arc<VpnState>>,
 ) -> Result<(), String> {
     info!("Setting active config");
-    let config = WgConfig::from_config_str(&config_str)?;
+    let config = vpn_config::parse_config_str(&config_str)?;
+    vpn_config::save_vpn_config(&config);
     *state.config.write().await = Some(config);
-    vpn_config::save_wg_config(&config_str);
     Ok(())
 }
 
@@ -61,19 +61,18 @@ pub async fn clear_config(
         disconnect(app, state.clone(), backend, platform).await?;
     }
     *state.config.write().await = None;
-    vpn_config::delete_wg_config();
+    vpn_config::delete_vpn_config();
     Ok(())
 }
 
-/// Load persisted WireGuard config into memory (called on startup).
+/// Load persisted VPN config into memory (called on startup).
 #[tauri::command]
 #[specta::specta]
 pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, String> {
     if state.config.read().await.is_some() {
         return Ok(true);
     }
-    if let Some(config_str) = vpn_config::load_wg_config() {
-        let config = WgConfig::from_config_str(&config_str)?;
+    if let Some(config) = vpn_config::load_vpn_config() {
         *state.config.write().await = Some(config);
         Ok(true)
     } else {
@@ -81,28 +80,59 @@ pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, 
     }
 }
 
-/// Get current saved config (without private key for security)
+/// Get current saved config (without private keys for security)
 #[tauri::command]
 #[specta::specta]
-pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<WgConfigSafe>, String> {
+pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<ConfigSafe>, String> {
     let config = state.config.read().await;
-    Ok(config.as_ref().map(|c| WgConfigSafe {
-        address: c.address.clone(),
-        dns: c.dns.clone(),
-        peer_endpoint: c.peer_endpoint.clone(),
-        allowed_ips: c.allowed_ips.clone(),
-        mtu: c.mtu,
-    }))
+    Ok(config.as_ref().map(ConfigSafe::from_config))
 }
 
-/// Safe config info (no private key)
+/// Safe config info (no private keys), tagged by protocol
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
-pub struct WgConfigSafe {
-    pub address: String,
-    pub dns: Option<String>,
-    pub peer_endpoint: String,
-    pub allowed_ips: String,
-    pub mtu: Option<u16>,
+#[serde(tag = "protocol")]
+pub enum ConfigSafe {
+    #[serde(rename = "wireguard")]
+    WireGuard {
+        address: String,
+        dns: Option<String>,
+        peer_endpoint: String,
+        allowed_ips: String,
+        mtu: Option<u16>,
+    },
+    #[serde(rename = "vless")]
+    Vless {
+        server_addr: String,
+        server_name: String,
+        flow: Option<String>,
+        address: String,
+        dns: Option<String>,
+        allowed_ips: String,
+        mtu: Option<u16>,
+    },
+}
+
+impl ConfigSafe {
+    fn from_config(config: &ProtocolConfig) -> Self {
+        match config {
+            ProtocolConfig::WireGuard(wg) => Self::WireGuard {
+                address: wg.address.clone(),
+                dns: wg.dns.clone(),
+                peer_endpoint: wg.peer_endpoint.clone(),
+                allowed_ips: wg.allowed_ips.clone(),
+                mtu: wg.mtu,
+            },
+            ProtocolConfig::Vless(vless) => Self::Vless {
+                server_addr: vless.server_addr.clone(),
+                server_name: vless.server_name.clone(),
+                flow: vless.flow.clone(),
+                address: vless.address.clone(),
+                dns: vless.dns.clone(),
+                allowed_ips: vless.allowed_ips.clone(),
+                mtu: vless.mtu,
+            },
+        }
+    }
 }
 
 /// Split tunneling mode
@@ -206,14 +236,22 @@ pub async fn connect(
     }
 
     #[cfg(target_os = "android")]
-    let result = connect_android(&app, &state, &backend, config, split_mode, selected_apps).await;
+    let result = connect_android(
+        &app,
+        &state,
+        &backend,
+        config.clone(),
+        split_mode,
+        selected_apps,
+    )
+    .await;
 
     #[cfg(not(target_os = "android"))]
     let result = connect_desktop(
         &state,
         &backend,
         &platform,
-        config,
+        config.clone(),
         split_mode,
         selected_apps,
     )
@@ -227,11 +265,21 @@ async fn connect_android(
     app: &AppHandle,
     state: &Arc<VpnState>,
     backend: &Arc<dyn VpnBackend>,
-    config: WgConfig,
+    config: ProtocolConfig,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
     use tauri_plugin_vpn::VpnExt;
+
+    // Android VLESS support is deferred
+    let wg = match &config {
+        ProtocolConfig::WireGuard(wg) => wg,
+        ProtocolConfig::Vless(_) => {
+            let mut conn = state.connection.write().await;
+            conn.status = ConnectionStatus::Disconnected;
+            return Err("VLESS is not yet supported on Android".to_string());
+        }
+    };
 
     let granted = app
         .vpn()
@@ -243,13 +291,13 @@ async fn connect_android(
         return Err("VPN permission denied".to_string());
     }
 
-    let wg_config_str = config.to_config_str();
+    let wg_config_str = wg.to_config_str();
     let mut vpn_config = tauri_plugin_vpn::VpnConfig {
-        ipv4_addr: config.address.clone(),
+        ipv4_addr: wg.address.clone(),
         ipv6_addr: None,
         routes: vec!["0.0.0.0/0".into(), "::/0".into()],
-        dns: config.dns.clone(),
-        mtu: config.get_mtu() as u32,
+        dns: wg.dns.clone(),
+        mtu: wg.get_mtu() as u32,
         disallowed_apps: vec![],
         allowed_apps: vec![],
         wg_config: Some(wg_config_str),
@@ -323,8 +371,8 @@ async fn connect_android(
     let mut conn = state.connection.write().await;
     conn.status = ConnectionStatus::Connected;
     conn.connected_at = Some(chrono::Utc::now().timestamp());
-    conn.server_endpoint = Some(config.peer_endpoint.clone());
-    conn.assigned_ip = Some(config.address.clone());
+    conn.server_endpoint = Some(config.server_endpoint_display());
+    conn.assigned_ip = Some(config.assigned_ip_display());
     info!("Connected successfully on Android");
     Ok(())
 }
@@ -334,20 +382,17 @@ async fn connect_desktop(
     state: &Arc<VpnState>,
     backend: &Arc<dyn VpnBackend>,
     platform: &Arc<PlatformImpl>,
-    config: WgConfig,
+    config: ProtocolConfig,
     _split_mode: Option<SplitMode>,
     _selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let endpoint = tokio::net::lookup_host(&config.peer_endpoint)
+    // Resolve endpoint for both protocols (used for routing)
+    let endpoint_host = config.endpoint_host_port();
+    let endpoint = tokio::net::lookup_host(endpoint_host)
         .await
-        .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
+        .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", endpoint_host))?
         .next()
-        .ok_or_else(|| {
-            format!(
-                "Endpoint '{}' resolved to no addresses",
-                config.peer_endpoint
-            )
-        })?;
+        .ok_or_else(|| format!("Endpoint '{}' resolved to no addresses", endpoint_host))?;
     let endpoint_ip = endpoint.ip();
 
     #[cfg(target_os = "linux")]
@@ -359,10 +404,12 @@ async fn connect_desktop(
     }
 
     #[cfg(target_os = "linux")]
-    let fwmark = if has_cap_net_admin() {
+    let fwmark = if config.is_wireguard() && has_cap_net_admin() {
         Some(FWMARK)
     } else {
-        info!("CAP_NET_ADMIN not present, running without fwmark");
+        if config.is_wireguard() {
+            info!("CAP_NET_ADMIN not present, running without fwmark");
+        }
         None
     };
 
@@ -421,30 +468,45 @@ async fn connect_desktop(
                 error!("Failed to configure DNS: {e}");
             }
 
-            {
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::VerifyingHandshake;
-            }
-            info!("Tunnel up, verifying handshake...");
+            // Protocol-specific connection verification
+            if config.is_wireguard() {
+                {
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::VerifyingHandshake;
+                }
+                info!("Tunnel up, verifying WireGuard handshake...");
 
-            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                .await
-                .is_err()
-            {
-                info!("No handshake after 5s — peer likely invalid, disconnecting");
-                let _ = platform.cleanup(INTERFACE_NAME).await;
-                let _ = backend.stop().await;
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Disconnected;
-                return Err("No WireGuard handshake — config may be invalid".to_string());
+                if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                    .await
+                    .is_err()
+                {
+                    info!("No handshake after 5s — peer likely invalid, disconnecting");
+                    let _ = platform.cleanup(INTERFACE_NAME).await;
+                    let _ = backend.stop().await;
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::Disconnected;
+                    return Err("No WireGuard handshake — config may be invalid".to_string());
+                }
+            } else {
+                // VLESS: connection is established during tunnel creation.
+                // Just verify the tunnel is still running.
+                info!("VLESS tunnel up, verifying...");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if !backend.get_all_info().await.is_some_and(|i| i.is_running) {
+                    let _ = platform.cleanup(INTERFACE_NAME).await;
+                    let _ = backend.stop().await;
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::Disconnected;
+                    return Err("VLESS tunnel failed to start".to_string());
+                }
             }
 
             state.speed_tracker.write().await.reset();
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Connected;
             conn.connected_at = Some(chrono::Utc::now().timestamp());
-            conn.server_endpoint = Some(config.peer_endpoint.clone());
-            conn.assigned_ip = Some(config.address.clone());
+            conn.server_endpoint = Some(config.server_endpoint_display());
+            conn.assigned_ip = Some(config.assigned_ip_display());
             info!("Connected successfully");
             Ok(())
         }
@@ -554,8 +616,8 @@ pub async fn get_connection_info(
             conn.connected_at = Some(connected_at);
             conn.last_handshake = info.as_ref().and_then(|i| i.last_handshake);
             if let Some(cfg) = config.as_ref() {
-                conn.server_endpoint = Some(cfg.peer_endpoint.clone());
-                conn.assigned_ip = Some(cfg.address.clone());
+                conn.server_endpoint = Some(cfg.server_endpoint_display());
+                conn.assigned_ip = Some(cfg.assigned_ip_display());
             }
             state.speed_tracker.write().await.reset();
             info!("Detected running tunnel, updated status to Connected");

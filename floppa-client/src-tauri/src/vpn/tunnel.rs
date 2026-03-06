@@ -321,9 +321,52 @@ impl Drop for GotatunTunnel {
     }
 }
 
+/// Active tunnel — wraps either a WireGuard (gotatun) or VLESS tunnel.
+enum ActiveTunnel {
+    WireGuard(GotatunTunnel),
+    Vless(shoes::api::VlessTunnel),
+}
+
+impl ActiveTunnel {
+    async fn get_stats(&self) -> Option<TrafficStats> {
+        match self {
+            Self::WireGuard(t) => t.get_stats().await.ok(),
+            Self::Vless(t) => {
+                let s = t.get_stats();
+                Some(TrafficStats {
+                    tx_bytes: s.tx_bytes,
+                    rx_bytes: s.rx_bytes,
+                    ..Default::default()
+                })
+            }
+        }
+    }
+
+    async fn get_last_handshake(&self) -> Option<i64> {
+        match self {
+            Self::WireGuard(t) => t.get_last_handshake().await,
+            Self::Vless(_) => None, // VLESS has no WireGuard handshake
+        }
+    }
+
+    fn connection_duration(&self) -> Option<Duration> {
+        match self {
+            Self::WireGuard(t) => t.connection_duration(),
+            Self::Vless(t) => Some(t.connection_duration()),
+        }
+    }
+
+    async fn stop(self) -> Result<(), String> {
+        match self {
+            Self::WireGuard(t) => t.stop().await,
+            Self::Vless(t) => t.stop().await,
+        }
+    }
+}
+
 /// Tunnel manager that owns the tunnel and provides thread-safe access
 pub struct TunnelManager {
-    tunnel: RwLock<Option<GotatunTunnel>>,
+    tunnel: RwLock<Option<ActiveTunnel>>,
 }
 
 impl TunnelManager {
@@ -333,11 +376,19 @@ impl TunnelManager {
         })
     }
 
-    /// Start tunnel on desktop platforms (creates TUN device)
+    /// Stop any existing tunnel (helper).
+    async fn stop_existing(tunnel_guard: &mut Option<ActiveTunnel>) -> Result<(), String> {
+        if let Some(tunnel) = tunnel_guard.take() {
+            tunnel.stop().await?;
+        }
+        Ok(())
+    }
+
+    /// Start WireGuard tunnel on desktop platforms (creates TUN device)
     ///
     /// `fwmark` is used on Linux for policy routing to ensure VPN packets bypass the VPN interface
     #[cfg(not(target_os = "android"))]
-    pub async fn start(
+    pub async fn start_wireguard(
         &self,
         config: &WgConfig,
         interface_name: &str,
@@ -345,55 +396,60 @@ impl TunnelManager {
         endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
+        Self::stop_existing(&mut tunnel_guard).await?;
 
-        // Stop existing tunnel if any
-        if let Some(tunnel) = tunnel_guard.take() {
-            tunnel.stop().await?;
-        }
-
-        // Create new tunnel
         let tunnel = GotatunTunnel::new(config, interface_name, fwmark, endpoint).await?;
-        *tunnel_guard = Some(tunnel);
-
+        *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
         Ok(())
     }
 
-    /// Start tunnel on Android using fd from VpnService
+    /// Start WireGuard tunnel on Android using fd from VpnService
     #[cfg(target_os = "android")]
-    pub async fn start(
+    pub async fn start_wireguard_with_fd(
         &self,
-        _config: &WgConfig,
-        _interface_name: &str,
-        _fwmark: Option<u32>,
+        config: &WgConfig,
+        tun_fd: RawFd,
     ) -> Result<(), String> {
-        // On Android, we need to wait for the fd from VpnService
-        // Use start_with_fd instead after receiving the fd
-        Err("On Android, call start_with_fd() after receiving fd from VpnService".to_string())
+        let mut tunnel_guard = self.tunnel.write().await;
+        Self::stop_existing(&mut tunnel_guard).await?;
+
+        let tunnel = GotatunTunnel::from_fd(config, tun_fd).await?;
+        *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
+        Ok(())
     }
 
-    /// Start tunnel using a raw file descriptor (Android only)
-    #[cfg(target_os = "android")]
-    pub async fn start_with_fd(&self, config: &WgConfig, tun_fd: RawFd) -> Result<(), String> {
+    /// Start VLESS tunnel on desktop platforms (creates TUN device)
+    #[cfg(not(target_os = "android"))]
+    pub async fn start_vless(
+        &self,
+        config: &shoes::api::VlessConfig,
+        interface_name: &str,
+    ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
+        Self::stop_existing(&mut tunnel_guard).await?;
 
-        // Stop existing tunnel if any
-        if let Some(tunnel) = tunnel_guard.take() {
-            tunnel.stop().await?;
-        }
+        let tunnel = shoes::api::VlessTunnel::new(config, interface_name).await?;
+        *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
+        Ok(())
+    }
 
-        // Create new tunnel from fd
-        let tunnel = GotatunTunnel::from_fd(config, tun_fd).await?;
-        *tunnel_guard = Some(tunnel);
+    /// Start VLESS tunnel using a raw file descriptor (Android/iOS)
+    pub async fn start_vless_with_fd(
+        &self,
+        config: &shoes::api::VlessConfig,
+        tun_fd: i32,
+    ) -> Result<(), String> {
+        let mut tunnel_guard = self.tunnel.write().await;
+        Self::stop_existing(&mut tunnel_guard).await?;
 
+        let tunnel = shoes::api::VlessTunnel::from_fd(config, tun_fd).await?;
+        *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
         Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
-        if let Some(tunnel) = tunnel_guard.take() {
-            tunnel.stop().await?;
-        }
-        Ok(())
+        Self::stop_existing(&mut tunnel_guard).await
     }
 
     pub async fn is_running(&self) -> bool {
@@ -402,32 +458,23 @@ impl TunnelManager {
 
     pub async fn get_stats(&self) -> Option<TrafficStats> {
         let tunnel_guard = self.tunnel.read().await;
-        if let Some(tunnel) = tunnel_guard.as_ref() {
-            tunnel.get_stats().await.ok()
-        } else {
-            None
+        match tunnel_guard.as_ref() {
+            Some(tunnel) => tunnel.get_stats().await,
+            None => None,
         }
     }
 
     pub async fn get_last_handshake(&self) -> Option<i64> {
         let tunnel_guard = self.tunnel.read().await;
-        if let Some(tunnel) = tunnel_guard.as_ref() {
-            tunnel.get_last_handshake().await
-        } else {
-            None
+        match tunnel_guard.as_ref() {
+            Some(tunnel) => tunnel.get_last_handshake().await,
+            None => None,
         }
     }
 
     pub async fn get_connection_duration(&self) -> Option<Duration> {
         let tunnel_guard = self.tunnel.read().await;
         tunnel_guard.as_ref().and_then(|t| t.connection_duration())
-    }
-
-    pub async fn get_interface_name(&self) -> Option<String> {
-        let tunnel_guard = self.tunnel.read().await;
-        tunnel_guard
-            .as_ref()
-            .map(|t| t.interface_name().to_string())
     }
 }
 

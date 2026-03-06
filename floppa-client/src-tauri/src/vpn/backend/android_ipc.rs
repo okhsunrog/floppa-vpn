@@ -14,7 +14,7 @@
 
 use super::{VpnBackend, VpnFullInfo};
 use crate::vpn::rpc::VpnRpcClient;
-use crate::vpn::state::{TrafficStats, WgConfig};
+use crate::vpn::state::{ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -70,7 +70,7 @@ impl AndroidIpcBackend {
 impl VpnBackend for AndroidIpcBackend {
     async fn start(
         &self,
-        _config: &WgConfig,
+        _config: &ProtocolConfig,
         _interface_name: &str,
         _fwmark: Option<u32>,
         _endpoint: std::net::SocketAddr,
@@ -81,7 +81,7 @@ impl VpnBackend for AndroidIpcBackend {
         Err("On Android, tunnel starts via VpnService JNI, not through backend.start()".into())
     }
 
-    async fn start_with_fd(&self, _config: &WgConfig, _tun_fd: i32) -> Result<(), String> {
+    async fn start_with_fd(&self, _config: &ProtocolConfig, _tun_fd: i32) -> Result<(), String> {
         // Same as start() — not used in two-process architecture.
         Err(
             "On Android, tunnel starts via VpnService JNI, not through backend.start_with_fd()"
