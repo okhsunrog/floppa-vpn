@@ -40,7 +40,8 @@ pub struct MySubscription {
 #[derive(Serialize, ToSchema)]
 pub struct MyPeer {
     id: i64,
-    assigned_ip: String,
+    protocol: String,
+    assigned_ip: Option<String>,
     sync_status: String,
     tx_bytes: i64,
     rx_bytes: i64,
@@ -54,7 +55,8 @@ pub struct MyPeer {
 #[derive(Serialize, ToSchema)]
 pub struct CreatePeerResponse {
     id: i64,
-    assigned_ip: String,
+    protocol: String,
+    assigned_ip: Option<String>,
     config: String,
 }
 
@@ -64,6 +66,8 @@ pub struct CreatePeerRequest {
     device_name: Option<String>,
     #[serde(default)]
     device_id: Option<String>,
+    #[serde(default)]
+    protocol: Option<String>,
 }
 
 /// Get current authenticated user info
@@ -140,7 +144,7 @@ pub(super) async fn get_my_peers(
     let peers: Vec<MyPeer> = sqlx::query_as!(
         MyPeer,
         r#"
-        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
+        SELECT id, protocol, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
         FROM peers
         WHERE user_id = $1 AND sync_status != 'removed'
         ORDER BY created_at DESC
@@ -181,23 +185,31 @@ pub(super) async fn create_my_peer(
         .get_encryption_key()
         .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
+    let reality_public_key = state
+        .secrets
+        .vless
+        .as_ref()
+        .map(|v| v.reality_public_key.as_str());
+
+    let ctx = services::CreatePeerContext {
+        pool: &state.pool,
+        config: &state.config,
+        encryption_key: &encryption_key,
+        wg_public_key: &state.wg_public_key,
+        reality_public_key,
+    };
+
     let options = body.map(|Json(req)| services::CreatePeerOptions {
         device_name: req.device_name,
         device_id: req.device_id,
+        protocol: req.protocol,
     });
 
-    let result = services::create_peer(
-        &state.pool,
-        auth.user_id,
-        &state.config,
-        &encryption_key,
-        &state.wg_public_key,
-        options,
-    )
-    .await?;
+    let result = services::create_peer(&ctx, auth.user_id, options).await?;
 
     Ok(Json(CreatePeerResponse {
         id: result.id,
+        protocol: result.protocol,
         assigned_ip: result.assigned_ip,
         config: result.config,
     }))
@@ -222,7 +234,7 @@ pub(super) async fn delete_my_peer(
     Path(peer_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
     let result = sqlx::query!(
-        "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND user_id = $2 AND sync_status = 'active'",
+        "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND user_id = $2 AND sync_status IN ('active', 'pending_add')",
         peer_id,
         auth.user_id
     )
@@ -236,7 +248,7 @@ pub(super) async fn delete_my_peer(
     Ok(StatusCode::OK)
 }
 
-/// Get WireGuard config for a peer owned by the current user
+/// Get config for a peer owned by the current user (WireGuard .conf or vless:// URI)
 #[utoipa::path(
     get,
     path = "/me/peers/{id}/config",
@@ -244,7 +256,7 @@ pub(super) async fn delete_my_peer(
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Peer ID")),
     responses(
-        (status = 200, description = "WireGuard config file", body = String),
+        (status = 200, description = "Peer config (WireGuard .conf or vless:// URI)", body = String),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 404, body = ApiError, description = "Peer not found"),
     )
@@ -256,7 +268,7 @@ pub(super) async fn get_my_peer_config(
 ) -> Result<String, ApiError> {
     let peer = sqlx::query!(
         r#"
-        SELECT private_key_encrypted, assigned_ip
+        SELECT protocol, private_key_encrypted, assigned_ip, vless_uuid
         FROM peers
         WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'
         "#,
@@ -267,28 +279,50 @@ pub(super) async fn get_my_peer_config(
     .await?
     .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
-    // Decrypt the private key using secrets
-    let encryption_key = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
-        .get_encryption_key()
-        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
+    match peer.protocol.as_str() {
+        "vless" => {
+            let vless_uuid = peer
+                .vless_uuid
+                .as_deref()
+                .ok_or_else(|| ApiError::internal(format!("VLESS peer {peer_id} has no UUID")))?;
+            let reality_public_key = state
+                .secrets
+                .vless
+                .as_ref()
+                .map(|v| v.reality_public_key.as_str())
+                .ok_or_else(|| ApiError::internal("VLESS secrets not configured"))?;
 
-    let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
-    })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key)
-        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
+            services::generate_vless_uri(vless_uuid, &state.config, reality_public_key)
+                .map_err(|e| ApiError::internal(format!("Failed to generate VLESS URI: {e}")))
+        }
+        _ => {
+            // WireGuard
+            let encryption_key = state
+                .secrets
+                .auth
+                .as_ref()
+                .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
+                .get_encryption_key()
+                .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
-    let config = services::generate_wg_config(
-        &private_key,
-        &peer.assigned_ip,
-        &state.config,
-        &state.wg_public_key,
-    );
-    Ok(config)
+            let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
+                ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
+            })?;
+            let private_key = decrypt_private_key(encrypted, &encryption_key)
+                .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
+
+            let assigned_ip = peer.assigned_ip.as_deref().ok_or_else(|| {
+                ApiError::internal(format!("WireGuard peer {peer_id} has no assigned IP"))
+            })?;
+
+            Ok(services::generate_wg_config(
+                &private_key,
+                assigned_ip,
+                &state.config,
+                &state.wg_public_key,
+            ))
+        }
+    }
 }
 
 /// Send WireGuard config to user via Telegram bot
@@ -310,10 +344,10 @@ pub(super) async fn send_my_peer_config(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    // Get peer's encrypted key and IP
+    // Get peer info
     let peer = sqlx::query!(
         r#"
-        SELECT private_key_encrypted, assigned_ip
+        SELECT protocol, private_key_encrypted, assigned_ip, vless_uuid
         FROM peers
         WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'
         "#,
@@ -324,29 +358,53 @@ pub(super) async fn send_my_peer_config(
     .await?
     .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
-    let assigned_ip = peer.assigned_ip.clone();
+    let (config, filename) = match peer.protocol.as_str() {
+        "vless" => {
+            let vless_uuid = peer
+                .vless_uuid
+                .as_deref()
+                .ok_or_else(|| ApiError::internal(format!("VLESS peer {peer_id} has no UUID")))?;
+            let reality_public_key = state
+                .secrets
+                .vless
+                .as_ref()
+                .map(|v| v.reality_public_key.as_str())
+                .ok_or_else(|| ApiError::internal("VLESS secrets not configured"))?;
 
-    // Decrypt and generate config
-    let encryption_key = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
-        .get_encryption_key()
-        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
+            let uri = services::generate_vless_uri(vless_uuid, &state.config, reality_public_key)
+                .map_err(|e| {
+                ApiError::internal(format!("Failed to generate VLESS URI: {e}"))
+            })?;
+            (uri, "floppa-vpn-vless.txt".to_string())
+        }
+        _ => {
+            let encryption_key = state
+                .secrets
+                .auth
+                .as_ref()
+                .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
+                .get_encryption_key()
+                .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
 
-    let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
-    })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key)
-        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
+            let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
+                ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
+            })?;
+            let private_key = decrypt_private_key(encrypted, &encryption_key)
+                .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
 
-    let config = services::generate_wg_config(
-        &private_key,
-        &assigned_ip,
-        &state.config,
-        &state.wg_public_key,
-    );
+            let assigned_ip = peer.assigned_ip.as_deref().ok_or_else(|| {
+                ApiError::internal(format!("WireGuard peer {peer_id} has no assigned IP"))
+            })?;
+
+            let wg_config = services::generate_wg_config(
+                &private_key,
+                assigned_ip,
+                &state.config,
+                &state.wg_public_key,
+            );
+            (wg_config, format!("floppa-vpn-{assigned_ip}.conf"))
+        }
+    };
 
     // Get user's telegram_id
     let telegram_id =
@@ -355,7 +413,6 @@ pub(super) async fn send_my_peer_config(
             .await?;
 
     // Send config as document via Telegram bot
-    let filename = format!("floppa-vpn-{assigned_ip}.conf");
     let file = InputFile::memory(config.into_bytes()).file_name(filename);
 
     state
@@ -389,7 +446,7 @@ pub(super) async fn get_my_peer_by_device(
     let peer: MyPeer = sqlx::query_as!(
         MyPeer,
         r#"
-        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
+        SELECT id, protocol, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
         FROM peers
         WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')
         "#,

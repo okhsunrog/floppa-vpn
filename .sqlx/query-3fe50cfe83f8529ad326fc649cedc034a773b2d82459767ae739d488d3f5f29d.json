@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.id, p.public_key AS \"public_key!\", p.assigned_ip AS \"assigned_ip!\", p.user_id,\n               pl.default_speed_limit_mbps AS speed_limit_mbps\n        FROM peers p\n        LEFT JOIN subscriptions s ON s.user_id = p.user_id\n          AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LEFT JOIN plans pl ON s.plan_id = pl.id\n        WHERE p.sync_status = 'pending_add' AND p.protocol = 'wireguard'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "public_key!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned_ip!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "speed_limit_mbps",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "3fe50cfe83f8529ad326fc649cedc034a773b2d82459767ae739d488d3f5f29d"
+}

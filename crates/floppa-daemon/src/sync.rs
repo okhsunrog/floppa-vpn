@@ -156,13 +156,13 @@ async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
 
     let peers = sqlx::query!(
         r#"
-        SELECT p.id, p.assigned_ip,
+        SELECT p.id, p.assigned_ip AS "assigned_ip!",
                pl.default_speed_limit_mbps AS speed_limit_mbps
         FROM peers p
         LEFT JOIN subscriptions s ON s.user_id = p.user_id
           AND (s.expires_at IS NULL OR s.expires_at > NOW())
         LEFT JOIN plans pl ON s.plan_id = pl.id
-        WHERE p.sync_status = 'active'
+        WHERE p.sync_status = 'active' AND p.protocol = 'wireguard'
         "#,
     )
     .fetch_all(pool)
@@ -211,16 +211,16 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
         .map(|r| r.enabled)
         .unwrap_or(false);
 
-    // Process pending additions
+    // Process pending additions (WireGuard only — VLESS peers are handled by floppa-vless)
     let pending_add = sqlx::query!(
         r#"
-        SELECT p.id, p.public_key, p.assigned_ip, p.user_id,
+        SELECT p.id, p.public_key AS "public_key!", p.assigned_ip AS "assigned_ip!", p.user_id,
                pl.default_speed_limit_mbps AS speed_limit_mbps
         FROM peers p
         LEFT JOIN subscriptions s ON s.user_id = p.user_id
           AND (s.expires_at IS NULL OR s.expires_at > NOW())
         LEFT JOIN plans pl ON s.plan_id = pl.id
-        WHERE p.sync_status = 'pending_add'
+        WHERE p.sync_status = 'pending_add' AND p.protocol = 'wireguard'
         "#,
     )
     .fetch_all(pool)
@@ -262,9 +262,9 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
         }
     }
 
-    // Process pending removals
+    // Process pending removals (WireGuard only)
     let pending_remove = sqlx::query!(
-        "SELECT id, public_key, assigned_ip FROM peers WHERE sync_status = 'pending_remove'",
+        r#"SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!" FROM peers WHERE sync_status = 'pending_remove' AND protocol = 'wireguard'"#,
     )
     .fetch_all(pool)
     .await?;
@@ -320,16 +320,16 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
         return Ok(());
     }
 
-    // Get all active peers and current speed limit from plan
+    // Get all active WireGuard peers and current speed limit from plan
     let peers = sqlx::query!(
         r#"
-        SELECT p.id, p.assigned_ip,
+        SELECT p.id, p.assigned_ip AS "assigned_ip!",
                pl.default_speed_limit_mbps AS speed_limit_mbps
         FROM peers p
         LEFT JOIN subscriptions s ON s.user_id = p.user_id
           AND (s.expires_at IS NULL OR s.expires_at > NOW())
         LEFT JOIN plans pl ON s.plan_id = pl.id
-        WHERE p.user_id = $1 AND p.sync_status = 'active'
+        WHERE p.user_id = $1 AND p.sync_status = 'active' AND p.protocol = 'wireguard'
         "#,
         user_id,
     )
@@ -339,7 +339,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
     if peers.is_empty() {
         debug!(
             user_id,
-            "No active peers for user, skipping rate limit update"
+            "No active WireGuard peers for user, skipping rate limit update"
         );
         return Ok(());
     }
@@ -453,13 +453,13 @@ async fn update_traffic_stats(
 async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
     let now = Utc::now();
 
-    // Find users with expired subscriptions and active peers
+    // Find users with expired subscriptions and active WireGuard peers
     let expired = sqlx::query_scalar!(
         r#"
         SELECT DISTINCT p.id
         FROM peers p
         JOIN users u ON p.user_id = u.id
-        WHERE p.sync_status = 'active'
+        WHERE p.sync_status = 'active' AND p.protocol = 'wireguard'
         AND NOT EXISTS (
             SELECT 1 FROM subscriptions s
             WHERE s.user_id = u.id

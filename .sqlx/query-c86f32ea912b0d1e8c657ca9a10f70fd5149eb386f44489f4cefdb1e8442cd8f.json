@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        WHERE p.sync_status != 'removed'\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
+  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.protocol, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        WHERE p.sync_status != 'removed'\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
   "describe": {
     "columns": [
       {
@@ -20,41 +20,46 @@
       },
       {
         "ordinal": 3,
-        "name": "assigned_ip",
+        "name": "protocol",
         "type_info": "Text"
       },
       {
         "ordinal": 4,
-        "name": "sync_status",
+        "name": "assigned_ip",
         "type_info": "Text"
       },
       {
         "ordinal": 5,
+        "name": "sync_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
         "name": "tx_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "rx_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "last_handshake",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "device_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "device_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "client_version",
         "type_info": "Text"
       }
@@ -67,6 +72,7 @@
       false,
       null,
       false,
+      true,
       false,
       false,
       false,
@@ -76,5 +82,5 @@
       true
     ]
   },
-  "hash": "a571d0f594fa238f586911aa225831009ba0fe9e12d06c5e8b79a082616104c0"
+  "hash": "c86f32ea912b0d1e8c657ca9a10f70fd5149eb386f44489f4cefdb1e8442cd8f"
 }

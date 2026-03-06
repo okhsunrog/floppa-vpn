@@ -15,6 +15,9 @@ use veil::Redact;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub wireguard: WireGuardConfig,
+    /// VLESS+REALITY configuration (optional — only needed if VLESS is offered)
+    #[serde(default)]
+    pub vless: Option<VlessConfig>,
     #[serde(default)]
     pub bot: Option<BotConfig>,
     #[serde(default)]
@@ -94,6 +97,30 @@ fn default_total_bandwidth() -> u32 {
     1000 // 1 Gbps default
 }
 
+/// VLESS+REALITY configuration for client config generation.
+/// The actual VLESS server runs as a separate binary (floppa-vless) on the EU VPS;
+/// this section provides the parameters needed to construct `vless://` URIs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VlessConfig {
+    /// VLESS+REALITY endpoint for client configs (e.g., "eu.example.com:443")
+    pub endpoint: String,
+    /// SNI hostname for REALITY (e.g., "www.microsoft.com")
+    pub sni: String,
+    /// REALITY short ID (hex string)
+    pub short_id: String,
+    /// Flow control (default: "xtls-rprx-vision")
+    #[serde(default = "default_vless_flow")]
+    pub flow: String,
+    /// DNS servers for client configs
+    pub dns: Vec<String>,
+    /// Allowed IPs for client configs (typically "0.0.0.0/0, ::/0")
+    pub allowed_ips: String,
+}
+
+fn default_vless_flow() -> String {
+    "xtls-rprx-vision".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct BotConfig {
     /// Bot username (without @) for Telegram Login Widget
@@ -143,6 +170,18 @@ pub struct Secrets {
     pub bot: Option<BotSecrets>,
     #[serde(default)]
     pub auth: Option<AuthSecrets>,
+    /// VLESS REALITY keys (optional — only needed if VLESS is offered)
+    #[serde(default)]
+    pub vless: Option<VlessSecrets>,
+}
+
+#[derive(Redact, Clone, Deserialize)]
+pub struct VlessSecrets {
+    /// REALITY x25519 public key (base64), embedded in client `vless://` URIs
+    pub reality_public_key: String,
+    /// REALITY x25519 private key (base64), used by floppa-vless server only
+    #[redact]
+    pub reality_private_key: String,
 }
 
 #[derive(Redact, Clone, Deserialize)]
