@@ -1,0 +1,19 @@
+[Unit]
+Description=Floppa VLESS+REALITY Proxy Server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=floppa
+WorkingDirectory=/opt/floppa-vless
+ExecStart=/opt/floppa-vless/bin/floppa-vless
+Environment=FLOPPA_VLESS_CONFIG=/etc/floppa-vless/config.toml
+Environment=FLOPPA_VLESS_SECRETS=/etc/floppa-vless/secrets.toml
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

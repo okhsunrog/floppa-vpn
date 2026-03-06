@@ -25,3 +25,13 @@ jwt_expiration_hours = 168  # 1 week (optional, default is 168)
 
 # Minimum client version (optional). Clients with older X-Client-Version get 426 Upgrade Required.
 # min_client_version = "0.2.0"
+
+# VLESS+REALITY proxy configuration (optional)
+# Only needed if the VLESS proxy is deployed. Used by floppa-server to generate vless:// URIs.
+# [vless]
+# endpoint = "eu.example.com:443"        # VLESS+REALITY server address
+# sni = "www.microsoft.com"              # REALITY SNI for camouflage
+# short_id = "abcdef1234567890"           # REALITY short ID (hex)
+# flow = "xtls-rprx-vision"              # Flow control (default: xtls-rprx-vision)
+# dns = ["1.1.1.1", "8.8.8.8"]
+# allowed_ips = "0.0.0.0/0, ::/0"

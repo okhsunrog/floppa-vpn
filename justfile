@@ -124,7 +124,7 @@ sqlx-check:
 # Clean build artifacts
 clean:
     cargo clean
-    rm -rf {{ release_dir }} floppa-vpn-release.tar.gz
+    rm -rf {{ release_dir }} release-vless floppa-vpn-release.tar.gz floppa-vless-release.tar.gz
 
 # Build frontend
 build-frontend:
@@ -202,6 +202,31 @@ test-speed-limit:
 build-cli:
     cargo build --release -p floppa-cli
 
+# Build floppa-vless binary in release mode
+build-vless:
+    cargo build --release -p floppa-vless
+
+# Create deployment archive for floppa-vless (EU VPS)
+package-vless: build-vless
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    rm -rf release-vless
+    mkdir -p release-vless/{bin,systemd}
+
+    cp target/release/floppa-vless release-vless/bin/
+    cp systemd/floppa-vless.service release-vless/systemd/
+
+    tar -czvf floppa-vless-release.tar.gz -C release-vless .
+
+    echo "Created floppa-vless-release.tar.gz"
+    echo "Contents:"
+    tar -tzvf floppa-vless-release.tar.gz
+
 # Deploy to Moscow VPS via Ansible (builds, packages, then deploys)
 deploy: package
     cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa
+
+# Deploy to Europe VPS via Ansible (builds, packages, then deploys)
+deploy-europe: package-vless
+    cd ../cloud-forge && ansible-playbook site-europe.yml --tags floppa-vless

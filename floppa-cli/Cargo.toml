@@ -21,4 +21,6 @@ ipnetwork = "0.21"
 anyhow = "1"
 dirs = "6"
 open = "5"
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "30753c5" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "808d665" }
+# Uncomment for local development, comment out before commit/push:
+# shoes-lite = { path = "../../rust/shoes-lite" }

@@ -5,7 +5,9 @@ CLAUDE.md
 floppa-client/src-tauri/target
 tauri-plugin-vpn/target
 release/
+release-vless/
 floppa-vpn-release.tar.gz
+floppa-vless-release.tar.gz
 
 # Python
 __pycache__/
