@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, display_name,\n                   price_stars as \"price_stars!\", period_days as \"period_days!\"\n            FROM plans\n            WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL AND is_public = true\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "price_stars!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_days!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "5fbf3bbfb0f21805f671fb7426f175ac03a4d1466f4c5f9f796c61eec867980d"
+}

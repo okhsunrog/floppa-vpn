@@ -185,6 +185,10 @@ export default {
     removeFailed: 'Не удалось удалить пир',
     device: 'Устройство: {name}',
     deviceId: 'ID устройства: {id}',
+    source: 'Источник',
+    sourceTrial: 'Пробный',
+    sourcePurchase: 'Покупка',
+    sourceAdminGrant: 'Админ',
   },
   userDashboard: {
     title: 'Главная',

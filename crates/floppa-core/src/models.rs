@@ -78,6 +78,10 @@ pub struct Plan {
     pub is_public: bool,
     /// If set, this is a trial plan with auto-expiration
     pub trial_days: Option<i32>,
+    /// Price in Telegram Stars (None = not purchasable with Stars)
+    pub price_stars: Option<i32>,
+    /// Subscription period in days (None = admin-only permanent plan)
+    pub period_days: Option<i32>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -91,5 +95,6 @@ pub struct Subscription {
     pub starts_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub payment_id: Option<String>,
+    pub source: String,
     pub created_at: DateTime<Utc>,
 }

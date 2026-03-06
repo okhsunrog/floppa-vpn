@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days FROM plans ORDER BY id",
+  "query": "SELECT id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id",
   "describe": {
     "columns": [
       {
@@ -47,6 +47,16 @@
         "ordinal": 8,
         "name": "trial_days",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "price_stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "period_days",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -61,8 +71,10 @@
       false,
       false,
       false,
+      true,
+      true,
       true
     ]
   },
-  "hash": "52d18c16f934ab7b5371bfe33147bb3871c7047710b121db5c6dd4d6f9668348"
+  "hash": "be5d6450d311324b8fa939fc07352d033279a43a98d536640a079d309d7207e8"
 }

@@ -41,7 +41,9 @@ export type CreatePlanRequest = {
     is_public?: boolean;
     max_peers?: number;
     name: string;
+    period_days?: number | null;
     price_rub?: number;
+    price_stars?: number | null;
     trial_days?: number | null;
 };
 
@@ -144,7 +146,9 @@ export type Plan = {
     is_public: boolean;
     max_peers: number;
     name: string;
+    period_days?: number | null;
     price_rub: number;
+    price_stars?: number | null;
     trial_days?: number | null;
 };
 
@@ -168,7 +172,9 @@ export type SetSubscriptionRequest = {
 export type Stats = {
     active_peers: number;
     active_subscriptions: number;
+    total_payments: number;
     total_rx_bytes: number;
+    total_stars_revenue: number;
     total_tx_bytes: number;
     total_users: number;
 };
@@ -181,6 +187,7 @@ export type SubscriptionDetail = {
     plan_display_name: string;
     plan_id: number;
     plan_name: string;
+    source: string;
     speed_limit_mbps?: number | null;
     starts_at: string;
     traffic_limit_bytes?: number | null;
@@ -200,6 +207,8 @@ export type TelegramAuthData = {
 };
 
 export type UpdatePlanRequest = {
+    clear_period_days?: boolean;
+    clear_price_stars?: boolean;
     clear_speed_limit?: boolean;
     clear_traffic_limit?: boolean;
     clear_trial_days?: boolean;
@@ -208,7 +217,9 @@ export type UpdatePlanRequest = {
     display_name?: string | null;
     is_public?: boolean | null;
     max_peers?: number | null;
+    period_days?: number | null;
     price_rub?: number | null;
+    price_stars?: number | null;
     trial_days?: number | null;
 };
 
@@ -646,6 +657,10 @@ export type DeleteAdminPeerErrors = {
      * Not an admin
      */
     403: ApiError;
+    /**
+     * Peer not found or not active
+     */
+    404: ApiError;
 };
 
 export type DeleteAdminPeerError = DeleteAdminPeerErrors[keyof DeleteAdminPeerErrors];
@@ -708,7 +723,7 @@ export type CreatePlanErrors = {
 export type CreatePlanError = CreatePlanErrors[keyof CreatePlanErrors];
 
 export type CreatePlanResponses = {
-    200: Plan;
+    201: Plan;
 };
 
 export type CreatePlanResponse = CreatePlanResponses[keyof CreatePlanResponses];
@@ -940,6 +955,10 @@ export type RemovePeerErrors = {
      * Not an admin
      */
     403: ApiError;
+    /**
+     * No active peers found
+     */
+    404: ApiError;
 };
 
 export type RemovePeerError = RemovePeerErrors[keyof RemovePeerErrors];

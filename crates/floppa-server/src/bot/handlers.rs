@@ -1,11 +1,16 @@
 use crate::bot::i18n;
-use floppa_core::{Config, DbPool, services};
+use chrono::{Duration, Utc};
+use floppa_core::{Config, DbPool, billing, services};
 use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
-    types::{InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo},
+    types::{
+        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery,
+        SuccessfulPayment, WebAppInfo,
+    },
     utils::command::BotCommands,
 };
+use tracing::error;
 
 type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
@@ -16,6 +21,8 @@ pub enum Command {
     Start,
     #[command(description = "Check subscription status")]
     Status,
+    #[command(description = "Purchase a subscription")]
+    Buy,
     #[command(description = "Change language / Сменить язык")]
     Lang,
 }
@@ -26,15 +33,22 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
     let command_handler = teloxide::filter_command::<Command, _>()
         .branch(case![Command::Start].endpoint(start))
         .branch(case![Command::Status].endpoint(status))
+        .branch(case![Command::Buy].endpoint(buy))
         .branch(case![Command::Lang].endpoint(lang));
 
     let callback_handler = Update::filter_callback_query().endpoint(handle_callback);
 
+    // PreCheckoutQuery must be handled as a top-level update kind (not a message)
+    let pre_checkout_handler = Update::filter_pre_checkout_query().endpoint(handle_pre_checkout);
+
+    // SuccessfulPayment comes as a message — must be before commands/fallback
     let message_handler = Update::filter_message()
+        .branch(Message::filter_successful_payment().endpoint(handle_successful_payment))
         .branch(command_handler)
         .endpoint(fallback);
 
     dptree::entry()
+        .branch(pre_checkout_handler)
         .branch(message_handler)
         .branch(callback_handler)
 }
@@ -124,6 +138,35 @@ async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     Ok(())
 }
 
+async fn buy(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
+    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
+
+    let plans = billing::get_purchasable_plans(&pool).await?;
+
+    if plans.is_empty() {
+        bot.send_message(msg.chat.id, msgs.buy_no_plans).await?;
+        return Ok(());
+    }
+
+    let buttons: Vec<Vec<InlineKeyboardButton>> = plans
+        .iter()
+        .map(|p| {
+            vec![InlineKeyboardButton::callback(
+                i18n::format_plan_button(msgs, &p.display_name, p.price_stars, p.period_days),
+                format!("buy:{}", p.id),
+            )]
+        })
+        .collect();
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+
+    bot.send_message(msg.chat.id, msgs.buy_choose_plan)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
 async fn lang(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
 
@@ -163,6 +206,266 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.lang_set)
                 .await?;
+        }
+    } else if let Some(plan_id_str) = data.strip_prefix("buy:") {
+        let plan_id: i32 = match plan_id_str.parse() {
+            Ok(id) => id,
+            Err(_) => return Ok(()),
+        };
+
+        let telegram_id = q.from.id.0 as i64;
+        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
+
+        // Look up user
+        let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id,)
+            .fetch_optional(&pool)
+            .await?;
+        let user_id = match user {
+            Some(u) => u.id,
+            None => return Ok(()),
+        };
+
+        // Look up the plan
+        let plan = sqlx::query!(
+            r#"
+            SELECT id, display_name,
+                   price_stars as "price_stars!", period_days as "period_days!"
+            FROM plans
+            WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL AND is_public = true
+            "#,
+            plan_id,
+        )
+        .fetch_optional(&pool)
+        .await?;
+        let plan = match plan {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+
+        // Calculate proration
+        let current_sub = billing::get_current_subscription(&pool, user_id).await?;
+        let proration =
+            billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
+
+        bot.answer_callback_query(&q.id).await?;
+
+        let chat_id = q
+            .message
+            .as_ref()
+            .map(|m| m.chat().id)
+            .unwrap_or(ChatId(telegram_id));
+
+        if proration.payable_stars == 0 {
+            // Credit covers the full price — switch with proportional days
+            let result = billing::process_credit_switch(
+                &pool,
+                user_id,
+                plan_id,
+                proration.subscription_days,
+                proration.credit_stars,
+            )
+            .await?;
+            if result.is_some() {
+                let expires = (Utc::now() + Duration::days(proration.subscription_days as i64))
+                    .format("%Y-%m-%d")
+                    .to_string();
+                let message = i18n::format_buy_success(msgs, &plan.display_name, &expires);
+                bot.send_message(chat_id, message).await?;
+            }
+            return Ok(());
+        }
+
+        // Send Stars invoice
+        let payload = billing::build_invoice_payload(plan_id, user_id);
+        let title = i18n::format_invoice_title(msgs, &plan.display_name, plan.period_days);
+        let description = i18n::format_invoice_description(
+            msgs,
+            &plan.display_name,
+            plan.period_days,
+            proration.credit_stars,
+        );
+
+        bot.send_invoice(
+            chat_id,
+            title,
+            description,
+            payload,
+            "",    // empty provider_token for Telegram Stars
+            "XTR", // Telegram Stars currency
+            vec![LabeledPrice::new(
+                &plan.display_name,
+                proration.payable_stars as u32,
+            )],
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> HandlerResult {
+    let (plan_id, payload_user_id) = match billing::parse_invoice_payload(&q.invoice_payload) {
+        Some(ids) => ids,
+        None => {
+            bot.answer_pre_checkout_query(&q.id, false)
+                .error_message("Invalid invoice")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    // Verify plan exists and is purchasable
+    let plan = sqlx::query!(
+        r#"SELECT price_stars as "price_stars!", period_days as "period_days!" FROM plans WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL"#,
+        plan_id,
+    )
+    .fetch_optional(&pool)
+    .await?;
+
+    let plan = match plan {
+        Some(p) => p,
+        None => {
+            bot.answer_pre_checkout_query(&q.id, false)
+                .error_message("Plan no longer available")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    // Verify user matches the one encoded in the payload
+    let telegram_id = q.from.id.0 as i64;
+    let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+        .fetch_optional(&pool)
+        .await?;
+
+    let user = match user {
+        Some(u) => u,
+        None => {
+            bot.answer_pre_checkout_query(&q.id, false)
+                .error_message("User not found. Please /start first.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if user.id != payload_user_id {
+        bot.answer_pre_checkout_query(&q.id, false)
+            .error_message("User mismatch. Please try again.")
+            .await?;
+        return Ok(());
+    }
+
+    // Re-verify amount matches current proration
+    let current_sub = billing::get_current_subscription(&pool, user.id).await?;
+    let proration =
+        billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
+
+    if q.total_amount as i32 != proration.payable_stars {
+        bot.answer_pre_checkout_query(&q.id, false)
+            .error_message("Price has changed. Please try again.")
+            .await?;
+        return Ok(());
+    }
+
+    bot.answer_pre_checkout_query(&q.id, true).await?;
+
+    Ok(())
+}
+
+async fn handle_successful_payment(
+    bot: Bot,
+    msg: Message,
+    payment: SuccessfulPayment,
+    pool: DbPool,
+) -> HandlerResult {
+    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+
+    let (plan_id, payload_user_id) = match billing::parse_invoice_payload(&payment.invoice_payload)
+    {
+        Some(ids) => ids,
+        None => {
+            error!(
+                "Invalid invoice payload in successful payment: {}",
+                payment.invoice_payload
+            );
+            bot.send_message(msg.chat.id, msgs.buy_error).await?;
+            return Ok(());
+        }
+    };
+
+    let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+        .fetch_optional(&pool)
+        .await?;
+    let user_id = match user {
+        Some(u) => u.id,
+        None => {
+            bot.send_message(msg.chat.id, msgs.buy_error).await?;
+            return Ok(());
+        }
+    };
+
+    if user_id != payload_user_id {
+        error!("User mismatch in successful payment: expected {payload_user_id}, got {user_id}");
+        bot.send_message(msg.chat.id, msgs.buy_error).await?;
+        return Ok(());
+    }
+
+    let plan = sqlx::query!(
+        "SELECT display_name, price_stars, period_days FROM plans WHERE id = $1",
+        plan_id,
+    )
+    .fetch_optional(&pool)
+    .await?;
+
+    let plan = match plan {
+        Some(p) => p,
+        None => {
+            bot.send_message(msg.chat.id, msgs.buy_error).await?;
+            return Ok(());
+        }
+    };
+
+    let period_days = plan.period_days.unwrap_or(30);
+    let price_stars = plan.price_stars.unwrap_or(0);
+
+    // Re-calculate proration for accurate credit recording
+    let current_sub = billing::get_current_subscription(&pool, user_id).await?;
+    let proration = billing::calculate_proration(current_sub.as_ref(), price_stars, period_days);
+
+    match billing::complete_payment(
+        &pool,
+        billing::CompletePaymentParams {
+            user_id,
+            plan_id,
+            period_days,
+            telegram_charge_id: &payment.telegram_payment_charge_id,
+            invoice_payload: &payment.invoice_payload,
+            amount: payment.total_amount as i32,
+            credit_amount: proration.credit_stars,
+        },
+    )
+    .await
+    {
+        Ok(_) => {
+            let expires = (Utc::now() + Duration::days(period_days as i64))
+                .format("%Y-%m-%d")
+                .to_string();
+            let message = i18n::format_buy_success(msgs, &plan.display_name, &expires);
+            bot.send_message(msg.chat.id, message).await?;
+        }
+        Err(e) => {
+            // Idempotency: if telegram_charge_id UNIQUE violated, payment was already processed
+            let is_duplicate = matches!(
+                &e,
+                floppa_core::error::FloppaError::Database(sqlx::Error::Database(pg_err))
+                    if pg_err.constraint() == Some("payments_telegram_charge_id_key")
+            );
+            if is_duplicate {
+                bot.send_message(msg.chat.id, msgs.buy_success).await?;
+                return Ok(());
+            }
+            error!("Failed to complete payment: {e}");
+            bot.send_message(msg.chat.id, msgs.buy_error).await?;
         }
     }
 
