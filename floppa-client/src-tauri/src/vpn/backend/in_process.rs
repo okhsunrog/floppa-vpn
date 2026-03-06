@@ -44,9 +44,7 @@ impl VpnBackend for InProcessBackend {
             use std::os::fd::RawFd;
             match config {
                 ProtocolConfig::WireGuard(wg) => {
-                    self.tunnel_manager
-                        .start_with_fd(wg, tun_fd as RawFd)
-                        .await
+                    self.tunnel_manager.start_with_fd(wg, tun_fd as RawFd).await
                 }
             }
         }

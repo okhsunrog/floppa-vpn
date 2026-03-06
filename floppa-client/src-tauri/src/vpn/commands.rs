@@ -212,8 +212,15 @@ pub async fn connect(
     }
 
     #[cfg(target_os = "android")]
-    let result =
-        connect_android(&app, &state, &backend, proto_config, split_mode, selected_apps).await;
+    let result = connect_android(
+        &app,
+        &state,
+        &backend,
+        proto_config,
+        split_mode,
+        selected_apps,
+    )
+    .await;
 
     #[cfg(not(target_os = "android"))]
     let result = connect_desktop(
@@ -355,7 +362,12 @@ async fn connect_desktop(
 ) -> Result<(), String> {
     let endpoint = tokio::net::lookup_host(config.endpoint_str())
         .await
-        .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.endpoint_str()))?
+        .map_err(|e| {
+            format!(
+                "Failed to resolve endpoint '{}': {e}",
+                config.endpoint_str()
+            )
+        })?
         .next()
         .ok_or_else(|| {
             format!(
