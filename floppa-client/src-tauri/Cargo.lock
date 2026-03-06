@@ -1666,7 +1666,7 @@ dependencies = [
  "nix 0.29.0",
  "serde",
  "serde_json",
- "shoes",
+ "shoes-lite",
  "specta",
  "specta-typescript",
  "tarpc",
@@ -5593,18 +5593,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "shoes"
+name = "shoes-lite"
 version = "0.2.8"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
- "base64 0.22.1",
+ "base64 0.21.7",
  "bytes",
  "chrono",
  "etherparse",
  "futures",
  "hickory-resolver",
- "indexmap 2.7.1",
+ "indexmap 1.9.3",
  "libc",
  "log",
  "lru",

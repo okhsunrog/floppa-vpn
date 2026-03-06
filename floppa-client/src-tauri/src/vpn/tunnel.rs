@@ -324,7 +324,7 @@ impl Drop for GotatunTunnel {
 /// Active tunnel — wraps either a WireGuard (gotatun) or VLESS tunnel.
 enum ActiveTunnel {
     WireGuard(GotatunTunnel),
-    Vless(shoes::api::VlessTunnel),
+    Vless(shoes_lite::api::VlessTunnel),
 }
 
 impl ActiveTunnel {
@@ -422,13 +422,13 @@ impl TunnelManager {
     #[cfg(not(target_os = "android"))]
     pub async fn start_vless(
         &self,
-        config: &shoes::api::VlessConfig,
+        config: &shoes_lite::api::VlessConfig,
         interface_name: &str,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = shoes::api::VlessTunnel::new(config, interface_name).await?;
+        let tunnel = shoes_lite::api::VlessTunnel::new(config, interface_name).await?;
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
         Ok(())
     }
@@ -436,13 +436,13 @@ impl TunnelManager {
     /// Start VLESS tunnel using a raw file descriptor (Android/iOS)
     pub async fn start_vless_with_fd(
         &self,
-        config: &shoes::api::VlessConfig,
+        config: &shoes_lite::api::VlessConfig,
         tun_fd: i32,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = shoes::api::VlessTunnel::from_fd(config, tun_fd).await?;
+        let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd).await?;
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
         Ok(())
     }

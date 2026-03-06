@@ -1,7 +1,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
-use shoes::api::VlessConfig;
+use shoes_lite::api::VlessConfig;
 use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
