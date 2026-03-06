@@ -4,6 +4,7 @@ members = [
     "crates/floppa-core",
     "crates/floppa-daemon",
     "crates/floppa-server",
+    "crates/floppa-vless",
 ]
 exclude = [
     "floppa-client/src-tauri",
