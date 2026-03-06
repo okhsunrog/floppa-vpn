@@ -1,6 +1,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
+use shoes_lite::api::VlessConfig;
 use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -280,6 +281,104 @@ impl Default for SpeedTracker {
     }
 }
 
+/// VLESS config with VPN-specific fields (address, dns, routes).
+///
+/// Wraps the core VLESS connection parameters from the URI together with
+/// tunnel configuration (IP address, DNS, routing) needed for VPN operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VlessVpnConfig {
+    /// Original VLESS URI (for persistence)
+    pub uri: String,
+    pub uuid: String,
+    /// Server address as "host:port"
+    pub server_addr: String,
+    /// SNI hostname for REALITY handshake
+    pub server_name: String,
+    /// REALITY public key (base64url-no-pad)
+    pub reality_public_key: String,
+    /// REALITY short ID (hex)
+    pub reality_short_id: String,
+    /// Flow control mode, e.g. "xtls-rprx-vision"
+    pub flow: Option<String>,
+    /// Tunnel IP address with CIDR prefix, e.g. "10.0.0.2/32"
+    pub address: String,
+    /// DNS servers, comma-separated
+    pub dns: Option<String>,
+    /// TUN MTU (default 1500)
+    pub mtu: Option<u16>,
+    /// Allowed IPs for routing, comma-separated CIDRs
+    pub allowed_ips: String,
+}
+
+impl VlessVpnConfig {
+    /// Parse a VLESS URI and fill VPN-specific fields with defaults.
+    pub fn from_uri(uri: &str) -> Result<Self, String> {
+        let parsed = VlessConfig::from_uri(uri)?;
+        Ok(Self {
+            uri: uri.to_string(),
+            uuid: parsed.uuid,
+            server_addr: parsed.server_addr,
+            server_name: parsed.server_name,
+            reality_public_key: parsed.reality_public_key,
+            reality_short_id: parsed.reality_short_id,
+            flow: parsed.flow,
+            address: "10.0.0.2/32".to_string(),
+            dns: Some("1.1.1.1".to_string()),
+            mtu: Some(1500),
+            allowed_ips: "0.0.0.0/0, ::/0".to_string(),
+        })
+    }
+
+    /// Convert to the shoes library VlessConfig for tunnel creation.
+    pub fn to_shoes_config(&self) -> VlessConfig {
+        let address = self.address.split('/').next().map(|s| s.to_string());
+
+        VlessConfig {
+            uuid: self.uuid.clone(),
+            server_addr: self.server_addr.clone(),
+            server_name: self.server_name.clone(),
+            reality_public_key: self.reality_public_key.clone(),
+            reality_short_id: self.reality_short_id.clone(),
+            flow: self.flow.clone(),
+            address,
+            netmask: None,
+            dns: self.dns.clone(),
+            mtu: self.mtu,
+            allowed_ips: Some(self.allowed_ips.clone()),
+        }
+    }
+
+    /// Get address as IpNetwork
+    pub fn address_network(&self) -> Result<IpNetwork, String> {
+        IpNetwork::from_str(&self.address).map_err(|e| format!("Invalid VLESS address: {}", e))
+    }
+
+    /// Get DNS servers as Vec<IpAddr>
+    pub fn dns_servers(&self) -> Vec<IpAddr> {
+        self.dns
+            .as_ref()
+            .map(|dns| {
+                dns.split(',')
+                    .filter_map(|s| s.trim().parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Get allowed IPs as Vec<IpNetwork>
+    pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
+        self.allowed_ips
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect()
+    }
+
+    /// Get MTU (default 1500 for VLESS)
+    pub fn get_mtu(&self) -> u16 {
+        self.mtu.unwrap_or(1500)
+    }
+}
+
 /// Protocol-agnostic VPN configuration.
 ///
 /// Each variant wraps a protocol-specific config. Common VPN concepts
@@ -290,6 +389,9 @@ impl Default for SpeedTracker {
 pub enum ProtocolConfig {
     #[serde(rename = "wireguard")]
     WireGuard(WgConfig),
+    #[serde(rename = "vless")]
+    #[specta(skip)]
+    Vless(VlessVpnConfig),
 }
 
 impl ProtocolConfig {
@@ -297,6 +399,7 @@ impl ProtocolConfig {
     pub fn endpoint_str(&self) -> &str {
         match self {
             Self::WireGuard(wg) => &wg.peer_endpoint,
+            Self::Vless(vless) => &vless.server_addr,
         }
     }
 
@@ -304,6 +407,7 @@ impl ProtocolConfig {
     pub fn address(&self) -> &str {
         match self {
             Self::WireGuard(wg) => &wg.address,
+            Self::Vless(vless) => &vless.address,
         }
     }
 
@@ -311,6 +415,7 @@ impl ProtocolConfig {
     pub fn address_network(&self) -> Result<IpNetwork, String> {
         match self {
             Self::WireGuard(wg) => wg.address_network(),
+            Self::Vless(vless) => vless.address_network(),
         }
     }
 
@@ -318,6 +423,7 @@ impl ProtocolConfig {
     pub fn dns_servers(&self) -> Vec<IpAddr> {
         match self {
             Self::WireGuard(wg) => wg.dns_servers(),
+            Self::Vless(vless) => vless.dns_servers(),
         }
     }
 
@@ -325,6 +431,7 @@ impl ProtocolConfig {
     pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
         match self {
             Self::WireGuard(wg) => wg.allowed_ips_networks(),
+            Self::Vless(vless) => vless.allowed_ips_networks(),
         }
     }
 
@@ -332,6 +439,7 @@ impl ProtocolConfig {
     pub fn get_mtu(&self) -> u16 {
         match self {
             Self::WireGuard(wg) => wg.get_mtu(),
+            Self::Vless(vless) => vless.get_mtu(),
         }
     }
 
@@ -339,6 +447,7 @@ impl ProtocolConfig {
     pub fn protocol_name(&self) -> &'static str {
         match self {
             Self::WireGuard(_) => "wireguard",
+            Self::Vless(_) => "vless",
         }
     }
 }

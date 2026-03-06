@@ -234,7 +234,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
                 }
             };
 
-            if let Err(e) = tunnel_manager.start_with_fd(&config, tun_fd as RawFd).await {
+            if let Err(e) = tunnel_manager
+                .start_wireguard_with_fd(&config, tun_fd as RawFd)
+                .await
+            {
                 error!("Failed to start tunnel: {e}");
                 return;
             }

@@ -1,7 +1,9 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
-use super::state::{ConnectionInfo, ConnectionStatus, ProtocolConfig, VpnState, WgConfig};
+use super::state::{
+    ConnectionInfo, ConnectionStatus, ProtocolConfig, VlessVpnConfig, VpnState, WgConfig,
+};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -33,7 +35,7 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
     vpn_config::get_device_name()
 }
 
-/// Parse a WireGuard config string, set it as the active config, and persist it.
+/// Parse a config string (WireGuard or VLESS URI), set it as active, and persist it.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_config(
@@ -41,8 +43,14 @@ pub async fn set_active_config(
     state: State<'_, Arc<VpnState>>,
 ) -> Result<(), String> {
     info!("Setting active config");
-    let wg = WgConfig::from_config_str(&config_str)?;
-    let config = ProtocolConfig::WireGuard(wg);
+    let trimmed = config_str.trim();
+    let config = if trimmed.starts_with("vless://") {
+        let vless = VlessVpnConfig::from_uri(trimmed)?;
+        ProtocolConfig::Vless(vless)
+    } else {
+        let wg = WgConfig::from_config_str(&config_str)?;
+        ProtocolConfig::WireGuard(wg)
+    };
     *state.config.write().await = Some(config.clone());
     vpn_config::save_config(&config);
     Ok(())
@@ -91,10 +99,12 @@ pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<Config
         address: c.address().to_string(),
         dns: match c {
             ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
+            ProtocolConfig::Vless(vless) => vless.dns.clone(),
         },
         server_endpoint: c.endpoint_str().to_string(),
         allowed_ips: match c {
             ProtocolConfig::WireGuard(wg) => wg.allowed_ips.clone(),
+            ProtocolConfig::Vless(vless) => vless.allowed_ips.clone(),
         },
         mtu: Some(c.get_mtu()),
     }))
@@ -260,10 +270,16 @@ async fn connect_android(
     // Extract protocol-specific config string for the Android VPN service
     let wg_config_str = match &config {
         ProtocolConfig::WireGuard(wg) => wg.to_config_str(),
+        ProtocolConfig::Vless(_) => {
+            let mut conn = state.connection.write().await;
+            conn.status = ConnectionStatus::Disconnected;
+            return Err("VLESS not yet supported on Android".to_string());
+        }
     };
 
     let dns = match &config {
         ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
+        ProtocolConfig::Vless(vless) => vless.dns.clone(),
     };
 
     let mut vpn_config = tauri_plugin_vpn::VpnConfig {
@@ -448,22 +464,39 @@ async fn connect_desktop(
                 error!("Failed to configure DNS: {e}");
             }
 
-            {
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::VerifyingHandshake;
-            }
-            info!("Tunnel up, verifying handshake...");
+            // Protocol-specific verification
+            let is_wireguard = matches!(&config, ProtocolConfig::WireGuard(_));
+            if is_wireguard {
+                {
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::VerifyingHandshake;
+                }
+                info!("Tunnel up, verifying WireGuard handshake...");
 
-            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                .await
-                .is_err()
-            {
-                info!("No handshake after 5s — peer likely invalid, disconnecting");
-                let _ = platform.cleanup(INTERFACE_NAME).await;
-                let _ = backend.stop().await;
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Disconnected;
-                return Err("No WireGuard handshake — config may be invalid".to_string());
+                if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                    .await
+                    .is_err()
+                {
+                    info!("No handshake after 5s — peer likely invalid, disconnecting");
+                    let _ = platform.cleanup(INTERFACE_NAME).await;
+                    let _ = backend.stop().await;
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::Disconnected;
+                    return Err("No WireGuard handshake — config may be invalid".to_string());
+                }
+            } else {
+                // VLESS: connection is established during tunnel creation,
+                // just verify tunnel is still running
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if let Some(info) = backend.get_all_info().await
+                    && !info.is_running
+                {
+                    let _ = platform.cleanup(INTERFACE_NAME).await;
+                    let _ = backend.stop().await;
+                    let mut conn = state.connection.write().await;
+                    conn.status = ConnectionStatus::Disconnected;
+                    return Err("VLESS tunnel stopped unexpectedly".to_string());
+                }
             }
 
             state.speed_tracker.write().await.reset();
