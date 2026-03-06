@@ -12,6 +12,14 @@ pub fn set_dns(config: &WgConfig) -> Result<()> {
     if servers.is_empty() {
         return Ok(());
     }
+    write_dns(&servers)
+}
+
+/// Write DNS servers to /etc/resolv.conf, backing up the original.
+pub fn write_dns(servers: &[String]) -> Result<()> {
+    if servers.is_empty() {
+        return Ok(());
+    }
 
     // Backup current resolv.conf
     if Path::new(RESOLV_CONF).exists() && !Path::new(RESOLV_BACKUP).exists() {
