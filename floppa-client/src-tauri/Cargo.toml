@@ -52,7 +52,10 @@ keyring = { version = "3.6.3", features = ["crypto-rust"] }
 tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "27.0.0"
-shoes-lite = { version = "0.2.8", path = "../../../rust/shoes" }
+# VLESS+REALITY protocol support
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "ee63104" }
+# Uncomment for local development, comment out before commit/push:
+# shoes-lite = { version = "0.2.8", path = "../../../rust/shoes" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.29", features = ["user", "net", "process"] }
