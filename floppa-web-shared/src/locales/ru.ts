@@ -7,7 +7,7 @@ export default {
     inactive: 'Неактивен',
     connected: 'Подключено',
     connecting: 'Подключение',
-    verifyingHandshake: 'Проверка соединения',
+    verifyingConnection: 'Проверка соединения',
     disconnected: 'Отключено',
     disconnecting: 'Отключение',
   },
@@ -291,7 +291,7 @@ export default {
   vpn: {
     connect: 'Подключить',
     connecting: 'Подключение...',
-    verifyingHandshake: 'Проверка...',
+    verifyingConnection: 'Проверка...',
     disconnect: 'Отключить',
     disconnecting: 'Отключение...',
     traffic: 'Трафик',
@@ -313,8 +313,9 @@ export default {
     offlineModeHint: 'Сервер недоступен. Используется сохранённая конфигурация.',
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
-    handshakeFailed: 'Не удалось подключиться. Попробуйте позже.',
+    connectionFailed: 'Не удалось подключиться. Попробуйте позже.',
     handshake: 'Хендшейк',
+    connectionHealth: 'Состояние',
     duration: 'Длительность',
   },
 }

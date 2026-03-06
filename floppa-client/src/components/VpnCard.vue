@@ -204,13 +204,13 @@ async function handleConnect() {
 
   await vpn.connect()
 
-  // If handshake failed, check with server whether our peer still exists
-  if (vpn.error?.includes('handshake') && vpn.deviceId) {
+  // If connection verification failed, check with server whether our peer still exists
+  if (vpn.error?.includes('verification failed') && vpn.deviceId) {
     // Keep UI in loading state while we check server and potentially recreate
     vpn.error = null
     vpn.isLoading = true
     try {
-      console.info('[VpnCard] Handshake failed, checking peer with server...')
+      console.info('[VpnCard] Connection verification failed, checking peer with server...')
       const { data: peer } = await getMyPeerByDevice({
         path: { device_id: vpn.deviceId },
       })
@@ -222,8 +222,8 @@ async function handleConnect() {
           await vpn.connect()
         }
       } else {
-        console.info('[VpnCard] Peer exists on server, handshake issue is elsewhere')
-        vpn.error = t('vpn.handshakeFailed')
+        console.info('[VpnCard] Peer exists on server, connection issue is elsewhere')
+        vpn.error = t('vpn.connectionFailed')
       }
     } finally {
       vpn.isLoading = false
@@ -236,8 +236,8 @@ const buttonLabel = computed(() => {
   switch (s) {
     case 'connecting':
       return t('vpn.connecting')
-    case 'verifying_handshake':
-      return t('vpn.verifyingHandshake')
+    case 'verifying_connection':
+      return t('vpn.verifyingConnection')
     case 'disconnecting':
       return t('vpn.disconnecting')
     case 'connected':
@@ -266,6 +266,38 @@ const handshakeDotClass = computed(() => {
   if (secs == null || secs < 0 || secs > 180) return 'bg-red-500'
   if (secs > 135) return 'bg-yellow-500'
   return 'bg-green-500'
+})
+
+// VLESS health tracking: traffic-based indicator
+const prevRxBytes = ref(0)
+const lastTrafficTime = ref(Date.now())
+
+watch(
+  () => vpn.connectionInfo?.stats.rx_bytes,
+  (newRx) => {
+    if (newRx != null && newRx > prevRxBytes.value) {
+      lastTrafficTime.value = Date.now()
+    }
+    prevRxBytes.value = newRx ?? 0
+  },
+)
+
+// Reset traffic tracking when disconnecting
+watch(
+  () => vpn.isConnected,
+  (connected) => {
+    if (!connected) {
+      prevRxBytes.value = 0
+      lastTrafficTime.value = Date.now()
+    }
+  },
+)
+
+const vlessHealthDotClass = computed(() => {
+  const elapsed = (Date.now() - lastTrafficTime.value) / 1000
+  if (elapsed < 30) return 'bg-green-500'
+  if (elapsed < 120) return 'bg-yellow-500'
+  return 'bg-neutral-400'
 })
 </script>
 
@@ -329,7 +361,25 @@ const handshakeDotClass = computed(() => {
           Server: {{ vpn.connectionInfo.server_endpoint }}
         </span>
         <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
-        <span class="inline-flex items-center justify-center gap-1.5">
+        <!-- WireGuard: show handshake dot + time -->
+        <span
+          v-if="vpn.connectionInfo.protocol === 'wireguard'"
+          class="inline-flex items-center justify-center gap-1.5"
+        >
+          {{ t('vpn.handshake') }}:
+          <span class="size-2 rounded-full" :class="handshakeDotClass" />
+          {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
+        </span>
+        <!-- VLESS: show traffic-based health indicator -->
+        <span
+          v-else-if="vpn.connectionInfo.protocol === 'vless'"
+          class="inline-flex items-center justify-center gap-1.5"
+        >
+          {{ t('vpn.connectionHealth') }}:
+          <span class="size-2 rounded-full" :class="vlessHealthDotClass" />
+        </span>
+        <!-- Unknown protocol: show handshake if available -->
+        <span v-else class="inline-flex items-center justify-center gap-1.5">
           {{ t('vpn.handshake') }}:
           <span class="size-2 rounded-full" :class="handshakeDotClass" />
           {{ formatHandshake(vpn.connectionInfo.last_handshake) }}

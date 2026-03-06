@@ -228,8 +228,9 @@ pub struct UserDetail {
 #[derive(Serialize, ToSchema)]
 pub struct PeerDetail {
     id: i64,
-    public_key: String,
-    assigned_ip: String,
+    protocol: String,
+    public_key: Option<String>,
+    assigned_ip: Option<String>,
     sync_status: String,
     tx_bytes: i64,
     rx_bytes: i64,
@@ -284,7 +285,7 @@ pub(super) async fn get_user(
     let peers: Vec<PeerDetail> = sqlx::query_as!(
         PeerDetail,
         r#"
-        SELECT id, public_key, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, device_name, device_id
+        SELECT id, protocol, public_key, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, device_name, device_id
         FROM peers WHERE user_id = $1 AND sync_status != 'removed'
         ORDER BY created_at DESC
         "#,
@@ -466,7 +467,8 @@ pub struct PeerSummary {
     id: i64,
     user_id: i64,
     username: Option<String>,
-    assigned_ip: String,
+    protocol: String,
+    assigned_ip: Option<String>,
     sync_status: String,
     tx_bytes: i64,
     rx_bytes: i64,
@@ -495,7 +497,7 @@ pub(super) async fn list_peers(
     let peers: Vec<PeerSummary> = sqlx::query_as!(
         PeerSummary,
         r#"
-        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
+        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.protocol, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
         FROM peers p
         JOIN users u ON p.user_id = u.id
         WHERE p.sync_status != 'removed'

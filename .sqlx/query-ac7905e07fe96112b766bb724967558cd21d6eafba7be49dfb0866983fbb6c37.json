@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id\n        FROM peers\n        WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
+  "query": "\n        SELECT id, protocol, public_key, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, device_name, device_id\n        FROM peers WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -10,46 +10,51 @@
       },
       {
         "ordinal": 1,
-        "name": "assigned_ip",
+        "name": "protocol",
         "type_info": "Text"
       },
       {
         "ordinal": 2,
-        "name": "sync_status",
+        "name": "public_key",
         "type_info": "Text"
       },
       {
         "ordinal": 3,
+        "name": "assigned_ip",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "sync_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
         "name": "tx_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 4,
+        "ordinal": 6,
         "name": "rx_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "traffic_used_bytes",
         "type_info": "Int8"
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "last_handshake",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
-        "name": "created_at",
-        "type_info": "Timestamptz"
-      },
-      {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "device_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "device_id",
         "type_info": "Text"
       }
@@ -62,15 +67,16 @@
     "nullable": [
       false,
       false,
+      true,
+      true,
       false,
       false,
       false,
       false,
       true,
-      false,
       true,
       true
     ]
   },
-  "hash": "f89a08022714f48e73d666558eb41ff56280695fc2345a716a2ea88bb3ad7714"
+  "hash": "ac7905e07fe96112b766bb724967558cd21d6eafba7be49dfb0866983fbb6c37"
 }

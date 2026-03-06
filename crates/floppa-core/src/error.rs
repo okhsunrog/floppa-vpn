@@ -29,6 +29,12 @@ pub enum FloppaError {
     #[error("Encryption error: {0}")]
     Encryption(String),
 
+    #[error("VLESS not configured on this server")]
+    VlessNotConfigured,
+
+    #[error("Invalid protocol: {0}")]
+    InvalidProtocol(String),
+
     #[error("Config error: {0}")]
     Config(#[from] crate::config::ConfigError),
 }

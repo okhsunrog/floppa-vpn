@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT protocol, private_key_encrypted, assigned_ip, vless_uuid\n        FROM peers\n        WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "protocol",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "private_key_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned_ip",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "vless_uuid",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "33e3d57c3ffe68f48dc97ea10bb63a4a01937d8bf5c822173bab29353fcfc35d"
+}

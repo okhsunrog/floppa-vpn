@@ -19,7 +19,7 @@ pub struct VpnConfig {
     #[serde(default)]
     pub dns: Option<String>,
 
-    /// MTU size (default: 1280 for WireGuard)
+    /// MTU size (default: 1280)
     #[serde(default = "default_mtu")]
     pub mtu: u32,
 
@@ -32,9 +32,9 @@ pub struct VpnConfig {
     #[serde(default)]
     pub allowed_apps: Vec<String>,
 
-    /// Raw WireGuard config string, passed to :vpn process for tunnel setup
+    /// Raw protocol config string (WG config text or vless:// URI), passed to :vpn process
     #[serde(default)]
-    pub wg_config: Option<String>,
+    pub protocol_config: Option<String>,
 }
 
 fn default_mtu() -> u32 {

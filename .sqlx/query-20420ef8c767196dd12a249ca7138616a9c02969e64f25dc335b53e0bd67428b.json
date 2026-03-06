@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, public_key, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, device_name, device_id\n        FROM peers WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
+  "query": "\n        SELECT id, protocol, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id\n        FROM peers\n        WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')\n        ",
   "describe": {
     "columns": [
       {
@@ -10,7 +10,7 @@
       },
       {
         "ordinal": 1,
-        "name": "public_key",
+        "name": "protocol",
         "type_info": "Text"
       },
       {
@@ -45,32 +45,39 @@
       },
       {
         "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
         "name": "device_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "device_id",
         "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
-      false,
+      true,
       false,
       false,
       false,
       false,
       true,
+      false,
       true,
       true
     ]
   },
-  "hash": "0e5bd30a2c90535d16494c78edaa2c93c8dbdac62b10eea92b9cd385788805fe"
+  "hash": "20420ef8c767196dd12a249ca7138616a9c02969e64f25dc335b53e0bd67428b"
 }

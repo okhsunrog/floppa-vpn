@@ -7,7 +7,7 @@ export default {
     inactive: 'Inactive',
     connected: 'Connected',
     connecting: 'Connecting',
-    verifyingHandshake: 'Verifying connection',
+    verifyingConnection: 'Verifying connection',
     disconnected: 'Disconnected',
     disconnecting: 'Disconnecting',
   },
@@ -290,7 +290,7 @@ export default {
   vpn: {
     connect: 'Connect',
     connecting: 'Connecting...',
-    verifyingHandshake: 'Verifying...',
+    verifyingConnection: 'Verifying...',
     disconnect: 'Disconnect',
     disconnecting: 'Disconnecting...',
     traffic: 'Traffic',
@@ -312,8 +312,9 @@ export default {
     offlineModeHint: 'Server unreachable. Using saved configuration.',
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
-    handshakeFailed: 'Connection failed. Please try again later.',
+    connectionFailed: 'Connection failed. Please try again later.',
     handshake: 'Handshake',
+    connectionHealth: 'Health',
     duration: 'Duration',
   },
 }

@@ -39,8 +39,8 @@ class VpnConfigArgs {
     var mtu: Int = 1280
     var disallowedApps: Array<String> = emptyArray()
     var allowedApps: Array<String> = emptyArray()
-    /** Raw WireGuard config string, passed to :vpn process via Intent */
-    var wgConfig: String? = null
+    /** Raw protocol config string (WG config text or vless:// URI), passed to :vpn process */
+    var protocolConfig: String? = null
 }
 
 @InvokeArg
@@ -102,8 +102,8 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                 "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}",
             )
 
-            if (args.wgConfig == null) {
-                invoke.reject("Missing wgConfig parameter")
+            if (args.protocolConfig == null) {
+                invoke.reject("Missing protocolConfig parameter")
                 return
             }
 
@@ -127,7 +127,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                     putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
                     putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
                     putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
-                    putExtra(FloppaVpnService.EXTRA_WG_CONFIG, args.wgConfig)
+                    putExtra(FloppaVpnService.EXTRA_PROTOCOL_CONFIG, args.protocolConfig)
                 }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

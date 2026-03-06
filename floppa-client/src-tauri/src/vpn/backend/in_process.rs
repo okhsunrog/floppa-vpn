@@ -32,7 +32,12 @@ impl VpnBackend for InProcessBackend {
         match config {
             ProtocolConfig::WireGuard(wg) => {
                 self.tunnel_manager
-                    .start(wg, interface_name, fwmark, endpoint)
+                    .start_wireguard(wg, interface_name, fwmark, endpoint)
+                    .await
+            }
+            ProtocolConfig::Vless(vless) => {
+                self.tunnel_manager
+                    .start_vless(&vless.to_shoes_config(), interface_name)
                     .await
             }
         }
@@ -44,7 +49,14 @@ impl VpnBackend for InProcessBackend {
             use std::os::fd::RawFd;
             match config {
                 ProtocolConfig::WireGuard(wg) => {
-                    self.tunnel_manager.start_with_fd(wg, tun_fd as RawFd).await
+                    self.tunnel_manager
+                        .start_wireguard_with_fd(wg, tun_fd as RawFd)
+                        .await
+                }
+                ProtocolConfig::Vless(vless) => {
+                    self.tunnel_manager
+                        .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
+                        .await
                 }
             }
         }

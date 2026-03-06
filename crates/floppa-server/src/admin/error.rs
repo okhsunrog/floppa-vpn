@@ -73,6 +73,16 @@ impl From<FloppaError> for ApiError {
                 message: "Subscription expired".into(),
                 status: StatusCode::PAYMENT_REQUIRED,
             },
+            FloppaError::VlessNotConfigured => Self {
+                error: "vless_not_configured".into(),
+                message: "VLESS is not configured on this server".into(),
+                status: StatusCode::BAD_REQUEST,
+            },
+            FloppaError::InvalidProtocol(ref proto) => Self {
+                error: "invalid_protocol".into(),
+                message: format!("Invalid protocol: {proto}. Expected 'wireguard' or 'vless'"),
+                status: StatusCode::BAD_REQUEST,
+            },
             FloppaError::Encryption(_) | FloppaError::KeyGeneration(_) | FloppaError::Config(_) => {
                 Self {
                     error: "internal_error".into(),

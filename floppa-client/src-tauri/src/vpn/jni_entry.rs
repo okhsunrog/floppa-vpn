@@ -2,10 +2,10 @@
 //!
 //! These functions are called by `FloppaVpnService` (Kotlin) in the separate
 //! VPN process. They initialize the Rust runtime, start/stop the WireGuard
-//! tunnel, and run the tarpc RPC server.
+//! or VLESS tunnel, and run the tarpc RPC server.
 
 use super::rpc_server::{self, RpcServerHandle};
-use super::state::WgConfig;
+use super::state::{VlessVpnConfig, WgConfig};
 use super::tunnel::{self, TunnelManager};
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::jint;
@@ -192,15 +192,32 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
     });
 }
 
+/// Bridges shoes-lite's SocketProtector trait to the JNI VpnService.protect() callback.
+struct ShoesSocketProtector;
+
+impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
+    fn protect(&self, fd: RawFd) -> std::io::Result<()> {
+        if protect_socket_jni(fd) {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "VpnService.protect() failed",
+            ))
+        }
+    }
+}
+
 /// Called in `FloppaVpnService.onStartCommand()` after TUN interface creation.
 ///
-/// Starts the WireGuard tunnel and tarpc RPC server.
+/// Detects protocol (WireGuard config text or vless:// URI) and starts the
+/// appropriate tunnel, then starts the tarpc RPC server.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartTunnel<'local>(
     mut env: EnvUnowned<'local>,
     this: JObject<'local>,
     tun_fd: jint,
-    wg_config: JString<'local>,
+    protocol_config: JString<'local>,
     socket_path: JString<'local>,
 ) {
     let _ = env.with_env(|env: &mut Env<'local>| -> Result<(), jni::errors::Error> {
@@ -213,33 +230,60 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
         }
 
         // Extract Java strings
-        let wg_config_str: String = wg_config.mutf8_chars(env)?.to_string();
+        let config_str: String = protocol_config.mutf8_chars(env)?.to_string();
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
 
         info!("nativeStartTunnel: fd={tun_fd}, socket={socket_path_str}");
 
-        // Set up socket protection callback (local JNI, no cross-process IPC)
+        // Set up socket protection for gotatun (WireGuard)
         tunnel::set_socket_protect_callback(protect_socket_jni);
+
+        // Set up socket protection for shoes-lite (VLESS)
+        shoes_lite::api::set_socket_protector(Arc::new(ShoesSocketProtector));
 
         let runtime = get_runtime();
         let tunnel_manager = get_tunnel_manager();
 
-        // Parse config and start tunnel
+        // Detect protocol and start tunnel
         runtime.block_on(async {
-            let config = match WgConfig::from_config_str(&wg_config_str) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to parse WireGuard config: {e}");
+            if config_str.starts_with("vless://") {
+                // VLESS protocol
+                let vless_vpn = match VlessVpnConfig::from_uri(&config_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to parse VLESS URI: {e}");
+                        return;
+                    }
+                };
+                let shoes_config = vless_vpn.to_shoes_config();
+
+                if let Err(e) = tunnel_manager
+                    .start_vless_with_fd(&shoes_config, tun_fd as i32)
+                    .await
+                {
+                    error!("Failed to start VLESS tunnel: {e}");
                     return;
                 }
-            };
+                info!("VLESS tunnel started successfully");
+            } else {
+                // WireGuard protocol
+                let config = match WgConfig::from_config_str(&config_str) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("Failed to parse WireGuard config: {e}");
+                        return;
+                    }
+                };
 
-            if let Err(e) = tunnel_manager.start_with_fd(&config, tun_fd as RawFd).await {
-                error!("Failed to start tunnel: {e}");
-                return;
+                if let Err(e) = tunnel_manager
+                    .start_wireguard_with_fd(&config, tun_fd as RawFd)
+                    .await
+                {
+                    error!("Failed to start WireGuard tunnel: {e}");
+                    return;
+                }
+                info!("WireGuard tunnel started successfully");
             }
-
-            info!("Tunnel started successfully");
 
             // Start tarpc RPC server
             match rpc_server::start_server(&socket_path_str, tunnel_manager.clone()) {
