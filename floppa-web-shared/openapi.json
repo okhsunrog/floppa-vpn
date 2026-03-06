@@ -732,6 +732,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "Peer not found or not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -806,7 +816,7 @@
           "required": true
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "",
             "content": {
               "application/json": {
@@ -1300,6 +1310,16 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "No active peers found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -1623,8 +1643,22 @@
           "name": {
             "type": "string"
           },
+          "period_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "price_rub": {
             "type": "integer",
+            "format": "int32"
+          },
+          "price_stars": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32"
           },
           "trial_days": {
@@ -2038,8 +2072,22 @@
           "name": {
             "type": "string"
           },
+          "period_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "price_rub": {
             "type": "integer",
+            "format": "int32"
+          },
+          "price_stars": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int32"
           },
           "trial_days": {
@@ -2093,7 +2141,9 @@
           "active_peers",
           "total_tx_bytes",
           "total_rx_bytes",
-          "active_subscriptions"
+          "active_subscriptions",
+          "total_payments",
+          "total_stars_revenue"
         ],
         "properties": {
           "active_peers": {
@@ -2104,7 +2154,15 @@
             "type": "integer",
             "format": "int64"
           },
+          "total_payments": {
+            "type": "integer",
+            "format": "int64"
+          },
           "total_rx_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_stars_revenue": {
             "type": "integer",
             "format": "int64"
           },
@@ -2127,7 +2185,8 @@
           "plan_display_name",
           "starts_at",
           "max_peers",
-          "is_active"
+          "is_active",
+          "source"
         ],
         "properties": {
           "expires_at": {
@@ -2156,6 +2215,9 @@
             "format": "int32"
           },
           "plan_name": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           },
           "speed_limit_mbps": {
@@ -2227,6 +2289,12 @@
       "UpdatePlanRequest": {
         "type": "object",
         "properties": {
+          "clear_period_days": {
+            "type": "boolean"
+          },
+          "clear_price_stars": {
+            "type": "boolean"
+          },
           "clear_speed_limit": {
             "type": "boolean"
           },
@@ -2269,7 +2337,21 @@
             ],
             "format": "int32"
           },
+          "period_days": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
           "price_rub": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "price_stars": {
             "type": [
               "integer",
               "null"

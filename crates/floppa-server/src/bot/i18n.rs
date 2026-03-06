@@ -15,6 +15,13 @@ pub struct Messages {
     pub no_subscription_short: &'static str,
     pub permanent: &'static str,
 
+    // /buy
+    pub buy_choose_plan: &'static str,
+    pub buy_no_plans: &'static str,
+    pub buy_success: &'static str,
+    pub buy_error: &'static str,
+    pub buy_plan_days: &'static str, // "days" / "дней"
+
     // /lang
     pub lang_prompt: &'static str,
     pub lang_set: &'static str,
@@ -35,8 +42,14 @@ static EN: Messages = Messages {
 
     status_plan: "Plan",
     status_expires: "Expires",
-    no_subscription_short: "No active subscription.\n\nContact admin to get started.",
+    no_subscription_short: "No active subscription.\n\nUse /buy to purchase a plan.",
     permanent: "Permanent",
+
+    buy_choose_plan: "Choose a plan to purchase:",
+    buy_no_plans: "No plans available for purchase at this time.",
+    buy_success: "Payment successful! Your subscription has been activated.",
+    buy_error: "Payment processing failed. Please try again or contact support.",
+    buy_plan_days: "days",
 
     lang_prompt: "Choose your language:",
     lang_set: "Language set to English",
@@ -44,6 +57,7 @@ static EN: Messages = Messages {
     unknown_message: "I only understand commands:\n\n\
                       /start — open the app\n\
                       /status — check subscription\n\
+                      /buy — purchase a plan\n\
                       /lang — change language",
 
     error_generic: "An error occurred. Please try again later.",
@@ -58,8 +72,14 @@ static RU: Messages = Messages {
 
     status_plan: "Тариф",
     status_expires: "Истекает",
-    no_subscription_short: "Нет активной подписки.\n\nОбратитесь к администратору.",
+    no_subscription_short: "Нет активной подписки.\n\nИспользуйте /buy для покупки тарифа.",
     permanent: "Бессрочно",
+
+    buy_choose_plan: "Выберите тариф для покупки:",
+    buy_no_plans: "Сейчас нет тарифов, доступных для покупки.",
+    buy_success: "Оплата прошла успешно! Подписка активирована.",
+    buy_error: "Ошибка обработки платежа. Попробуйте снова или обратитесь в поддержку.",
+    buy_plan_days: "дней",
 
     lang_prompt: "Выберите язык:",
     lang_set: "Язык изменён на русский",
@@ -67,6 +87,7 @@ static RU: Messages = Messages {
     unknown_message: "Я понимаю только команды:\n\n\
                       /start — открыть приложение\n\
                       /status — проверить подписку\n\
+                      /buy — купить тариф\n\
                       /lang — сменить язык",
 
     error_generic: "Произошла ошибка. Попробуйте позже.",
@@ -110,5 +131,35 @@ pub fn format_status(msgs: &Messages, plan: &str, expires: &str) -> String {
     format!(
         "{}: {}\n{}: {}",
         msgs.status_plan, plan, msgs.status_expires, expires
+    )
+}
+
+/// Format plan button text: "Premium — 250 ⭐ / 30 days"
+pub fn format_plan_button(msgs: &Messages, name: &str, stars: i32, days: i32) -> String {
+    format!("{name} — {stars} ⭐ / {days} {}", msgs.buy_plan_days)
+}
+
+/// Format invoice title: "Premium (30 days)"
+pub fn format_invoice_title(msgs: &Messages, name: &str, days: i32) -> String {
+    format!("{name} ({days} {})", msgs.buy_plan_days)
+}
+
+/// Format invoice description with optional proration info.
+pub fn format_invoice_description(msgs: &Messages, name: &str, days: i32, credit: i32) -> String {
+    if credit > 0 {
+        format!(
+            "{name} — {days} {}\n(-{credit} ⭐ credit)",
+            msgs.buy_plan_days
+        )
+    } else {
+        format!("{name} — {days} {}", msgs.buy_plan_days)
+    }
+}
+
+/// Format success message with plan name and expiry date.
+pub fn format_buy_success(msgs: &Messages, plan: &str, expires: &str) -> String {
+    format!(
+        "{}\n\n{}: {}\n{}: {}",
+        msgs.buy_success, msgs.status_plan, plan, msgs.status_expires, expires
     )
 }

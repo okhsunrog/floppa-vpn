@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days\n        ",
+  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -47,6 +47,16 @@
         "ordinal": 8,
         "name": "trial_days",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "price_stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "period_days",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -58,6 +68,8 @@
         "Int4",
         "Int4",
         "Bool",
+        "Int4",
+        "Int4",
         "Int4"
       ]
     },
@@ -70,8 +82,10 @@
       false,
       false,
       false,
+      true,
+      true,
       true
     ]
   },
-  "hash": "78de211bc6b6b421ce426f6e6ca4ad3eba4cf328754e2448091986c9812b8763"
+  "hash": "828e6c10c9e0fb3ac22ec9721bf6c733972e8e7fb7c2e8cb61e7460318a971a2"
 }

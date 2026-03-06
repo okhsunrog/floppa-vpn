@@ -59,6 +59,7 @@ async fn main() -> Result<()> {
     bot.set_my_commands(vec![
         BotCommand::new("start", "Запустить бота"),
         BotCommand::new("status", "Проверить подписку"),
+        BotCommand::new("buy", "Купить тариф"),
         BotCommand::new("lang", "Сменить язык"),
     ])
     .language_code("ru")

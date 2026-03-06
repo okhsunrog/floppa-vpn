@@ -185,6 +185,10 @@ export default {
     removeFailed: 'Failed to remove peer',
     device: 'Device: {name}',
     deviceId: 'Device ID: {id}',
+    source: 'Source',
+    sourceTrial: 'Trial',
+    sourcePurchase: 'Purchase',
+    sourceAdminGrant: 'Admin Grant',
   },
   userDashboard: {
     title: 'Dashboard',

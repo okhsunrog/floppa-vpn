@@ -82,7 +82,7 @@ pub async fn upsert_user(
                 let expires_at = now + Duration::days(days);
 
                 sqlx::query!(
-                    "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'trial')",
                     row.id,
                     plan.id,
                     now,

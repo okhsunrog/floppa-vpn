@@ -19,6 +19,8 @@ pub struct Stats {
     total_tx_bytes: i64,
     total_rx_bytes: i64,
     active_subscriptions: i64,
+    total_payments: i64,
+    total_stars_revenue: i64,
 }
 
 /// Get system statistics (admin only)
@@ -44,7 +46,9 @@ pub(super) async fn get_stats(
             (SELECT COUNT(*) FROM peers WHERE sync_status = 'active') as "active_peers!",
             (SELECT COALESCE(SUM(tx_bytes), 0)::bigint FROM peers) as "total_tx_bytes!",
             (SELECT COALESCE(SUM(rx_bytes), 0)::bigint FROM peers) as "total_rx_bytes!",
-            (SELECT COUNT(*) FROM subscriptions WHERE expires_at IS NULL OR expires_at > NOW()) as "active_subscriptions!"
+            (SELECT COUNT(*) FROM subscriptions WHERE expires_at IS NULL OR expires_at > NOW()) as "active_subscriptions!",
+            (SELECT COUNT(*) FROM payments WHERE status = 'completed') as "total_payments!",
+            (SELECT COALESCE(SUM(amount), 0)::bigint FROM payments WHERE status = 'completed') as "total_stars_revenue!"
         "#,
     )
     .fetch_one(&state.pool)
@@ -56,6 +60,8 @@ pub(super) async fn get_stats(
         total_tx_bytes: stats.total_tx_bytes,
         total_rx_bytes: stats.total_rx_bytes,
         active_subscriptions: stats.active_subscriptions,
+        total_payments: stats.total_payments,
+        total_stars_revenue: stats.total_stars_revenue,
     }))
 }
 
@@ -190,7 +196,7 @@ pub(super) async fn create_user(
 
     // Create subscription
     sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'admin_grant')",
         user_id,
         req.plan_id,
         now,
@@ -245,6 +251,7 @@ pub struct SubscriptionDetail {
     traffic_limit_bytes: Option<i64>,
     max_peers: i32,
     is_active: bool,
+    source: String,
 }
 
 /// Get user details (admin only)
@@ -294,7 +301,8 @@ pub(super) async fn get_user(
                p.default_speed_limit_mbps as speed_limit_mbps,
                p.default_traffic_limit_bytes as traffic_limit_bytes,
                p.max_peers,
-               (s.expires_at IS NULL OR s.expires_at > NOW()) as "is_active!"
+               (s.expires_at IS NULL OR s.expires_at > NOW()) as "is_active!",
+               s.source
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
         WHERE s.user_id = $1
@@ -373,7 +381,7 @@ pub(super) async fn set_subscription(
 
     // Insert new subscription
     sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'admin_grant')",
         id,
         req.plan_id,
         now,

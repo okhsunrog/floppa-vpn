@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id, s.plan_id, p.price_stars, p.period_days, s.expires_at\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ORDER BY s.expires_at DESC NULLS FIRST\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "plan_id",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "price_stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_days",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "expires_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "4a8e2fe4d4eeff50285da3efe5b166bdcb35f9bee12727f645d929fac72f8fe6"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT price_stars as \"price_stars!\", period_days as \"period_days!\" FROM plans WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "price_stars!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "period_days!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "deaef135c7f7d8c18add84c06b79d8904a8cb4a51a165a31f6dd78f046a1203b"
+}

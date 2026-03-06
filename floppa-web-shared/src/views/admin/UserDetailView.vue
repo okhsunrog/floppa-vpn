@@ -14,6 +14,33 @@ import { formatBytes, formatDateTime, formatSpeedLimit, formatTrafficLimit } fro
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
+function sourceLabel(source: string): string {
+  const { t } = useI18n()
+  switch (source) {
+    case 'trial':
+      return t('adminUserDetail.sourceTrial')
+    case 'purchase':
+      return t('adminUserDetail.sourcePurchase')
+    case 'admin_grant':
+      return t('adminUserDetail.sourceAdminGrant')
+    default:
+      return source
+  }
+}
+
+function sourceColor(source: string): 'info' | 'success' | 'warning' | 'neutral' {
+  switch (source) {
+    case 'trial':
+      return 'info'
+    case 'purchase':
+      return 'success'
+    case 'admin_grant':
+      return 'warning'
+    default:
+      return 'neutral'
+  }
+}
+
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
@@ -379,6 +406,12 @@ async function doRemovePeer() {
             <div class="flex items-center gap-3 mb-3">
               <span class="text-lg font-semibold">{{ activeSubscription.plan_display_name }}</span>
               <UBadge
+                v-if="activeSubscription.source"
+                :color="sourceColor(activeSubscription.source)"
+                :label="sourceLabel(activeSubscription.source)"
+                variant="subtle"
+              />
+              <UBadge
                 v-if="!activeSubscription.expires_at"
                 color="success"
                 :label="t('userDashboard.permanentLabel')"
@@ -443,6 +476,13 @@ async function doRemovePeer() {
               >
                 <div class="flex items-center gap-2 mb-1">
                   <span class="font-medium">{{ sub.plan_display_name }}</span>
+                  <UBadge
+                    v-if="sub.source"
+                    :color="sourceColor(sub.source)"
+                    :label="sourceLabel(sub.source)"
+                    variant="subtle"
+                    size="sm"
+                  />
                 </div>
                 <div class="text-[var(--ui-text-muted)]">
                   {{ formatDateTime(sub.starts_at) }} &mdash;

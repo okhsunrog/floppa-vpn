@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            default_traffic_limit_bytes = CASE WHEN $5 THEN NULL ELSE COALESCE($6, default_traffic_limit_bytes) END,\n            max_peers = COALESCE($7, max_peers),\n            price_rub = COALESCE($8, price_rub),\n            is_public = COALESCE($9, is_public),\n            trial_days = CASE WHEN $10 THEN NULL ELSE COALESCE($11, trial_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days\n        ",
+  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            default_traffic_limit_bytes = CASE WHEN $5 THEN NULL ELSE COALESCE($6, default_traffic_limit_bytes) END,\n            max_peers = COALESCE($7, max_peers),\n            price_rub = COALESCE($8, price_rub),\n            is_public = COALESCE($9, is_public),\n            trial_days = CASE WHEN $10 THEN NULL ELSE COALESCE($11, trial_days) END,\n            price_stars = CASE WHEN $12 THEN NULL ELSE COALESCE($13, price_stars) END,\n            period_days = CASE WHEN $14 THEN NULL ELSE COALESCE($15, period_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -47,6 +47,16 @@
         "ordinal": 8,
         "name": "trial_days",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 9,
+        "name": "price_stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 10,
+        "name": "period_days",
+        "type_info": "Int4"
       }
     ],
     "parameters": {
@@ -61,6 +71,10 @@
         "Int4",
         "Bool",
         "Bool",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Bool",
         "Int4"
       ]
     },
@@ -73,8 +87,10 @@
       false,
       false,
       false,
+      true,
+      true,
       true
     ]
   },
-  "hash": "049e843b4495dcb3a67f3e6d9746800ee0b9f0127b494e0bad040058ef2dbee7"
+  "hash": "ee454b471c1f2445c1abcd3e8abe99bfaada7b57e8b2c89263e291e0ccf6b06c"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT s.id, s.plan_id, p.name as plan_name, p.display_name as plan_display_name,\n               s.starts_at, s.expires_at,\n               p.default_speed_limit_mbps as speed_limit_mbps,\n               p.default_traffic_limit_bytes as traffic_limit_bytes,\n               p.max_peers,\n               (s.expires_at IS NULL OR s.expires_at > NOW()) as \"is_active!\"\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1\n        ORDER BY s.starts_at DESC\n        ",
+  "query": "\n        SELECT s.id, s.plan_id, p.name as plan_name, p.display_name as plan_display_name,\n               s.starts_at, s.expires_at,\n               p.default_speed_limit_mbps as speed_limit_mbps,\n               p.default_traffic_limit_bytes as traffic_limit_bytes,\n               p.max_peers,\n               (s.expires_at IS NULL OR s.expires_at > NOW()) as \"is_active!\",\n               s.source\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1\n        ORDER BY s.starts_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -52,6 +52,11 @@
         "ordinal": 9,
         "name": "is_active!",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "source",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -69,8 +74,9 @@
       true,
       true,
       false,
-      null
+      null,
+      false
     ]
   },
-  "hash": "0b769e7917091df3caf2e8f27e16a7763fd01190bb5745255a14fbf84658c982"
+  "hash": "c85d9abbb6301328bdea5565f5157042c1d78670728d5c4df618cf11819daf70"
 }

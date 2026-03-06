@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT display_name, price_stars, period_days FROM plans WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "display_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "price_stars",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "period_days",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "cae02999f5c11118f7cad137adcc610ec7c4da7160e0e2b3017426b682b7f14d"
+}
