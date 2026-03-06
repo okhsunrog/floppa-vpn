@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::process::Command;
 use std::str::FromStr;
 
-pub const INTERFACE_NAME: &str = "floppa0";
+pub const DEFAULT_INTERFACE_NAME: &str = "floppa0";
 
 pub type FloppaDevice = Device<(UdpSocketFactory, TunDevice, TunDevice)>;
 
@@ -164,12 +164,12 @@ fn get_default_gateway() -> Result<Option<String>> {
         .map(|s| s.to_string()))
 }
 
-pub async fn configure_networking(config: &WgConfig) -> Result<()> {
+pub async fn configure_networking(config: &WgConfig, interface: &str) -> Result<()> {
     let addr = config.address_network()?;
 
-    run_ip(&["addr", "add", &addr.to_string(), "dev", INTERFACE_NAME])?;
-    run_ip(&["link", "set", INTERFACE_NAME, "mtu", "1420"])?;
-    run_ip(&["link", "set", INTERFACE_NAME, "up"])?;
+    run_ip(&["addr", "add", &addr.to_string(), "dev", interface])?;
+    run_ip(&["link", "set", interface, "mtu", "1420"])?;
+    run_ip(&["link", "set", interface, "up"])?;
 
     // Add host route for WG endpoint via default gateway to prevent routing loop
     let endpoint = config.peer_socket_addr().await?;
@@ -183,14 +183,14 @@ pub async fn configure_networking(config: &WgConfig) -> Result<()> {
     for network in config.allowed_ips_networks() {
         if network.prefix() == 0 {
             if network.is_ipv4() {
-                run_ip(&["route", "add", "0.0.0.0/1", "dev", INTERFACE_NAME])?;
-                run_ip(&["route", "add", "128.0.0.0/1", "dev", INTERFACE_NAME])?;
+                run_ip(&["route", "add", "0.0.0.0/1", "dev", interface])?;
+                run_ip(&["route", "add", "128.0.0.0/1", "dev", interface])?;
             } else {
-                let _ = run_ip(&["route", "add", "::/1", "dev", INTERFACE_NAME]);
-                let _ = run_ip(&["route", "add", "8000::/1", "dev", INTERFACE_NAME]);
+                let _ = run_ip(&["route", "add", "::/1", "dev", interface]);
+                let _ = run_ip(&["route", "add", "8000::/1", "dev", interface]);
             }
         } else {
-            run_ip(&["route", "add", &network.to_string(), "dev", INTERFACE_NAME])?;
+            run_ip(&["route", "add", &network.to_string(), "dev", interface])?;
         }
     }
 
@@ -201,7 +201,7 @@ pub async fn configure_networking(config: &WgConfig) -> Result<()> {
     Ok(())
 }
 
-pub async fn create_tunnel(config: &WgConfig) -> Result<FloppaDevice> {
+pub async fn create_tunnel(config: &WgConfig, interface: &str) -> Result<FloppaDevice> {
     let private_key = config.private_key_bytes()?;
     let peer_public_key = config.peer_public_key_bytes()?;
     let preshared_key = config.peer_preshared_key_bytes()?;
@@ -209,7 +209,7 @@ pub async fn create_tunnel(config: &WgConfig) -> Result<FloppaDevice> {
     let allowed_ips = config.allowed_ips_networks();
 
     let mut tun_config = tun::Configuration::default();
-    tun_config.tun_name(INTERFACE_NAME).mtu(1420);
+    tun_config.tun_name(interface).mtu(1420);
     let tun_device = tun::create_as_async(&tun_config)?;
     let gota_tun = TunDevice::from_tun_device(tun_device)?;
 

@@ -11,7 +11,7 @@ class TestGotatun:
     """Test VPN connectivity through gotatun tunnel."""
 
     def test_interface_exists(self, gotatun_container):
-        """Verify the TUN interface was created by floppa-test-tunnel."""
+        """Verify the TUN interface was created by floppa-cli."""
         result = docker_exec(gotatun_container, ["ip", "link", "show", "floppa-test0"])
         assert "floppa-test0" in result.stdout
 
