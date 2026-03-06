@@ -1,7 +1,7 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
-use super::state::{ConnectionInfo, ConnectionStatus, VpnState, WgConfig};
+use super::state::{ConnectionInfo, ConnectionStatus, ProtocolConfig, VpnState, WgConfig};
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::sync::Arc;
@@ -41,9 +41,10 @@ pub async fn set_active_config(
     state: State<'_, Arc<VpnState>>,
 ) -> Result<(), String> {
     info!("Setting active config");
-    let config = WgConfig::from_config_str(&config_str)?;
-    *state.config.write().await = Some(config);
-    vpn_config::save_wg_config(&config_str);
+    let wg = WgConfig::from_config_str(&config_str)?;
+    let config = ProtocolConfig::WireGuard(wg);
+    *state.config.write().await = Some(config.clone());
+    vpn_config::save_config(&config);
     Ok(())
 }
 
@@ -61,19 +62,18 @@ pub async fn clear_config(
         disconnect(app, state.clone(), backend, platform).await?;
     }
     *state.config.write().await = None;
-    vpn_config::delete_wg_config();
+    vpn_config::delete_config();
     Ok(())
 }
 
-/// Load persisted WireGuard config into memory (called on startup).
+/// Load persisted VPN config into memory (called on startup).
 #[tauri::command]
 #[specta::specta]
 pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, String> {
     if state.config.read().await.is_some() {
         return Ok(true);
     }
-    if let Some(config_str) = vpn_config::load_wg_config() {
-        let config = WgConfig::from_config_str(&config_str)?;
+    if let Some(config) = vpn_config::load_config() {
         *state.config.write().await = Some(config);
         Ok(true)
     } else {
@@ -84,23 +84,29 @@ pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, 
 /// Get current saved config (without private key for security)
 #[tauri::command]
 #[specta::specta]
-pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<WgConfigSafe>, String> {
+pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<ConfigSafe>, String> {
     let config = state.config.read().await;
-    Ok(config.as_ref().map(|c| WgConfigSafe {
-        address: c.address.clone(),
-        dns: c.dns.clone(),
-        peer_endpoint: c.peer_endpoint.clone(),
-        allowed_ips: c.allowed_ips.clone(),
-        mtu: c.mtu,
+    Ok(config.as_ref().map(|c| ConfigSafe {
+        protocol: c.protocol_name().to_string(),
+        address: c.address().to_string(),
+        dns: match c {
+            ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
+        },
+        server_endpoint: c.endpoint_str().to_string(),
+        allowed_ips: match c {
+            ProtocolConfig::WireGuard(wg) => wg.allowed_ips.clone(),
+        },
+        mtu: Some(c.get_mtu()),
     }))
 }
 
-/// Safe config info (no private key)
+/// Safe config info (no private keys or secrets)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
-pub struct WgConfigSafe {
+pub struct ConfigSafe {
+    pub protocol: String,
     pub address: String,
     pub dns: Option<String>,
-    pub peer_endpoint: String,
+    pub server_endpoint: String,
     pub allowed_ips: String,
     pub mtu: Option<u16>,
 }
@@ -197,8 +203,8 @@ pub async fn connect(
         }
     }
 
-    let config = state.config.read().await;
-    let config = config.as_ref().ok_or("No active config")?.clone();
+    let proto_config = state.config.read().await;
+    let proto_config = proto_config.as_ref().ok_or("No active config")?.clone();
 
     {
         let mut conn = state.connection.write().await;
@@ -206,14 +212,15 @@ pub async fn connect(
     }
 
     #[cfg(target_os = "android")]
-    let result = connect_android(&app, &state, &backend, config, split_mode, selected_apps).await;
+    let result =
+        connect_android(&app, &state, &backend, proto_config, split_mode, selected_apps).await;
 
     #[cfg(not(target_os = "android"))]
     let result = connect_desktop(
         &state,
         &backend,
         &platform,
-        config,
+        proto_config,
         split_mode,
         selected_apps,
     )
@@ -227,7 +234,7 @@ async fn connect_android(
     app: &AppHandle,
     state: &Arc<VpnState>,
     backend: &Arc<dyn VpnBackend>,
-    config: WgConfig,
+    config: ProtocolConfig,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
@@ -243,12 +250,20 @@ async fn connect_android(
         return Err("VPN permission denied".to_string());
     }
 
-    let wg_config_str = config.to_config_str();
+    // Extract protocol-specific config string for the Android VPN service
+    let wg_config_str = match &config {
+        ProtocolConfig::WireGuard(wg) => wg.to_config_str(),
+    };
+
+    let dns = match &config {
+        ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
+    };
+
     let mut vpn_config = tauri_plugin_vpn::VpnConfig {
-        ipv4_addr: config.address.clone(),
+        ipv4_addr: config.address().to_string(),
         ipv6_addr: None,
         routes: vec!["0.0.0.0/0".into(), "::/0".into()],
-        dns: config.dns.clone(),
+        dns,
         mtu: config.get_mtu() as u32,
         disallowed_apps: vec![],
         allowed_apps: vec![],
@@ -323,8 +338,8 @@ async fn connect_android(
     let mut conn = state.connection.write().await;
     conn.status = ConnectionStatus::Connected;
     conn.connected_at = Some(chrono::Utc::now().timestamp());
-    conn.server_endpoint = Some(config.peer_endpoint.clone());
-    conn.assigned_ip = Some(config.address.clone());
+    conn.server_endpoint = Some(config.endpoint_str().to_string());
+    conn.assigned_ip = Some(config.address().to_string());
     info!("Connected successfully on Android");
     Ok(())
 }
@@ -334,18 +349,18 @@ async fn connect_desktop(
     state: &Arc<VpnState>,
     backend: &Arc<dyn VpnBackend>,
     platform: &Arc<PlatformImpl>,
-    config: WgConfig,
+    config: ProtocolConfig,
     _split_mode: Option<SplitMode>,
     _selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
-    let endpoint = tokio::net::lookup_host(&config.peer_endpoint)
+    let endpoint = tokio::net::lookup_host(config.endpoint_str())
         .await
-        .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
+        .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.endpoint_str()))?
         .next()
         .ok_or_else(|| {
             format!(
                 "Endpoint '{}' resolved to no addresses",
-                config.peer_endpoint
+                config.endpoint_str()
             )
         })?;
     let endpoint_ip = endpoint.ip();
@@ -443,8 +458,8 @@ async fn connect_desktop(
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Connected;
             conn.connected_at = Some(chrono::Utc::now().timestamp());
-            conn.server_endpoint = Some(config.peer_endpoint.clone());
-            conn.assigned_ip = Some(config.address.clone());
+            conn.server_endpoint = Some(config.endpoint_str().to_string());
+            conn.assigned_ip = Some(config.address().to_string());
             info!("Connected successfully");
             Ok(())
         }
@@ -554,8 +569,8 @@ pub async fn get_connection_info(
             conn.connected_at = Some(connected_at);
             conn.last_handshake = info.as_ref().and_then(|i| i.last_handshake);
             if let Some(cfg) = config.as_ref() {
-                conn.server_endpoint = Some(cfg.peer_endpoint.clone());
-                conn.assigned_ip = Some(cfg.address.clone());
+                conn.server_endpoint = Some(cfg.endpoint_str().to_string());
+                conn.assigned_ip = Some(cfg.address().to_string());
             }
             state.speed_tracker.write().await.reset();
             info!("Detected running tunnel, updated status to Connected");

@@ -13,4 +13,4 @@ pub mod tunnel;
 
 pub use backend::{VpnBackend, create_backend};
 pub use platform::{Platform, PlatformImpl, get_platform};
-pub use state::VpnState;
+pub use state::{ProtocolConfig, VpnState};

@@ -4,7 +4,7 @@
 //! Used on desktop platforms (Linux, Windows, macOS).
 
 use super::{VpnBackend, VpnFullInfo};
-use crate::vpn::state::WgConfig;
+use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
 use async_trait::async_trait;
 
@@ -24,23 +24,31 @@ impl InProcessBackend {
 impl VpnBackend for InProcessBackend {
     async fn start(
         &self,
-        config: &WgConfig,
+        config: &ProtocolConfig,
         interface_name: &str,
         fwmark: Option<u32>,
         endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
-        self.tunnel_manager
-            .start(config, interface_name, fwmark, endpoint)
-            .await
+        match config {
+            ProtocolConfig::WireGuard(wg) => {
+                self.tunnel_manager
+                    .start(wg, interface_name, fwmark, endpoint)
+                    .await
+            }
+        }
     }
 
-    async fn start_with_fd(&self, config: &WgConfig, tun_fd: i32) -> Result<(), String> {
+    async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String> {
         #[cfg(target_os = "android")]
         {
             use std::os::fd::RawFd;
-            self.tunnel_manager
-                .start_with_fd(config, tun_fd as RawFd)
-                .await
+            match config {
+                ProtocolConfig::WireGuard(wg) => {
+                    self.tunnel_manager
+                        .start_with_fd(wg, tun_fd as RawFd)
+                        .await
+                }
+            }
         }
         #[cfg(not(target_os = "android"))]
         {

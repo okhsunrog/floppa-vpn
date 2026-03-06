@@ -38,7 +38,7 @@
 #![allow(dead_code)]
 
 use super::{VpnBackend, VpnFullInfo};
-use crate::vpn::state::WgConfig;
+use crate::vpn::state::ProtocolConfig;
 use async_trait::async_trait;
 
 pub struct IosBackend {
@@ -65,7 +65,7 @@ impl IosBackend {
 impl VpnBackend for IosBackend {
     async fn start(
         &self,
-        _config: &WgConfig,
+        _config: &ProtocolConfig,
         _interface_name: &str,
         _fwmark: Option<u32>,
         _endpoint: std::net::SocketAddr,
@@ -100,7 +100,7 @@ impl VpnBackend for IosBackend {
         Err("IosBackend not yet implemented".into())
     }
 
-    async fn start_with_fd(&self, _config: &WgConfig, _tun_fd: i32) -> Result<(), String> {
+    async fn start_with_fd(&self, _config: &ProtocolConfig, _tun_fd: i32) -> Result<(), String> {
         // Not used on iOS — the Network Extension creates and owns the TUN device.
         // NEPacketTunnelProvider.packetFlow provides the virtual interface internally.
         Err("start_with_fd is not used on iOS; the Network Extension manages the TUN device".into())
