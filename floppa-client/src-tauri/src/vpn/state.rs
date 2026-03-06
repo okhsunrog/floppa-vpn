@@ -280,9 +280,72 @@ impl Default for SpeedTracker {
     }
 }
 
+/// Protocol-agnostic VPN configuration.
+///
+/// Each variant wraps a protocol-specific config. Common VPN concepts
+/// (endpoint, address, DNS, etc.) are exposed via methods on this enum,
+/// so the connect flow doesn't need to know which protocol is in use.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+#[serde(tag = "protocol", content = "config")]
+pub enum ProtocolConfig {
+    #[serde(rename = "wireguard")]
+    WireGuard(WgConfig),
+}
+
+impl ProtocolConfig {
+    /// Server endpoint as "host:port" string.
+    pub fn endpoint_str(&self) -> &str {
+        match self {
+            Self::WireGuard(wg) => &wg.peer_endpoint,
+        }
+    }
+
+    /// Local tunnel address string (e.g. "10.0.0.2/32").
+    pub fn address(&self) -> &str {
+        match self {
+            Self::WireGuard(wg) => &wg.address,
+        }
+    }
+
+    /// Local tunnel address as IpNetwork.
+    pub fn address_network(&self) -> Result<IpNetwork, String> {
+        match self {
+            Self::WireGuard(wg) => wg.address_network(),
+        }
+    }
+
+    /// DNS servers.
+    pub fn dns_servers(&self) -> Vec<IpAddr> {
+        match self {
+            Self::WireGuard(wg) => wg.dns_servers(),
+        }
+    }
+
+    /// Allowed IPs / routes.
+    pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
+        match self {
+            Self::WireGuard(wg) => wg.allowed_ips_networks(),
+        }
+    }
+
+    /// Tunnel MTU.
+    pub fn get_mtu(&self) -> u16 {
+        match self {
+            Self::WireGuard(wg) => wg.get_mtu(),
+        }
+    }
+
+    /// Protocol name for display / persistence.
+    pub fn protocol_name(&self) -> &'static str {
+        match self {
+            Self::WireGuard(_) => "wireguard",
+        }
+    }
+}
+
 /// Global VPN state
 pub struct VpnState {
-    pub config: RwLock<Option<WgConfig>>,
+    pub config: RwLock<Option<ProtocolConfig>>,
     pub connection: RwLock<ConnectionInfo>,
     pub speed_tracker: RwLock<SpeedTracker>,
 }

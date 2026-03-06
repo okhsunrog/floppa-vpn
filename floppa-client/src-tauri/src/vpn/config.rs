@@ -1,3 +1,4 @@
+use super::state::{ProtocolConfig, WgConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -7,8 +8,10 @@ use uuid::Uuid;
 #[cfg(not(target_os = "android"))]
 const KEYRING_SERVICE: &str = "floppa-vpn";
 #[cfg(not(target_os = "android"))]
-const KEYRING_ENTRY: &str = "wg-config";
-const CONFIG_FILENAME: &str = "wg.conf";
+const KEYRING_ENTRY: &str = "vpn-config";
+const CONFIG_FILENAME: &str = "vpn-config.json";
+/// Legacy WG config filename — checked during load for backwards compatibility.
+const LEGACY_CONFIG_FILENAME: &str = "wg.conf";
 
 /// Tauri app config dir, set once at startup
 static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -88,14 +91,25 @@ pub fn get_device_name() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Save WireGuard config string to OS keyring (fallback to file on Android / keyring failure).
-pub fn save_wg_config(config_str: &str) {
+/// Save VPN config to OS keyring (fallback to file on Android / keyring failure).
+///
+/// The config is serialized as JSON with a protocol tag so we can support
+/// multiple protocols in the future.
+pub fn save_config(config: &ProtocolConfig) {
+    let json = match serde_json::to_string(config) {
+        Ok(j) => j,
+        Err(e) => {
+            warn!("Failed to serialize config: {e}");
+            return;
+        }
+    };
+
     #[cfg(not(target_os = "android"))]
     {
         match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
-            Ok(entry) => match entry.set_password(config_str) {
+            Ok(entry) => match entry.set_password(&json) {
                 Ok(()) => {
-                    info!("WG config saved to OS keyring");
+                    info!("VPN config saved to OS keyring");
                     return;
                 }
                 Err(e) => warn!("Keyring save failed, falling back to file: {e}"),
@@ -105,64 +119,127 @@ pub fn save_wg_config(config_str: &str) {
     }
 
     // File fallback (always used on Android, fallback on desktop)
-    save_wg_config_file(config_str);
+    save_config_file(&json);
 }
 
-/// Load WireGuard config string from OS keyring (fallback to file).
-pub fn load_wg_config() -> Option<String> {
+/// Load VPN config from OS keyring (fallback to file).
+///
+/// Supports both the new JSON format and legacy WG `.conf` files.
+pub fn load_config() -> Option<ProtocolConfig> {
     #[cfg(not(target_os = "android"))]
     {
         match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
             Ok(entry) => match entry.get_password() {
-                Ok(config_str) => {
-                    info!("WG config loaded from OS keyring");
-                    return Some(config_str);
+                Ok(stored) => {
+                    info!("VPN config loaded from OS keyring");
+                    return parse_stored_config(&stored);
                 }
-                Err(keyring::Error::NoEntry) => {}
+                Err(keyring::Error::NoEntry) => {
+                    // Also check legacy keyring entry
+                    if let Some(config) = load_legacy_keyring() {
+                        return Some(config);
+                    }
+                }
                 Err(e) => warn!("Keyring load failed, trying file fallback: {e}"),
             },
             Err(e) => warn!("Keyring unavailable, trying file fallback: {e}"),
         }
     }
 
-    // File fallback
-    load_wg_config_file()
+    // File fallback — try new format first, then legacy
+    if let Some(config) = load_config_file() {
+        return Some(config);
+    }
+    load_legacy_config_file()
 }
 
-/// Delete saved WireGuard config from both keyring and file.
-pub fn delete_wg_config() {
+/// Delete saved VPN config from both keyring and file.
+pub fn delete_config() {
     #[cfg(not(target_os = "android"))]
     {
+        // Delete new keyring entry
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
             match entry.delete_credential() {
-                Ok(()) => info!("WG config deleted from OS keyring"),
+                Ok(()) => info!("VPN config deleted from OS keyring"),
                 Err(keyring::Error::NoEntry) => {}
-                Err(e) => warn!("Failed to delete WG config from keyring: {e}"),
+                Err(e) => warn!("Failed to delete VPN config from keyring: {e}"),
+            }
+        }
+        // Also delete legacy keyring entry if it exists
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, "wg-config") {
+            match entry.delete_credential() {
+                Ok(()) => info!("Legacy WG config deleted from OS keyring"),
+                Err(keyring::Error::NoEntry) => {}
+                Err(e) => warn!("Failed to delete legacy WG config from keyring: {e}"),
             }
         }
     }
 
-    // Also remove file fallback if it exists
+    // Remove both new and legacy config files
     if let Ok(dir) = get_config_dir() {
-        let path = dir.join(CONFIG_FILENAME);
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-            info!("WG config file deleted");
+        for filename in [CONFIG_FILENAME, LEGACY_CONFIG_FILENAME] {
+            let path = dir.join(filename);
+            if path.exists() {
+                let _ = std::fs::remove_file(&path);
+                info!("Config file deleted: {path:?}");
+            }
         }
     }
 }
 
-fn save_wg_config_file(config_str: &str) {
+/// Parse a stored config string — try JSON first, fall back to legacy WG `.conf`.
+fn parse_stored_config(stored: &str) -> Option<ProtocolConfig> {
+    // Try JSON (new format)
+    if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
+        return Some(config);
+    }
+    // Fall back to legacy WG config format
+    match WgConfig::from_config_str(stored) {
+        Ok(wg) => {
+            info!("Loaded legacy WireGuard config, will re-save in new format");
+            Some(ProtocolConfig::WireGuard(wg))
+        }
+        Err(e) => {
+            warn!("Failed to parse stored config: {e}");
+            None
+        }
+    }
+}
+
+/// Try loading from legacy keyring entry ("wg-config").
+#[cfg(not(target_os = "android"))]
+fn load_legacy_keyring() -> Option<ProtocolConfig> {
+    let entry = keyring::Entry::new(KEYRING_SERVICE, "wg-config").ok()?;
+    match entry.get_password() {
+        Ok(config_str) => {
+            info!("Legacy WG config loaded from OS keyring");
+            match WgConfig::from_config_str(&config_str) {
+                Ok(wg) => Some(ProtocolConfig::WireGuard(wg)),
+                Err(e) => {
+                    warn!("Failed to parse legacy WG config from keyring: {e}");
+                    None
+                }
+            }
+        }
+        Err(keyring::Error::NoEntry) => None,
+        Err(e) => {
+            warn!("Failed to load legacy WG config from keyring: {e}");
+            None
+        }
+    }
+}
+
+fn save_config_file(json: &str) {
     let path = match get_config_dir() {
         Ok(dir) => dir.join(CONFIG_FILENAME),
         Err(e) => {
-            warn!("Failed to save WG config to file: {e}");
+            warn!("Failed to save config to file: {e}");
             return;
         }
     };
 
-    if let Err(e) = std::fs::write(&path, config_str) {
-        warn!("Failed to write WG config file: {e}");
+    if let Err(e) = std::fs::write(&path, json) {
+        warn!("Failed to write config file: {e}");
         return;
     }
 
@@ -172,21 +249,45 @@ fn save_wg_config_file(config_str: &str) {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
 
-    info!("WG config saved to file: {path:?}");
+    info!("VPN config saved to file: {path:?}");
 }
 
-fn load_wg_config_file() -> Option<String> {
+fn load_config_file() -> Option<ProtocolConfig> {
     let path = get_config_dir().ok()?.join(CONFIG_FILENAME);
     if !path.exists() {
         return None;
     }
     match std::fs::read_to_string(&path) {
-        Ok(config_str) => {
-            info!("WG config loaded from file: {path:?}");
-            Some(config_str)
+        Ok(json) => {
+            info!("VPN config loaded from file: {path:?}");
+            parse_stored_config(&json)
         }
         Err(e) => {
-            warn!("Failed to read WG config file: {e}");
+            warn!("Failed to read config file: {e}");
+            None
+        }
+    }
+}
+
+/// Try loading from legacy `wg.conf` file.
+fn load_legacy_config_file() -> Option<ProtocolConfig> {
+    let path = get_config_dir().ok()?.join(LEGACY_CONFIG_FILENAME);
+    if !path.exists() {
+        return None;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(config_str) => {
+            info!("Legacy WG config loaded from file: {path:?}");
+            match WgConfig::from_config_str(&config_str) {
+                Ok(wg) => Some(ProtocolConfig::WireGuard(wg)),
+                Err(e) => {
+                    warn!("Failed to parse legacy WG config file: {e}");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read legacy WG config file: {e}");
             None
         }
     }
