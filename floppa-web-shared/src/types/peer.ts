@@ -21,7 +21,7 @@ export interface PeerInfo {
 export type ConnectionStatus =
   | 'disconnected'
   | 'connecting'
-  | 'verifying_handshake'
+  | 'verifying_connection'
   | 'connected'
   | 'disconnecting'
 

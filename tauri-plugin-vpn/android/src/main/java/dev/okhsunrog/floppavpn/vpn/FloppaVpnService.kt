@@ -15,8 +15,8 @@ import androidx.core.app.NotificationCompat
  * Android VpnService implementation for Floppa VPN.
  *
  * Runs in a separate `:vpn` process (android:process=":vpn" in manifest). Creates a TUN interface
- * and delegates WireGuard tunnel management to Rust via JNI. The Rust code runs a tarpc RPC server
- * for the UI process to query status, stats, and request disconnect.
+ * and delegates tunnel management (WireGuard or VLESS) to Rust via JNI. The Rust code runs a tarpc
+ * RPC server for the UI process to query status, stats, and request disconnect.
  */
 class FloppaVpnService : VpnService() {
 
@@ -36,7 +36,7 @@ class FloppaVpnService : VpnService() {
         const val EXTRA_MTU = "mtu"
         const val EXTRA_DISALLOWED_APPS = "disallowed_apps"
         const val EXTRA_ALLOWED_APPS = "allowed_apps"
-        const val EXTRA_WG_CONFIG = "wg_config"
+        const val EXTRA_PROTOCOL_CONFIG = "protocol_config"
 
         // Singleton instance for local protectSocket() calls from JNI
         @JvmField var instance: FloppaVpnService? = null
@@ -49,7 +49,7 @@ class FloppaVpnService : VpnService() {
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit()
 
-    private external fun nativeStartTunnel(tunFd: Int, wgConfig: String, socketPath: String)
+    private external fun nativeStartTunnel(tunFd: Int, protocolConfig: String, socketPath: String)
 
     private external fun nativeStop()
 
@@ -82,9 +82,9 @@ class FloppaVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        val wgConfig = intent.getStringExtra(EXTRA_WG_CONFIG)
-        if (wgConfig == null) {
-            Log.e(TAG, "Missing WG config in intent")
+        val protocolConfig = intent.getStringExtra(EXTRA_PROTOCOL_CONFIG)
+        if (protocolConfig == null) {
+            Log.e(TAG, "Missing protocol config in intent")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -99,9 +99,9 @@ class FloppaVpnService : VpnService() {
 
             Log.i(TAG, "TUN interface created with fd: $fd")
 
-            // Start the WireGuard tunnel and tarpc RPC server via JNI
+            // Start the tunnel and tarpc RPC server via JNI
             val socketPath = applicationInfo.dataDir + "/vpn.sock"
-            nativeStartTunnel(fd, wgConfig, socketPath)
+            nativeStartTunnel(fd, protocolConfig, socketPath)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN tunnel", e)
             stopSelf()

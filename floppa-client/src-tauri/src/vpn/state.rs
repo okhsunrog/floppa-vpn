@@ -15,7 +15,7 @@ pub enum ConnectionStatus {
     #[default]
     Disconnected,
     Connecting,
-    VerifyingHandshake,
+    VerifyingConnection,
     Connected,
     Disconnecting,
 }
@@ -214,6 +214,7 @@ pub struct TrafficStats {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ConnectionInfo {
     pub status: ConnectionStatus,
+    pub protocol: Option<String>,
     pub server_endpoint: Option<String>,
     pub assigned_ip: Option<String>,
     pub connected_at: Option<i64>, // Unix timestamp
@@ -225,6 +226,7 @@ impl Default for ConnectionInfo {
     fn default() -> Self {
         Self {
             status: ConnectionStatus::Disconnected,
+            protocol: None,
             server_endpoint: None,
             assigned_ip: None,
             connected_at: None,

@@ -205,7 +205,7 @@ pub async fn connect(
         let conn = state.connection.read().await;
         match conn.status {
             ConnectionStatus::Disconnected => {}
-            ConnectionStatus::Connecting | ConnectionStatus::VerifyingHandshake => {
+            ConnectionStatus::Connecting | ConnectionStatus::VerifyingConnection => {
                 return Err("Already connecting".to_string());
             }
             ConnectionStatus::Connected => return Err("Already connected".to_string()),
@@ -267,14 +267,10 @@ async fn connect_android(
         return Err("VPN permission denied".to_string());
     }
 
-    // Extract protocol-specific config string for the Android VPN service
-    let wg_config_str = match &config {
+    // Serialize config for the Android VPN service (WG config text or vless:// URI)
+    let protocol_config_str = match &config {
         ProtocolConfig::WireGuard(wg) => wg.to_config_str(),
-        ProtocolConfig::Vless(_) => {
-            let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Disconnected;
-            return Err("VLESS not yet supported on Android".to_string());
-        }
+        ProtocolConfig::Vless(vless) => vless.uri.clone(),
     };
 
     let dns = match &config {
@@ -290,7 +286,7 @@ async fn connect_android(
         mtu: config.get_mtu() as u32,
         disallowed_apps: vec![],
         allowed_apps: vec![],
-        wg_config: Some(wg_config_str),
+        protocol_config: Some(protocol_config_str),
     };
 
     let mode = split_mode.unwrap_or_default();
@@ -340,26 +336,43 @@ async fn connect_android(
 
     {
         let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::VerifyingHandshake;
+        conn.status = ConnectionStatus::VerifyingConnection;
     }
-    info!("Tunnel up on Android, verifying handshake...");
 
-    if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-        .await
-        .is_err()
-    {
-        info!("No handshake after 5s — peer likely invalid, stopping tunnel");
-        if let Err(e) = backend.stop().await {
-            error!("Failed to stop tunnel after handshake failure: {e}");
+    match &config {
+        ProtocolConfig::WireGuard(_) => {
+            info!("Tunnel up on Android, verifying WireGuard handshake...");
+            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                .await
+                .is_err()
+            {
+                info!("No handshake after 5s — peer likely invalid, stopping tunnel");
+                if let Err(e) = backend.stop().await {
+                    error!("Failed to stop tunnel after verification failure: {e}");
+                }
+                let mut conn = state.connection.write().await;
+                *conn = ConnectionInfo::default();
+                return Err("Connection verification failed — config may be invalid".to_string());
+            }
         }
-        let mut conn = state.connection.write().await;
-        *conn = ConnectionInfo::default();
-        return Err("No WireGuard handshake — config may be invalid".to_string());
+        ProtocolConfig::Vless(_) => {
+            info!("Tunnel up on Android, verifying VLESS connectivity...");
+            if let Err(e) = verify_vless_connectivity(std::time::Duration::from_secs(10)).await {
+                info!("VLESS connectivity check failed: {e}");
+                if let Err(e) = backend.stop().await {
+                    error!("Failed to stop tunnel after verification failure: {e}");
+                }
+                let mut conn = state.connection.write().await;
+                *conn = ConnectionInfo::default();
+                return Err(format!("Connection verification failed: {e}"));
+            }
+        }
     }
 
     state.speed_tracker.write().await.reset();
     let mut conn = state.connection.write().await;
     conn.status = ConnectionStatus::Connected;
+    conn.protocol = Some(config.protocol_name().to_string());
     conn.connected_at = Some(chrono::Utc::now().timestamp());
     conn.server_endpoint = Some(config.endpoint_str().to_string());
     conn.assigned_ip = Some(config.address().to_string());
@@ -465,43 +478,47 @@ async fn connect_desktop(
             }
 
             // Protocol-specific verification
-            let is_wireguard = matches!(&config, ProtocolConfig::WireGuard(_));
-            if is_wireguard {
-                {
-                    let mut conn = state.connection.write().await;
-                    conn.status = ConnectionStatus::VerifyingHandshake;
-                }
-                info!("Tunnel up, verifying WireGuard handshake...");
+            {
+                let mut conn = state.connection.write().await;
+                conn.status = ConnectionStatus::VerifyingConnection;
+            }
 
-                if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                    .await
-                    .is_err()
-                {
-                    info!("No handshake after 5s — peer likely invalid, disconnecting");
-                    let _ = platform.cleanup(INTERFACE_NAME).await;
-                    let _ = backend.stop().await;
-                    let mut conn = state.connection.write().await;
-                    conn.status = ConnectionStatus::Disconnected;
-                    return Err("No WireGuard handshake — config may be invalid".to_string());
+            match &config {
+                ProtocolConfig::WireGuard(_) => {
+                    info!("Tunnel up, verifying WireGuard handshake...");
+                    if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                        .await
+                        .is_err()
+                    {
+                        info!("No handshake after 5s — peer likely invalid, disconnecting");
+                        let _ = platform.cleanup(INTERFACE_NAME).await;
+                        let _ = backend.stop().await;
+                        let mut conn = state.connection.write().await;
+                        conn.status = ConnectionStatus::Disconnected;
+                        return Err(
+                            "Connection verification failed — config may be invalid".to_string()
+                        );
+                    }
                 }
-            } else {
-                // VLESS: connection is established during tunnel creation,
-                // just verify tunnel is still running
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if let Some(info) = backend.get_all_info().await
-                    && !info.is_running
-                {
-                    let _ = platform.cleanup(INTERFACE_NAME).await;
-                    let _ = backend.stop().await;
-                    let mut conn = state.connection.write().await;
-                    conn.status = ConnectionStatus::Disconnected;
-                    return Err("VLESS tunnel stopped unexpectedly".to_string());
+                ProtocolConfig::Vless(_) => {
+                    info!("Tunnel up, verifying VLESS connectivity...");
+                    if let Err(e) =
+                        verify_vless_connectivity(std::time::Duration::from_secs(10)).await
+                    {
+                        info!("VLESS connectivity check failed: {e}");
+                        let _ = platform.cleanup(INTERFACE_NAME).await;
+                        let _ = backend.stop().await;
+                        let mut conn = state.connection.write().await;
+                        conn.status = ConnectionStatus::Disconnected;
+                        return Err(format!("Connection verification failed: {e}"));
+                    }
                 }
             }
 
             state.speed_tracker.write().await.reset();
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Connected;
+            conn.protocol = Some(config.protocol_name().to_string());
             conn.connected_at = Some(chrono::Utc::now().timestamp());
             conn.server_endpoint = Some(config.endpoint_str().to_string());
             conn.assigned_ip = Some(config.address().to_string());
@@ -538,6 +555,19 @@ async fn wait_for_handshake(
         }
         tokio::time::sleep(poll_interval).await;
     }
+}
+
+/// Verify VLESS tunnel connectivity by making a TCP connection through the tunnel.
+/// This goes: TUN → smoltcp → VLESS proxy → server → target, proving end-to-end connectivity.
+async fn verify_vless_connectivity(timeout: std::time::Duration) -> Result<(), String> {
+    tokio::time::timeout(timeout, async {
+        tokio::net::TcpStream::connect("1.1.1.1:443")
+            .await
+            .map_err(|e| format!("connectivity check failed: {e}"))
+    })
+    .await
+    .map_err(|_| "connectivity check timed out".to_string())?
+    .map(|_stream| ())
 }
 
 /// Disconnect from VPN
@@ -614,16 +644,17 @@ pub async fn get_connection_info(
             conn.connected_at = Some(connected_at);
             conn.last_handshake = info.as_ref().and_then(|i| i.last_handshake);
             if let Some(cfg) = config.as_ref() {
+                conn.protocol = Some(cfg.protocol_name().to_string());
                 conn.server_endpoint = Some(cfg.endpoint_str().to_string());
                 conn.assigned_ip = Some(cfg.address().to_string());
             }
             state.speed_tracker.write().await.reset();
             info!("Detected running tunnel, updated status to Connected");
         }
-        // Tunnel died during handshake verification
-        ConnectionStatus::VerifyingHandshake if !is_running => {
+        // Tunnel died during connection verification
+        ConnectionStatus::VerifyingConnection if !is_running => {
             *conn = ConnectionInfo::default();
-            info!("Tunnel stopped during handshake verification, reset to Disconnected");
+            info!("Tunnel stopped during connection verification, reset to Disconnected");
         }
         // Tunnel dropped while connected
         ConnectionStatus::Connected if !is_running => {

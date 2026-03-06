@@ -32,7 +32,7 @@ export const useVpnStore = defineStore(
     const connectionStatus = computed(() => {
       if (isConnected.value) return 'connected' as const
       const s = connectionInfo.value?.status
-      if (s === 'connecting' || s === 'verifying_handshake') return 'connecting' as const
+      if (s === 'connecting' || s === 'verifying_connection') return 'connecting' as const
       if (s === 'disconnecting') return 'disconnecting' as const
       return 'disconnected' as const
     })
@@ -135,7 +135,7 @@ export const useVpnStore = defineStore(
       // Rust side: app.emit("vpn-status", &conn_info) on each ConnectionStatus transition
       // TS side: listen("vpn-status", (e) => { connectionInfo.value = e.payload })
       // This would eliminate polling and give instant UI updates for all transitions
-      // (connecting → verifying_handshake → connected), but adds complexity
+      // (connecting → verifying_connection → connected), but adds complexity
       // (event setup, specta typing, dedup with refreshStatus). Current approach
       // (optimistic status + 500ms poll) is good enough for now.
       connectionInfo.value = {
@@ -147,7 +147,7 @@ export const useVpnStore = defineStore(
         stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
       }
 
-      // Poll status during connect to show intermediate states (connecting → verifying_handshake)
+      // Poll status during connect to show intermediate states (connecting → verifying_connection)
       const pollId = setInterval(() => refreshStatus(), 500)
 
       try {
