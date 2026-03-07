@@ -178,7 +178,13 @@ Set to `NULL` for unlimited. Use `test_plan` (id=5) for experiments.
 
 ## Reference results (March 2026)
 
-### WireGuard (gotatun, MTU 1420)
+### WireGuard — kernel module (baseline, host system)
+
+| Download | Upload | Ping |
+|----------|--------|------|
+| ~394 Mbps | ~230 Mbps | ~53 ms |
+
+### WireGuard — gotatun (userspace, namespace, MTU 1420)
 
 | Speed Limit | Download | Upload |
 |-------------|----------|--------|
@@ -187,10 +193,11 @@ Set to `NULL` for unlimited. Use `test_plan` (id=5) for experiments.
 | 50 Mbps | ~45 Mbps | ~23 Mbps |
 | 20 Mbps | ~19 Mbps | ~17 Mbps |
 
-### VLESS+REALITY (shoes-lite, MTU 1500)
+### VLESS+REALITY — shoes-lite (userspace, namespace, MTU 1500)
 
-| Speed Limit | Download | Upload |
-|-------------|----------|--------|
-| NULL (unlimited) | ~117 Mbps | ~33 Mbps |
+| Build | Download | Upload | Ping |
+|-------|----------|--------|------|
+| Debug | ~117 Mbps | ~33 Mbps | ~107 ms |
+| Release | ~384 Mbps | ~39 Mbps | ~94 ms |
 
-Upload varies due to path bottleneck (double WG encapsulation through Europe exit node), not TC limits.
+Download matches kernel WG. Upload is limited by smoltcp userspace TCP stack overhead.
