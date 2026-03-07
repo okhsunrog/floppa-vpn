@@ -11,7 +11,7 @@ use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
 use tracing::{error, info};
 
-use shoes_lite::address::NetLocation;
+use shoes_lite::address::{NetLocation, NetLocationMask};
 use shoes_lite::client_proxy_selector::{ClientProxySelector, ConnectAction, ConnectRule};
 use shoes_lite::reality::{self, RealityServerTarget};
 use shoes_lite::resolver::CachingNativeResolver;
@@ -77,8 +77,10 @@ async fn main() -> anyhow::Result<()> {
     let resolver: Arc<dyn shoes_lite::resolver::Resolver> = Arc::new(CachingNativeResolver::new());
 
     let direct_chain_group = build_direct_chain_group(resolver.clone());
+    // NOTE: masks must contain NetLocationMask::ANY to match all destinations.
+    // An empty vec![] means "match nothing" — all connections would be silently blocked.
     let allow_all_rule = ConnectRule::new(
-        vec![], // empty masks = match everything
+        vec![NetLocationMask::ANY],
         ConnectAction::new_allow(None, direct_chain_group),
     );
     let proxy_selector = Arc::new(ClientProxySelector::new(vec![allow_all_rule]));

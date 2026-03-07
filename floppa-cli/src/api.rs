@@ -31,7 +31,8 @@ pub struct SubscriptionInfo {
 #[allow(dead_code)]
 pub struct MyPeer {
     pub id: i64,
-    pub assigned_ip: String,
+    pub protocol: String,
+    pub assigned_ip: Option<String>,
     pub sync_status: String,
     pub device_name: Option<String>,
     pub device_id: Option<String>,
@@ -40,7 +41,7 @@ pub struct MyPeer {
 #[derive(Debug, Deserialize)]
 pub struct CreatePeerResponse {
     pub id: i64,
-    pub assigned_ip: String,
+    pub assigned_ip: Option<String>,
     pub config: String,
 }
 
@@ -48,6 +49,7 @@ pub struct CreatePeerResponse {
 struct CreatePeerRequest {
     device_name: Option<String>,
     device_id: Option<String>,
+    protocol: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,7 +122,11 @@ impl ApiClient {
         resp.json().await.context("Failed to parse peers response")
     }
 
-    pub async fn create_peer(&self, device_name: Option<String>) -> Result<CreatePeerResponse> {
+    pub async fn create_peer(
+        &self,
+        device_name: Option<String>,
+        protocol: &str,
+    ) -> Result<CreatePeerResponse> {
         let resp = self
             .client
             .post(self.url("/me/peers"))
@@ -128,6 +134,7 @@ impl ApiClient {
             .json(&CreatePeerRequest {
                 device_name,
                 device_id: None,
+                protocol: Some(protocol.to_string()),
             })
             .send()
             .await?;
@@ -162,21 +169,25 @@ impl ApiClient {
         resp.text().await.context("Failed to read config response")
     }
 
-    /// Find an existing active peer or create a new one. Returns the WG config string.
-    pub async fn find_or_create_peer(&self) -> Result<String> {
+    /// Find an existing active peer matching the protocol, or create a new one.
+    pub async fn find_or_create_peer(&self, protocol: &str) -> Result<String> {
         let peers = self.list_peers().await?;
 
-        // Look for an active peer
-        let active = peers.iter().find(|p| p.sync_status == "active");
+        // Look for an active peer matching the requested protocol
+        let active = peers
+            .iter()
+            .find(|p| p.sync_status == "active" && p.protocol == protocol);
 
         let peer_id = if let Some(peer) = active {
-            eprintln!("Using existing peer: {} ({})", peer.assigned_ip, peer.id);
+            let addr = peer.assigned_ip.as_deref().unwrap_or("n/a");
+            eprintln!("Using existing {protocol} peer: {addr} ({})", peer.id);
             peer.id
         } else {
             let hostname = hostname();
-            eprintln!("Creating new peer (device: {hostname})...");
-            let created = self.create_peer(Some(hostname)).await?;
-            eprintln!("Peer created: {} ({})", created.assigned_ip, created.id);
+            eprintln!("Creating new {protocol} peer (device: {hostname})...");
+            let created = self.create_peer(Some(hostname), protocol).await?;
+            let addr = created.assigned_ip.as_deref().unwrap_or("n/a");
+            eprintln!("Peer created: {addr} ({})", created.id);
             return Ok(created.config);
         };
 
