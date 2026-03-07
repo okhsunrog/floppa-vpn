@@ -1,7 +1,7 @@
 //! UUID registry with database synchronization.
 //!
 //! Keeps the in-memory VLESS UUID registry in sync with PostgreSQL via:
-//! - **LISTEN/NOTIFY**: Real-time updates when peers or subscriptions change
+//! - **LISTEN/NOTIFY**: Real-time updates when users or subscriptions change
 //! - **Periodic full sync**: Safety net for missed notifications
 
 use std::sync::Arc;
@@ -10,42 +10,36 @@ use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tracing::{error, info, warn};
 
-use crate::auth::{MultiUserAuthenticator, UserInfo};
+use crate::auth::MultiUserAuthenticator;
 
-/// Load all active VLESS peers from the database into the authenticator.
+/// Load all users with VLESS UUIDs and active subscriptions into the authenticator.
 pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> anyhow::Result<()> {
     let rows = sqlx::query!(
         r#"
-        SELECT p.id as peer_id, p.user_id, p.vless_uuid,
+        SELECT u.id as user_id, u.vless_uuid,
                pl.default_speed_limit_mbps as speed_limit_mbps
-        FROM peers p
-        JOIN subscriptions s ON s.user_id = p.user_id
+        FROM users u
+        JOIN subscriptions s ON s.user_id = u.id
         JOIN plans pl ON s.plan_id = pl.id
-        WHERE p.protocol = 'vless'
-          AND p.sync_status NOT IN ('removed', 'pending_remove')
+        WHERE u.vless_uuid IS NOT NULL
           AND (s.expires_at IS NULL OR s.expires_at > NOW())
         "#
     )
     .fetch_all(pool)
     .await?;
 
-    auth.clear();
-
-    let mut count = 0usize;
+    let mut users = Vec::with_capacity(rows.len());
     for row in rows {
         let uuid_str = match &row.vless_uuid {
             Some(u) => u,
-            None => {
-                warn!(peer_id = row.peer_id, "VLESS peer has no UUID, skipping");
-                continue;
-            }
+            None => continue,
         };
 
         let uuid_bytes = match parse_vless_uuid(uuid_str) {
             Some(b) => b,
             None => {
                 error!(
-                    peer_id = row.peer_id,
+                    user_id = row.user_id,
                     uuid = uuid_str,
                     "Invalid VLESS UUID format"
                 );
@@ -53,16 +47,11 @@ pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> any
             }
         };
 
-        auth.insert(
-            uuid_bytes,
-            UserInfo {
-                peer_id: row.peer_id,
-                user_id: row.user_id,
-                speed_limit_mbps: row.speed_limit_mbps,
-            },
-        );
-        count += 1;
+        users.push((uuid_bytes, row.user_id, row.speed_limit_mbps));
     }
+
+    let count = users.len();
+    auth.sync_users(users);
 
     info!(count, "Registry synced from database");
     Ok(())
@@ -100,18 +89,18 @@ pub async fn listen_for_changes(pool: PgPool, auth: Arc<MultiUserAuthenticator>)
 
 async fn run_listener(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> anyhow::Result<()> {
     let mut listener = PgListener::connect_with(pool).await?;
-    listener.listen("peer_changed").await?;
+    listener.listen("vless_user_changed").await?;
     listener.listen("subscription_changed").await?;
-    info!("Listening for DB notifications (peer_changed, subscription_changed)");
+    info!("Listening for DB notifications (vless_user_changed, subscription_changed)");
 
     loop {
         let notification = listener.recv().await?;
         match notification.channel() {
-            "peer_changed" | "subscription_changed" => {
+            "vless_user_changed" | "subscription_changed" => {
                 // Both channels trigger a full registry re-sync.
-                // peer_changed: a VLESS peer may have been added/removed.
+                // vless_user_changed: a user's VLESS UUID was set/regenerated.
                 // subscription_changed: a user's plan (speed limit) may have changed,
-                //   or subscription expired → peers should be removed from registry.
+                //   or subscription expired → user should be removed from registry.
                 if let Err(e) = full_sync(pool, auth).await {
                     error!("Sync after {} failed: {e:#}", notification.channel());
                 }

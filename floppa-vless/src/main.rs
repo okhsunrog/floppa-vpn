@@ -25,7 +25,6 @@ use shoes_lite::tls_server_handler::{
 
 use crate::auth::MultiUserAuthenticator;
 use crate::config::{VlessServerConfig, VlessServerSecrets};
-use crate::stats::TrafficCollector;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,9 +53,6 @@ async fn main() -> anyhow::Result<()> {
     registry::full_sync(&pool, &authenticator)
         .await
         .context("Initial registry sync failed")?;
-
-    // Initialize traffic collector
-    let traffic = Arc::new(TrafficCollector::new());
 
     // Parse REALITY private key
     let private_key = reality::decode_private_key(&secrets.reality_private_key)
@@ -148,10 +144,10 @@ async fn main() -> anyhow::Result<()> {
 
     // 3. Traffic stats flush
     let flush_pool = pool.clone();
-    let flush_traffic = traffic.clone();
+    let flush_auth = authenticator.clone();
     let flush_interval = config.traffic.flush_interval_secs;
     let flush_handle = tokio::spawn(async move {
-        stats::flush_loop(flush_pool, flush_traffic, flush_interval).await;
+        stats::flush_loop(flush_pool, flush_auth, flush_interval).await;
     });
 
     // Start TCP listener
@@ -213,7 +209,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Flush remaining traffic stats before exit
-    if let Err(e) = traffic.flush(&pool).await {
+    if let Err(e) = stats::flush_traffic(&authenticator, &pool).await {
         error!("Final traffic flush failed: {e:#}");
     }
 
