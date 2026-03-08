@@ -52,9 +52,15 @@ pub fn init_tracing() {
     }
 }
 
-/// Custom formatter that strips noisy URL suffixes from webview targets.
-/// e.g. `webview:error@http://localhost:1420/node_modules/...` → `webview`
-/// Other targets (floppa_client_lib, keyring, etc.) are left unchanged.
+/// Custom formatter that resolves the real source for log-crate events.
+///
+/// `tracing-log` normalizes all `log` crate events to target `log` and stores
+/// the original target in a `log.target` field. We extract that field to show
+/// the actual source (e.g. `shoes_lite::crypto`, `keyring`).
+///
+/// Tauri's WebView interception produces targets like
+/// `webview:error@http://localhost:1420/...` — we strip the URL suffix.
+///
 /// Only needed on desktop — on Android the target is already short.
 #[cfg(not(target_os = "android"))]
 struct ShortTargetFormat;
@@ -75,9 +81,26 @@ where
         let level = meta.level();
         let target = meta.target();
 
-        // Plugin-log events have target "log", Tauri's WebView interception
-        // has target "webview:LEVEL@http://...". Both → "webview".
-        let short_target = if target == "log" || target.starts_with("webview") {
+        // For log-crate events (target "log"), extract the real source from
+        // the log.target field that tracing-log stores.
+        let mut real_target = String::new();
+        if target == "log" {
+            let mut visitor = LogTargetVisitor::default();
+            event.record(&mut visitor);
+            if let Some(t) = visitor.log_target {
+                real_target = t;
+            }
+        }
+
+        let short_target = if !real_target.is_empty() {
+            // Shorten webview targets from log.target too
+            if real_target.starts_with("webview") {
+                "webview"
+            } else {
+                &real_target
+            }
+        } else if target.starts_with("webview") {
+            // Tauri WebView interception: "webview:LEVEL@URL" → "webview"
             "webview"
         } else {
             target
@@ -99,4 +122,22 @@ where
         ctx.field_format().format_fields(writer.by_ref(), event)?;
         writeln!(writer)
     }
+}
+
+/// Visitor that extracts the `log.target` field from tracing-log events.
+#[cfg(not(target_os = "android"))]
+#[derive(Default)]
+struct LogTargetVisitor {
+    log_target: Option<String>,
+}
+
+#[cfg(not(target_os = "android"))]
+impl tracing::field::Visit for LogTargetVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "log.target" {
+            self.log_target = Some(value.to_string());
+        }
+    }
+
+    fn record_debug(&mut self, _field: &tracing::field::Field, _value: &dyn std::fmt::Debug) {}
 }

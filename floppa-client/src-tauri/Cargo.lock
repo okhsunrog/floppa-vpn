@@ -2139,7 +2139,7 @@ dependencies = [
  "tokio",
  "tun",
  "typed-builder",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "x25519-dalek",
  "zerocopy",
 ]
@@ -2324,7 +2324,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hickory-net"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#7325541085fb1485555ca94bf8968beee900a14b"
+source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2340,7 +2340,7 @@ dependencies = [
  "http",
  "idna",
  "ipnet",
- "jni 0.21.1",
+ "jni 0.22.3",
  "pin-project-lite",
  "quinn",
  "rand 0.10.0",
@@ -2356,12 +2356,12 @@ dependencies = [
 [[package]]
 name = "hickory-proto"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#7325541085fb1485555ca94bf8968beee900a14b"
+source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
 dependencies = [
  "data-encoding",
  "idna",
  "ipnet",
- "jni 0.21.1",
+ "jni 0.22.3",
  "once_cell",
  "prefix-trie",
  "rand 0.10.0",
@@ -2375,7 +2375,7 @@ dependencies = [
 [[package]]
 name = "hickory-resolver"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#7325541085fb1485555ca94bf8968beee900a14b"
+source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -5443,7 +5443,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "shoes-lite"
 version = "0.2.8"
-source = "git+https://github.com/okhsunrog/shoes-lite?rev=f8f27b2#f8f27b2bf3bc34e0dffc9f19eff70abca6913ddb"
+source = "git+https://github.com/okhsunrog/shoes-lite?rev=044f489#044f4891da3bd90fc8352080296b9f1dd6d15022"
 dependencies = [
  "async-trait",
  "aws-lc-rs",
