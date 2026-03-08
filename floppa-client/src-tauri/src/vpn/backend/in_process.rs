@@ -71,6 +71,10 @@ impl VpnBackend for InProcessBackend {
         self.tunnel_manager.stop().await
     }
 
+    async fn ping(&self) -> Result<(), String> {
+        self.tunnel_manager.ping().await
+    }
+
     async fn get_all_info(&self) -> Option<VpnFullInfo> {
         Some(VpnFullInfo {
             is_running: self.tunnel_manager.is_running().await,

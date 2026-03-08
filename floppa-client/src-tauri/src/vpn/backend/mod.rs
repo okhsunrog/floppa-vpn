@@ -63,6 +63,10 @@ pub trait VpnBackend: Send + Sync {
     /// This is a **normal state**, not an error — callers should treat `None` as
     /// "tunnel not available" without logging errors or retrying.
     async fn get_all_info(&self) -> Option<VpnFullInfo>;
+
+    /// Ping the VLESS server through the proxy chain (bypasses TUN).
+    /// Updates `last_packet_received` on success so the health dot reflects connectivity.
+    async fn ping(&self) -> Result<(), String>;
 }
 
 /// Create the appropriate VPN backend for the current platform.

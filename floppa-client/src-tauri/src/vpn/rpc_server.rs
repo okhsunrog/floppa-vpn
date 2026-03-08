@@ -58,6 +58,10 @@ impl VpnRpc for VpnRpcServer {
 
         result
     }
+
+    async fn ping(self, _ctx: Context) -> Result<(), String> {
+        self.tunnel_manager.ping().await
+    }
 }
 
 /// Start the tarpc server on a Unix domain socket.

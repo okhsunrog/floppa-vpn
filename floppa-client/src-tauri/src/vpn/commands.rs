@@ -406,9 +406,11 @@ async fn connect_android(
                 return Err("Connection verification failed — config may be invalid".to_string());
             }
         }
-        ProtocolConfig::Vless(_) => {
+        ProtocolConfig::Vless(vless) => {
             info!("Tunnel up on Android, verifying VLESS connectivity...");
-            if let Err(e) = verify_vless_connectivity(std::time::Duration::from_secs(10)).await {
+            if let Err(e) =
+                verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
+            {
                 info!("VLESS connectivity check failed: {e}");
                 if let Err(e) = backend.stop().await {
                     error!("Failed to stop tunnel after verification failure: {e}");
@@ -551,10 +553,10 @@ async fn connect_desktop(
                         );
                     }
                 }
-                ProtocolConfig::Vless(_) => {
+                ProtocolConfig::Vless(vless) => {
                     info!("Tunnel up, verifying VLESS connectivity...");
                     if let Err(e) =
-                        verify_vless_connectivity(std::time::Duration::from_secs(10)).await
+                        verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
                     {
                         info!("VLESS connectivity check failed: {e}");
                         let _ = platform.cleanup(INTERFACE_NAME).await;
@@ -608,17 +610,16 @@ async fn wait_for_handshake(
     }
 }
 
-/// Verify VLESS tunnel connectivity by making a TCP connection through the tunnel.
-/// This goes: TUN → smoltcp → VLESS proxy → server → target, proving end-to-end connectivity.
-async fn verify_vless_connectivity(timeout: std::time::Duration) -> Result<(), String> {
-    tokio::time::timeout(timeout, async {
-        tokio::net::TcpStream::connect("1.1.1.1:443")
-            .await
-            .map_err(|e| format!("connectivity check failed: {e}"))
-    })
-    .await
-    .map_err(|_| "connectivity check timed out".to_string())?
-    .map(|_stream| ())
+/// Verify VLESS connectivity by making a test TCP connection through the proxy chain directly.
+/// Bypasses TUN — proves: server reachable → REALITY handshake → UUID accepted → proxy works.
+async fn verify_vless_connectivity(
+    vless_config: &VlessVpnConfig,
+    timeout: std::time::Duration,
+) -> Result<(), String> {
+    vless_config
+        .to_shoes_config()
+        .check_connectivity(timeout)
+        .await
 }
 
 /// Disconnect from VPN
@@ -687,7 +688,6 @@ pub async fn get_connection_info(
         ConnectionStatus::Disconnected if is_running => {
             let configs = state.configs.read().await;
             let config = configs.active_config();
-            conn.status = ConnectionStatus::Connected;
             let connected_at = info
                 .as_ref()
                 .and_then(|i| i.connected_secs)
@@ -701,7 +701,22 @@ pub async fn get_connection_info(
                 conn.assigned_ip = Some(cfg.address().to_string());
             }
             state.speed_tracker.write().await.reset();
+            conn.status = ConnectionStatus::Connected;
             info!("Detected running tunnel, updated status to Connected");
+
+            // For VLESS, ping the tunnel in the background to update health dot.
+            // VLESS has no keepalives, so last_packet_received may be stale.
+            if config
+                .as_ref()
+                .is_some_and(|c| matches!(c, ProtocolConfig::Vless(_)))
+            {
+                let backend = backend.inner().clone();
+                tokio::spawn(async move {
+                    if let Err(e) = backend.ping().await {
+                        warn!("Background VLESS ping failed: {e}");
+                    }
+                });
+            }
         }
         // Tunnel died during connection verification
         ConnectionStatus::VerifyingConnection if !is_running => {

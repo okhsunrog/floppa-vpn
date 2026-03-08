@@ -369,6 +369,13 @@ impl ActiveTunnel {
         }
     }
 
+    async fn ping(&self) -> Result<(), String> {
+        match self {
+            Self::Vless(t) => t.ping(Duration::from_secs(10)).await,
+            Self::WireGuard(_) => Ok(()), // WireGuard has handshake-based health
+        }
+    }
+
     async fn stop(self) -> Result<(), String> {
         match self {
             Self::WireGuard(t) => t.stop().await,
@@ -530,6 +537,14 @@ impl TunnelManager {
     pub async fn get_connection_duration(&self) -> Option<Duration> {
         let tunnel_guard = self.tunnel.read().await;
         tunnel_guard.as_ref().and_then(|t| t.connection_duration())
+    }
+
+    pub async fn ping(&self) -> Result<(), String> {
+        let tunnel_guard = self.tunnel.read().await;
+        match tunnel_guard.as_ref() {
+            Some(tunnel) => tunnel.ping().await,
+            None => Err("No tunnel running".to_string()),
+        }
     }
 
     pub async fn get_interface_name(&self) -> Option<String> {

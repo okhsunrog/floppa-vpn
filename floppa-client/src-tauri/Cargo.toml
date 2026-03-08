@@ -55,7 +55,7 @@ tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "27.0.0"
 # VLESS+REALITY protocol support
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "404b933" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "84155cc" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 

@@ -103,6 +103,17 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
+    async fn ping(&self) -> Result<(), String> {
+        let client = self.get_client().await?;
+        match client.ping(tarpc::context::current()).await {
+            Ok(result) => result,
+            Err(e) => {
+                self.invalidate_client().await;
+                Err(format!("RPC error: {e}"))
+            }
+        }
+    }
+
     async fn get_all_info(&self) -> Option<VpnFullInfo> {
         let client = match self.get_client().await {
             Ok(c) => {

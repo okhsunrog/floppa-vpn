@@ -113,6 +113,10 @@ impl VpnBackend for IosBackend {
         Err("IosBackend not yet implemented".into())
     }
 
+    async fn ping(&self) -> Result<(), String> {
+        Err("IosBackend not yet implemented".into())
+    }
+
     async fn get_all_info(&self) -> Option<VpnFullInfo> {
         // TODO: Check NEVPNConnection.status and query stats via sendProviderMessage()
         Some(VpnFullInfo {

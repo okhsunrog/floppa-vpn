@@ -20,4 +20,8 @@ pub trait VpnRpc {
 
     /// Stop the tunnel and VPN service.
     async fn stop() -> Result<(), String>;
+
+    /// Ping the VLESS server through the proxy chain.
+    /// Updates last_packet_received on success.
+    async fn ping() -> Result<(), String>;
 }
