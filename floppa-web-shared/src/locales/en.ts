@@ -22,7 +22,6 @@ export default {
     add: 'Add',
     remove: 'Remove',
     close: 'Close',
-    open: 'Open',
     copy: 'Copy',
     download: 'Download',
     create: 'Create',
