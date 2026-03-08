@@ -72,7 +72,7 @@ impl VpnBackend for AndroidIpcBackend {
         &self,
         _config: &ProtocolConfig,
         _interface_name: &str,
-        _fwmark: Option<u32>,
+        _tun_params: &crate::vpn::platform::TunParams,
         _endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         // On Android, the tunnel starts via JNI in the :vpn process.

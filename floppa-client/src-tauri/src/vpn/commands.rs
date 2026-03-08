@@ -196,44 +196,6 @@ pub struct SafeAreaInsets {
 
 const INTERFACE_NAME: &str = "floppa0";
 
-/// fwmark used on Linux for policy routing
-#[cfg(target_os = "linux")]
-const FWMARK: u32 = 0x666c6f70; // "flop" in hex
-
-/// Check whether the current process has effective CAP_NET_ADMIN.
-#[cfg(target_os = "linux")]
-fn has_cap_net_admin() -> bool {
-    const CAP_NET_ADMIN_BIT: u32 = 12;
-
-    let status = match std::fs::read_to_string("/proc/self/status") {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Failed to read /proc/self/status: {e}");
-            return false;
-        }
-    };
-
-    let cap_eff_hex = match status
-        .lines()
-        .find(|line| line.starts_with("CapEff:"))
-        .and_then(|line| line.split_whitespace().nth(1))
-    {
-        Some(v) => v,
-        None => {
-            warn!("CapEff not found in /proc/self/status");
-            return false;
-        }
-    };
-
-    match u128::from_str_radix(cap_eff_hex, 16) {
-        Ok(bits) => (bits & (1u128 << CAP_NET_ADMIN_BIT)) != 0,
-        Err(e) => {
-            warn!("Failed to parse CapEff value '{cap_eff_hex}': {e}");
-            false
-        }
-    }
-}
-
 /// Connect to VPN
 #[tauri::command]
 #[specta::specta]
@@ -442,6 +404,8 @@ async fn connect_desktop(
     _split_mode: Option<SplitMode>,
     _selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
+    use super::platform::Platform;
+
     let endpoint = tokio::net::lookup_host(config.endpoint_str())
         .await
         .map_err(|e| {
@@ -459,7 +423,6 @@ async fn connect_desktop(
         })?;
     let endpoint_ip = endpoint.ip();
 
-    #[cfg(target_os = "linux")]
     if let Err(e) = platform.prepare_tun(INTERFACE_NAME).await {
         error!("Failed to prepare TUN interface: {e}");
         let mut conn = state.connection.write().await;
@@ -467,31 +430,26 @@ async fn connect_desktop(
         return Err(format!("Failed to prepare TUN interface: {e}"));
     }
 
-    #[cfg(target_os = "linux")]
-    let fwmark = if has_cap_net_admin() {
-        Some(FWMARK)
-    } else {
-        info!("CAP_NET_ADMIN not present, running without fwmark");
-        None
-    };
+    let tun_params = platform.tun_params();
 
-    #[cfg(target_os = "linux")]
+    // Try starting with fwmark; if it fails due to permissions, retry without.
     let start_result = match backend
-        .start(&config, INTERFACE_NAME, fwmark, endpoint)
+        .start(&config, INTERFACE_NAME, &tun_params, endpoint)
         .await
     {
         Err(e)
-            if fwmark.is_some()
+            if tun_params.fwmark.is_some()
                 && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
         {
-            warn!("Tunnel start with fwmark failed due permissions, retrying without fwmark");
-            backend.start(&config, INTERFACE_NAME, None, endpoint).await
+            warn!("Tunnel start with fwmark failed due to permissions, retrying without fwmark");
+            let mut retry_params = tun_params;
+            retry_params.fwmark = None;
+            backend
+                .start(&config, INTERFACE_NAME, &retry_params, endpoint)
+                .await
         }
         result => result,
     };
-
-    #[cfg(not(target_os = "linux"))]
-    let start_result = backend.start(&config, INTERFACE_NAME, None, endpoint).await;
 
     match start_result {
         Ok(()) => {

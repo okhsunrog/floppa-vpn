@@ -14,6 +14,7 @@ mod android_ipc;
 // iOS backend — stub for future implementation
 mod ios;
 
+use super::platform::TunParams;
 use super::state::{ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
 use std::net::SocketAddr;
@@ -39,13 +40,13 @@ pub trait VpnBackend: Send + Sync {
     /// Start tunnel by creating a TUN device (desktop platforms).
     ///
     /// `endpoint` is the pre-resolved server address so the hostname is only
-    /// resolved once. On Linux, `fwmark` is used for policy routing to prevent
-    /// VPN packets from being routed back through the VPN interface.
+    /// resolved once. `tun_params` carries platform-specific configuration
+    /// (fwmark, wintun path, manage_device) from the platform layer.
     async fn start(
         &self,
         config: &ProtocolConfig,
         interface_name: &str,
-        fwmark: Option<u32>,
+        tun_params: &TunParams,
         endpoint: SocketAddr,
     ) -> Result<(), String>;
 

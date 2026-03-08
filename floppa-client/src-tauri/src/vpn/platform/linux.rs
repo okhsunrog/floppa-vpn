@@ -4,13 +4,16 @@
 //! A polkit policy (`dev.okhsunrog.floppa-vpn.policy`) allows the helper to
 //! run without a password prompt for active desktop sessions.
 
-use super::Platform;
+use super::{Platform, TunParams};
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
 use std::process::Command;
 use tracing::{debug, info, warn};
+
+/// Firewall mark for policy routing — "flop" in hex.
+const FWMARK: u32 = 0x666c6f70;
 
 /// Path to the installed network helper script
 const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper";
@@ -167,6 +170,39 @@ impl LinuxPlatform {
             .map(|s| s.to_string()))
     }
 
+    /// Check whether the current process has effective CAP_NET_ADMIN.
+    fn has_cap_net_admin() -> bool {
+        const CAP_NET_ADMIN_BIT: u32 = 12;
+
+        let status = match std::fs::read_to_string("/proc/self/status") {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("Failed to read /proc/self/status: {e}");
+                return false;
+            }
+        };
+
+        let cap_eff_hex = match status
+            .lines()
+            .find(|line| line.starts_with("CapEff:"))
+            .and_then(|line| line.split_whitespace().nth(1))
+        {
+            Some(v) => v,
+            None => {
+                warn!("CapEff not found in /proc/self/status");
+                return false;
+            }
+        };
+
+        match u128::from_str_radix(cap_eff_hex, 16) {
+            Ok(bits) => (bits & (1u128 << CAP_NET_ADMIN_BIT)) != 0,
+            Err(e) => {
+                warn!("Failed to parse CapEff value '{cap_eff_hex}': {e}");
+                false
+            }
+        }
+    }
+
     /// Check if IPv6 is enabled in the kernel.
     ///
     /// If the procfs knob is unavailable, assume enabled to avoid silently
@@ -187,6 +223,21 @@ impl Default for LinuxPlatform {
 
 #[async_trait]
 impl Platform for LinuxPlatform {
+    fn tun_params(&self) -> TunParams {
+        let fwmark = if Self::has_cap_net_admin() {
+            Some(FWMARK)
+        } else {
+            info!("CAP_NET_ADMIN not present, running without fwmark");
+            None
+        };
+
+        TunParams {
+            manage_device: false,
+            fwmark,
+            wintun_file: None,
+        }
+    }
+
     async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
         // Create persistent TUN owned by the current user via pkexec helper.
         // This allows unprivileged opening of the device from gotatun.

@@ -8,10 +8,40 @@
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
+use std::path::PathBuf;
+
+/// Platform-specific parameters for TUN device creation.
+///
+/// Each platform provides these via [`Platform::tun_params()`], centralizing
+/// OS-specific decisions (fwmark, wintun path, device management) so callers
+/// don't need scattered `#[cfg]` blocks.
+#[derive(Debug, Clone, Default)]
+pub struct TunParams {
+    /// Whether the `tun` crate should manage the device (create, configure, bring up).
+    ///
+    /// - Linux: `false` — pkexec helper pre-creates a persistent TUN
+    /// - Windows: `true` — Wintun creates the adapter in-process
+    pub manage_device: bool,
+
+    /// Firewall mark for policy routing (Linux only).
+    ///
+    /// Marks WireGuard UDP packets so they bypass the VPN routing table,
+    /// preventing routing loops. `None` if CAP_NET_ADMIN is unavailable.
+    pub fwmark: Option<u32>,
+
+    /// Path to `wintun.dll` (Windows only).
+    pub wintun_file: Option<PathBuf>,
+}
 
 /// Platform-specific VPN operations
 #[async_trait]
 pub trait Platform: Send + Sync {
+    /// Return platform-specific TUN creation parameters.
+    ///
+    /// Called once before each connection to determine how the TUN device
+    /// should be created (manage_device, fwmark, wintun path, etc.).
+    fn tun_params(&self) -> TunParams;
+
     /// Prepare TUN interface before tunnel startup.
     ///
     /// On Linux, this may invoke a privileged helper to create a persistent
@@ -77,6 +107,10 @@ impl PlatformImpl {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "android")))]
 #[async_trait]
 impl Platform for PlatformImpl {
+    fn tun_params(&self) -> TunParams {
+        TunParams::default()
+    }
+
     async fn prepare_tun(&self, _iface: &str) -> Result<(), String> {
         Err("Platform not supported".to_string())
     }

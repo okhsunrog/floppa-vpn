@@ -67,7 +67,7 @@ impl VpnBackend for IosBackend {
         &self,
         _config: &ProtocolConfig,
         _interface_name: &str,
-        _fwmark: Option<u32>,
+        _tun_params: &crate::vpn::platform::TunParams,
         _endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         // TODO: iOS connect flow:
@@ -96,7 +96,7 @@ impl VpnBackend for IosBackend {
         //
         // 6. Monitor NEVPNConnection.status for .connected confirmation
         //
-        // interface_name and fwmark are ignored on iOS.
+        // interface_name and tun_params are ignored on iOS.
         Err("IosBackend not yet implemented".into())
     }
 

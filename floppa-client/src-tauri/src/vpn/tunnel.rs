@@ -1,5 +1,6 @@
 //! GotatunTunnel - WireGuard tunnel using gotatun library
 
+use super::platform::TunParams;
 use super::state::{TrafficStats, WgConfig};
 use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
@@ -14,6 +15,16 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
+
+/// Fixed Wintun adapter GUID for WireGuard tunnels.
+/// Different from VLESS to avoid adapter conflicts, but fixed to prevent
+/// Windows "new network detected" popups on every connect.
+#[cfg(target_os = "windows")]
+const WG_DEVICE_GUID: u128 = 0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A00;
+
+/// Fixed Wintun adapter GUID for VLESS tunnels.
+#[cfg(target_os = "windows")]
+const VLESS_DEVICE_GUID: u128 = 0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A01;
 
 #[cfg(target_os = "android")]
 use std::os::fd::RawFd;
@@ -131,13 +142,14 @@ impl GotatunTunnel {
     /// Create a new tunnel from WireGuard config (desktop platforms).
     ///
     /// `endpoint` is the pre-resolved server address so the hostname is only
-    /// resolved once (in `connect_desktop`).
+    /// resolved once (in `connect_desktop`). `tun_params` carries platform-specific
+    /// configuration from the platform layer.
     #[cfg(not(target_os = "android"))]
     #[allow(unused_variables, unused_mut)]
     pub async fn new(
         config: &WgConfig,
         interface_name: &str,
-        fwmark: Option<u32>,
+        tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
     ) -> Result<Self, String> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
@@ -151,17 +163,12 @@ impl GotatunTunnel {
 
         #[cfg(target_os = "windows")]
         {
-            // Metric = 1 gives tunnel routes highest priority over physical adapter
             tun_config.metric(1);
+            let wintun_file = tun_params.wintun_file.clone();
             tun_config.platform_config(|cfg| {
-                // Fixed GUID prevents Windows "new network detected" popup on every connect
-                cfg.device_guid(0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A00);
-                // Load wintun.dll from the exe's directory (cwd may differ, e.g. deep-link launches)
-                let exe_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-                if let Some(dir) = exe_dir {
-                    cfg.wintun_file(dir.join("wintun.dll"));
+                cfg.device_guid(WG_DEVICE_GUID);
+                if let Some(ref path) = wintun_file {
+                    cfg.wintun_file(path);
                 }
             });
         }
@@ -186,8 +193,7 @@ impl GotatunTunnel {
             .with_private_key(x25519::StaticSecret::from(private_key))
             .with_peer(peer);
 
-        #[cfg(target_os = "linux")]
-        if let Some(mark) = fwmark {
+        if let Some(mark) = tun_params.fwmark {
             builder = builder.with_fwmark(mark);
         }
 
@@ -265,7 +271,7 @@ impl GotatunTunnel {
     pub async fn new(
         _config: &WgConfig,
         _interface_name: &str,
-        _fwmark: Option<u32>,
+        _tun_params: &TunParams,
     ) -> Result<Self, String> {
         Err("On Android, use from_fd() with the fd from VpnService".to_string())
     }
@@ -405,20 +411,18 @@ impl TunnelManager {
     }
 
     /// Start WireGuard tunnel on desktop platforms (creates TUN device)
-    ///
-    /// `fwmark` is used on Linux for policy routing to ensure VPN packets bypass the VPN interface
     #[cfg(not(target_os = "android"))]
     pub async fn start_wireguard(
         &self,
         config: &WgConfig,
         interface_name: &str,
-        fwmark: Option<u32>,
+        tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = GotatunTunnel::new(config, interface_name, fwmark, endpoint).await?;
+        let tunnel = GotatunTunnel::new(config, interface_name, tun_params, endpoint).await?;
         *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
 
         Ok(())
@@ -430,7 +434,7 @@ impl TunnelManager {
         &self,
         _config: &WgConfig,
         _interface_name: &str,
-        _fwmark: Option<u32>,
+        _tun_params: &TunParams,
     ) -> Result<(), String> {
         Err(
             "On Android, call start_wireguard_with_fd() after receiving fd from VpnService"
@@ -456,33 +460,25 @@ impl TunnelManager {
 
     /// Start VLESS tunnel on desktop platforms
     #[cfg(not(target_os = "android"))]
+    #[allow(unused_variables)]
     pub async fn start_vless(
         &self,
         config: &shoes_lite::api::VlessConfig,
         interface_name: &str,
+        tun_params: &TunParams,
     ) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        // On Linux, the TUN device is pre-created by the privileged pkexec helper,
-        // so shoes-lite should not manage it. On Windows, shoes-lite must create and
-        // manage the Wintun adapter itself.
-        let manage = !cfg!(target_os = "linux");
         let mut tun_config = TunServerConfig::new()
             .tun_name(interface_name.to_string())
-            .manage_device(manage);
+            .manage_device(tun_params.manage_device);
 
         #[cfg(target_os = "windows")]
         {
-            // Use a different fixed GUID than WireGuard to avoid adapter conflicts,
-            // but still fixed to prevent Windows "new network detected" popups.
-            tun_config = tun_config.device_guid(0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A01);
-            // Load wintun.dll from the exe's directory
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
-            if let Some(dir) = exe_dir {
-                tun_config = tun_config.wintun_file(dir.join("wintun.dll"));
+            tun_config = tun_config.device_guid(VLESS_DEVICE_GUID);
+            if let Some(ref path) = tun_params.wintun_file {
+                tun_config = tun_config.wintun_file(path);
             }
         }
 

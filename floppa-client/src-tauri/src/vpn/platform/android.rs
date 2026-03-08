@@ -10,7 +10,7 @@
 //! starting the VPN via the tauri-plugin-vpn. The Rust side just receives
 //! the TUN file descriptor and uses it with gotatun.
 
-use super::Platform;
+use super::{Platform, TunParams};
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
@@ -36,6 +36,10 @@ impl Default for AndroidPlatform {
 
 #[async_trait]
 impl Platform for AndroidPlatform {
+    fn tun_params(&self) -> TunParams {
+        TunParams::default()
+    }
+
     async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
         // On Android, TUN is created by VpnService before Rust gets the fd.
         debug!("Android: TUN prepared by VpnService for {}", iface);

@@ -4,6 +4,7 @@
 //! Used on desktop platforms (Linux, Windows, macOS).
 
 use super::{VpnBackend, VpnFullInfo};
+use crate::vpn::platform::TunParams;
 use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
 use async_trait::async_trait;
@@ -26,18 +27,18 @@ impl VpnBackend for InProcessBackend {
         &self,
         config: &ProtocolConfig,
         interface_name: &str,
-        fwmark: Option<u32>,
+        tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
     ) -> Result<(), String> {
         match config {
             ProtocolConfig::WireGuard(wg) => {
                 self.tunnel_manager
-                    .start_wireguard(wg, interface_name, fwmark, endpoint)
+                    .start_wireguard(wg, interface_name, tun_params, endpoint)
                     .await
             }
             ProtocolConfig::Vless(vless) => {
                 self.tunnel_manager
-                    .start_vless(&vless.to_shoes_config(), interface_name)
+                    .start_vless(&vless.to_shoes_config(), interface_name, tun_params)
                     .await
             }
         }

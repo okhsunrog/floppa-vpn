@@ -6,7 +6,7 @@
 //! - `netsh interface ip set dns` for DNS
 //! - `route` command for endpoint host route
 
-use super::Platform;
+use super::{Platform, TunParams};
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
@@ -123,6 +123,18 @@ impl Default for WindowsPlatform {
 
 #[async_trait]
 impl Platform for WindowsPlatform {
+    fn tun_params(&self) -> TunParams {
+        let wintun_file = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("wintun.dll")));
+
+        TunParams {
+            manage_device: true,
+            fwmark: None,
+            wintun_file,
+        }
+    }
+
     async fn prepare_tun(&self, _iface: &str) -> Result<(), String> {
         // Windows tunnel creation is handled by Wintun in-process.
         Ok(())
