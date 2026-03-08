@@ -5477,7 +5477,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "shoes-lite"
 version = "0.2.8"
-source = "git+https://github.com/okhsunrog/shoes-lite?rev=84155cc#84155cc267a743b7972d37cf2622dcb9e2d0c867"
+source = "git+https://github.com/okhsunrog/shoes-lite?rev=a8b5c12#a8b5c120bcb7231397146d6413cd4ec4b5536150"
 dependencies = [
  "async-trait",
  "aws-lc-rs",

@@ -464,11 +464,27 @@ impl TunnelManager {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        // Build TunServerConfig with manage_device(false) on Linux because
-        // the TUN device is pre-created by the privileged pkexec helper.
+        // On Linux, the TUN device is pre-created by the privileged pkexec helper,
+        // so shoes-lite should not manage it. On Windows, shoes-lite must create and
+        // manage the Wintun adapter itself.
+        let manage = !cfg!(target_os = "linux");
         let mut tun_config = TunServerConfig::new()
             .tun_name(interface_name.to_string())
-            .manage_device(false);
+            .manage_device(manage);
+
+        #[cfg(target_os = "windows")]
+        {
+            // Use a different fixed GUID than WireGuard to avoid adapter conflicts,
+            // but still fixed to prevent Windows "new network detected" popups.
+            tun_config = tun_config.device_guid(0xF109_9A00_C1EE_40A0_B5EC_DE3A_F109_9A01);
+            // Load wintun.dll from the exe's directory
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+            if let Some(dir) = exe_dir {
+                tun_config = tun_config.wintun_file(dir.join("wintun.dll"));
+            }
+        }
 
         if let Some(ref addr_str) = config.address {
             let addr: IpAddr = addr_str
