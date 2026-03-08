@@ -184,6 +184,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
+          pacman-key --init
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
             base-devel rust nodejs openssl appmenu-gtk-module librsvg unzip \
