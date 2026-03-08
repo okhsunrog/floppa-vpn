@@ -27,10 +27,10 @@ thiserror = "2"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.22"
-rand = "0.9"
+rand = "0.10"
 
 # Auth (JWT + Telegram verification)
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["aws_lc_rs"] }
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
@@ -42,7 +42,7 @@ teloxide = { version = "0.17", features = ["macros"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"] }
 
 # Config
-toml = "0.8"
+toml = "0.9"
 
 # Web server
 axum = "0.8"
@@ -50,7 +50,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Metrics / observability
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", features = ["http-listener"] }
+metrics-exporter-prometheus = { version = "0.18", features = ["http-listener"] }
 
 # Shared crate
 floppa-core = { path = "floppa-core" }

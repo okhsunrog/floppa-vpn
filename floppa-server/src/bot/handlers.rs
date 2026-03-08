@@ -5,8 +5,7 @@ use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
     types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ParseMode,
-        PreCheckoutQuery,
+        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ParseMode, PreCheckoutQuery,
         SuccessfulPayment, WebAppInfo,
     },
     utils::command::BotCommands,

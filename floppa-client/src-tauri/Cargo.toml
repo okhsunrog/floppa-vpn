@@ -25,9 +25,9 @@ tauri-plugin-os = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
-specta = { version = "=2.0.0-rc.22", features = ["serde", "serde_json", "derive"] }
-specta-typescript = { version = "0.0.9" }
-tauri-specta = { git = "https://github.com/specta-rs/tauri-specta", rev = "6fe9532", features = ["typescript", "derive"] }
+specta = { version = "=2.0.0-rc.23", features = ["derive"] }
+specta-typescript = { version = "0.0.10" }
+tauri-specta = { git = "https://github.com/specta-rs/tauri-specta", rev = "b7cd99b", features = ["typescript", "derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio = { version = "1", features = ["full"] }
@@ -53,18 +53,18 @@ hostname = "0.4.2"
 keyring = { version = "3.6.3", features = ["crypto-rust"] }
 tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
-tauri-plugin-android-fs = "27.0.0"
+tauri-plugin-android-fs = "27.1.0"
 # VLESS+REALITY protocol support
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "84155cc" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.29", features = ["user", "net", "process"] }
+nix = { version = "0.31", features = ["user", "net", "process"] }
 keyring = { version = "3.6.3", features = ["linux-native-async-persistent"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock"
 ] }
@@ -72,7 +72,7 @@ keyring = { version = "3.6.3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 futures = "0.3.32"
-jni = "0.22.2"
+jni = "0.22.3"
 tarpc = { version = "0.37.0", features = ["serde-transport", "tokio1", "unix"] }
 tokio-serde = { version = "0.9.0", features = ["bincode"] }
 tokio-util = { version = "0.7.18", features = ["codec"] }
