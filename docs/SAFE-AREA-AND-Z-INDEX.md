@@ -19,6 +19,7 @@ Normal page content                auto      static     html padding pushes belo
 Sticky navbar                      40        sticky     AppLayout.vue header
 Safe area masks (::before/::after) 40        fixed      styles.css — colored bars over status/nav bar
 Modal/Slideover overlay + content  50        fixed      vite.config.ts global ui override
+Dropdowns (Select, SelectMenu)     51        absolute   vite.config.ts — above modals when inside one
 ```
 
 ## How Each Piece Works

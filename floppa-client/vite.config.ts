@@ -30,9 +30,12 @@ export default defineConfig({
     ui({
       autoImport: { ignore: ['options'], exclude: [/floppa-web-shared\/src\/client/, /node_modules/] },
       ui: {
-        // Ensure all modals/slideovers render above the sticky navbar (z-40)
+        // Ensure all modals/slideovers render above the sticky navbar (z-40),
+        // and dropdowns render above modals (z-[51])
         modal: { slots: { overlay: 'z-50', content: 'z-50' } },
         slideover: { slots: { overlay: 'z-50', content: 'z-50' } },
+        select: { slots: { content: 'z-[51]' } },
+        selectMenu: { slots: { content: 'z-[51]' } },
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ui() type mismatch with Vite's PluginOption
     }) as any,
