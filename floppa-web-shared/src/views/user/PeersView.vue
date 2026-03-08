@@ -10,7 +10,7 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
-import { formatBytes, formatDate, formatDateTime, formatTrafficLimit } from '../../utils'
+import { formatBytes, formatDate, formatDateTime } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -286,21 +286,6 @@ async function downloadConfig() {
                 <span class="ml-1 text-xs text-[var(--ui-text-muted)]">RX</span>
               </div>
             </div>
-          </div>
-          <div
-            v-if="me?.subscription?.traffic_limit_bytes"
-            class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]"
-          >
-            <UIcon name="i-lucide-gauge" class="size-4" />
-            <span>{{
-              t('userPeers.trafficUsed', {
-                used: formatBytes(peer.traffic_used_bytes),
-                limit: formatTrafficLimit(
-                  me.subscription.traffic_limit_bytes,
-                  t('common.unlimited'),
-                ),
-              })
-            }}</span>
           </div>
           <div class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)] mb-4">
             <span v-if="peer.last_handshake">{{

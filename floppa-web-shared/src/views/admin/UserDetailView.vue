@@ -10,7 +10,7 @@ import {
   deleteSubscriptionMutation,
   deleteAdminPeerMutation,
 } from '../../client/@pinia/colada.gen'
-import { formatBytes, formatDateTime, formatSpeedLimit, formatTrafficLimit } from '../../utils'
+import { formatBytes, formatDateTime, formatSpeedLimit } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -336,18 +336,7 @@ async function doRemovePeer() {
                   formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
                 }}</small
               >
-              <small>
-                Traffic: {{ formatBytes(peer.traffic_used_bytes) }}
-                <template v-if="activeSubscription.traffic_limit_bytes">
-                  /
-                  {{
-                    formatTrafficLimit(
-                      activeSubscription.traffic_limit_bytes,
-                      t('common.unlimited'),
-                    )
-                  }}
-                </template>
-              </small>
+              <small> Traffic: {{ formatBytes(peer.tx_bytes + peer.rx_bytes) }} </small>
             </div>
             <UButton
               v-if="peer.sync_status === 'active'"
@@ -440,12 +429,6 @@ async function doRemovePeer() {
                 <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.speed') }}</span>
                 <span>{{
                   formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
-                }}</span>
-              </div>
-              <div class="flex flex-col gap-0.5">
-                <span class="text-[var(--ui-text-muted)]">{{ t('adminUserDetail.traffic') }}</span>
-                <span>{{
-                  formatTrafficLimit(activeSubscription.traffic_limit_bytes, t('common.unlimited'))
                 }}</span>
               </div>
             </div>

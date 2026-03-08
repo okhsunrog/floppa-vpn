@@ -24,3 +24,5 @@ subtle = "2"
 dashmap = "6"
 rustc-hash = "2.1.1"
 toml.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true

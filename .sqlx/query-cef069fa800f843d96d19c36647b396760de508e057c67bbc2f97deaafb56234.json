@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            default_traffic_limit_bytes = CASE WHEN $5 THEN NULL ELSE COALESCE($6, default_traffic_limit_bytes) END,\n            max_peers = COALESCE($7, max_peers),\n            price_rub = COALESCE($8, price_rub),\n            is_public = COALESCE($9, is_public),\n            trial_days = CASE WHEN $10 THEN NULL ELSE COALESCE($11, trial_days) END,\n            price_stars = CASE WHEN $12 THEN NULL ELSE COALESCE($13, price_stars) END,\n            period_days = CASE WHEN $14 THEN NULL ELSE COALESCE($15, period_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days\n        ",
+  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            max_peers = COALESCE($5, max_peers),\n            price_rub = COALESCE($6, price_rub),\n            is_public = COALESCE($7, is_public),\n            trial_days = CASE WHEN $8 THEN NULL ELSE COALESCE($9, trial_days) END,\n            price_stars = CASE WHEN $10 THEN NULL ELSE COALESCE($11, price_stars) END,\n            period_days = CASE WHEN $12 THEN NULL ELSE COALESCE($13, period_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -25,36 +25,31 @@
       },
       {
         "ordinal": 4,
-        "name": "default_traffic_limit_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 5,
         "name": "max_peers",
         "type_info": "Int4"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "price_rub",
         "type_info": "Int4"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "is_public",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "trial_days",
         "type_info": "Int4"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "price_stars",
         "type_info": "Int4"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "period_days",
         "type_info": "Int4"
       }
@@ -65,8 +60,6 @@
         "Text",
         "Bool",
         "Int4",
-        "Bool",
-        "Int8",
         "Int4",
         "Int4",
         "Bool",
@@ -83,7 +76,6 @@
       false,
       false,
       true,
-      true,
       false,
       false,
       false,
@@ -92,5 +84,5 @@
       true
     ]
   },
-  "hash": "ee454b471c1f2445c1abcd3e8abe99bfaada7b57e8b2c89263e291e0ccf6b06c"
+  "hash": "cef069fa800f843d96d19c36647b396760de508e057c67bbc2f97deaafb56234"
 }

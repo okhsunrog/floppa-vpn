@@ -28,6 +28,8 @@ pub struct AppState {
     pub secrets: Secrets,
     pub wg_public_key: String,
     pub bot: Bot,
+    pub http_client: reqwest::Client,
+    pub vm_url: String,
     telegram_login_states: Arc<RwLock<HashMap<String, PendingTelegramLoginState>>>,
     telegram_login_codes: Arc<RwLock<HashMap<String, PendingTelegramLoginCode>>>,
 }
@@ -127,12 +129,20 @@ pub fn create_router(
     wg_public_key: String,
     bot: Bot,
 ) -> axum::Router {
+    let vm_url = config
+        .metrics
+        .as_ref()
+        .map(|m| m.victoria_metrics_url.clone())
+        .unwrap_or_else(|| "http://127.0.0.1:8428".to_string());
+
     let state = AppState {
         pool,
         config,
         secrets,
         wg_public_key,
         bot,
+        http_client: reqwest::Client::new(),
+        vm_url,
         telegram_login_states: Arc::new(RwLock::new(HashMap::new())),
         telegram_login_codes: Arc::new(RwLock::new(HashMap::new())),
     };

@@ -39,7 +39,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
         let pool = pool.clone();
         let config = config.clone();
         async move {
-            let interval = Duration::from_secs(30);
+            let interval = Duration::from_secs(15);
             // In-memory cache of last-seen WireGuard counters per public_key.
             // Used to compute deltas so that DB counters survive WireGuard restarts.
             // Seed with current WG values so the first cycle computes a zero delta
@@ -50,10 +50,18 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
                     prev_wg_counters.insert(public_key, (tx, rx));
                 }
             }
+            // Map public_key → (user_id, peer_id) for metrics labels
+            let mut peer_user_map = load_peer_user_map(&pool).await.unwrap_or_default();
             loop {
                 tokio::time::sleep(interval).await;
-                if let Err(e) = periodic_sync(&pool, &config, &mut prev_wg_counters).await {
+                if let Err(e) =
+                    periodic_sync(&pool, &config, &mut prev_wg_counters, &peer_user_map).await
+                {
                     error!(error = %e, "Periodic sync failed");
+                }
+                // Refresh the map periodically (cheap query)
+                if let Ok(map) = load_peer_user_map(&pool).await {
+                    peer_user_map = map;
                 }
             }
         }
@@ -301,8 +309,9 @@ async fn periodic_sync(
     pool: &DbPool,
     config: &Config,
     prev_wg_counters: &mut HashMap<String, (u64, u64)>,
+    peer_user_map: &HashMap<String, (i64, i64)>,
 ) -> Result<()> {
-    update_traffic_stats(pool, config, prev_wg_counters).await?;
+    update_traffic_stats(pool, config, prev_wg_counters, peer_user_map).await?;
     check_expired_subscriptions(pool).await?;
     Ok(())
 }
@@ -393,13 +402,11 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
 /// WireGuard values in memory and add only the delta each cycle.
 /// If new < old (counter reset), we treat the new value as the full delta.
 ///
-/// - `tx_bytes` / `rx_bytes`: lifetime cumulative, useful for monitoring.
-/// - `traffic_used_bytes`: also cumulative for now; will diverge from tx+rx
-///   once billing-period resets are implemented (for enforcing plan traffic limits).
 async fn update_traffic_stats(
     pool: &DbPool,
     config: &Config,
     prev_wg_counters: &mut HashMap<String, (u64, u64)>,
+    peer_user_map: &HashMap<String, (i64, i64)>,
 ) -> Result<()> {
     let stats = crate::wg::get_peer_stats(&config.wireguard.interface)?;
 
@@ -434,20 +441,43 @@ async fn update_traffic_stats(
             continue;
         }
 
-        sqlx::query!(
-            "UPDATE peers SET tx_bytes = tx_bytes + $1, rx_bytes = rx_bytes + $2, \
-             traffic_used_bytes = traffic_used_bytes + $1 + $2, last_handshake = $3 \
-             WHERE public_key = $4 AND sync_status = 'active'",
-            delta_tx as i64,
-            delta_rx as i64,
-            *last_handshake,
-            public_key,
-        )
-        .execute(pool)
-        .await?;
+        // Record traffic in Prometheus counters (keyed by user_id + peer_id)
+        if let Some(&(user_id, peer_id)) = peer_user_map.get(public_key) {
+            let uid = user_id.to_string();
+            let pid = peer_id.to_string();
+            metrics::counter!("wg_tx_bytes_total", "user_id" => uid.clone(), "peer_id" => pid.clone())
+                .increment(delta_tx);
+            metrics::counter!("wg_rx_bytes_total", "user_id" => uid, "peer_id" => pid)
+                .increment(delta_rx);
+        }
+
+        // Update last_handshake only (traffic tracking moved to VictoriaMetrics)
+        if let Some(handshake) = last_handshake {
+            sqlx::query!(
+                "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
+                *handshake,
+                public_key,
+            )
+            .execute(pool)
+            .await?;
+        }
     }
 
     Ok(())
+}
+
+/// Load a mapping of public_key → (user_id, peer_id) for active peers.
+async fn load_peer_user_map(pool: &DbPool) -> Result<HashMap<String, (i64, i64)>> {
+    let rows = sqlx::query!(
+        r#"SELECT public_key AS "public_key!", user_id, id AS peer_id FROM peers WHERE sync_status = 'active'"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.public_key, (r.user_id, r.peer_id)))
+        .collect())
 }
 
 async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {

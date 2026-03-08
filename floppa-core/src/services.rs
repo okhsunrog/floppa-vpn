@@ -345,6 +345,7 @@ mod tests {
             auth: None,
             allowed_origins: vec![],
             min_client_version: None,
+            metrics: None,
         }
     }
 

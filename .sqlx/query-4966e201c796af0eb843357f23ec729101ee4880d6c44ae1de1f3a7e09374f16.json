@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id\n        FROM peers\n        WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
+  "query": "\n        SELECT id, assigned_ip, sync_status, last_handshake, created_at, device_name, device_id\n        FROM peers\n        WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -20,36 +20,21 @@
       },
       {
         "ordinal": 3,
-        "name": "tx_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 4,
-        "name": "rx_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 5,
-        "name": "traffic_used_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 6,
         "name": "last_handshake",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 4,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 5,
         "name": "device_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
+        "ordinal": 6,
         "name": "device_id",
         "type_info": "Text"
       }
@@ -63,14 +48,11 @@
       false,
       false,
       false,
-      false,
-      false,
-      false,
       true,
       false,
       true,
       true
     ]
   },
-  "hash": "f89a08022714f48e73d666558eb41ff56280695fc2345a716a2ea88bb3ad7714"
+  "hash": "4966e201c796af0eb843357f23ec729101ee4880d6c44ae1de1f3a7e09374f16"
 }

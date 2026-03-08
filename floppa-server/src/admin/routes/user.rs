@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
 use utoipa::ToSchema;
 
-use crate::admin::{auth::AuthUser, error::ApiError};
+use crate::admin::{auth::AuthUser, error::ApiError, vm_client};
 
 use super::AppState;
 
@@ -33,7 +33,6 @@ pub struct MySubscription {
     starts_at: chrono::DateTime<Utc>,
     expires_at: Option<chrono::DateTime<Utc>>,
     speed_limit_mbps: Option<i32>,
-    traffic_limit_bytes: Option<i64>,
     max_peers: i32,
 }
 
@@ -44,7 +43,6 @@ pub struct MyPeer {
     sync_status: String,
     tx_bytes: i64,
     rx_bytes: i64,
-    traffic_used_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
     created_at: chrono::DateTime<Utc>,
     device_name: Option<String>,
@@ -103,7 +101,6 @@ pub(super) async fn get_me(
             s.starts_at,
             s.expires_at,
             p.default_speed_limit_mbps as speed_limit_mbps,
-            p.default_traffic_limit_bytes as traffic_limit_bytes,
             p.max_peers
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
@@ -142,10 +139,9 @@ pub(super) async fn get_my_peers(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<MyPeer>>, ApiError> {
-    let peers: Vec<MyPeer> = sqlx::query_as!(
-        MyPeer,
+    let rows = sqlx::query!(
         r#"
-        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
+        SELECT id, assigned_ip, sync_status, last_handshake, created_at, device_name, device_id
         FROM peers
         WHERE user_id = $1 AND sync_status != 'removed'
         ORDER BY created_at DESC
@@ -154,6 +150,29 @@ pub(super) async fn get_my_peers(
     )
     .fetch_all(&state.pool)
     .await?;
+
+    let peer_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
+        .await
+        .unwrap_or_default();
+
+    let peers: Vec<MyPeer> = rows
+        .into_iter()
+        .map(|r| {
+            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            MyPeer {
+                id: r.id,
+                assigned_ip: r.assigned_ip,
+                sync_status: r.sync_status,
+                tx_bytes: tx,
+                rx_bytes: rx,
+                last_handshake: r.last_handshake,
+                created_at: r.created_at,
+                device_name: r.device_name,
+                device_id: r.device_id,
+            }
+        })
+        .collect();
 
     Ok(Json(peers))
 }
@@ -384,10 +403,9 @@ pub(super) async fn get_my_peer_by_device(
     State(state): State<AppState>,
     Path(device_id): Path<String>,
 ) -> Result<Json<MyPeer>, ApiError> {
-    let peer: MyPeer = sqlx::query_as!(
-        MyPeer,
+    let row = sqlx::query!(
         r#"
-        SELECT id, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, created_at, device_name, device_id
+        SELECT id, assigned_ip, sync_status, last_handshake, created_at, device_name, device_id
         FROM peers
         WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')
         "#,
@@ -406,13 +424,29 @@ pub(super) async fn get_my_peer_by_device(
         let _ = sqlx::query!(
             "UPDATE peers SET client_version = $1 WHERE id = $2",
             version,
-            peer.id
+            row.id
         )
         .execute(&state.pool)
         .await;
     }
 
-    Ok(Json(peer))
+    let (tx, rx) = vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
+        .await
+        .ok()
+        .and_then(|m| m.get(&row.id).copied())
+        .unwrap_or((0, 0));
+
+    Ok(Json(MyPeer {
+        id: row.id,
+        assigned_ip: row.assigned_ip,
+        sync_status: row.sync_status,
+        tx_bytes: tx,
+        rx_bytes: rx,
+        last_handshake: row.last_handshake,
+        created_at: row.created_at,
+        device_name: row.device_name,
+        device_id: row.device_id,
+    }))
 }
 
 /// Get VLESS config for the current user (generates UUID on first call)
