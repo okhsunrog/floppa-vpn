@@ -59,7 +59,7 @@ static EN: Messages = Messages {
     lang_prompt: "Choose your language:",
     lang_set: "Language set to English",
 
-    vless_your_config: "Your VLESS config:",
+    vless_your_config: "Your VLESS config (tap to copy):",
 
     vless_not_configured: "VLESS is not configured on this server.",
     vless_no_user: "Please use /start first.",
@@ -95,7 +95,7 @@ static RU: Messages = Messages {
     lang_prompt: "Выберите язык:",
     lang_set: "Язык изменён на русский",
 
-    vless_your_config: "Ваш VLESS конфиг:",
+    vless_your_config: "Ваш VLESS конфиг (нажмите, чтобы скопировать):",
 
     vless_not_configured: "VLESS не настроен на этом сервере.",
     vless_no_user: "Сначала используйте /start.",
