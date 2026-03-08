@@ -5,6 +5,8 @@ use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
 use gotatun::udp::socket::UdpSocketFactory;
 use gotatun::x25519;
+use shoes_lite::tun::TunServerConfig;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -443,7 +445,7 @@ impl TunnelManager {
         Ok(())
     }
 
-    /// Start VLESS tunnel on desktop platforms (creates TUN device)
+    /// Start VLESS tunnel on desktop platforms
     #[cfg(not(target_os = "android"))]
     pub async fn start_vless(
         &self,
@@ -453,7 +455,23 @@ impl TunnelManager {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = shoes_lite::api::VlessTunnel::new(config, interface_name).await?;
+        // Build TunServerConfig with manage_device(false) on Linux because
+        // the TUN device is pre-created by the privileged pkexec helper.
+        let mut tun_config = TunServerConfig::new()
+            .tun_name(interface_name.to_string())
+            .manage_device(false);
+
+        if let Some(ref addr_str) = config.address {
+            let addr: IpAddr = addr_str
+                .parse()
+                .map_err(|e| format!("Invalid tunnel address '{addr_str}': {e}"))?;
+            tun_config = tun_config.address(addr);
+        }
+        if let Some(mtu) = config.mtu {
+            tun_config = tun_config.mtu(mtu);
+        }
+
+        let tunnel = shoes_lite::api::VlessTunnel::start(config, tun_config).await?;
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
         Ok(())
     }
