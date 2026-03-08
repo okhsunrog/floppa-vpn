@@ -51,6 +51,9 @@ pub struct MyPeer {
 
 #[derive(Serialize, ToSchema)]
 pub struct MyPeersResponse {
+    /// Total WG traffic for this user (includes removed peers), last 30 days.
+    wg_download_bytes: i64,
+    wg_upload_bytes: i64,
     peers: Vec<MyPeer>,
     /// VLESS info (None if VLESS not configured on server)
     vless: Option<VlessInfo>,
@@ -253,6 +256,12 @@ pub(super) async fn get_my_peers(
         })
         .collect();
 
+    // User-level WG traffic (includes removed peers)
+    let (wg_download_bytes, wg_upload_bytes) =
+        vm_client::user_wg_traffic(&state.http_client, &state.vm_url, auth.user_id, 30)
+            .await
+            .unwrap_or((0, 0));
+
     // VLESS info (only if server has VLESS configured)
     let vless = if state.config.vless.is_some() {
         let has_uuid = sqlx::query_scalar!(
@@ -277,7 +286,12 @@ pub(super) async fn get_my_peers(
         None
     };
 
-    Ok(Json(MyPeersResponse { peers, vless }))
+    Ok(Json(MyPeersResponse {
+        wg_download_bytes,
+        wg_upload_bytes,
+        peers,
+        vless,
+    }))
 }
 
 /// Create a new WireGuard peer for the current user

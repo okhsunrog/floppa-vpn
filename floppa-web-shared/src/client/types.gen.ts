@@ -126,6 +126,11 @@ export type MyPeer = {
 export type MyPeersResponse = {
     peers: Array<MyPeer>;
     vless?: null | VlessInfo;
+    /**
+     * Total WG traffic for this user (includes removed peers), last 30 days.
+     */
+    wg_download_bytes: number;
+    wg_upload_bytes: number;
 };
 
 export type MySubscription = {
@@ -263,6 +268,11 @@ export type UserDetail = {
     telegram_id: number;
     username?: string | null;
     vless?: null | VlessAdminInfo;
+    /**
+     * Total WG traffic for this user (includes removed peers), last 30 days.
+     */
+    wg_download_bytes: number;
+    wg_upload_bytes: number;
 };
 
 export type UserSummary = {

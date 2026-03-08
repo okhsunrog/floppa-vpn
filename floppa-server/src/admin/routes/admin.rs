@@ -226,6 +226,9 @@ pub struct UserDetail {
     photo_url: Option<String>,
     is_admin: bool,
     created_at: chrono::DateTime<Utc>,
+    /// Total WG traffic for this user (includes removed peers), last 30 days.
+    wg_download_bytes: i64,
+    wg_upload_bytes: i64,
     peers: Vec<PeerDetail>,
     vless: Option<VlessAdminInfo>,
     subscriptions: Vec<SubscriptionDetail>,
@@ -348,6 +351,12 @@ pub(super) async fn get_user(
     .fetch_all(&state.pool)
     .await?;
 
+    // User-level WG traffic (includes removed peers)
+    let (wg_download_bytes, wg_upload_bytes) =
+        vm_client::user_wg_traffic(&state.http_client, &state.vm_url, id, 30)
+            .await
+            .unwrap_or((0, 0));
+
     // VLESS info (only if server has VLESS configured)
     let vless = if state.config.vless.is_some() {
         let has_uuid =
@@ -379,6 +388,8 @@ pub(super) async fn get_user(
         photo_url: user.photo_url,
         is_admin: user.is_admin,
         created_at: user.created_at,
+        wg_download_bytes,
+        wg_upload_bytes,
         peers,
         vless,
         subscriptions,

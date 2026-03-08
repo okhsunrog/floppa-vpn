@@ -2336,6 +2336,8 @@
       "MyPeersResponse": {
         "type": "object",
         "required": [
+          "wg_download_bytes",
+          "wg_upload_bytes",
           "peers"
         ],
         "properties": {
@@ -2355,6 +2357,15 @@
                 "description": "VLESS info (None if VLESS not configured on server)"
               }
             ]
+          },
+          "wg_download_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total WG traffic for this user (includes removed peers), last 30 days."
+          },
+          "wg_upload_bytes": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -2863,6 +2874,8 @@
           "telegram_id",
           "is_admin",
           "created_at",
+          "wg_download_bytes",
+          "wg_upload_bytes",
           "peers",
           "subscriptions"
         ],
@@ -2927,6 +2940,15 @@
                 "$ref": "#/components/schemas/VlessAdminInfo"
               }
             ]
+          },
+          "wg_download_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total WG traffic for this user (includes removed peers), last 30 days."
+          },
+          "wg_upload_bytes": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
