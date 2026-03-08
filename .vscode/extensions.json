@@ -13,6 +13,7 @@
     "ms-python.python",
     "ms-python.vscode-pylance",
     "naco-siren.gradle-language",
-    "mtxr.sqltools"
+    "mtxr.sqltools",
+    "editorconfig.editorconfig"
   ]
 }
