@@ -364,7 +364,7 @@ export default {
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
     connectionFailed: 'Не удалось подключиться. Попробуйте позже.',
-    lastActivity: 'Активность',
+    lastActivity: 'Последний трафик',
     duration: 'Длительность',
     protocol: 'Протокол',
     wireguard: 'WireGuard',

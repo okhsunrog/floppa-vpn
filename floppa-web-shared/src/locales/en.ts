@@ -363,7 +363,7 @@ export default {
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
-    lastActivity: 'Last activity',
+    lastActivity: 'Last transfer',
     duration: 'Duration',
     protocol: 'Protocol',
     wireguard: 'WireGuard',
