@@ -186,7 +186,7 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
-            base-devel rust nodejs openssl appmenu-gtk-module librsvg \
+            base-devel rust nodejs openssl appmenu-gtk-module librsvg unzip \
             cairo desktop-file-utils gdk-pixbuf2 glib2 gtk3 hicolor-icon-theme \
             libsoup3 pango webkit2gtk-4.1 libappindicator-gtk3 libcap
           curl -fsSL https://bun.sh/install | bash
