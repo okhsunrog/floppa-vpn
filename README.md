@@ -4,42 +4,67 @@
 
 <h1 align="center">Floppa VPN</h1>
 
-<p align="center">WireGuard VPN service built with Rust — daemon, Telegram bot, admin panel, and Tauri 2 client app.</p>
+<p align="center">VPN service built with Rust — daemon, Telegram bot, admin panel, and Tauri 2 client app.</p>
 
 [![CI](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml)
 
 ## Architecture
+
+Two tunnel protocols, two VPS regions:
+
+- **WireGuard** — client connects to Moscow VPS (:51820), traffic routes to Europe VPS via a site-to-site WireGuard tunnel (policy routing + MASQUERADE)
+- **VLESS+REALITY** — client connects directly to Europe VPS (:443), camouflaged as regular HTTPS
 
 ```mermaid
 graph TD
     Client["<b>Client Apps</b><br/>Tauri 2 — Linux, Windows, Android"]
 
     Client -- "WireGuard :51820" --> Daemon
+    Client -- "VLESS+REALITY :443" --> Vless
     Client -- "HTTPS" --> Nginx
 
-    subgraph VPS
+    subgraph Moscow["Moscow VPS"]
         Nginx["<b>Nginx</b><br/>Reverse proxy + TLS"]
         Nginx -- ":3000" --> Server
 
         Server["<b>floppa-server</b><br/>Telegram bot · REST API · Vue admin panel"]
         Server <-- "pg LISTEN / NOTIFY" --> DB
+        Server -- "query traffic" --> VM
 
         DB[("<b>PostgreSQL</b><br/>Source of truth")]
         DB <-- "pg LISTEN / NOTIFY" --> Daemon
 
-        Daemon["<b>floppa-daemon</b><br/>WireGuard sync · tc HFSC rate limits · bandwidth tracking"]
+        Daemon["<b>floppa-daemon</b><br/>WireGuard sync · tc HFSC rate limits"]
+        Daemon -- "scrape :9101" --> VM
+
+        VM[("<b>VictoriaMetrics</b><br/>Traffic metrics")]
     end
+
+    subgraph Europe["Europe VPS (exit node)"]
+        Vless["<b>floppa-vless</b><br/>VLESS+REALITY proxy · per-user rate limits"]
+        Vless <-- "pg LISTEN / NOTIFY" --> DB
+        Vless -- "scrape :9103" --> VM
+    end
+
+    Daemon -- "site-to-site WG tunnel" --> Europe
 ```
 
-**How it works:** Server writes peer changes to PostgreSQL (e.g. `sync_status = 'pending_add'`) → DB trigger fires `pg_notify('peer_changed')` → daemon picks it up, syncs WireGuard, applies rate limits, and marks peer as `active`. All state lives in the database.
+**How it works:** Server writes peer changes to PostgreSQL (e.g. `sync_status = 'pending_add'`) → DB trigger fires `pg_notify('peer_changed')` → daemon picks it up, syncs WireGuard, applies rate limits, and marks peer as `active`. The VLESS proxy on Europe syncs its user registry from the same database via `pg LISTEN/NOTIFY`. All state lives in the database. Traffic metrics from both daemon and VLESS are scraped by VictoriaMetrics; the server queries VM to serve traffic stats in the API.
 
 ## Features
 
 ### Daemon
 - Stateless WireGuard peer synchronization via `wg set`
 - Per-peer HFSC traffic shaping (bidirectional — egress + IFB ingress)
-- Bandwidth tracking from `wg show dump`
+- Prometheus metrics endpoint — traffic counters scraped by VictoriaMetrics
 - Auto-runs database migrations on startup
+
+### VLESS Proxy
+- [shoes-lite](https://github.com/okhsunrog/shoes-lite) — VLESS+REALITY with Vision flow control
+- Per-user token-bucket rate limiting synced from subscription plans
+- Real-time user registry via `pg LISTEN/NOTIFY` + periodic full sync
+- Prometheus metrics endpoint for per-user traffic counters
+- Constant-time UUID comparison (timing-attack resistant)
 
 ### Telegram Bot
 - User registration with automatic 7-day trial
@@ -49,11 +74,16 @@ graph TD
 ### Admin Panel
 - Dashboard with server stats and traffic overview
 - User management — create, search, subscription control
-- Plan management — speed limits, traffic caps, peer limits, pricing
+- Plan management — speed limits, peer limits, pricing
 - Peer monitoring — sync status, traffic, last handshake
+
+### CLI Client
+- Standalone WireGuard client (`floppa-cli`) for headless/server use
+- Also used as the tunnel binary for integration tests
 
 ### Client App (Tauri 2)
 - Cross-platform: Linux, Windows, Android
+- WireGuard and VLESS+REALITY tunnel support
 - Split tunneling with per-app selection (Android)
 - WireGuard config persistence via OS keyring (desktop) or encrypted file (Android)
 - Deep-link authentication (Telegram Login Widget → JWT)
@@ -65,7 +95,7 @@ The client uses trait-based abstraction (`VpnBackend` + `Platform`) to share Tau
 
 **Language split:**
 
-- **Rust** — all VPN logic: WireGuard tunnel (gotatun), connection management, route/DNS/TUN setup, config persistence, IPC between processes, Tauri commands. The entire `VpnBackend` and `Platform` trait hierarchy is Rust
+- **Rust** — all VPN logic: WireGuard tunnel (gotatun), VLESS tunnel (shoes-lite), connection management, route/DNS/TUN setup, config persistence, IPC between processes, Tauri commands. The entire `VpnBackend` and `Platform` trait hierarchy is Rust
 - **TypeScript / Vue** — UI layer: connection controls, stats display, settings, split tunneling picker, update checks, theme management
 - **Kotlin** (Android only) — thin platform bridge via `tauri-plugin-vpn`: VPN service lifecycle, TUN fd creation, `VpnService.Builder` for split tunneling, foreground notification, system API access (battery optimization, notification permissions, status bar style, safe area insets, device name)
 
@@ -159,11 +189,13 @@ graph TD
 | Layer | Tech |
 |-------|------|
 | Server | Rust, Axum, teloxide, sqlx, utoipa (OpenAPI), memory-serve |
-| Daemon | Rust, WireGuard (`wg`), Linux tc, sqlx |
+| Daemon | Rust, WireGuard (`wg`), Linux tc HFSC, Prometheus metrics |
+| VLESS Proxy | Rust, [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS+REALITY+Vision), Prometheus metrics |
 | Frontend | Vue 3, Nuxt UI v4, Pinia Colada, Tailwind v4 |
-| Client | Tauri 2, gotatun (Mullvad WireGuard), tauri-specta (type-safe bindings), custom tauri-plugin-vpn |
+| Client | Tauri 2, gotatun (Mullvad WireGuard), shoes-lite (VLESS), tauri-specta, custom tauri-plugin-vpn |
 | Database | PostgreSQL with LISTEN/NOTIFY |
-| Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), JWT |
+| Metrics | VictoriaMetrics (Prometheus-compatible TSDB) |
+| Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), XTLS REALITY, JWT |
 
 ## Development
 
@@ -192,7 +224,10 @@ just package
 
 ## Deployment
 
-See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide. TL;DR: Ansible deploys three systemd services — `floppa-daemon` (root, WireGuard + tc), `floppa-server` (bot + API + embedded frontend), and nginx as reverse proxy with Let's Encrypt.
+See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide. Ansible deploys across two VPS regions:
+
+- **Moscow** — `floppa-daemon` (root, WireGuard + tc), `floppa-server` (bot + API + embedded frontend), VictoriaMetrics, Grafana, nginx with Let's Encrypt
+- **Europe** — `floppa-vless` (VLESS+REALITY exit node)
 
 ## License
 
