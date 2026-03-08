@@ -1,9 +1,13 @@
 {
-  "version": "0.3.3",
+  "version": "0.4.0",
   "sections": [
     {
       "type": "added",
       "items": [
+        {
+          "en": "VLESS+REALITY protocol — connect via VLESS as an alternative to WireGuard, on all platforms",
+          "ru": "Протокол VLESS+REALITY — подключение через VLESS как альтернатива WireGuard, на всех платформах"
+        },
         {
           "en": "VLESS connectivity check — verifies tunnel works through the actual proxy chain, not just the network",
           "ru": "Проверка VLESS-соединения — проверяет работу туннеля через реальную прокси-цепочку, а не просто сеть"
@@ -26,14 +30,22 @@
           "ru": "«Последняя активность» переименовано в «Последний трафик» для ясности"
         },
         {
-          "en": "Smaller Android APK — optimized release build",
-          "ru": "Меньший размер Android APK — оптимизирована сборка релиза"
+          "en": "Smaller Android APK — optimized release build with LTO and stripping",
+          "ru": "Меньший размер Android APK — оптимизирована сборка релиза с LTO и стриппингом"
         }
       ]
     },
     {
       "type": "fixed",
       "items": [
+        {
+          "en": "VLESS connection on Windows — fixed TUN device creation and platform configuration",
+          "ru": "VLESS-подключение на Windows — исправлено создание TUN-устройства и конфигурация платформы"
+        },
+        {
+          "en": "VLESS connection on Linux desktop",
+          "ru": "VLESS-подключение на Linux десктопе"
+        },
         {
           "en": "VLESS connection verification now works correctly on Android (was bypassing the tunnel)",
           "ru": "Проверка VLESS-подключения теперь работает корректно на Android (раньше обходила туннель)"
