@@ -1735,13 +1735,6 @@
             ],
             "format": "int32"
           },
-          "default_traffic_limit_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
           "display_name": {
             "type": "string"
           },
@@ -2003,13 +1996,6 @@
           "starts_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "traffic_limit_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           }
         }
       },
@@ -2149,13 +2135,6 @@
               "null"
             ],
             "format": "int32"
-          },
-          "default_traffic_limit_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           },
           "display_name": {
             "type": "string"
@@ -2332,13 +2311,6 @@
           "starts_at": {
             "type": "string",
             "format": "date-time"
-          },
-          "traffic_limit_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           }
         }
       },
@@ -2400,9 +2372,6 @@
           "clear_speed_limit": {
             "type": "boolean"
           },
-          "clear_traffic_limit": {
-            "type": "boolean"
-          },
           "clear_trial_days": {
             "type": "boolean"
           },
@@ -2412,13 +2381,6 @@
               "null"
             ],
             "format": "int32"
-          },
-          "default_traffic_limit_bytes": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
           },
           "display_name": {
             "type": [

@@ -17,7 +17,6 @@ pub struct Plan {
     name: String,
     display_name: String,
     default_speed_limit_mbps: Option<i32>,
-    default_traffic_limit_bytes: Option<i64>,
     max_peers: i32,
     price_rub: i32,
     is_public: bool,
@@ -32,8 +31,6 @@ pub struct CreatePlanRequest {
     display_name: String,
     #[serde(default)]
     default_speed_limit_mbps: Option<i32>,
-    #[serde(default)]
-    default_traffic_limit_bytes: Option<i64>,
     #[serde(default = "default_max_peers")]
     max_peers: i32,
     #[serde(default)]
@@ -55,8 +52,6 @@ pub struct UpdatePlanRequest {
     #[serde(default)]
     default_speed_limit_mbps: Option<i32>,
     #[serde(default)]
-    default_traffic_limit_bytes: Option<i64>,
-    #[serde(default)]
     max_peers: Option<i32>,
     #[serde(default)]
     price_rub: Option<i32>,
@@ -70,8 +65,6 @@ pub struct UpdatePlanRequest {
     period_days: Option<i32>,
     #[serde(default)]
     clear_speed_limit: bool,
-    #[serde(default)]
-    clear_traffic_limit: bool,
     #[serde(default)]
     clear_trial_days: bool,
     #[serde(default)]
@@ -105,7 +98,7 @@ pub(super) async fn list_plans(
 ) -> Result<Json<Vec<Plan>>, ApiError> {
     let plans: Vec<Plan> = sqlx::query_as!(
         Plan,
-        "SELECT id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id"
+        "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id"
     )
     .fetch_all(&state.pool)
     .await?;
@@ -146,14 +139,13 @@ pub(super) async fn create_plan(
     let plan: Plan = sqlx::query_as!(
         Plan,
         r#"
-        INSERT INTO plans (name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days
+        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days
         "#,
         &req.name,
         &req.display_name,
         req.default_speed_limit_mbps,
-        req.default_traffic_limit_bytes,
         req.max_peers,
         req.price_rub,
         req.is_public,
@@ -205,22 +197,19 @@ pub(super) async fn update_plan(
         UPDATE plans SET
             display_name = COALESCE($2, display_name),
             default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,
-            default_traffic_limit_bytes = CASE WHEN $5 THEN NULL ELSE COALESCE($6, default_traffic_limit_bytes) END,
-            max_peers = COALESCE($7, max_peers),
-            price_rub = COALESCE($8, price_rub),
-            is_public = COALESCE($9, is_public),
-            trial_days = CASE WHEN $10 THEN NULL ELSE COALESCE($11, trial_days) END,
-            price_stars = CASE WHEN $12 THEN NULL ELSE COALESCE($13, price_stars) END,
-            period_days = CASE WHEN $14 THEN NULL ELSE COALESCE($15, period_days) END
+            max_peers = COALESCE($5, max_peers),
+            price_rub = COALESCE($6, price_rub),
+            is_public = COALESCE($7, is_public),
+            trial_days = CASE WHEN $8 THEN NULL ELSE COALESCE($9, trial_days) END,
+            price_stars = CASE WHEN $10 THEN NULL ELSE COALESCE($11, price_stars) END,
+            period_days = CASE WHEN $12 THEN NULL ELSE COALESCE($13, period_days) END
         WHERE id = $1
-        RETURNING id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days
+        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days
         "#,
         id,
         req.display_name.as_deref(),
         req.clear_speed_limit,
         req.default_speed_limit_mbps,
-        req.clear_traffic_limit,
-        req.default_traffic_limit_bytes,
         req.max_peers,
         req.price_rub,
         req.is_public,

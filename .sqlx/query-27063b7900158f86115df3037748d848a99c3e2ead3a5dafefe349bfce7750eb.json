@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, display_name, default_speed_limit_mbps, default_traffic_limit_bytes, max_peers, price_rub, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id",
+  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, price_rub, is_public, trial_days, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -25,48 +25,52 @@
       },
       {
         "ordinal": 4,
-        "name": "default_traffic_limit_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 5,
         "name": "max_peers",
         "type_info": "Int4"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "price_rub",
         "type_info": "Int4"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "is_public",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "trial_days",
         "type_info": "Int4"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "price_stars",
         "type_info": "Int4"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "period_days",
         "type_info": "Int4"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text",
+        "Text",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Int4"
+      ]
     },
     "nullable": [
       false,
       false,
       false,
-      true,
       true,
       false,
       false,
@@ -76,5 +80,5 @@
       true
     ]
   },
-  "hash": "be5d6450d311324b8fa939fc07352d033279a43a98d536640a079d309d7207e8"
+  "hash": "27063b7900158f86115df3037748d848a99c3e2ead3a5dafefe349bfce7750eb"
 }

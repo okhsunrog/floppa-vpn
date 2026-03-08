@@ -33,7 +33,6 @@ pub struct MySubscription {
     starts_at: chrono::DateTime<Utc>,
     expires_at: Option<chrono::DateTime<Utc>>,
     speed_limit_mbps: Option<i32>,
-    traffic_limit_bytes: Option<i64>,
     max_peers: i32,
 }
 
@@ -102,7 +101,6 @@ pub(super) async fn get_me(
             s.starts_at,
             s.expires_at,
             p.default_speed_limit_mbps as speed_limit_mbps,
-            p.default_traffic_limit_bytes as traffic_limit_bytes,
             p.max_peers
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
@@ -432,12 +430,11 @@ pub(super) async fn get_my_peer_by_device(
         .await;
     }
 
-    let (tx, rx) =
-        vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
-            .await
-            .ok()
-            .and_then(|m| m.get(&row.id).copied())
-            .unwrap_or((0, 0));
+    let (tx, rx) = vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
+        .await
+        .ok()
+        .and_then(|m| m.get(&row.id).copied())
+        .unwrap_or((0, 0));
 
     Ok(Json(MyPeer {
         id: row.id,

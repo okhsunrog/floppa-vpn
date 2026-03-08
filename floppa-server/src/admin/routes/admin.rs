@@ -250,7 +250,6 @@ pub struct SubscriptionDetail {
     starts_at: chrono::DateTime<Utc>,
     expires_at: Option<chrono::DateTime<Utc>>,
     speed_limit_mbps: Option<i32>,
-    traffic_limit_bytes: Option<i64>,
     max_peers: i32,
     is_active: bool,
     source: String,
@@ -323,7 +322,6 @@ pub(super) async fn get_user(
         SELECT s.id, s.plan_id, p.name as plan_name, p.display_name as plan_display_name,
                s.starts_at, s.expires_at,
                p.default_speed_limit_mbps as speed_limit_mbps,
-               p.default_traffic_limit_bytes as traffic_limit_bytes,
                p.max_peers,
                (s.expires_at IS NULL OR s.expires_at > NOW()) as "is_active!",
                s.source

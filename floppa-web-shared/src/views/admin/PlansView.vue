@@ -34,7 +34,6 @@ const planForm = ref<CreatePlanRequest>({
   name: '',
   display_name: '',
   default_speed_limit_mbps: null,
-  default_traffic_limit_bytes: null,
   max_peers: 1,
   price_rub: 0,
   is_public: true,
@@ -53,7 +52,6 @@ function openNewPlanDialog() {
     name: '',
     display_name: '',
     default_speed_limit_mbps: null,
-    default_traffic_limit_bytes: null,
     max_peers: 1,
     price_rub: 0,
     is_public: true,
@@ -69,7 +67,6 @@ function openEditPlanDialog(plan: Plan) {
     name: plan.name,
     display_name: plan.display_name,
     default_speed_limit_mbps: plan.default_speed_limit_mbps ?? null,
-    default_traffic_limit_bytes: plan.default_traffic_limit_bytes ?? null,
     max_peers: plan.max_peers,
     price_rub: plan.price_rub,
     is_public: plan.is_public,
@@ -92,13 +89,11 @@ async function savePlan() {
       const update: UpdatePlanRequest = {
         display_name: planForm.value.display_name,
         default_speed_limit_mbps: planForm.value.default_speed_limit_mbps,
-        default_traffic_limit_bytes: planForm.value.default_traffic_limit_bytes,
         max_peers: planForm.value.max_peers,
         price_rub: planForm.value.price_rub,
         is_public: planForm.value.is_public,
         trial_days: planForm.value.trial_days,
         clear_speed_limit: planForm.value.default_speed_limit_mbps == null,
-        clear_traffic_limit: planForm.value.default_traffic_limit_bytes == null,
         clear_trial_days: planForm.value.trial_days == null,
       }
       const updated = await updateMut.mutateAsync({
@@ -161,11 +156,6 @@ async function doDeletePlan() {
   pendingDeletePlan.value = null
 }
 
-function formatTrafficGb(bytes: number | null | undefined): string {
-  if (bytes == null) return t('common.unlimited')
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(0)} GB`
-}
-
 function formatPrice(rub: number): string {
   if (rub === 0) return t('common.free')
   return `${rub} ₽`
@@ -175,7 +165,6 @@ const columns = computed<TableColumn<Plan>[]>(() => [
   { accessorKey: 'name', header: t('adminPlans.name') },
   { accessorKey: 'display_name', header: t('adminPlans.displayName') },
   { accessorKey: 'default_speed_limit_mbps', header: t('adminPlans.speed') },
-  { accessorKey: 'default_traffic_limit_bytes', header: t('adminPlans.traffic') },
   { accessorKey: 'max_peers', header: t('adminPlans.maxPeers') },
   { accessorKey: 'price_rub', header: t('adminPlans.price') },
   { accessorKey: 'trial_days', header: t('adminPlans.trial') },
@@ -210,9 +199,6 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 ? `${row.original.default_speed_limit_mbps} Mbps`
                 : t('common.unlimited')
             }}
-          </template>
-          <template #default_traffic_limit_bytes-cell="{ row }">
-            {{ formatTrafficGb(row.original.default_traffic_limit_bytes) }}
           </template>
           <template #price_rub-cell="{ row }">
             {{ formatPrice(row.original.price_rub) }}
@@ -293,8 +279,6 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 ? `${plan.default_speed_limit_mbps} Mbps`
                 : t('common.unlimited')
             }}</span>
-            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.traffic') }}</span>
-            <span>{{ formatTrafficGb(plan.default_traffic_limit_bytes) }}</span>
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.maxPeers') }}</span>
             <span>{{ plan.max_peers }}</span>
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.price') }}</span>

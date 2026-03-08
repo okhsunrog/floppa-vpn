@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            p.name as plan_name,\n            p.display_name as plan_display_name,\n            s.starts_at,\n            s.expires_at,\n            p.default_speed_limit_mbps as speed_limit_mbps,\n            p.default_traffic_limit_bytes as traffic_limit_bytes,\n            p.max_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LIMIT 1\n        ",
+  "query": "\n        SELECT\n            p.name as plan_name,\n            p.display_name as plan_display_name,\n            s.starts_at,\n            s.expires_at,\n            p.default_speed_limit_mbps as speed_limit_mbps,\n            p.max_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LIMIT 1\n        ",
   "describe": {
     "columns": [
       {
@@ -30,11 +30,6 @@
       },
       {
         "ordinal": 5,
-        "name": "traffic_limit_bytes",
-        "type_info": "Int8"
-      },
-      {
-        "ordinal": 6,
         "name": "max_peers",
         "type_info": "Int4"
       }
@@ -50,9 +45,8 @@
       false,
       true,
       true,
-      true,
       false
     ]
   },
-  "hash": "45588fdc2e3c9c526d857c7f24b5a72d84e283fa2a566faa1e86c0f72bf9bf48"
+  "hash": "ae4699f69dfacb0c884c21e5032768fe7570183a0688f2c5e7c40a97e208cfec"
 }

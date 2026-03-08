@@ -44,14 +44,6 @@ pub struct Peer {
     pub created_at: DateTime<Utc>,
     /// Last WireGuard handshake time (updated by daemon)
     pub last_handshake: Option<DateTime<Utc>>,
-    /// Lifetime cumulative traffic counters (updated by daemon, never reset).
-    /// Useful for monitoring and analytics.
-    pub tx_bytes: i64,
-    pub rx_bytes: i64,
-    /// Traffic used in current billing period (updated by daemon).
-    /// Will be used for enforcing plan traffic limits once billing is implemented.
-    /// Currently tracks the same as tx + rx until period reset logic is added.
-    pub traffic_used_bytes: i64,
     /// Human-readable device name (hostname), set by client app
     pub device_name: Option<String>,
     /// Unique device UUID, set by client app (NULL for bot/web-created peers)
@@ -68,8 +60,6 @@ pub struct Plan {
     pub display_name: String,
     /// Bandwidth limit in Mbps (None = unlimited)
     pub default_speed_limit_mbps: Option<i32>,
-    /// Traffic limit in bytes (None = unlimited)
-    pub default_traffic_limit_bytes: Option<i64>,
     /// Maximum number of WireGuard peers allowed
     pub max_peers: i32,
     /// Price in rubles (0 = free)

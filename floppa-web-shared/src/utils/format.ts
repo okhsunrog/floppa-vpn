@@ -77,31 +77,3 @@ export function formatSpeedLimit(
 ): string {
   return mbps == null ? unlimitedLabel : `${mbps} Mbps`
 }
-
-/**
- * Format traffic limit (null = unlimited)
- */
-export function formatTrafficLimit(
-  bytes: number | null | undefined,
-  unlimitedLabel = 'Unlimited',
-): string {
-  if (bytes == null) return unlimitedLabel
-  const gb = bytes / (1024 * 1024 * 1024)
-  return `${gb.toFixed(1)} GB`
-}
-
-/**
- * Convert GB to bytes
- */
-export function gbToBytes(gb: number | null): number | null {
-  if (gb === null) return null
-  return gb * 1024 * 1024 * 1024
-}
-
-/**
- * Convert bytes to GB
- */
-export function bytesToGb(bytes: number | null): number | null {
-  if (bytes === null) return null
-  return Math.round(bytes / (1024 * 1024 * 1024))
-}

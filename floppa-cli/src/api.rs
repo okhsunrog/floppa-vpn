@@ -23,7 +23,6 @@ pub struct SubscriptionInfo {
     pub plan_name: String,
     pub plan_display_name: String,
     pub speed_limit_mbps: Option<i32>,
-    pub traffic_limit_bytes: Option<i64>,
     pub max_peers: i32,
 }
 

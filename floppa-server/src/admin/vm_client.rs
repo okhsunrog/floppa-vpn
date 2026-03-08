@@ -69,10 +69,8 @@ pub async fn peer_traffic(
         .join("|");
     let window = format!("{days}d");
 
-    let tx_query =
-        format!(r#"increase(wg_tx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
-    let rx_query =
-        format!(r#"increase(wg_rx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
+    let tx_query = format!(r#"increase(wg_tx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
+    let rx_query = format!(r#"increase(wg_rx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
 
     let (tx_results, rx_results) = tokio::try_join!(
         query_vm(client, vm_url, &tx_query),

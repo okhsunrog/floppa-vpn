@@ -36,7 +36,6 @@ export type CreatePeerResponse = {
 
 export type CreatePlanRequest = {
     default_speed_limit_mbps?: number | null;
-    default_traffic_limit_bytes?: number | null;
     display_name: string;
     is_public?: boolean;
     max_peers?: number;
@@ -107,7 +106,6 @@ export type MySubscription = {
     plan_name: string;
     speed_limit_mbps?: number | null;
     starts_at: string;
-    traffic_limit_bytes?: number | null;
 };
 
 export type PeerDetail = {
@@ -138,7 +136,6 @@ export type PeerSummary = {
 
 export type Plan = {
     default_speed_limit_mbps?: number | null;
-    default_traffic_limit_bytes?: number | null;
     display_name: string;
     id: number;
     is_public: boolean;
@@ -188,7 +185,6 @@ export type SubscriptionDetail = {
     source: string;
     speed_limit_mbps?: number | null;
     starts_at: string;
-    traffic_limit_bytes?: number | null;
 };
 
 /**
@@ -208,10 +204,8 @@ export type UpdatePlanRequest = {
     clear_period_days?: boolean;
     clear_price_stars?: boolean;
     clear_speed_limit?: boolean;
-    clear_traffic_limit?: boolean;
     clear_trial_days?: boolean;
     default_speed_limit_mbps?: number | null;
-    default_traffic_limit_bytes?: number | null;
     display_name?: string | null;
     is_public?: boolean | null;
     max_peers?: number | null;
