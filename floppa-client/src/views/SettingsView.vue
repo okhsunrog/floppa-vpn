@@ -265,13 +265,13 @@ function selectMode(mode: SplitMode) {
           </UBadge>
         </div>
 
+        <UInput
+          v-model="searchQuery"
+          :placeholder="t('settings.searchApps')"
+          icon="i-lucide-search"
+          class="mb-3"
+        />
         <div class="flex items-center gap-3 mb-4">
-          <UInput
-            v-model="searchQuery"
-            :placeholder="t('settings.searchApps')"
-            icon="i-lucide-search"
-            class="flex-1"
-          />
           <UButton
             :label="t('settings.showSystemApps')"
             :color="showSystemApps ? 'primary' : 'neutral'"

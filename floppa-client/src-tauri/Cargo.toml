@@ -82,4 +82,5 @@ tracing-logcat = "0.1.0"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
 [patch.crates-io]
-wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "ab1e808" }
+wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "e7764f3" }
+
