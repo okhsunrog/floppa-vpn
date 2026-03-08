@@ -32,7 +32,7 @@ enum Command {
         /// Config file (.conf) or VLESS URI file
         #[arg(long)]
         config: Option<String>,
-        /// Protocol to use when creating a new peer (wireguard or vless)
+        /// Protocol: wireguard (default) or vless
         #[arg(long, default_value = "wireguard")]
         protocol: String,
         /// TUN interface name
@@ -49,14 +49,14 @@ enum Command {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
-    /// Fetch and print peer config (WireGuard .conf or VLESS URI)
+    /// Fetch and print config (WireGuard .conf or VLESS URI)
     Config {
-        /// Peer ID (uses first active peer if omitted)
-        #[arg(long)]
-        peer_id: Option<i64>,
-        /// Protocol to use when creating a new peer (wireguard or vless)
+        /// Protocol: wireguard (default) or vless
         #[arg(long, default_value = "wireguard")]
         protocol: String,
+        /// Peer ID (WireGuard only; uses first active peer if omitted)
+        #[arg(long)]
+        peer_id: Option<i64>,
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
@@ -130,7 +130,11 @@ async fn main() -> Result<()> {
                     } else {
                         bail!("No active subscription");
                     }
-                    client.find_or_create_peer(&protocol).await?
+                    if protocol == "vless" {
+                        client.get_vless_config().await?
+                    } else {
+                        client.find_or_create_peer().await?
+                    }
                 }
             };
 
@@ -148,16 +152,12 @@ async fn main() -> Result<()> {
             if peers.is_empty() {
                 eprintln!("No peers found.");
             } else {
-                println!(
-                    "{:<6} {:<10} {:<18} {:<14} Device",
-                    "ID", "Protocol", "IP", "Status"
-                );
+                println!("{:<6} {:<18} {:<14} Device", "ID", "IP", "Status");
                 for p in &peers {
                     println!(
-                        "{:<6} {:<10} {:<18} {:<14} {}",
+                        "{:<6} {:<18} {:<14} {}",
                         p.id,
-                        p.protocol,
-                        p.assigned_ip.as_deref().unwrap_or("n/a"),
+                        p.assigned_ip,
                         p.sync_status,
                         p.device_name.as_deref().unwrap_or("-")
                     );
@@ -165,16 +165,20 @@ async fn main() -> Result<()> {
             }
         }
         Command::Config {
-            peer_id,
             protocol,
+            peer_id,
             api_url,
         } => {
             let token =
                 auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
             let client = api::ApiClient::new(&api_url, &token);
-            let config = match peer_id {
-                Some(id) => client.get_peer_config(id).await?,
-                None => client.find_or_create_peer(&protocol).await?,
+            let config = if protocol == "vless" {
+                client.get_vless_config().await?
+            } else {
+                match peer_id {
+                    Some(id) => client.get_peer_config(id).await?,
+                    None => client.find_or_create_peer().await?,
+                }
             };
             print!("{config}");
         }

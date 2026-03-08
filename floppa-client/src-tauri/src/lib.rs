@@ -28,6 +28,8 @@ pub fn run() {
             vpn::commands::clear_config,
             vpn::commands::load_saved_config,
             vpn::commands::get_config,
+            vpn::commands::set_active_protocol,
+            vpn::commands::get_available_protocols,
             vpn::commands::connect,
             vpn::commands::disconnect,
             vpn::commands::get_connection_info,

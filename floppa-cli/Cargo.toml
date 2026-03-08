@@ -9,7 +9,7 @@ name = "floppa-cli"
 path = "src/main.rs"
 
 [dependencies]
-gotatun = { git = "https://github.com/mullvad/gotatun", rev = "3969d36", features = ["device", "tun"] }
+gotatun = { git = "https://github.com/okhsunrog/gotatun", rev = "efcedee", features = ["device", "tun"] }
 tun = { version = "0.8", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
@@ -21,7 +21,7 @@ ipnetwork = "0.21"
 anyhow = "1"
 dirs = "6"
 open = "5"
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "6c222d8" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "f8f27b2" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log = "0.2.0"

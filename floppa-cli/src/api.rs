@@ -31,8 +31,7 @@ pub struct SubscriptionInfo {
 #[allow(dead_code)]
 pub struct MyPeer {
     pub id: i64,
-    pub protocol: String,
-    pub assigned_ip: Option<String>,
+    pub assigned_ip: String,
     pub sync_status: String,
     pub device_name: Option<String>,
     pub device_id: Option<String>,
@@ -41,7 +40,7 @@ pub struct MyPeer {
 #[derive(Debug, Deserialize)]
 pub struct CreatePeerResponse {
     pub id: i64,
-    pub assigned_ip: Option<String>,
+    pub assigned_ip: String,
     pub config: String,
 }
 
@@ -49,7 +48,11 @@ pub struct CreatePeerResponse {
 struct CreatePeerRequest {
     device_name: Option<String>,
     device_id: Option<String>,
-    protocol: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VlessConfigResponse {
+    pub uri: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,11 +125,7 @@ impl ApiClient {
         resp.json().await.context("Failed to parse peers response")
     }
 
-    pub async fn create_peer(
-        &self,
-        device_name: Option<String>,
-        protocol: &str,
-    ) -> Result<CreatePeerResponse> {
+    pub async fn create_peer(&self, device_name: Option<String>) -> Result<CreatePeerResponse> {
         let resp = self
             .client
             .post(self.url("/me/peers"))
@@ -134,7 +133,6 @@ impl ApiClient {
             .json(&CreatePeerRequest {
                 device_name,
                 device_id: None,
-                protocol: Some(protocol.to_string()),
             })
             .send()
             .await?;
@@ -169,29 +167,50 @@ impl ApiClient {
         resp.text().await.context("Failed to read config response")
     }
 
-    /// Find an existing active peer matching the protocol, or create a new one.
-    pub async fn find_or_create_peer(&self, protocol: &str) -> Result<String> {
+    /// Find an existing active WireGuard peer, or create a new one.
+    pub async fn find_or_create_peer(&self) -> Result<String> {
         let peers = self.list_peers().await?;
 
-        // Look for an active peer matching the requested protocol
-        let active = peers
-            .iter()
-            .find(|p| p.sync_status == "active" && p.protocol == protocol);
+        let active = peers.iter().find(|p| p.sync_status == "active");
 
         let peer_id = if let Some(peer) = active {
-            let addr = peer.assigned_ip.as_deref().unwrap_or("n/a");
-            eprintln!("Using existing {protocol} peer: {addr} ({})", peer.id);
+            eprintln!("Using existing peer: {} ({})", peer.assigned_ip, peer.id);
             peer.id
         } else {
             let hostname = hostname();
-            eprintln!("Creating new {protocol} peer (device: {hostname})...");
-            let created = self.create_peer(Some(hostname), protocol).await?;
-            let addr = created.assigned_ip.as_deref().unwrap_or("n/a");
-            eprintln!("Peer created: {addr} ({})", created.id);
+            eprintln!("Creating new WireGuard peer (device: {hostname})...");
+            let created = self.create_peer(Some(hostname)).await?;
+            eprintln!("Peer created: {} ({})", created.assigned_ip, created.id);
             return Ok(created.config);
         };
 
         self.get_peer_config(peer_id).await
+    }
+
+    /// Fetch VLESS config for the current user.
+    pub async fn get_vless_config(&self) -> Result<String> {
+        let resp = self
+            .client
+            .get(self.url("/me/vless-config"))
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+
+        if resp.status() == 401 {
+            bail!("Authentication failed. Run `floppa-cli login` again.");
+        }
+        if resp.status() == 404 {
+            bail!("VLESS not available on this server.");
+        }
+        if !resp.status().is_success() {
+            bail!("GET /me/vless-config failed: {}", resp.status());
+        }
+
+        let vless: VlessConfigResponse = resp
+            .json()
+            .await
+            .context("Failed to parse VLESS config response")?;
+        Ok(vless.uri)
     }
 
     /// Exchange a one-time login code for a JWT token (no auth required).

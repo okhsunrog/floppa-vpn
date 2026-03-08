@@ -4,8 +4,8 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
-import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getPublicConfig, getStats, getUser, getVersion, listPeers, listPlans, listUsers, type Options, removePeer, sendMyPeerConfig, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetSubscriptionData, SetSubscriptionError, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse } from '../types.gen';
+import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMyVlessConfig, getPublicConfig, getStats, getUser, getVersion, listPeers, listPlans, listUsers, type Options, regenerateMyVlessConfig, removePeer, sendMyPeerConfig, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan } from '../sdk.gen';
+import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetMyVlessConfigData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListPeersData, ListPlansData, ListUsersData, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetSubscriptionData, SetSubscriptionError, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse } from '../types.gen';
 
 /**
  * Authenticate via Telegram Login Widget
@@ -237,6 +237,37 @@ export const getMyPeerConfigQuery = defineQueryOptions((options: Options<GetMyPe
 export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerConfigData>>): UseMutationOptions<unknown, Options<SendMyPeerConfigData>, SendMyPeerConfigError> => ({
     mutation: async (vars) => {
         const { data } = await sendMyPeerConfig({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+export const getMyVlessConfigQueryKey = (options?: Options<GetMyVlessConfigData>) => createQueryKey('getMyVlessConfig', options);
+
+/**
+ * Get VLESS config for the current user (generates UUID on first call)
+ */
+export const getMyVlessConfigQuery = defineQueryOptions((options?: Options<GetMyVlessConfigData>) => ({
+    key: getMyVlessConfigQueryKey(options),
+    query: async (context) => {
+        const { data } = await getMyVlessConfig({
+            ...options,
+            ...context,
+            throwOnError: true
+        });
+        return data;
+    }
+}));
+
+/**
+ * Regenerate VLESS UUID for the current user (old UUID stops working immediately)
+ */
+export const regenerateMyVlessConfigMutation = (options?: Partial<Options<RegenerateMyVlessConfigData>>): UseMutationOptions<RegenerateMyVlessConfigResponse, Options<RegenerateMyVlessConfigData>, RegenerateMyVlessConfigError> => ({
+    mutation: async (vars) => {
+        const { data } = await regenerateMyVlessConfig({
             ...options,
             ...vars,
             throwOnError: true

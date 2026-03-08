@@ -7,7 +7,7 @@
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TunnelInfo {
     pub is_running: bool,
-    pub last_handshake: Option<i64>,
+    pub last_packet_received: Option<i64>,
     pub connected_secs: Option<u64>,
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,

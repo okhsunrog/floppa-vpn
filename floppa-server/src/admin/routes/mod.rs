@@ -71,6 +71,10 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(user::get_my_peer_config))
     .routes(routes!(user::send_my_peer_config))
     .routes(routes!(user::get_my_peer_by_device))
+    .routes(routes!(
+        user::get_my_vless_config,
+        user::regenerate_my_vless_config
+    ))
     // Admin endpoints
     .routes(routes!(admin::get_stats))
     .routes(routes!(admin::list_users, admin::create_user))

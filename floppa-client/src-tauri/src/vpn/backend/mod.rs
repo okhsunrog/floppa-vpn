@@ -24,7 +24,7 @@ use std::sync::Arc;
 pub struct VpnFullInfo {
     pub is_running: bool,
     pub stats: Option<TrafficStats>,
-    pub last_handshake: Option<i64>,
+    pub last_packet_received: Option<i64>,
     pub connected_secs: Option<u64>,
 }
 

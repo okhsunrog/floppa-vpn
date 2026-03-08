@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { commands, type ConnectionInfo, type WgConfigSafe } from '../bindings'
+import { commands, type ConnectionInfo, type ConfigSafe } from '../bindings'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
 import { i18n } from '../i18n'
@@ -12,13 +12,14 @@ const MAX_RECONNECT_ATTEMPTS = 3
 export const useVpnStore = defineStore(
   'vpn',
   () => {
-    const config = ref<WgConfigSafe | null>(null)
+    const config = ref<ConfigSafe | null>(null)
     const connectionInfo = ref<ConnectionInfo | null>(null)
     const isLoading = ref(false)
     const error = ref<string | null>(null)
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
+    const availableProtocols = ref<string[]>([])
 
     // Auto-reconnect state
     const reconnectAttempts = ref(0)
@@ -28,6 +29,7 @@ export const useVpnStore = defineStore(
 
     const isConnected = computed(() => connectionInfo.value?.status === 'connected')
     const hasConfig = computed(() => config.value !== null)
+    const activeProtocol = computed(() => config.value?.protocol ?? 'wireguard')
 
     const connectionStatus = computed(() => {
       if (isConnected.value) return 'connected' as const
@@ -117,6 +119,11 @@ export const useVpnStore = defineStore(
         } else {
           console.error('Failed to load config:', result.error)
         }
+        // Load available protocols
+        const protocolsResult = await commands.getAvailableProtocols()
+        if (protocolsResult.status === 'ok') {
+          availableProtocols.value = protocolsResult.data
+        }
       } catch (e) {
         console.error('Failed to load config:', e)
       }
@@ -144,7 +151,7 @@ export const useVpnStore = defineStore(
         server_endpoint: null,
         assigned_ip: null,
         connected_at: null,
-        last_handshake: null,
+        last_packet_received: null,
         stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
       }
 
@@ -255,6 +262,20 @@ export const useVpnStore = defineStore(
       }, delay)
     }
 
+    async function setProtocol(protocol: string) {
+      error.value = null
+      try {
+        const result = await commands.setActiveProtocol(protocol)
+        if (result.status === 'error') {
+          error.value = result.error
+          return
+        }
+        await loadConfig()
+      } catch (e) {
+        error.value = String(e)
+      }
+    }
+
     function setOnReconnectFailed(cb: (() => void) | null) {
       onReconnectFailed = cb
     }
@@ -270,6 +291,8 @@ export const useVpnStore = defineStore(
       deviceId,
       deviceName,
       connectionStatus,
+      activeProtocol,
+      availableProtocols,
       initPlatform,
       cleanup,
       loadConfig,
@@ -279,6 +302,7 @@ export const useVpnStore = defineStore(
       disconnect,
       reconnect,
       refreshStatus,
+      setProtocol,
       setOnReconnectFailed,
     }
   },
@@ -287,4 +311,4 @@ export const useVpnStore = defineStore(
   },
 )
 
-export type { ConnectionInfo, WgConfigSafe }
+export type { ConnectionInfo, ConfigSafe }

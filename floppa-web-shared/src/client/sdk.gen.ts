@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListUsersData, ListUsersErrors, ListUsersResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses } from './types.gen';
+import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListUsersData, ListUsersErrors, ListUsersResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -110,6 +110,16 @@ export const getMyPeerConfig = <ThrowOnError extends boolean = false>(options: O
  * Send WireGuard config to user via Telegram bot
  */
 export const sendMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<SendMyPeerConfigData, ThrowOnError>) => (options.client ?? client).post<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError>({ url: '/me/peers/{id}/send-config', ...options });
+
+/**
+ * Get VLESS config for the current user (generates UUID on first call)
+ */
+export const getMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<GetMyVlessConfigData, ThrowOnError>) => (options?.client ?? client).get<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError>({ url: '/me/vless-config', ...options });
+
+/**
+ * Regenerate VLESS UUID for the current user (old UUID stops working immediately)
+ */
+export const regenerateMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<RegenerateMyVlessConfigData, ThrowOnError>) => (options?.client ?? client).post<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError>({ url: '/me/vless-config/regenerate', ...options });
 
 /**
  * List all peers (admin only)

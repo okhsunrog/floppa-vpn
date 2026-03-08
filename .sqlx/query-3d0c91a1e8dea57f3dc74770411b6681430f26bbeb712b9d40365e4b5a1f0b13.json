@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT private_key_encrypted, assigned_ip\n        FROM peers\n        WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "private_key_encrypted",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "assigned_ip",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "3d0c91a1e8dea57f3dc74770411b6681430f26bbeb712b9d40365e4b5a1f0b13"
+}

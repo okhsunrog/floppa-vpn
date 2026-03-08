@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, public_key AS \"public_key!\", assigned_ip AS \"assigned_ip!\" FROM peers WHERE sync_status = 'pending_remove' AND protocol = 'wireguard'",
+  "query": "SELECT id, public_key AS \"public_key!\", assigned_ip AS \"assigned_ip!\" FROM peers WHERE sync_status = 'pending_remove'",
   "describe": {
     "columns": [
       {
@@ -24,9 +24,9 @@
     },
     "nullable": [
       false,
-      true,
-      true
+      false,
+      false
     ]
   },
-  "hash": "34420806d3f5723208665a795c317c9a0f18a3186fc58519697af1b48a05acae"
+  "hash": "0f1c67b41b5f19c371691005597626d5ef408e44d6d12a9d232e64b60acc27ce"
 }

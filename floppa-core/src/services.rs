@@ -113,36 +113,27 @@ pub struct CreatePeerContext<'a> {
     pub config: &'a Config,
     pub encryption_key: &'a [u8; 32],
     pub wg_public_key: &'a str,
-    /// REALITY public key from secrets (required only for VLESS)
-    pub reality_public_key: Option<&'a str>,
 }
 
 /// Client-provided options when creating a peer.
 pub struct CreatePeerOptions {
     pub device_name: Option<String>,
     pub device_id: Option<String>,
-    /// Protocol: "wireguard" (default) or "vless"
-    pub protocol: Option<String>,
 }
 
 /// Result of peer creation.
 pub struct CreatePeerResult {
     pub id: i64,
-    /// Assigned IP (WireGuard only, None for VLESS)
-    pub assigned_ip: Option<String>,
-    /// Plaintext WireGuard private key (None for VLESS)
-    pub private_key_plaintext: Option<String>,
-    /// Ready-to-use config: WireGuard .conf text or vless:// URI
+    pub assigned_ip: String,
+    pub private_key_plaintext: String,
+    /// WireGuard .conf text
     pub config: String,
-    /// Protocol used: "wireguard" or "vless"
-    pub protocol: String,
 }
 
-/// Create a new VPN peer (WireGuard or VLESS) for a user.
+/// Create a new WireGuard peer for a user.
 ///
-/// Checks subscription + peer limit, then:
-/// - **WireGuard**: generates x25519 keypair, encrypts private key, allocates IP, generates .conf
-/// - **VLESS**: generates UUID v4, generates `vless://` URI (no IP allocation)
+/// Checks subscription + peer limit, then generates x25519 keypair,
+/// encrypts private key, allocates IP, and generates .conf.
 ///
 /// Uses a transaction with FOR UPDATE to prevent concurrent peer limit violations.
 pub async fn create_peer(
@@ -150,24 +141,10 @@ pub async fn create_peer(
     user_id: i64,
     options: Option<CreatePeerOptions>,
 ) -> Result<CreatePeerResult> {
-    let (device_name, device_id, protocol) = match &options {
-        Some(opts) => (
-            opts.device_name.as_deref(),
-            opts.device_id.as_deref(),
-            opts.protocol.as_deref().unwrap_or("wireguard"),
-        ),
-        None => (None, None, "wireguard"),
+    let (device_name, device_id) = match &options {
+        Some(opts) => (opts.device_name.as_deref(), opts.device_id.as_deref()),
+        None => (None, None),
     };
-
-    // Validate protocol
-    if protocol != "wireguard" && protocol != "vless" {
-        return Err(FloppaError::InvalidProtocol(protocol.to_string()));
-    }
-
-    // For VLESS, verify server is configured and public key is provided
-    if protocol == "vless" && (ctx.config.vless.is_none() || ctx.reality_public_key.is_none()) {
-        return Err(FloppaError::VlessNotConfigured);
-    }
 
     // Transaction: check limit + allocate resources + insert peer atomically
     let mut tx = ctx.pool.begin().await?;
@@ -198,82 +175,45 @@ pub async fn create_peer(
         });
     }
 
-    match protocol {
-        "vless" => {
-            let vless_uuid = uuid::Uuid::new_v4().to_string();
+    let (private_key, public_key) = crate::wg_keys::generate_keypair()
+        .map_err(|e| FloppaError::KeyGeneration(e.to_string()))?;
 
-            let peer_id = sqlx::query_scalar!(
-                r#"
-                INSERT INTO peers (user_id, protocol, vless_uuid, sync_status, device_name, device_id)
-                VALUES ($1, 'vless', $2, 'pending_add', $3, $4)
-                RETURNING id
-                "#,
-                user_id,
-                &vless_uuid,
-                device_name,
-                device_id,
-            )
-            .fetch_one(&mut *tx)
-            .await?;
+    let encrypted_private_key = encrypt_private_key(private_key.as_base64(), ctx.encryption_key)
+        .map_err(|e| FloppaError::Encryption(e.to_string()))?;
 
-            tx.commit().await?;
+    let assigned_ip = allocate_ip_tx(&mut tx, &ctx.config.wireguard.client_subnet).await?;
 
-            let vless_config =
-                generate_vless_uri(&vless_uuid, ctx.config, ctx.reality_public_key.unwrap())?;
+    let peer_id = sqlx::query_scalar!(
+        r#"
+        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, device_name, device_id)
+        VALUES ($1, $2, $3, $4, 'pending_add', $5, $6)
+        RETURNING id
+        "#,
+        user_id,
+        public_key.as_base64(),
+        &encrypted_private_key,
+        &assigned_ip,
+        device_name,
+        device_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
 
-            Ok(CreatePeerResult {
-                id: peer_id,
-                assigned_ip: None,
-                private_key_plaintext: None,
-                config: vless_config,
-                protocol: "vless".to_string(),
-            })
-        }
-        _ => {
-            // WireGuard flow
-            let (private_key, public_key) = crate::wg_keys::generate_keypair()
-                .map_err(|e| FloppaError::KeyGeneration(e.to_string()))?;
+    tx.commit().await?;
 
-            let encrypted_private_key =
-                encrypt_private_key(private_key.as_base64(), ctx.encryption_key)
-                    .map_err(|e| FloppaError::Encryption(e.to_string()))?;
+    let wg_config = generate_wg_config(
+        private_key.as_base64(),
+        &assigned_ip,
+        ctx.config,
+        ctx.wg_public_key,
+    );
 
-            let assigned_ip = allocate_ip_tx(&mut tx, &ctx.config.wireguard.client_subnet).await?;
-
-            let peer_id = sqlx::query_scalar!(
-                r#"
-                INSERT INTO peers (user_id, protocol, public_key, private_key_encrypted, assigned_ip, sync_status, device_name, device_id)
-                VALUES ($1, 'wireguard', $2, $3, $4, 'pending_add', $5, $6)
-                RETURNING id
-                "#,
-                user_id,
-                public_key.as_base64(),
-                &encrypted_private_key,
-                &assigned_ip,
-                device_name,
-                device_id,
-            )
-            .fetch_one(&mut *tx)
-            .await?;
-
-            tx.commit().await?;
-
-            let wg_config = generate_wg_config(
-                private_key.as_base64(),
-                &assigned_ip,
-                ctx.config,
-                ctx.wg_public_key,
-            );
-
-            Ok(CreatePeerResult {
-                id: peer_id,
-                assigned_ip: Some(assigned_ip),
-                private_key_plaintext: Some(private_key.as_base64().to_string()),
-                config: wg_config,
-                protocol: "wireguard".to_string(),
-            })
-        }
-    }
+    Ok(CreatePeerResult {
+        id: peer_id,
+        assigned_ip,
+        private_key_plaintext: private_key.as_base64().to_string(),
+        config: wg_config,
+    })
 }
 
 /// Allocate the next available IP address from the WireGuard subnet.
@@ -296,12 +236,10 @@ where
 {
     let network: Ipv4Network = subnet.parse().map_err(|_| FloppaError::NoAvailableIps)?;
 
-    // assigned_ip is nullable (NULL for VLESS peers), so filter NULLs
-    let assigned: Vec<Option<String>> = sqlx::query_scalar(
-        "SELECT assigned_ip FROM peers WHERE assigned_ip IS NOT NULL AND sync_status != 'removed'",
-    )
-    .fetch_all(executor)
-    .await?;
+    let assigned: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT assigned_ip FROM peers WHERE sync_status != 'removed'")
+            .fetch_all(executor)
+            .await?;
 
     let assigned_set: HashSet<Ipv4Addr> = assigned
         .iter()
@@ -672,7 +610,6 @@ mod tests {
             config,
             encryption_key: &ENCRYPTION_KEY,
             wg_public_key: "dGVzdC1wdWJsaWMta2V5LWJhc2U2NC1lbmNvZGVkMTI=",
-            reality_public_key: None,
         }
     }
 
@@ -687,12 +624,10 @@ mod tests {
 
         let result = create_peer(&ctx, user_id, None).await.unwrap();
 
-        assert_eq!(result.assigned_ip.as_deref(), Some("10.200.0.2"));
-        assert!(result.private_key_plaintext.is_some());
-        assert!(!result.private_key_plaintext.as_ref().unwrap().is_empty());
+        assert_eq!(result.assigned_ip, "10.200.0.2");
+        assert!(!result.private_key_plaintext.is_empty());
         assert!(result.config.contains("[Interface]"));
         assert!(result.config.contains("[Peer]"));
-        assert_eq!(result.protocol, "wireguard");
 
         // Verify peer in DB
         let status = sqlx::query_scalar!("SELECT sync_status FROM peers WHERE id = $1", result.id)
@@ -751,7 +686,6 @@ mod tests {
         let options = Some(CreatePeerOptions {
             device_name: Some("Pixel 9".into()),
             device_id: Some("test-device-uuid".into()),
-            protocol: None,
         });
 
         let result = create_peer(&ctx, user_id, options).await.unwrap();

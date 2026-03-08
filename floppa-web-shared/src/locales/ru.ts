@@ -314,8 +314,10 @@ export default {
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
     connectionFailed: 'Не удалось подключиться. Попробуйте позже.',
-    handshake: 'Хендшейк',
-    connectionHealth: 'Состояние',
+    lastActivity: 'Активность',
     duration: 'Длительность',
+    protocol: 'Протокол',
+    wireguard: 'WireGuard',
+    vless: 'VLESS',
   },
 }
