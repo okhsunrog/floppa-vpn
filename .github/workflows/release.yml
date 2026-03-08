@@ -200,7 +200,7 @@ jobs:
           useradd -m builder
           chown -R builder:builder .
           cd scripts/arch
-          su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -p PKGBUILD-local --noconfirm"
+          su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -p PKGBUILD-local -d --noconfirm"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
