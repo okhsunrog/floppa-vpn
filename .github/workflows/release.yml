@@ -80,7 +80,7 @@ jobs:
           path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/floppa-vpn-*-android-arm64.apk
 
   linux:
-    name: Linux AppImage
+    name: Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
