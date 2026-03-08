@@ -22,7 +22,7 @@ const loading = computed(() => meStatus.value === 'pending' || peersStatus.value
 const error = computed(() => meError.value || peersError.value)
 
 const totalTraffic = computed(() => {
-  const wg = peers.value?.peers?.reduce((sum, p) => sum + p.download_bytes + p.upload_bytes, 0) ?? 0
+  const wg = (peers.value?.wg_download_bytes ?? 0) + (peers.value?.wg_upload_bytes ?? 0)
   const vl = peers.value?.vless
     ? peers.value.vless.download_bytes + peers.value.vless.upload_bytes
     : 0
