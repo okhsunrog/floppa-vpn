@@ -193,6 +193,7 @@ impl GotatunTunnel {
             .with_private_key(x25519::StaticSecret::from(private_key))
             .with_peer(peer);
 
+        #[cfg(target_os = "linux")]
         if let Some(mark) = tun_params.fwmark {
             builder = builder.with_fwmark(mark);
         }
