@@ -1,0 +1,18 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "tauri-apps.tauri-vscode",
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "prettier.prettier-vscode",
+    "blueglassblock.better-json5",
+    "tamasfe.even-better-toml",
+    "fill-labs.dependi",
+    "promptexecution.justlang-lsp",
+    "mathiasfrohlich.Kotlin",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "naco-siren.gradle-language",
+    "mtxr.sqltools"
+  ]
+}

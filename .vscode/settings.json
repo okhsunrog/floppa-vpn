@@ -1,0 +1,7 @@
+{
+  "rust-analyzer.linkedProjects": [
+    "Cargo.toml",
+    "floppa-client/src-tauri/Cargo.toml",
+    "tauri-plugin-vpn/Cargo.toml"
+  ]
+}

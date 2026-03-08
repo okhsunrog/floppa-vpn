@@ -34,7 +34,6 @@ dist/
 *.tsbuildinfo
 
 # IDE
-.vscode/
 .idea/
 
 # Tool cache (ktfmt JAR etc.)
