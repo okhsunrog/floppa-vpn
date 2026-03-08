@@ -10,7 +10,7 @@ import {
   deleteSubscriptionMutation,
   deleteAdminPeerMutation,
 } from '../../client/@pinia/colada.gen'
-import { formatBytes, formatDateTime, formatSpeedLimit } from '../../utils'
+import { formatBytes, formatDateTime, formatSpeedLimit, handleExternalLinkClick } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -250,6 +250,7 @@ async function doRemovePeer() {
             :href="`https://t.me/${user.username}`"
             target="_blank"
             class="text-sm text-[var(--ui-text-muted)] hover:text-[var(--ui-primary)] underline"
+            @click="handleExternalLinkClick"
             >@{{ user.username }}</a
           >
         </div>
@@ -273,6 +274,7 @@ async function doRemovePeer() {
               :href="`https://t.me/${user.username}`"
               target="_blank"
               class="font-medium text-[var(--ui-primary)] hover:underline"
+              @click="handleExternalLinkClick"
               >{{ user.telegram_id }}</a
             >
             <span v-else class="font-medium">{{ user.telegram_id }}</span>

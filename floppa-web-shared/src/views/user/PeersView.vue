@@ -11,7 +11,7 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
-import { formatBytes, formatDate, formatDateTime } from '../../utils'
+import { formatBytes, formatDate, formatDateTime, openExternal } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 
@@ -250,6 +250,10 @@ async function copyVlessUri() {
   }
 }
 
+function openVlessUri() {
+  if (vlessUri.value) openExternal(vlessUri.value)
+}
+
 async function doRegenerateVless() {
   vlessRegenerateConfirmOpen.value = false
   try {
@@ -474,6 +478,12 @@ async function doRegenerateVless() {
       </template>
       <template #footer>
         <UButton :label="t('common.copy')" icon="i-lucide-copy" @click="copyVlessUri" />
+        <UButton
+          :label="t('common.open')"
+          icon="i-lucide-external-link"
+          color="success"
+          @click="openVlessUri"
+        />
         <UButton
           :label="t('common.close')"
           color="neutral"

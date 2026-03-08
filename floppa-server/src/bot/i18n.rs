@@ -26,6 +26,12 @@ pub struct Messages {
     pub lang_prompt: &'static str,
     pub lang_set: &'static str,
 
+    // /vless
+    pub vless_your_config: &'static str,
+    pub vless_open: &'static str,
+    pub vless_not_configured: &'static str,
+    pub vless_no_user: &'static str,
+
     // fallback
     pub unknown_message: &'static str,
 
@@ -54,10 +60,16 @@ static EN: Messages = Messages {
     lang_prompt: "Choose your language:",
     lang_set: "Language set to English",
 
+    vless_your_config: "Your VLESS config:",
+    vless_open: "Open in app",
+    vless_not_configured: "VLESS is not configured on this server.",
+    vless_no_user: "Please use /start first.",
+
     unknown_message: "I only understand commands:\n\n\
                       /start — open the app\n\
                       /status — check subscription\n\
                       /buy — purchase a plan\n\
+                      /vless — get VLESS config\n\
                       /lang — change language",
 
     error_generic: "An error occurred. Please try again later.",
@@ -84,10 +96,16 @@ static RU: Messages = Messages {
     lang_prompt: "Выберите язык:",
     lang_set: "Язык изменён на русский",
 
+    vless_your_config: "Ваш VLESS конфиг:",
+    vless_open: "Открыть в приложении",
+    vless_not_configured: "VLESS не настроен на этом сервере.",
+    vless_no_user: "Сначала используйте /start.",
+
     unknown_message: "Я понимаю только команды:\n\n\
                       /start — открыть приложение\n\
                       /status — проверить подписку\n\
                       /buy — купить тариф\n\
+                      /vless — получить VLESS конфиг\n\
                       /lang — сменить язык",
 
     error_generic: "Произошла ошибка. Попробуйте позже.",

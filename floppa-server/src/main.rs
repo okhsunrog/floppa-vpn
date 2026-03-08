@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
         BotCommand::new("start", "Запустить бота"),
         BotCommand::new("status", "Проверить подписку"),
         BotCommand::new("buy", "Купить тариф"),
+        BotCommand::new("vless", "VLESS конфиг"),
         BotCommand::new("lang", "Сменить язык"),
     ])
     .language_code("ru")
@@ -124,7 +125,7 @@ async fn main() -> Result<()> {
     // Build teloxide dispatcher
     let handler = bot::handlers::schema();
     let mut dispatcher = Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![pool, config, wg_public_key])
+        .dependencies(dptree::deps![pool, config, secrets, wg_public_key])
         .enable_ctrlc_handler()
         .build();
 

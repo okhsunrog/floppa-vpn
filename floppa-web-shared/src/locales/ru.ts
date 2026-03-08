@@ -22,6 +22,7 @@ export default {
     add: 'Добавить',
     remove: 'Удалить',
     close: 'Закрыть',
+    open: 'Открыть',
     copy: 'Копировать',
     download: 'Скачать',
     create: 'Создать',

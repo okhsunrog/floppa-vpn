@@ -1,11 +1,11 @@
 use crate::bot::i18n;
 use chrono::{Duration, Utc};
-use floppa_core::{Config, DbPool, billing, services};
+use floppa_core::{Config, DbPool, Secrets, billing, services};
 use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
     types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, PreCheckoutQuery,
+        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ParseMode, PreCheckoutQuery,
         SuccessfulPayment, WebAppInfo,
     },
     utils::command::BotCommands,
@@ -23,6 +23,8 @@ pub enum Command {
     Status,
     #[command(description = "Purchase a subscription")]
     Buy,
+    #[command(description = "Get VLESS config")]
+    Vless,
     #[command(description = "Change language / Сменить язык")]
     Lang,
 }
@@ -34,6 +36,7 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
         .branch(case![Command::Start].endpoint(start))
         .branch(case![Command::Status].endpoint(status))
         .branch(case![Command::Buy].endpoint(buy))
+        .branch(case![Command::Vless].endpoint(vless))
         .branch(case![Command::Lang].endpoint(lang));
 
     let callback_handler = Update::filter_callback_query().endpoint(handle_callback);
@@ -169,6 +172,90 @@ async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerRes
     let keyboard = InlineKeyboardMarkup::new(buttons);
 
     bot.send_message(msg.chat.id, msgs.buy_choose_plan)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+async fn vless(
+    bot: Bot,
+    msg: Message,
+    pool: DbPool,
+    config: Config,
+    secrets: Secrets,
+) -> HandlerResult {
+    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+
+    // Check VLESS is configured
+    let reality_public_key = match secrets.vless.as_ref() {
+        Some(v) if config.vless.is_some() => &v.reality_public_key,
+        _ => {
+            bot.send_message(msg.chat.id, msgs.vless_not_configured)
+                .await?;
+            return Ok(());
+        }
+    };
+
+    // Look up user
+    let user = sqlx::query!(
+        "SELECT id, vless_uuid FROM users WHERE telegram_id = $1",
+        telegram_id,
+    )
+    .fetch_optional(&pool)
+    .await?;
+
+    let user = match user {
+        Some(u) => u,
+        None => {
+            bot.send_message(msg.chat.id, msgs.vless_no_user).await?;
+            return Ok(());
+        }
+    };
+
+    // Check active subscription
+    let has_sub = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM subscriptions
+            WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
+        ) as "exists!""#,
+        user.id,
+    )
+    .fetch_one(&pool)
+    .await?;
+
+    if !has_sub {
+        bot.send_message(msg.chat.id, msgs.no_subscription_short)
+            .await?;
+        return Ok(());
+    }
+
+    // Get or generate VLESS UUID
+    let uuid = match user.vless_uuid {
+        Some(uuid) => uuid,
+        None => {
+            let new_uuid = uuid::Uuid::new_v4().to_string();
+            sqlx::query!(
+                "UPDATE users SET vless_uuid = $1 WHERE id = $2",
+                &new_uuid,
+                user.id
+            )
+            .execute(&pool)
+            .await?;
+            new_uuid
+        }
+    };
+
+    let uri = services::generate_vless_uri(&uuid, &config, reality_public_key)?;
+
+    let text = format!("{}\n\n<code>{}</code>", msgs.vless_your_config, uri);
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
+        msgs.vless_open,
+        uri.parse()?,
+    )]]);
+
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(ParseMode::Html)
         .reply_markup(keyboard)
         .await?;
 
