@@ -337,7 +337,7 @@ async function doRemovePeer() {
                 }}</small
               >
               <small>
-                Traffic: {{ formatBytes(peer.traffic_used_bytes) }}
+                Traffic: {{ formatBytes(peer.tx_bytes + peer.rx_bytes) }}
                 <template v-if="activeSubscription.traffic_limit_bytes">
                   /
                   {{

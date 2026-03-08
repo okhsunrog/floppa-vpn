@@ -1921,7 +1921,6 @@
           "sync_status",
           "tx_bytes",
           "rx_bytes",
-          "traffic_used_bytes",
           "created_at"
         ],
         "properties": {
@@ -1961,10 +1960,6 @@
           },
           "sync_status": {
             "type": "string"
-          },
-          "traffic_used_bytes": {
-            "type": "integer",
-            "format": "int64"
           },
           "tx_bytes": {
             "type": "integer",
@@ -2026,8 +2021,7 @@
           "assigned_ip",
           "sync_status",
           "tx_bytes",
-          "rx_bytes",
-          "traffic_used_bytes"
+          "rx_bytes"
         ],
         "properties": {
           "assigned_ip": {
@@ -2065,10 +2059,6 @@
           },
           "sync_status": {
             "type": "string"
-          },
-          "traffic_used_bytes": {
-            "type": "integer",
-            "format": "int64"
           },
           "tx_bytes": {
             "type": "integer",

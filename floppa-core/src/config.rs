@@ -28,6 +28,9 @@ pub struct Config {
     /// Minimum client version required (semver, e.g. "0.2.0"). Older clients get 426.
     #[serde(default)]
     pub min_client_version: Option<String>,
+    /// Metrics / observability configuration
+    #[serde(default)]
+    pub metrics: Option<MetricsConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -138,6 +141,17 @@ pub struct AuthConfig {
 
 fn default_jwt_expiration_hours() -> u64 {
     24 * 7 // 1 week
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetricsConfig {
+    /// VictoriaMetrics query URL (default: http://127.0.0.1:8428)
+    #[serde(default = "default_vm_url")]
+    pub victoria_metrics_url: String,
+}
+
+fn default_vm_url() -> String {
+    "http://127.0.0.1:8428".to_string()
 }
 
 impl Config {

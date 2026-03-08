@@ -8,7 +8,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::admin::{auth::AdminUser, error::ApiError};
+use crate::admin::{auth::AdminUser, error::ApiError, vm_client};
 
 use super::AppState;
 
@@ -44,8 +44,6 @@ pub(super) async fn get_stats(
         SELECT
             (SELECT COUNT(*) FROM users) as "total_users!",
             (SELECT COUNT(*) FROM peers WHERE sync_status = 'active') as "active_peers!",
-            (SELECT COALESCE(SUM(tx_bytes), 0)::bigint FROM peers) as "total_tx_bytes!",
-            (SELECT COALESCE(SUM(rx_bytes), 0)::bigint FROM peers) as "total_rx_bytes!",
             (SELECT COUNT(*) FROM subscriptions WHERE expires_at IS NULL OR expires_at > NOW()) as "active_subscriptions!",
             (SELECT COUNT(*) FROM payments WHERE status = 'completed') as "total_payments!",
             (SELECT COALESCE(SUM(amount), 0)::bigint FROM payments WHERE status = 'completed') as "total_stars_revenue!"
@@ -54,11 +52,16 @@ pub(super) async fn get_stats(
     .fetch_one(&state.pool)
     .await?;
 
+    let (total_tx_bytes, total_rx_bytes) =
+        vm_client::system_traffic(&state.http_client, &state.vm_url, 30)
+            .await
+            .unwrap_or((0, 0));
+
     Ok(Json(Stats {
         total_users: stats.total_users,
         active_peers: stats.active_peers,
-        total_tx_bytes: stats.total_tx_bytes,
-        total_rx_bytes: stats.total_rx_bytes,
+        total_tx_bytes,
+        total_rx_bytes,
         active_subscriptions: stats.active_subscriptions,
         total_payments: stats.total_payments,
         total_stars_revenue: stats.total_stars_revenue,
@@ -233,7 +236,6 @@ pub struct PeerDetail {
     sync_status: String,
     tx_bytes: i64,
     rx_bytes: i64,
-    traffic_used_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
     device_name: Option<String>,
     device_id: Option<String>,
@@ -281,10 +283,9 @@ pub(super) async fn get_user(
     .await?
     .ok_or_else(|| ApiError::not_found("User not found"))?;
 
-    let peers: Vec<PeerDetail> = sqlx::query_as!(
-        PeerDetail,
+    let peer_rows = sqlx::query!(
         r#"
-        SELECT id, public_key, assigned_ip, sync_status, tx_bytes, rx_bytes, traffic_used_bytes, last_handshake, device_name, device_id
+        SELECT id, public_key, assigned_ip, sync_status, last_handshake, device_name, device_id
         FROM peers WHERE user_id = $1 AND sync_status != 'removed'
         ORDER BY created_at DESC
         "#,
@@ -292,6 +293,29 @@ pub(super) async fn get_user(
     )
     .fetch_all(&state.pool)
     .await?;
+
+    let peer_ids: Vec<i64> = peer_rows.iter().map(|r| r.id).collect();
+    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
+        .await
+        .unwrap_or_default();
+
+    let peers: Vec<PeerDetail> = peer_rows
+        .into_iter()
+        .map(|r| {
+            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            PeerDetail {
+                id: r.id,
+                public_key: r.public_key,
+                assigned_ip: r.assigned_ip,
+                sync_status: r.sync_status,
+                tx_bytes: tx,
+                rx_bytes: rx,
+                last_handshake: r.last_handshake,
+                device_name: r.device_name,
+                device_id: r.device_id,
+            }
+        })
+        .collect();
 
     let subscriptions: Vec<SubscriptionDetail> = sqlx::query_as!(
         SubscriptionDetail,
@@ -492,10 +516,9 @@ pub(super) async fn list_peers(
     _admin: AdminUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<PeerSummary>>, ApiError> {
-    let peers: Vec<PeerSummary> = sqlx::query_as!(
-        PeerSummary,
+    let rows = sqlx::query!(
         r#"
-        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.tx_bytes, p.rx_bytes, p.last_handshake, p.device_name, p.device_id, p.client_version
+        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.last_handshake, p.device_name, p.device_id, p.client_version
         FROM peers p
         JOIN users u ON p.user_id = u.id
         WHERE p.sync_status != 'removed'
@@ -504,6 +527,31 @@ pub(super) async fn list_peers(
     )
     .fetch_all(&state.pool)
     .await?;
+
+    let peer_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
+    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
+        .await
+        .unwrap_or_default();
+
+    let peers: Vec<PeerSummary> = rows
+        .into_iter()
+        .map(|r| {
+            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            PeerSummary {
+                id: r.id,
+                user_id: r.user_id,
+                username: r.username,
+                assigned_ip: r.assigned_ip,
+                sync_status: r.sync_status,
+                tx_bytes: tx,
+                rx_bytes: rx,
+                last_handshake: r.last_handshake,
+                device_name: r.device_name,
+                device_id: r.device_id,
+                client_version: r.client_version,
+            }
+        })
+        .collect();
 
     Ok(Json(peers))
 }

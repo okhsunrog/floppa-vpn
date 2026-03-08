@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT public_key AS \"public_key!\", user_id FROM peers WHERE sync_status = 'active'",
+  "query": "SELECT public_key AS \"public_key!\", user_id, id AS peer_id FROM peers WHERE sync_status = 'active'",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "user_id",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "peer_id",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
@@ -19,8 +24,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "618da707deb947d58b94d87688acdf07460945e6d837591f8d5b0ba885d9d09a"
+  "hash": "974478afb1e98f48b6b53cd4c715be32d1d13b092d7d924b4bb0a3dd6196a25d"
 }

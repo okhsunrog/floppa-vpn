@@ -97,7 +97,6 @@ export type MyPeer = {
     last_handshake?: string | null;
     rx_bytes: number;
     sync_status: string;
-    traffic_used_bytes: number;
     tx_bytes: number;
 };
 
@@ -120,7 +119,6 @@ export type PeerDetail = {
     public_key: string;
     rx_bytes: number;
     sync_status: string;
-    traffic_used_bytes: number;
     tx_bytes: number;
 };
 
