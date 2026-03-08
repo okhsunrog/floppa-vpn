@@ -312,12 +312,12 @@ async function doRemovePeer() {
             </div>
             <div class="flex gap-4 mb-2">
               <div class="flex items-center gap-1">
-                <UIcon name="i-lucide-arrow-up" class="text-green-500" />
-                <span>{{ formatBytes(peer.tx_bytes) }}</span>
+                <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
+                <span>{{ formatBytes(peer.download_bytes) }}</span>
               </div>
               <div class="flex items-center gap-1">
-                <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
-                <span>{{ formatBytes(peer.rx_bytes) }}</span>
+                <UIcon name="i-lucide-arrow-up" class="text-green-500" />
+                <span>{{ formatBytes(peer.upload_bytes) }}</span>
               </div>
             </div>
             <div class="text-sm text-[var(--ui-text-muted)] mb-2">
@@ -336,7 +336,7 @@ async function doRemovePeer() {
                   formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
                 }}</small
               >
-              <small> Traffic: {{ formatBytes(peer.tx_bytes + peer.rx_bytes) }} </small>
+              <small> Traffic: {{ formatBytes(peer.download_bytes + peer.upload_bytes) }} </small>
             </div>
             <UButton
               v-if="peer.sync_status === 'active'"

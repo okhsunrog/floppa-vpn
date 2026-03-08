@@ -41,8 +41,8 @@ pub struct MyPeer {
     id: i64,
     assigned_ip: String,
     sync_status: String,
-    tx_bytes: i64,
-    rx_bytes: i64,
+    download_bytes: i64,
+    upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
     created_at: chrono::DateTime<Utc>,
     device_name: Option<String>,
@@ -159,13 +159,13 @@ pub(super) async fn get_my_peers(
     let peers: Vec<MyPeer> = rows
         .into_iter()
         .map(|r| {
-            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
             MyPeer {
                 id: r.id,
                 assigned_ip: r.assigned_ip,
                 sync_status: r.sync_status,
-                tx_bytes: tx,
-                rx_bytes: rx,
+                download_bytes: download,
+                upload_bytes: upload,
                 last_handshake: r.last_handshake,
                 created_at: r.created_at,
                 device_name: r.device_name,
@@ -430,18 +430,19 @@ pub(super) async fn get_my_peer_by_device(
         .await;
     }
 
-    let (tx, rx) = vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
-        .await
-        .ok()
-        .and_then(|m| m.get(&row.id).copied())
-        .unwrap_or((0, 0));
+    let (download, upload) =
+        vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
+            .await
+            .ok()
+            .and_then(|m| m.get(&row.id).copied())
+            .unwrap_or((0, 0));
 
     Ok(Json(MyPeer {
         id: row.id,
         assigned_ip: row.assigned_ip,
         sync_status: row.sync_status,
-        tx_bytes: tx,
-        rx_bytes: rx,
+        download_bytes: download,
+        upload_bytes: upload,
         last_handshake: row.last_handshake,
         created_at: row.created_at,
         device_name: row.device_name,

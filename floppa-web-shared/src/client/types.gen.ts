@@ -92,11 +92,11 @@ export type MyPeer = {
     created_at: string;
     device_id?: string | null;
     device_name?: string | null;
+    download_bytes: number;
     id: number;
     last_handshake?: string | null;
-    rx_bytes: number;
     sync_status: string;
-    tx_bytes: number;
+    upload_bytes: number;
 };
 
 export type MySubscription = {
@@ -112,12 +112,12 @@ export type PeerDetail = {
     assigned_ip: string;
     device_id?: string | null;
     device_name?: string | null;
+    download_bytes: number;
     id: number;
     last_handshake?: string | null;
     public_key: string;
-    rx_bytes: number;
     sync_status: string;
-    tx_bytes: number;
+    upload_bytes: number;
 };
 
 export type PeerSummary = {
@@ -125,11 +125,11 @@ export type PeerSummary = {
     client_version?: string | null;
     device_id?: string | null;
     device_name?: string | null;
+    download_bytes: number;
     id: number;
     last_handshake?: string | null;
-    rx_bytes: number;
     sync_status: string;
-    tx_bytes: number;
+    upload_bytes: number;
     user_id: number;
     username?: string | null;
 };
@@ -167,10 +167,10 @@ export type SetSubscriptionRequest = {
 export type Stats = {
     active_peers: number;
     active_subscriptions: number;
+    total_download_bytes: number;
     total_payments: number;
-    total_rx_bytes: number;
     total_stars_revenue: number;
-    total_tx_bytes: number;
+    total_upload_bytes: number;
     total_users: number;
 };
 

@@ -16,8 +16,8 @@ use super::AppState;
 pub struct Stats {
     total_users: i64,
     active_peers: i64,
-    total_tx_bytes: i64,
-    total_rx_bytes: i64,
+    total_download_bytes: i64,
+    total_upload_bytes: i64,
     active_subscriptions: i64,
     total_payments: i64,
     total_stars_revenue: i64,
@@ -52,7 +52,7 @@ pub(super) async fn get_stats(
     .fetch_one(&state.pool)
     .await?;
 
-    let (total_tx_bytes, total_rx_bytes) =
+    let (total_download_bytes, total_upload_bytes) =
         vm_client::system_traffic(&state.http_client, &state.vm_url, 30)
             .await
             .unwrap_or((0, 0));
@@ -60,8 +60,8 @@ pub(super) async fn get_stats(
     Ok(Json(Stats {
         total_users: stats.total_users,
         active_peers: stats.active_peers,
-        total_tx_bytes,
-        total_rx_bytes,
+        total_download_bytes,
+        total_upload_bytes,
         active_subscriptions: stats.active_subscriptions,
         total_payments: stats.total_payments,
         total_stars_revenue: stats.total_stars_revenue,
@@ -234,8 +234,8 @@ pub struct PeerDetail {
     public_key: String,
     assigned_ip: String,
     sync_status: String,
-    tx_bytes: i64,
-    rx_bytes: i64,
+    download_bytes: i64,
+    upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
     device_name: Option<String>,
     device_id: Option<String>,
@@ -301,14 +301,14 @@ pub(super) async fn get_user(
     let peers: Vec<PeerDetail> = peer_rows
         .into_iter()
         .map(|r| {
-            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
             PeerDetail {
                 id: r.id,
                 public_key: r.public_key,
                 assigned_ip: r.assigned_ip,
                 sync_status: r.sync_status,
-                tx_bytes: tx,
-                rx_bytes: rx,
+                download_bytes: download,
+                upload_bytes: upload,
                 last_handshake: r.last_handshake,
                 device_name: r.device_name,
                 device_id: r.device_id,
@@ -490,8 +490,8 @@ pub struct PeerSummary {
     username: Option<String>,
     assigned_ip: String,
     sync_status: String,
-    tx_bytes: i64,
-    rx_bytes: i64,
+    download_bytes: i64,
+    upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
     device_name: Option<String>,
     device_id: Option<String>,
@@ -534,15 +534,15 @@ pub(super) async fn list_peers(
     let peers: Vec<PeerSummary> = rows
         .into_iter()
         .map(|r| {
-            let (tx, rx) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
             PeerSummary {
                 id: r.id,
                 user_id: r.user_id,
                 username: r.username,
                 assigned_ip: r.assigned_ip,
                 sync_status: r.sync_status,
-                tx_bytes: tx,
-                rx_bytes: rx,
+                download_bytes: download,
+                upload_bytes: upload,
                 last_handshake: r.last_handshake,
                 device_name: r.device_name,
                 device_id: r.device_id,

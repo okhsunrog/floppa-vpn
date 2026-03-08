@@ -1912,8 +1912,8 @@
           "id",
           "assigned_ip",
           "sync_status",
-          "tx_bytes",
-          "rx_bytes",
+          "download_bytes",
+          "upload_bytes",
           "created_at"
         ],
         "properties": {
@@ -1936,6 +1936,10 @@
               "null"
             ]
           },
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -1947,14 +1951,10 @@
             ],
             "format": "date-time"
           },
-          "rx_bytes": {
-            "type": "integer",
-            "format": "int64"
-          },
           "sync_status": {
             "type": "string"
           },
-          "tx_bytes": {
+          "upload_bytes": {
             "type": "integer",
             "format": "int64"
           }
@@ -2006,8 +2006,8 @@
           "public_key",
           "assigned_ip",
           "sync_status",
-          "tx_bytes",
-          "rx_bytes"
+          "download_bytes",
+          "upload_bytes"
         ],
         "properties": {
           "assigned_ip": {
@@ -2025,6 +2025,10 @@
               "null"
             ]
           },
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -2039,14 +2043,10 @@
           "public_key": {
             "type": "string"
           },
-          "rx_bytes": {
-            "type": "integer",
-            "format": "int64"
-          },
           "sync_status": {
             "type": "string"
           },
-          "tx_bytes": {
+          "upload_bytes": {
             "type": "integer",
             "format": "int64"
           }
@@ -2059,8 +2059,8 @@
           "user_id",
           "assigned_ip",
           "sync_status",
-          "tx_bytes",
-          "rx_bytes"
+          "download_bytes",
+          "upload_bytes"
         ],
         "properties": {
           "assigned_ip": {
@@ -2084,6 +2084,10 @@
               "null"
             ]
           },
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -2095,14 +2099,10 @@
             ],
             "format": "date-time"
           },
-          "rx_bytes": {
-            "type": "integer",
-            "format": "int64"
-          },
           "sync_status": {
             "type": "string"
           },
-          "tx_bytes": {
+          "upload_bytes": {
             "type": "integer",
             "format": "int64"
           },
@@ -2220,8 +2220,8 @@
         "required": [
           "total_users",
           "active_peers",
-          "total_tx_bytes",
-          "total_rx_bytes",
+          "total_download_bytes",
+          "total_upload_bytes",
           "active_subscriptions",
           "total_payments",
           "total_stars_revenue"
@@ -2235,11 +2235,11 @@
             "type": "integer",
             "format": "int64"
           },
-          "total_payments": {
+          "total_download_bytes": {
             "type": "integer",
             "format": "int64"
           },
-          "total_rx_bytes": {
+          "total_payments": {
             "type": "integer",
             "format": "int64"
           },
@@ -2247,7 +2247,7 @@
             "type": "integer",
             "format": "int64"
           },
-          "total_tx_bytes": {
+          "total_upload_bytes": {
             "type": "integer",
             "format": "int64"
           },

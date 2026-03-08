@@ -50,8 +50,9 @@ async fn query_vm(
         .collect())
 }
 
-/// Get per-peer WG traffic (tx, rx) for the given peer IDs over the last N days.
-/// Returns peer_id -> (tx_bytes, rx_bytes).
+/// Get per-peer WG traffic for the given peer IDs over the last N days.
+/// Returns peer_id -> (download_bytes, upload_bytes) from the **client's** perspective.
+/// (Server-side wg_tx = client download, server-side wg_rx = client upload.)
 pub async fn peer_traffic(
     client: &reqwest::Client,
     vm_url: &str,
@@ -69,22 +70,26 @@ pub async fn peer_traffic(
         .join("|");
     let window = format!("{days}d");
 
-    let tx_query = format!(r#"increase(wg_tx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
-    let rx_query = format!(r#"increase(wg_rx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
+    // Server TX = data sent to client = client download
+    let download_query =
+        format!(r#"increase(wg_tx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
+    // Server RX = data received from client = client upload
+    let upload_query =
+        format!(r#"increase(wg_rx_bytes_total{{peer_id=~"{ids_regex}"}}[{window}])"#);
 
-    let (tx_results, rx_results) = tokio::try_join!(
-        query_vm(client, vm_url, &tx_query),
-        query_vm(client, vm_url, &rx_query),
+    let (download_results, upload_results) = tokio::try_join!(
+        query_vm(client, vm_url, &download_query),
+        query_vm(client, vm_url, &upload_query),
     )?;
 
     let mut result: HashMap<i64, (i64, i64)> = HashMap::new();
 
-    for (labels, value) in &tx_results {
+    for (labels, value) in &download_results {
         if let Some(pid) = labels.get("peer_id").and_then(|s| s.parse::<i64>().ok()) {
             result.entry(pid).or_default().0 = *value as i64;
         }
     }
-    for (labels, value) in &rx_results {
+    for (labels, value) in &upload_results {
         if let Some(pid) = labels.get("peer_id").and_then(|s| s.parse::<i64>().ok()) {
             result.entry(pid).or_default().1 = *value as i64;
         }
@@ -94,7 +99,7 @@ pub async fn peer_traffic(
 }
 
 /// Get system-wide total traffic (WG + VLESS) over the last N days.
-/// Returns (total_tx, total_rx).
+/// Returns (total_download, total_upload) from the **client's** perspective.
 pub async fn system_traffic(
     client: &reqwest::Client,
     vm_url: &str,
@@ -102,20 +107,25 @@ pub async fn system_traffic(
 ) -> Result<(i64, i64)> {
     let window = format!("{days}d");
 
-    let tx_query = format!(
+    // Server TX = client download
+    let download_query = format!(
         "sum(increase(wg_tx_bytes_total[{window}])) + sum(increase(vless_tx_bytes_total[{window}]))"
     );
-    let rx_query = format!(
+    // Server RX = client upload
+    let upload_query = format!(
         "sum(increase(wg_rx_bytes_total[{window}])) + sum(increase(vless_rx_bytes_total[{window}]))"
     );
 
-    let (tx_results, rx_results) = tokio::try_join!(
-        query_vm(client, vm_url, &tx_query),
-        query_vm(client, vm_url, &rx_query),
+    let (download_results, upload_results) = tokio::try_join!(
+        query_vm(client, vm_url, &download_query),
+        query_vm(client, vm_url, &upload_query),
     )?;
 
-    let tx = tx_results.first().map(|(_, v)| *v as i64).unwrap_or(0);
-    let rx = rx_results.first().map(|(_, v)| *v as i64).unwrap_or(0);
+    let download = download_results
+        .first()
+        .map(|(_, v)| *v as i64)
+        .unwrap_or(0);
+    let upload = upload_results.first().map(|(_, v)| *v as i64).unwrap_or(0);
 
-    Ok((tx, rx))
+    Ok((download, upload))
 }
