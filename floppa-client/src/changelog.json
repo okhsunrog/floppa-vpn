@@ -2,60 +2,19 @@
   "version": "0.3.3",
   "sections": [
     {
-      "type": "notes",
-      "items": [
-        {
-          "en": "Follow project news, new features, and promotions in our Telegram channel: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)",
-          "ru": "Следите за новостями проекта, новыми фичами и акциями в нашем Telegram-канале: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)"
-        }
-      ]
-    },
-    {
       "type": "added",
       "items": [
         {
-          "en": "Handshake indicator — shows WireGuard handshake age with color-coded status dot",
-          "ru": "Индикатор хендшейка — показывает возраст WireGuard handshake с цветовым индикатором"
+          "en": "VLESS connectivity check — verifies tunnel works through the actual proxy chain, not just the network",
+          "ru": "Проверка VLESS-соединения — проверяет работу туннеля через реальную прокси-цепочку, а не просто сеть"
         },
         {
-          "en": "Config download on Android — saves to Download/FloppaVPN/ with file path in notification",
-          "ru": "Скачивание конфигов на Android — сохраняется в Download/FloppaVPN/ с указанием пути в уведомлении"
+          "en": "Changelog history — browse older changelogs with arrow navigation",
+          "ru": "История изменений — просмотр старых версий с навигацией стрелками"
         },
         {
-          "en": "\"Send to Telegram\" button in Telegram Mini App — bot sends config file directly",
-          "ru": "Кнопка «Отправить в Telegram» в Telegram Mini App — бот отправляет файл конфига напрямую"
-        },
-        {
-          "en": "\"What's new\" changelog viewer — in Settings, on the update banner, and auto-shown after app update",
-          "ru": "Просмотр «Что нового» — в настройках, на баннере обновления и автоматически после обновления"
-        },
-        {
-          "en": "Three-way theme toggle (light / dark / system) and language picker",
-          "ru": "Трёхпозиционный переключатель темы (светлая / тёмная / системная) и выбор языка"
-        },
-        {
-          "en": "Retry button and browser change tips on login screen",
-          "ru": "Кнопка повтора и подсказки о смене браузера на экране входа"
-        },
-        {
-          "en": "VPN automatically stops on logout",
-          "ru": "VPN автоматически останавливается при выходе из аккаунта"
-        },
-        {
-          "en": "VPN connection duration preserved across app restarts",
-          "ru": "Время подключения VPN сохраняется при перезапуске приложения"
-        },
-        {
-          "en": "WireGuard handshake verification — detects invalid configs before reporting connection success",
-          "ru": "Проверка WireGuard handshake — определяет невалидные конфиги до подтверждения подключения"
-        },
-        {
-          "en": "Auto-recreate config when it's deleted on server — seamless reconnection without manual steps",
-          "ru": "Автоматическое пересоздание конфига при удалении на сервере — бесшовное переподключение без ручных действий"
-        },
-        {
-          "en": "Connect button now shows current phase (Connecting → Verifying → Disconnect)",
-          "ru": "Кнопка подключения теперь показывает текущую фазу (Подключение → Проверка → Отключить)"
+          "en": "Arch Linux package (.pkg.tar.zst) now available in releases",
+          "ru": "Arch Linux пакет (.pkg.tar.zst) теперь доступен в релизах"
         }
       ]
     },
@@ -63,32 +22,12 @@
       "type": "changed",
       "items": [
         {
-          "en": "Split tunneling now works correctly (was broken in previous release)",
-          "ru": "Раздельное туннелирование теперь работает корректно (было сломано в предыдущей версии)"
+          "en": "\"Last activity\" renamed to \"Last transfer\" for clarity",
+          "ru": "«Последняя активность» переименовано в «Последний трафик» для ясности"
         },
         {
-          "en": "Faster and smoother main screen startup",
-          "ru": "Более быстрый и плавный запуск основного экрана приложения"
-        },
-        {
-          "en": "Reduced VPN status polling overhead (single request instead of four)",
-          "ru": "Снижена нагрузка при опросе статуса VPN (один запрос вместо четырёх)"
-        },
-        {
-          "en": "Split tunneling app list loads faster — icons loaded in background",
-          "ru": "Список приложений для раздельного туннелирования загружается быстрее — иконки загружаются в фоне"
-        },
-        {
-          "en": "User avatar cached locally for faster loading",
-          "ru": "Аватар пользователя кэшируется локально для быстрой загрузки"
-        },
-        {
-          "en": "Android status bar icons synced with app theme",
-          "ru": "Иконки строки состояния Android синхронизированы с темой приложения"
-        },
-        {
-          "en": "Proper VPN state machine — more reliable connection state tracking and auto-reconnection",
-          "ru": "Полноценная машина состояний VPN — более надёжное отслеживание состояния подключения и автопереподключение"
+          "en": "Smaller Android APK — optimized release build",
+          "ru": "Меньший размер Android APK — оптимизирована сборка релиза"
         }
       ]
     },
@@ -96,48 +35,159 @@
       "type": "fixed",
       "items": [
         {
-          "en": "Sidebar close button hidden behind Android status bar",
-          "ru": "Кнопка закрытия боковой панели скрывалась за строкой состояния Android"
+          "en": "VLESS connection verification now works correctly on Android (was bypassing the tunnel)",
+          "ru": "Проверка VLESS-подключения теперь работает корректно на Android (раньше обходила туннель)"
         },
         {
-          "en": "Sidebar back button breaking navigation history",
-          "ru": "Кнопка «Назад» в боковой панели ломала историю навигации"
+          "en": "Total traffic on dashboard now includes traffic from removed WireGuard configs",
+          "ru": "Общий трафик на панели теперь учитывает трафик удалённых WireGuard-конфигов"
+        }
+      ]
+    }
+  ],
+  "history": [
+    {
+      "version": "0.3.3",
+      "sections": [
+        {
+          "type": "notes",
+          "items": [
+            {
+              "en": "Follow project news, new features, and promotions in our Telegram channel: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)",
+              "ru": "Следите за новостями проекта, новыми фичами и акциями в нашем Telegram-канале: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)"
+            }
+          ]
         },
         {
-          "en": "Sidebar now closes with Android back button",
-          "ru": "Боковая панель теперь закрывается кнопкой «Назад» на Android"
+          "type": "added",
+          "items": [
+            {
+              "en": "Handshake indicator — shows WireGuard handshake age with color-coded status dot",
+              "ru": "Индикатор хендшейка — показывает возраст WireGuard handshake с цветовым индикатором"
+            },
+            {
+              "en": "Config download on Android — saves to Download/FloppaVPN/ with file path in notification",
+              "ru": "Скачивание конфигов на Android — сохраняется в Download/FloppaVPN/ с указанием пути в уведомлении"
+            },
+            {
+              "en": "\"Send to Telegram\" button in Telegram Mini App — bot sends config file directly",
+              "ru": "Кнопка «Отправить в Telegram» в Telegram Mini App — бот отправляет файл конфига напрямую"
+            },
+            {
+              "en": "\"What's new\" changelog viewer — in Settings, on the update banner, and auto-shown after app update",
+              "ru": "Просмотр «Что нового» — в настройках, на баннере обновления и автоматически после обновления"
+            },
+            {
+              "en": "Three-way theme toggle (light / dark / system) and language picker",
+              "ru": "Трёхпозиционный переключатель темы (светлая / тёмная / системная) и выбор языка"
+            },
+            {
+              "en": "Retry button and browser change tips on login screen",
+              "ru": "Кнопка повтора и подсказки о смене браузера на экране входа"
+            },
+            {
+              "en": "VPN automatically stops on logout",
+              "ru": "VPN автоматически останавливается при выходе из аккаунта"
+            },
+            {
+              "en": "VPN connection duration preserved across app restarts",
+              "ru": "Время подключения VPN сохраняется при перезапуске приложения"
+            },
+            {
+              "en": "WireGuard handshake verification — detects invalid configs before reporting connection success",
+              "ru": "Проверка WireGuard handshake — определяет невалидные конфиги до подтверждения подключения"
+            },
+            {
+              "en": "Auto-recreate config when it's deleted on server — seamless reconnection without manual steps",
+              "ru": "Автоматическое пересоздание конфига при удалении на сервере — бесшовное переподключение без ручных действий"
+            },
+            {
+              "en": "Connect button now shows current phase (Connecting → Verifying → Disconnect)",
+              "ru": "Кнопка подключения теперь показывает текущую фазу (Подключение → Проверка → Отключить)"
+            }
+          ]
         },
         {
-          "en": "Invisible buttons on warning banners",
-          "ru": "Невидимые кнопки на предупреждающих баннерах"
+          "type": "changed",
+          "items": [
+            {
+              "en": "Split tunneling now works correctly (was broken in previous release)",
+              "ru": "Раздельное туннелирование теперь работает корректно (было сломано в предыдущей версии)"
+            },
+            {
+              "en": "Faster and smoother main screen startup",
+              "ru": "Более быстрый и плавный запуск основного экрана приложения"
+            },
+            {
+              "en": "Reduced VPN status polling overhead (single request instead of four)",
+              "ru": "Снижена нагрузка при опросе статуса VPN (один запрос вместо четырёх)"
+            },
+            {
+              "en": "Split tunneling app list loads faster — icons loaded in background",
+              "ru": "Список приложений для раздельного туннелирования загружается быстрее — иконки загружаются в фоне"
+            },
+            {
+              "en": "User avatar cached locally for faster loading",
+              "ru": "Аватар пользователя кэшируется локально для быстрой загрузки"
+            },
+            {
+              "en": "Android status bar icons synced with app theme",
+              "ru": "Иконки строки состояния Android синхронизированы с темой приложения"
+            },
+            {
+              "en": "Proper VPN state machine — more reliable connection state tracking and auto-reconnection",
+              "ru": "Полноценная машина состояний VPN — более надёжное отслеживание состояния подключения и автопереподключение"
+            }
+          ]
         },
         {
-          "en": "Update banner buttons overflowing on small screens",
-          "ru": "Кнопки баннера обновления не помещались на маленьких экранах"
-        },
-        {
-          "en": "Offline banner now shows retry button and clears automatically on reconnect",
-          "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи"
-        },
-        {
-          "en": "Bottom safe area not respected in mobile panels",
-          "ru": "Нижний безопасный отступ не учитывался в мобильных панелях"
-        },
-        {
-          "en": "VPN tunnel not stopping on Android in error scenarios (handshake failure, connection timeout)",
-          "ru": "VPN-туннель не останавливался на Android при ошибках (неудачный handshake, таймаут подключения)"
-        },
-        {
-          "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode",
-          "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»"
-        },
-        {
-          "en": "\"What's new\" changelog not loading on update banner",
-          "ru": "Список изменений не загружался при нажатии «Что нового» на баннере обновления"
-        },
-        {
-          "en": "VPN showing \"Disconnected\" after app restart on Android when tunnel is still running",
-          "ru": "VPN показывал «Отключено» после перезапуска приложения на Android, когда туннель ещё работает"
+          "type": "fixed",
+          "items": [
+            {
+              "en": "Sidebar close button hidden behind Android status bar",
+              "ru": "Кнопка закрытия боковой панели скрывалась за строкой состояния Android"
+            },
+            {
+              "en": "Sidebar back button breaking navigation history",
+              "ru": "Кнопка «Назад» в боковой панели ломала историю навигации"
+            },
+            {
+              "en": "Sidebar now closes with Android back button",
+              "ru": "Боковая панель теперь закрывается кнопкой «Назад» на Android"
+            },
+            {
+              "en": "Invisible buttons on warning banners",
+              "ru": "Невидимые кнопки на предупреждающих баннерах"
+            },
+            {
+              "en": "Update banner buttons overflowing on small screens",
+              "ru": "Кнопки баннера обновления не помещались на маленьких экранах"
+            },
+            {
+              "en": "Offline banner now shows retry button and clears automatically on reconnect",
+              "ru": "Баннер оффлайн-режима теперь показывает кнопку повтора и исчезает при восстановлении связи"
+            },
+            {
+              "en": "Bottom safe area not respected in mobile panels",
+              "ru": "Нижний безопасный отступ не учитывался в мобильных панелях"
+            },
+            {
+              "en": "VPN tunnel not stopping on Android in error scenarios (handshake failure, connection timeout)",
+              "ru": "VPN-туннель не останавливался на Android при ошибках (неудачный handshake, таймаут подключения)"
+            },
+            {
+              "en": "Reconnect alert for split tunneling now visible when switching back to 'All apps' mode",
+              "ru": "Уведомление о переподключении для раздельного туннелирования теперь видно при возврате в режим «Все приложения»"
+            },
+            {
+              "en": "\"What's new\" changelog not loading on update banner",
+              "ru": "Список изменений не загружался при нажатии «Что нового» на баннере обновления"
+            },
+            {
+              "en": "VPN showing \"Disconnected\" after app restart on Android when tunnel is still running",
+              "ru": "VPN показывал «Отключено» после перезапуска приложения на Android, когда туннель ещё работает"
+            }
+          ]
         }
       ]
     }

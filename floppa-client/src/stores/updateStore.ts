@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { platform, arch } from '@tauri-apps/plugin-os'
 import bundledChangelog from '../changelog.json'
 
@@ -31,9 +31,13 @@ export interface ChangelogSection {
   items: ChangelogItem[]
 }
 
-export interface ChangelogData {
+export interface ChangelogEntry {
   version: string
   sections: ChangelogSection[]
+}
+
+export interface ChangelogData extends ChangelogEntry {
+  history?: ChangelogEntry[]
 }
 
 interface GitHubAsset {
@@ -97,10 +101,34 @@ export const useUpdateStore = defineStore('update', () => {
   const dismissed = ref(false)
   const forceUpdate = ref<ForceUpdateInfo | null>(null)
 
-  const changelog = ref<ChangelogData | null>(null)
+  const changelog = ref<ChangelogEntry | null>(null)
   const changelogLoading = ref(false)
   const changelogModalOpen = ref(false)
   const changelogMode = ref<'update' | 'current'>('update')
+  const changelogEntries = ref<ChangelogEntry[]>([])
+  const changelogIndex = ref(0)
+
+  const hasNewerChangelog = computed(() => changelogIndex.value > 0)
+  const hasOlderChangelog = computed(() => changelogIndex.value < changelogEntries.value.length - 1)
+
+  function changelogNewer() {
+    if (!hasNewerChangelog.value) return
+    changelogIndex.value--
+    changelog.value = changelogEntries.value[changelogIndex.value]!
+  }
+
+  function changelogOlder() {
+    if (!hasOlderChangelog.value) return
+    changelogIndex.value++
+    changelog.value = changelogEntries.value[changelogIndex.value]!
+  }
+
+  function loadChangelogData(data: ChangelogData) {
+    const { history, ...current } = data
+    changelogEntries.value = [current, ...(history ?? [])]
+    changelogIndex.value = 0
+    changelog.value = changelogEntries.value[0]!
+  }
 
   async function checkForUpdates() {
     try {
@@ -140,7 +168,12 @@ export const useUpdateStore = defineStore('update', () => {
     changelogLoading.value = true
     changelogModalOpen.value = true
     try {
-      changelog.value = await fetchChangelogForVersion(updateInfo.value.version)
+      const data = await fetchChangelogForVersion(updateInfo.value.version)
+      if (data) {
+        loadChangelogData(data)
+      } else {
+        changelog.value = null
+      }
     } finally {
       changelogLoading.value = false
     }
@@ -148,7 +181,7 @@ export const useUpdateStore = defineStore('update', () => {
 
   function openChangelogForCurrent() {
     changelogMode.value = 'current'
-    changelog.value = bundledChangelog as ChangelogData
+    loadChangelogData(bundledChangelog as ChangelogData)
     changelogModalOpen.value = true
   }
 
@@ -160,7 +193,7 @@ export const useUpdateStore = defineStore('update', () => {
     // Show changelog either way so users see what's new.
     if (!lastSeen) {
       localStorage.setItem(LAST_SEEN_VERSION_KEY, current)
-      changelog.value = bundledChangelog as ChangelogData
+      loadChangelogData(bundledChangelog as ChangelogData)
       changelogMode.value = 'current'
       changelogModalOpen.value = true
       return
@@ -171,7 +204,7 @@ export const useUpdateStore = defineStore('update', () => {
 
     // Version bumped — show bundled changelog
     localStorage.setItem(LAST_SEEN_VERSION_KEY, current)
-    changelog.value = bundledChangelog as ChangelogData
+    loadChangelogData(bundledChangelog as ChangelogData)
     changelogMode.value = 'current'
     changelogModalOpen.value = true
   }
@@ -192,10 +225,14 @@ export const useUpdateStore = defineStore('update', () => {
     changelogLoading,
     changelogModalOpen,
     changelogMode,
+    hasNewerChangelog,
+    hasOlderChangelog,
     checkForUpdates,
     openChangelogForUpdate,
     openChangelogForCurrent,
     checkPostUpdateChangelog,
+    changelogNewer,
+    changelogOlder,
     setForceUpdate,
     dismiss,
   }

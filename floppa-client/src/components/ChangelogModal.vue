@@ -54,10 +54,28 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
 </script>
 
 <template>
-  <UModal
-    v-model:open="updateStore.changelogModalOpen"
-    :title="t('changelog.title', { version: updateStore.changelog?.version ?? '' })"
-  >
+  <UModal v-model:open="updateStore.changelogModalOpen">
+    <template #header>
+      <div class="flex items-center gap-1">
+        <UButton
+          icon="i-lucide-chevron-left"
+          variant="ghost"
+          size="xs"
+          :disabled="!updateStore.hasNewerChangelog"
+          @click="updateStore.changelogNewer()"
+        />
+        <span class="text-lg font-semibold">{{
+          t('changelog.title', { version: updateStore.changelog?.version ?? '' })
+        }}</span>
+        <UButton
+          icon="i-lucide-chevron-right"
+          variant="ghost"
+          size="xs"
+          :disabled="!updateStore.hasOlderChangelog"
+          @click="updateStore.changelogOlder()"
+        />
+      </div>
+    </template>
     <template #body>
       <div v-if="updateStore.changelogLoading" class="flex justify-center py-8">
         <div class="animate-spin i-lucide-loader-2 size-6 text-[var(--ui-primary)]" />

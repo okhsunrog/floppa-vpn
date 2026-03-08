@@ -10,7 +10,7 @@ PKGBUILD="scripts/arch/PKGBUILD"
 # Extract versions
 tauri_ver=$(grep -oP '^\s*version:\s*"\K[^"]+' "$TAURI_CONF")
 cargo_ver=$(grep -oP '^version\s*=\s*"\K[^"]+' "$CARGO_TOML")
-changelog_ver=$(grep -oP '"version"\s*:\s*"\K[^"]+' "$CHANGELOG")
+changelog_ver=$(grep -oP '"version"\s*:\s*"\K[^"]+' "$CHANGELOG" | head -1)
 pkgbuild_ver=$(grep -oP '^pkgver=\K.+' "$PKGBUILD")
 
 errors=()
