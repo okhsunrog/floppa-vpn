@@ -28,7 +28,6 @@ pub struct Messages {
 
     // /vless
     pub vless_your_config: &'static str,
-    pub vless_open: &'static str,
     pub vless_not_configured: &'static str,
     pub vless_no_user: &'static str,
 
@@ -61,7 +60,7 @@ static EN: Messages = Messages {
     lang_set: "Language set to English",
 
     vless_your_config: "Your VLESS config:",
-    vless_open: "Open in app",
+
     vless_not_configured: "VLESS is not configured on this server.",
     vless_no_user: "Please use /start first.",
 
@@ -97,7 +96,7 @@ static RU: Messages = Messages {
     lang_set: "Язык изменён на русский",
 
     vless_your_config: "Ваш VLESS конфиг:",
-    vless_open: "Открыть в приложении",
+
     vless_not_configured: "VLESS не настроен на этом сервере.",
     vless_no_user: "Сначала используйте /start.",
 

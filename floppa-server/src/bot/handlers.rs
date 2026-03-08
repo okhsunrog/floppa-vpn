@@ -5,7 +5,8 @@ use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
     types::{
-        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ParseMode, PreCheckoutQuery,
+        InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice, ParseMode,
+        PreCheckoutQuery,
         SuccessfulPayment, WebAppInfo,
     },
     utils::command::BotCommands,
@@ -249,14 +250,9 @@ async fn vless(
     let uri = services::generate_vless_uri(&uuid, &config, reality_public_key)?;
 
     let text = format!("{}\n\n<code>{}</code>", msgs.vless_your_config, uri);
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
-        msgs.vless_open,
-        uri.parse()?,
-    )]]);
 
     bot.send_message(msg.chat.id, text)
         .parse_mode(ParseMode::Html)
-        .reply_markup(keyboard)
         .await?;
 
     Ok(())
