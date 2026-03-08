@@ -69,49 +69,78 @@ ensure-ktfmt:
 
 # Format Kotlin files
 fmt-kotlin: ensure-ktfmt
-    java -jar {{ ktfmt_jar }} --kotlinlang-style {{ kotlin_sources }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "ktfmt..."
+    out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
 
 # Check Kotlin formatting
 check-kotlin: ensure-ktfmt
-    java -jar {{ ktfmt_jar }} --kotlinlang-style --set-exit-if-changed --dry-run {{ kotlin_sources }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "ktfmt..."
+    out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style --set-exit-if-changed --dry-run {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
 
 # Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
 check:
-    just --unstable --fmt --check
-    just check-rust
-    just check-frontend
-    just check-kotlin
+    @just --unstable --fmt --check
+    @just check-rust
+    @just check-frontend
+    @just check-kotlin
 
 # Rust: fmt + clippy + tests (workspace + excluded crates)
 check-rust:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "rustfmt..."
     cargo fmt --check
     cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
-    cargo clippy -- -D warnings
-    cargo test
+    echo "clippy..."
+    cargo clippy --quiet -- -D warnings
+    echo "tests..."
+    output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
 
 # Frontend: format + type-check + lint + build
 check-frontend:
-    cd floppa-web-shared && bun run format:check && bun run type-check && bun run lint:check
-    cd floppa-face && bun run format:check && bun run type-check && bun run lint:check
-    cd floppa-client && bun run format:check && bun run type-check && bun run lint:check && bun run build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
+    for pkg in floppa-web-shared floppa-face floppa-client; do
+        echo "$pkg: format + typecheck + lint..."
+        cd "$pkg"
+        run bun run --silent format:check
+        run bun run --silent type-check
+        run bun run --silent lint:check
+        cd ..
+    done
+    echo "floppa-client: build..."
+    run bash -c 'cd floppa-client && bun run --silent build'
 
 # Format all code (Rust + frontend + Kotlin)
 fmt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
+    echo "rustfmt..."
     cargo fmt
     cargo fmt --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --manifest-path tauri-plugin-vpn/Cargo.toml
-    cd floppa-web-shared && bun run format && bun run lint
-    cd floppa-face && bun run format && bun run lint
-    cd floppa-client && bun run format && bun run lint
+    for pkg in floppa-web-shared floppa-face floppa-client; do
+        echo "$pkg: format + lint..."
+        cd "$pkg"
+        run bun run --silent format
+        run bun run --silent lint
+        cd ..
+    done
     just fmt-kotlin
 
 # Lint (without auto-fix)
 lint:
-    cargo clippy -- -D warnings
-    cd floppa-web-shared && bun run lint:check
-    cd floppa-face && bun run lint:check
-    cd floppa-client && bun run lint:check
+    @cargo clippy --quiet -- -D warnings
+    @cd floppa-web-shared && bun run --silent lint:check
+    @cd floppa-face && bun run --silent lint:check
+    @cd floppa-client && bun run --silent lint:check
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
 sqlx-prepare:
