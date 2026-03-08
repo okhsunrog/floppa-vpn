@@ -7,6 +7,7 @@ import {
   getMyPeersQuery,
   createMyPeerMutation,
   deleteMyPeerMutation,
+  regenerateMyVlessConfigMutation,
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
@@ -23,7 +24,7 @@ const isMiniApp = Boolean(
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
 const {
-  data: peers,
+  data: peersData,
   status: peersStatus,
   error: peersError,
   refresh: refreshPeers,
@@ -38,6 +39,9 @@ const queryErrorMessage = computed(() => {
   return err.message
 })
 
+const peers = computed(() => peersData.value?.peers)
+const vless = computed(() => peersData.value?.vless)
+
 const createMut = useMutation(createMyPeerMutation())
 const deleteMut = useMutation(deleteMyPeerMutation())
 
@@ -48,6 +52,13 @@ const currentConfig = ref<CreatePeerResponse | null>(null)
 const confirmOpen = ref(false)
 const confirmMessage = ref('')
 const pendingDeletePeerId = ref<number | null>(null)
+
+// VLESS state
+const vlessDialog = ref(false)
+const vlessUri = ref<string | null>(null)
+const vlessLoading = ref(false)
+const vlessRegenerateConfirmOpen = ref(false)
+const regenerateMut = useMutation(regenerateMyVlessConfigMutation())
 
 const canCreatePeer = computed(() => {
   if (!me.value?.subscription) return false
@@ -211,6 +222,50 @@ async function downloadConfig() {
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// VLESS functions
+async function showVlessConfig() {
+  vlessLoading.value = true
+  try {
+    const { data } = await import('../../client/sdk.gen').then((m) =>
+      m.getMyVlessConfig({ throwOnError: true }),
+    )
+    vlessUri.value = data.uri
+    vlessDialog.value = true
+  } catch (e) {
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : String(e),
+      color: 'error',
+    })
+  } finally {
+    vlessLoading.value = false
+  }
+}
+
+async function copyVlessUri() {
+  if (vlessUri.value) {
+    await navigator.clipboard.writeText(vlessUri.value)
+    toast.add({ title: t('userPeers.vlessCopied'), color: 'success' })
+  }
+}
+
+async function doRegenerateVless() {
+  vlessRegenerateConfirmOpen.value = false
+  try {
+    const response = await regenerateMut.mutateAsync({})
+    vlessUri.value = response.uri
+    vlessDialog.value = true
+    await refreshPeers()
+    toast.add({ title: t('userPeers.vlessRegenerated'), color: 'success' })
+  } catch (e) {
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : String(e),
+      color: 'error',
+    })
+  }
+}
 </script>
 
 <template>
@@ -248,78 +303,135 @@ async function downloadConfig() {
         </div>
       </UCard>
 
-      <!-- Empty state -->
-      <UCard v-else-if="!peers?.length" class="max-w-sm mx-auto">
-        <div class="flex flex-col items-center text-center py-8">
-          <UIcon name="i-lucide-key" class="text-4xl text-[var(--ui-text-muted)] mb-4" />
-          <p>{{ t('userPeers.noConfigs') }}</p>
-          <p class="text-sm text-[var(--ui-text-muted)] mt-1">{{ t('userPeers.noConfigsHint') }}</p>
-        </div>
-      </UCard>
-
-      <!-- Peers grid -->
-      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4">
-        <UCard v-for="peer in peers" :key="peer.id">
-          <div class="flex justify-between items-center mb-2">
-            <span class="font-mono text-lg font-semibold">{{ peer.assigned_ip }}</span>
-            <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
-          </div>
-          <div
-            v-if="peer.device_name"
-            class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]"
-          >
-            <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
-            <span>{{ t('userPeers.device', { name: peer.device_name }) }}</span>
-          </div>
-          <div class="flex gap-6 mb-3">
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
-              <div>
-                <span class="font-medium">{{ formatBytes(peer.download_bytes) }}</span>
-                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
-                  t('traffic.download')
-                }}</span>
+      <template v-else>
+        <!-- VLESS Section -->
+        <UCard v-if="vless" class="mb-6">
+          <template #header>
+            <div class="flex items-center gap-2 font-semibold">
+              <UIcon name="i-lucide-shield" />
+              {{ t('userPeers.vlessTitle') }}
+            </div>
+          </template>
+          <div class="flex flex-wrap items-center gap-4">
+            <div class="flex gap-6">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
+                <div>
+                  <span class="font-medium">{{ formatBytes(vless.download_bytes) }}</span>
+                  <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                    t('traffic.download')
+                  }}</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-arrow-up" class="text-green-500" />
+                <div>
+                  <span class="font-medium">{{ formatBytes(vless.upload_bytes) }}</span>
+                  <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                    t('traffic.upload')
+                  }}</span>
+                </div>
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-arrow-up" class="text-green-500" />
-              <div>
-                <span class="font-medium">{{ formatBytes(peer.upload_bytes) }}</span>
-                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
-                  t('traffic.upload')
-                }}</span>
-              </div>
+            <div class="flex gap-2 ml-auto">
+              <UButton
+                :label="t('userPeers.vlessShowConfig')"
+                icon="i-lucide-eye"
+                size="sm"
+                :loading="vlessLoading"
+                @click="showVlessConfig"
+              />
+              <UButton
+                v-if="vless.has_uuid"
+                :label="t('userPeers.vlessRegenerate')"
+                icon="i-lucide-refresh-cw"
+                color="warning"
+                variant="soft"
+                size="sm"
+                @click="vlessRegenerateConfirmOpen = true"
+              />
             </div>
-          </div>
-          <div class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)] mb-4">
-            <span v-if="peer.last_handshake">{{
-              t('userPeers.lastSeen', { date: formatDateTime(peer.last_handshake) })
-            }}</span>
-            <span v-else>{{ t('common.neverConnected') }}</span>
-            <span>{{ t('userPeers.createdAt', { date: formatDate(peer.created_at) }) }}</span>
-          </div>
-          <div class="flex gap-2">
-            <UButton
-              v-if="!peer.device_name"
-              :label="t('userPeers.showConfig')"
-              icon="i-lucide-eye"
-              size="sm"
-              @click="showConfig(peer)"
-            />
-            <UButton
-              v-if="peer.sync_status === 'active'"
-              icon="i-lucide-trash-2"
-              color="error"
-              variant="ghost"
-              size="sm"
-              @click="confirmDeletePeer(peer.id, peer.assigned_ip)"
-            />
           </div>
         </UCard>
-      </div>
+
+        <!-- Empty state (no WG peers and no VLESS) -->
+        <UCard v-if="!peers?.length && !vless?.has_uuid" class="max-w-sm mx-auto">
+          <div class="flex flex-col items-center text-center py-8">
+            <UIcon name="i-lucide-key" class="text-4xl text-[var(--ui-text-muted)] mb-4" />
+            <p>{{ t('userPeers.noConfigs') }}</p>
+            <p class="text-sm text-[var(--ui-text-muted)] mt-1">
+              {{ t('userPeers.noConfigsHint') }}
+            </p>
+          </div>
+        </UCard>
+
+        <!-- Peers grid -->
+        <div
+          v-if="peers?.length"
+          class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4"
+        >
+          <UCard v-for="peer in peers" :key="peer.id">
+            <div class="flex justify-between items-center mb-2">
+              <span class="font-mono text-lg font-semibold">{{ peer.assigned_ip }}</span>
+              <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
+            </div>
+            <div
+              v-if="peer.device_name"
+              class="flex items-center gap-1.5 mb-3 text-sm text-[var(--ui-text-muted)]"
+            >
+              <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
+              <span>{{ t('userPeers.device', { name: peer.device_name }) }}</span>
+            </div>
+            <div class="flex gap-6 mb-3">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
+                <div>
+                  <span class="font-medium">{{ formatBytes(peer.download_bytes) }}</span>
+                  <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                    t('traffic.download')
+                  }}</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <UIcon name="i-lucide-arrow-up" class="text-green-500" />
+                <div>
+                  <span class="font-medium">{{ formatBytes(peer.upload_bytes) }}</span>
+                  <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                    t('traffic.upload')
+                  }}</span>
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)] mb-4">
+              <span v-if="peer.last_handshake">{{
+                t('userPeers.lastSeen', { date: formatDateTime(peer.last_handshake) })
+              }}</span>
+              <span v-else>{{ t('common.neverConnected') }}</span>
+              <span>{{ t('userPeers.createdAt', { date: formatDate(peer.created_at) }) }}</span>
+            </div>
+            <div class="flex gap-2">
+              <UButton
+                v-if="!peer.device_name"
+                :label="t('userPeers.showConfig')"
+                icon="i-lucide-eye"
+                size="sm"
+                @click="showConfig(peer)"
+              />
+              <UButton
+                v-if="peer.sync_status === 'active'"
+                icon="i-lucide-trash-2"
+                color="error"
+                variant="ghost"
+                size="sm"
+                @click="confirmDeletePeer(peer.id, peer.assigned_ip)"
+              />
+            </div>
+          </UCard>
+        </div>
+      </template>
     </template>
 
-    <!-- Config Dialog -->
+    <!-- WG Config Dialog -->
     <UModal v-model:open="configDialog" :title="t('userPeers.configTitle')">
       <template #body>
         <div v-if="currentConfig" class="flex flex-col gap-4">
@@ -350,6 +462,27 @@ async function downloadConfig() {
       </template>
     </UModal>
 
+    <!-- VLESS Config Dialog -->
+    <UModal v-model:open="vlessDialog" :title="t('userPeers.vlessTitle')">
+      <template #body>
+        <div v-if="vlessUri" class="flex flex-col gap-4">
+          <pre
+            class="bg-[var(--ui-bg-inverted)] text-[var(--ui-text-inverted)] p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap break-all"
+            >{{ vlessUri }}</pre
+          >
+        </div>
+      </template>
+      <template #footer>
+        <UButton :label="t('common.copy')" icon="i-lucide-copy" @click="copyVlessUri" />
+        <UButton
+          :label="t('common.close')"
+          color="neutral"
+          variant="outline"
+          @click="vlessDialog = false"
+        />
+      </template>
+    </UModal>
+
     <!-- Confirm Delete Dialog -->
     <UModal v-model:open="confirmOpen" :title="t('userPeers.deleteConfig')">
       <template #body>
@@ -367,6 +500,27 @@ async function downloadConfig() {
           color="error"
           :loading="deleteMut.asyncStatus.value === 'loading'"
           @click="doDeletePeer"
+        />
+      </template>
+    </UModal>
+
+    <!-- VLESS Regenerate Confirm Dialog -->
+    <UModal v-model:open="vlessRegenerateConfirmOpen" :title="t('userPeers.vlessRegenerate')">
+      <template #body>
+        <p>{{ t('userPeers.vlessRegenerateConfirm') }}</p>
+      </template>
+      <template #footer>
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="vlessRegenerateConfirmOpen = false"
+        />
+        <UButton
+          :label="t('userPeers.vlessRegenerate')"
+          color="warning"
+          :loading="regenerateMut.asyncStatus.value === 'loading'"
+          @click="doRegenerateVless"
         />
       </template>
     </UModal>

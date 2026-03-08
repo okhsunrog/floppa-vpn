@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT ai.id, ai.user_id,\n               COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               ai.device_id, ai.device_name, ai.platform, ai.app_version,\n               ai.last_seen_at, ai.created_at,\n               EXISTS(SELECT 1 FROM peers p WHERE p.installation_id = ai.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS \"has_wg!\",\n               (u.vless_uuid IS NOT NULL) AS \"has_vless!\"\n        FROM app_installations ai\n        JOIN users u ON ai.user_id = u.id\n        ORDER BY ai.last_seen_at DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "device_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "device_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "platform",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "app_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "last_seen_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 9,
+        "name": "has_wg!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 10,
+        "name": "has_vless!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "ad0be2475785ce37b7f5323814903270d19ebf03f7dedc646816ac52cb86260b"
+}

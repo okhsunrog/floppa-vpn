@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, public_key, assigned_ip, sync_status, last_handshake, device_name, device_id\n        FROM peers WHERE user_id = $1 AND sync_status != 'removed'\n        ORDER BY created_at DESC\n        ",
+  "query": "\n        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status, p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != 'removed'\n        ORDER BY p.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -35,7 +35,7 @@
       },
       {
         "ordinal": 6,
-        "name": "device_id",
+        "name": "device_id?",
         "type_info": "Text"
       }
     ],
@@ -51,8 +51,8 @@
       false,
       true,
       true,
-      true
+      false
     ]
   },
-  "hash": "8713d32da035922db5b55065187d2ba3d00ee77d24b582f6f5d17522fcac292d"
+  "hash": "2976c456f5d069c78133d2851f1b77488817dfc0a1b7f2fed7c3ec7f4d3eb56e"
 }

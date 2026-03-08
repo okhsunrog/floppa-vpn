@@ -50,6 +50,18 @@ export function createAppRoutes(): RouteRecordRaw[] {
       component: () => import('../views/admin/PlansView.vue'),
       meta: { requiresAuth: true, requiresAdmin: true },
     },
+    {
+      path: '/admin/installations',
+      name: 'admin-installations',
+      component: () => import('../views/admin/InstallationsView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
+      path: '/admin/vless',
+      name: 'admin-vless',
+      component: () => import('../views/admin/VlessPeersView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ]
 }
 

@@ -67,6 +67,14 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
+    /// Get stable device ID (ANDROID_ID) that persists across reinstalls.
+    pub fn get_device_id(&self) -> Result<String> {
+        self.0
+            .run_mobile_plugin::<DeviceIdResponse>("getDeviceId", ())
+            .map(|r| r.id)
+            .map_err(Into::into)
+    }
+
     /// Get device name (manufacturer + model) from Android Build properties.
     pub fn get_device_name(&self) -> Result<String> {
         self.0

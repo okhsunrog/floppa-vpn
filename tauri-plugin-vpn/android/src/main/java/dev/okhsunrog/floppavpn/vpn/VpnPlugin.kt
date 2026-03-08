@@ -298,6 +298,16 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve()
     }
 
+    /** Get a stable device ID that persists across app reinstalls. */
+    @Command
+    fun getDeviceId(invoke: Invoke) {
+        val androidId =
+            Settings.Secure.getString(activity.contentResolver, Settings.Secure.ANDROID_ID)
+        val ret = JSObject()
+        ret.put("id", androidId)
+        invoke.resolve(ret)
+    }
+
     /** Get device name (manufacturer + model) for peer identification. */
     @Command
     fun getDeviceName(invoke: Invoke) {

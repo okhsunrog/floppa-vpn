@@ -3,21 +3,24 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { listPeersQuery, deleteAdminPeerMutation } from '../../client/@pinia/colada.gen'
-import type { PeerSummary } from '../../client/types.gen'
-import { formatBytes, formatDateTime } from '../../utils'
+import {
+  listVlessPeersQuery,
+  regenerateAdminVlessConfigMutation,
+} from '../../client/@pinia/colada.gen'
+import type { VlessPeerSummary } from '../../client/types.gen'
+import { formatBytes } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: peers, status, error, refresh: refreshPeers } = useQuery(listPeersQuery())
-const deleteMut = useMutation(deleteAdminPeerMutation())
+const { data: peers, status, error, refresh: refreshPeers } = useQuery(listVlessPeersQuery())
+const regenerateMut = useMutation(regenerateAdminVlessConfigMutation())
 const search = ref('')
 
 const confirmOpen = ref(false)
-const confirmMessage = ref('')
-const pendingPeerId = ref<number | null>(null)
+const confirmUsername = ref('')
+const pendingUserId = ref<number | null>(null)
 
 const filteredPeers = computed(() => {
   if (!peers.value) return []
@@ -25,50 +28,47 @@ const filteredPeers = computed(() => {
   const q = search.value.toLowerCase()
   return peers.value.filter(
     (p) =>
-      p.assigned_ip.includes(q) ||
       p.username?.toLowerCase().includes(q) ||
       p.device_name?.toLowerCase().includes(q) ||
-      p.device_id?.toLowerCase().includes(q),
+      p.plan_name?.toLowerCase().includes(q),
   )
 })
 
-function confirmDeletePeer(peerId: number, peerIp: string) {
-  pendingPeerId.value = peerId
-  confirmMessage.value = t('adminPeers.deleteConfirm', { ip: peerIp })
+function confirmRegenerate(userId: number, username: string | null | undefined) {
+  pendingUserId.value = userId
+  confirmUsername.value = username || '-'
   confirmOpen.value = true
 }
 
-async function doDeletePeer() {
-  if (!pendingPeerId.value) return
+async function doRegenerate() {
+  if (!pendingUserId.value) return
   try {
-    await deleteMut.mutateAsync({ path: { id: pendingPeerId.value } })
+    await regenerateMut.mutateAsync({ path: { id: pendingUserId.value } })
     await refreshPeers()
     toast.add({
       title: t('common.success'),
-      description: t('adminPeers.peerDeleted'),
+      description: t('adminVless.regenerated'),
       color: 'success',
     })
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminPeers.deleteFailed'),
+      description: e instanceof Error ? e.message : t('adminVless.regenerateFailed'),
       color: 'error',
     })
   }
   confirmOpen.value = false
-  pendingPeerId.value = null
+  pendingUserId.value = null
 }
 
-const columns = computed<TableColumn<PeerSummary>[]>(() => [
-  { accessorKey: 'assigned_ip', header: t('adminPeers.ip') },
-  { accessorKey: 'username', header: t('adminPeers.user') },
-  { accessorKey: 'device_name', header: t('adminPeers.device') },
-  { accessorKey: 'client_version', header: t('adminPeers.version') },
-  { accessorKey: 'plan_name', header: t('adminPeers.plan') },
-  { accessorKey: 'download_bytes', header: t('adminPeers.download') },
-  { accessorKey: 'upload_bytes', header: t('adminPeers.upload') },
-  { accessorKey: 'last_handshake', header: t('adminPeers.lastSeen') },
-  { accessorKey: 'has_vless', header: 'VLESS' },
+const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
+  { accessorKey: 'username', header: t('adminVless.user') },
+  { accessorKey: 'device_name', header: t('adminVless.device') },
+  { accessorKey: 'app_version', header: t('adminVless.version') },
+  { accessorKey: 'plan_name', header: t('adminVless.plan') },
+  { accessorKey: 'download_bytes', header: t('adminVless.download') },
+  { accessorKey: 'upload_bytes', header: t('adminVless.upload') },
+  { accessorKey: 'has_wg', header: 'WG' },
   { id: 'actions', header: '' },
 ])
 </script>
@@ -76,10 +76,10 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
 <template>
   <div class="max-w-7xl mx-auto">
     <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
-      <h1 class="text-2xl font-bold">{{ t('adminPeers.title') }}</h1>
+      <h1 class="text-2xl font-bold">{{ t('adminVless.title') }}</h1>
       <UInput
         v-model="search"
-        :placeholder="t('adminPeers.searchPlaceholder')"
+        :placeholder="t('adminVless.searchPlaceholder')"
         icon="i-lucide-search"
         class="w-full sm:w-64"
       />
@@ -98,9 +98,6 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           class="[&_tbody_tr]:cursor-pointer"
           @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
         >
-          <template #assigned_ip-cell="{ row }">
-            <span class="font-mono font-medium">{{ row.original.assigned_ip }}</span>
-          </template>
           <template #username-cell="{ row }">
             {{ row.original.username || '-' }}
           </template>
@@ -118,9 +115,9 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
             </span>
             <span v-else class="text-[var(--ui-text-muted)]">-</span>
           </template>
-          <template #client_version-cell="{ row }">
-            <span v-if="row.original.client_version" class="font-mono text-xs">{{
-              row.original.client_version
+          <template #app_version-cell="{ row }">
+            <span v-if="row.original.app_version" class="font-mono text-xs">{{
+              row.original.app_version
             }}</span>
             <span v-else class="text-[var(--ui-text-muted)]">-</span>
           </template>
@@ -133,31 +130,25 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           <template #upload_bytes-cell="{ row }">
             {{ formatBytes(row.original.upload_bytes) }}
           </template>
-          <template #last_handshake-cell="{ row }">
-            <span v-if="row.original.last_handshake">{{
-              formatDateTime(row.original.last_handshake)
-            }}</span>
-            <span v-else class="text-[var(--ui-text-muted)]">{{ t('common.neverConnected') }}</span>
-          </template>
-          <template #has_vless-cell="{ row }">
+          <template #has_wg-cell="{ row }">
             <UIcon
-              :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-              :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
+              :name="row.original.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
+              :class="row.original.has_wg ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
               class="size-4"
             />
           </template>
           <template #actions-cell="{ row }">
             <UButton
-              icon="i-lucide-trash-2"
-              color="error"
+              icon="i-lucide-refresh-cw"
+              color="warning"
               variant="ghost"
               size="xs"
-              @click.stop="confirmDeletePeer(row.original.id, row.original.assigned_ip)"
+              @click.stop="confirmRegenerate(row.original.user_id, row.original.username)"
             />
           </template>
           <template #empty>
             <div class="text-center py-8 text-[var(--ui-text-muted)]">
-              {{ t('adminPeers.noPeers') }}
+              {{ t('adminVless.noConfigs') }}
             </div>
           </template>
         </UTable>
@@ -166,50 +157,43 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
       <!-- Mobile cards -->
       <div class="md:hidden flex flex-col gap-3">
         <div v-if="filteredPeers.length === 0" class="text-center py-8 text-[var(--ui-text-muted)]">
-          {{ t('adminPeers.noPeers') }}
+          {{ t('adminVless.noConfigs') }}
         </div>
         <UCard
           v-for="peer in filteredPeers"
-          :key="peer.id"
+          :key="peer.user_id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
           @click="router.push(`/admin/users/${peer.user_id}`)"
         >
           <div class="flex justify-between items-start">
             <div>
-              <span class="font-mono font-medium">{{ peer.assigned_ip }}</span>
-              <span class="block text-sm">{{ peer.username || '-' }}</span>
+              <span class="font-medium">{{ peer.username || '-' }}</span>
+              <span
+                v-if="peer.device_name"
+                class="flex items-center gap-1.5 text-sm text-[var(--ui-text-muted)] mt-0.5"
+              >
+                <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
+                {{ peer.device_name }}
+              </span>
             </div>
             <UButton
-              icon="i-lucide-trash-2"
-              color="error"
+              icon="i-lucide-refresh-cw"
+              color="warning"
               variant="ghost"
               size="xs"
-              @click.stop="confirmDeletePeer(peer.id, peer.assigned_ip)"
+              @click.stop="confirmRegenerate(peer.user_id, peer.username)"
             />
-          </div>
-          <div
-            v-if="peer.device_name || peer.client_version"
-            class="flex items-center gap-3 mt-1.5 text-sm text-[var(--ui-text-muted)]"
-          >
-            <span v-if="peer.device_name" class="flex items-center gap-1.5">
-              <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
-              {{ peer.device_name }}
-            </span>
-            <span v-if="peer.client_version" class="font-mono text-xs"
-              >v{{ peer.client_version }}</span
-            >
           </div>
           <div class="flex gap-3 mt-2 text-xs text-[var(--ui-text-muted)] flex-wrap items-center">
             <span v-if="peer.plan_name">{{ peer.plan_name }}</span>
+            <span v-if="peer.app_version" class="font-mono">v{{ peer.app_version }}</span>
             <span>↓ {{ formatBytes(peer.download_bytes) }}</span>
             <span>↑ {{ formatBytes(peer.upload_bytes) }}</span>
-            <span v-if="peer.last_handshake">{{ formatDateTime(peer.last_handshake) }}</span>
-            <span v-else>{{ t('common.neverConnected') }}</span>
             <span class="flex items-center gap-1">
-              VLESS
+              WG
               <UIcon
-                :name="peer.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-                :class="peer.has_vless ? 'text-green-500' : ''"
+                :name="peer.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
+                :class="peer.has_wg ? 'text-green-500' : ''"
                 class="size-3.5"
               />
             </span>
@@ -218,10 +202,10 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
       </div>
     </template>
 
-    <!-- Confirm Delete Dialog -->
-    <UModal v-model:open="confirmOpen" :title="t('adminPeers.deletePeer')">
+    <!-- Confirm Regenerate Dialog -->
+    <UModal v-model:open="confirmOpen" :title="t('adminVless.regenerateTitle')">
       <template #body>
-        <p>{{ confirmMessage }}</p>
+        <p>{{ t('adminVless.regenerateConfirm', { user: confirmUsername }) }}</p>
       </template>
       <template #footer>
         <UButton
@@ -231,10 +215,10 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           @click="confirmOpen = false"
         />
         <UButton
-          :label="t('common.delete')"
-          color="error"
-          :loading="deleteMut.asyncStatus.value === 'loading'"
-          @click="doDeletePeer"
+          :label="t('adminVless.regenerate')"
+          color="warning"
+          :loading="regenerateMut.asyncStatus.value === 'loading'"
+          @click="doRegenerate"
         />
       </template>
     </UModal>

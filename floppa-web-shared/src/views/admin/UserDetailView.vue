@@ -286,6 +286,42 @@ async function doRemovePeer() {
         </div>
       </UCard>
 
+      <!-- VLESS Section -->
+      <UCard v-if="user.vless" class="mb-6">
+        <template #header>
+          <div class="flex items-center gap-2 font-semibold">
+            <UIcon name="i-lucide-shield" />
+            {{ t('adminUserDetail.vless') }}
+            <UBadge
+              v-if="user.vless.has_uuid"
+              color="success"
+              :label="t('adminUserDetail.vlessActive')"
+              variant="subtle"
+              size="sm"
+            />
+            <UBadge
+              v-else
+              color="neutral"
+              :label="t('adminUserDetail.vlessNoConfig')"
+              variant="subtle"
+              size="sm"
+            />
+          </div>
+        </template>
+        <div class="flex gap-6">
+          <div class="flex items-center gap-1.5">
+            <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
+            <span class="text-sm text-[var(--ui-text-muted)]">{{ t('traffic.download') }}</span>
+            <span class="font-medium">{{ formatBytes(user.vless.download_bytes) }}</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <UIcon name="i-lucide-arrow-up" class="text-green-500" />
+            <span class="text-sm text-[var(--ui-text-muted)]">{{ t('traffic.upload') }}</span>
+            <span class="font-medium">{{ formatBytes(user.vless.upload_bytes) }}</span>
+          </div>
+        </div>
+      </UCard>
+
       <!-- Peers Section -->
       <UCard class="mb-6">
         <template #header>

@@ -1,7 +1,7 @@
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
 };
 use chrono::Utc;
@@ -50,6 +50,21 @@ pub struct MyPeer {
 }
 
 #[derive(Serialize, ToSchema)]
+pub struct MyPeersResponse {
+    peers: Vec<MyPeer>,
+    /// VLESS info (None if VLESS not configured on server)
+    vless: Option<VlessInfo>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct VlessInfo {
+    /// Whether the user has generated a VLESS UUID
+    has_uuid: bool,
+    download_bytes: i64,
+    upload_bytes: i64,
+}
+
+#[derive(Serialize, ToSchema)]
 pub struct CreatePeerResponse {
     id: i64,
     assigned_ip: String,
@@ -62,11 +77,35 @@ pub struct CreatePeerRequest {
     device_name: Option<String>,
     #[serde(default)]
     device_id: Option<String>,
+    #[serde(default)]
+    installation_id: Option<i64>,
 }
 
 #[derive(Serialize, ToSchema)]
 pub struct VlessConfigResponse {
     uri: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct UpsertInstallationRequest {
+    device_id: String,
+    #[serde(default)]
+    device_name: Option<String>,
+    #[serde(default)]
+    platform: Option<String>,
+    #[serde(default)]
+    app_version: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct InstallationResponse {
+    id: i64,
+    device_id: String,
+    device_name: Option<String>,
+    platform: Option<String>,
+    app_version: Option<String>,
+    last_seen_at: chrono::DateTime<Utc>,
+    created_at: chrono::DateTime<Utc>,
 }
 
 /// Get current authenticated user info
@@ -124,27 +163,67 @@ pub(super) async fn get_me(
     }))
 }
 
-/// List current user's peers
+/// Upsert an app installation (device registration)
+#[utoipa::path(
+    post,
+    path = "/me/installations",
+    tag = "user",
+    security(("bearer" = [])),
+    request_body = UpsertInstallationRequest,
+    responses(
+        (status = 200, body = InstallationResponse),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn upsert_my_installation(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<UpsertInstallationRequest>,
+) -> Result<Json<InstallationResponse>, ApiError> {
+    let installation = services::upsert_installation(
+        &state.pool,
+        auth.user_id,
+        &req.device_id,
+        req.device_name.as_deref(),
+        req.platform.as_deref(),
+        req.app_version.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(InstallationResponse {
+        id: installation.id,
+        device_id: installation.device_id,
+        device_name: installation.device_name,
+        platform: installation.platform,
+        app_version: installation.app_version,
+        last_seen_at: installation.last_seen_at,
+        created_at: installation.created_at,
+    }))
+}
+
+/// List current user's peers and VLESS info
 #[utoipa::path(
     get,
     path = "/me/peers",
     tag = "user",
     security(("bearer" = [])),
     responses(
-        (status = 200, body = Vec<MyPeer>),
+        (status = 200, body = MyPeersResponse),
         (status = 401, body = ApiError, description = "Unauthorized"),
     )
 )]
 pub(super) async fn get_my_peers(
     auth: AuthUser,
     State(state): State<AppState>,
-) -> Result<Json<Vec<MyPeer>>, ApiError> {
+) -> Result<Json<MyPeersResponse>, ApiError> {
     let rows = sqlx::query!(
         r#"
-        SELECT id, assigned_ip, sync_status, last_handshake, created_at, device_name, device_id
-        FROM peers
-        WHERE user_id = $1 AND sync_status != 'removed'
-        ORDER BY created_at DESC
+        SELECT p.id, p.assigned_ip, p.sync_status, p.last_handshake, p.created_at,
+               ai.device_name, ai.device_id AS "device_id?"
+        FROM peers p
+        LEFT JOIN app_installations ai ON p.installation_id = ai.id
+        WHERE p.user_id = $1 AND p.sync_status != 'removed'
+        ORDER BY p.created_at DESC
         "#,
         auth.user_id
     )
@@ -169,12 +248,36 @@ pub(super) async fn get_my_peers(
                 last_handshake: r.last_handshake,
                 created_at: r.created_at,
                 device_name: r.device_name,
-                device_id: r.device_id,
+                device_id: r.device_id, // LEFT JOIN → already Option
             }
         })
         .collect();
 
-    Ok(Json(peers))
+    // VLESS info (only if server has VLESS configured)
+    let vless = if state.config.vless.is_some() {
+        let has_uuid = sqlx::query_scalar!(
+            "SELECT vless_uuid IS NOT NULL FROM users WHERE id = $1",
+            auth.user_id
+        )
+        .fetch_one(&state.pool)
+        .await?
+        .unwrap_or(false);
+
+        let (download_bytes, upload_bytes) =
+            vm_client::user_vless_traffic(&state.http_client, &state.vm_url, auth.user_id, 30)
+                .await
+                .unwrap_or((0, 0));
+
+        Some(VlessInfo {
+            has_uuid,
+            download_bytes,
+            upload_bytes,
+        })
+    } else {
+        None
+    };
+
+    Ok(Json(MyPeersResponse { peers, vless }))
 }
 
 /// Create a new WireGuard peer for the current user
@@ -212,9 +315,30 @@ pub(super) async fn create_my_peer(
         wg_public_key: &state.wg_public_key,
     };
 
-    let options = body.map(|Json(req)| services::CreatePeerOptions {
-        device_name: req.device_name,
-        device_id: req.device_id,
+    // Resolve installation_id: use explicit field, or auto-upsert from legacy device_id/device_name
+    let installation_id = if let Some(Json(ref req)) = body {
+        if let Some(id) = req.installation_id {
+            Some(id)
+        } else if let Some(ref device_id) = req.device_id {
+            let inst = services::upsert_installation(
+                &state.pool,
+                auth.user_id,
+                device_id,
+                req.device_name.as_deref(),
+                None,
+                None,
+            )
+            .await?;
+            Some(inst.id)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let options = installation_id.map(|id| services::CreatePeerOptions {
+        installation_id: Some(id),
     });
 
     let result = services::create_peer(&ctx, auth.user_id, options).await?;
@@ -399,15 +523,16 @@ pub(super) async fn send_my_peer_config(
 )]
 pub(super) async fn get_my_peer_by_device(
     auth: AuthUser,
-    headers: HeaderMap,
     State(state): State<AppState>,
     Path(device_id): Path<String>,
 ) -> Result<Json<MyPeer>, ApiError> {
     let row = sqlx::query!(
         r#"
-        SELECT id, assigned_ip, sync_status, last_handshake, created_at, device_name, device_id
-        FROM peers
-        WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')
+        SELECT p.id, p.assigned_ip, p.sync_status, p.last_handshake, p.created_at,
+               ai.device_name, ai.device_id
+        FROM peers p
+        JOIN app_installations ai ON p.installation_id = ai.id
+        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.sync_status NOT IN ('removed', 'pending_remove')
         "#,
         auth.user_id,
         &device_id
@@ -415,20 +540,6 @@ pub(super) async fn get_my_peer_by_device(
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::not_found("No peer for this device"))?;
-
-    // Update client_version for this specific peer
-    if let Some(version) = headers
-        .get("X-Client-Version")
-        .and_then(|v| v.to_str().ok())
-    {
-        let _ = sqlx::query!(
-            "UPDATE peers SET client_version = $1 WHERE id = $2",
-            version,
-            row.id
-        )
-        .execute(&state.pool)
-        .await;
-    }
 
     let (download, upload) =
         vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
@@ -446,7 +557,7 @@ pub(super) async fn get_my_peer_by_device(
         last_handshake: row.last_handshake,
         created_at: row.created_at,
         device_name: row.device_name,
-        device_id: row.device_id,
+        device_id: Some(row.device_id),
     }))
 }
 

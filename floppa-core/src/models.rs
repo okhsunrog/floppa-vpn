@@ -44,12 +44,21 @@ pub struct Peer {
     pub created_at: DateTime<Utc>,
     /// Last WireGuard handshake time (updated by daemon)
     pub last_handshake: Option<DateTime<Utc>>,
-    /// Human-readable device name (hostname), set by client app
+    /// FK to app_installations (NULL for bot/web-created peers)
+    pub installation_id: Option<i64>,
+}
+
+/// App installation (device) tracked independently of VPN peers
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct AppInstallation {
+    pub id: i64,
+    pub user_id: i64,
+    pub device_id: String,
     pub device_name: Option<String>,
-    /// Unique device UUID, set by client app (NULL for bot/web-created peers)
-    pub device_id: Option<String>,
-    /// Client app version (from X-Client-Version header)
-    pub client_version: Option<String>,
+    pub platform: Option<String>,
+    pub app_version: Option<String>,
+    pub last_seen_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Subscription plan definition

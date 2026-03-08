@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET installation_id = NULL WHERE installation_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d5977d99c9cb55dc016e256eb1ec1d9de009a39b08b74b0ea4ddf75d4748c293"
+}

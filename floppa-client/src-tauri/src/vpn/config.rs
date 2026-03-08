@@ -1,17 +1,15 @@
-use super::state::{ProtocolConfig, SavedVpnConfigs, WgConfig};
+use super::state::{SavedVpnConfigs, WgConfig};
+#[cfg(not(target_os = "android"))]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tracing::{info, warn};
-use uuid::Uuid;
 
 #[cfg(not(target_os = "android"))]
 const KEYRING_SERVICE: &str = "floppa-vpn";
 #[cfg(not(target_os = "android"))]
 const KEYRING_ENTRY: &str = "vpn-config";
 const CONFIG_FILENAME: &str = "vpn-config.json";
-/// Legacy WG config filename — checked during load for backwards compatibility.
-const LEGACY_CONFIG_FILENAME: &str = "wg.conf";
 
 /// Tauri app config dir, set once at startup
 static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -20,12 +18,6 @@ static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Must be called during app setup.
 pub fn init_config_dir(path: PathBuf) {
     let _ = APP_CONFIG_DIR.set(path);
-}
-
-/// On-disk device identity
-#[derive(Serialize, Deserialize)]
-struct DeviceIdentity {
-    device_id: String,
 }
 
 /// Get the config directory for the app
@@ -50,9 +42,19 @@ fn get_config_dir() -> Result<PathBuf, String> {
     Ok(config_dir)
 }
 
-/// Get or create a persistent device UUID.
+/// On-disk device identity (desktop only — Android uses ANDROID_ID).
+#[cfg(not(target_os = "android"))]
+#[derive(Serialize, Deserialize)]
+struct DeviceIdentity {
+    device_id: String,
+}
+
+/// Get or create a persistent device UUID (desktop only).
 /// Stored at `~/.config/floppa-vpn/device.json`.
+#[cfg(not(target_os = "android"))]
 pub fn get_or_create_device_id() -> Result<String, String> {
+    use uuid::Uuid;
+
     let path = get_config_dir()?.join("device.json");
 
     if path.exists() {
@@ -120,8 +122,6 @@ pub fn save_configs(configs: &SavedVpnConfigs) {
 }
 
 /// Load VPN configs from OS keyring (fallback to file).
-///
-/// Backwards-compatible: migrates old single-config format to dual-config.
 pub fn load_configs() -> Option<SavedVpnConfigs> {
     #[cfg(not(target_os = "android"))]
     {
@@ -133,8 +133,13 @@ pub fn load_configs() -> Option<SavedVpnConfigs> {
                 }
                 Err(keyring::Error::NoEntry) => {
                     // Also check legacy keyring entry
-                    if let Some(config) = load_legacy_keyring() {
-                        return Some(migrate_single_config(config));
+                    if let Some(wg) = load_legacy_keyring() {
+                        let configs = SavedVpnConfigs {
+                            active_protocol: "wireguard".to_string(),
+                            wireguard: Some(wg),
+                            vless: None,
+                        };
+                        return Some(configs);
                     }
                 }
                 Err(e) => warn!("Keyring load failed, trying file fallback: {e}"),
@@ -143,11 +148,7 @@ pub fn load_configs() -> Option<SavedVpnConfigs> {
         }
     }
 
-    // File fallback — try new format first, then legacy
-    if let Some(configs) = load_configs_file() {
-        return Some(configs);
-    }
-    load_legacy_config_file().map(migrate_single_config)
+    load_configs_file()
 }
 
 /// Delete saved VPN config from both keyring and file.
@@ -171,18 +172,18 @@ pub fn delete_configs() {
     }
 
     if let Ok(dir) = get_config_dir() {
-        for filename in [CONFIG_FILENAME, LEGACY_CONFIG_FILENAME] {
-            let path = dir.join(filename);
-            if path.exists() {
-                let _ = std::fs::remove_file(&path);
-                info!("Config file deleted: {path:?}");
-            }
+        let path = dir.join(CONFIG_FILENAME);
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+            info!("Config file deleted: {path:?}");
         }
     }
 }
 
 /// Parse stored configs — try new SavedVpnConfigs format first, fall back to old single ProtocolConfig, then legacy WG.
 fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
+    use super::state::ProtocolConfig;
+
     // Try new dual-config format
     if let Ok(configs) = serde_json::from_str::<SavedVpnConfigs>(stored)
         && configs.has_any()
@@ -191,13 +192,28 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
     }
     // Try old single ProtocolConfig format
     if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
-        return Some(migrate_single_config(config));
+        return Some(match config {
+            ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
+                active_protocol: "wireguard".to_string(),
+                wireguard: Some(wg),
+                vless: None,
+            },
+            ProtocolConfig::Vless(vless) => SavedVpnConfigs {
+                active_protocol: "vless".to_string(),
+                wireguard: None,
+                vless: Some(vless),
+            },
+        });
     }
     // Fall back to legacy WG config format
     match WgConfig::from_config_str(stored) {
         Ok(wg) => {
             info!("Loaded legacy WireGuard config, migrating to new format");
-            Some(migrate_single_config(ProtocolConfig::WireGuard(wg)))
+            Some(SavedVpnConfigs {
+                active_protocol: "wireguard".to_string(),
+                wireguard: Some(wg),
+                vless: None,
+            })
         }
         Err(e) => {
             warn!("Failed to parse stored config: {e}");
@@ -206,31 +222,15 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
     }
 }
 
-/// Migrate a single ProtocolConfig to the new dual-config format.
-fn migrate_single_config(config: ProtocolConfig) -> SavedVpnConfigs {
-    match config {
-        ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
-            active_protocol: "wireguard".to_string(),
-            wireguard: Some(wg),
-            vless: None,
-        },
-        ProtocolConfig::Vless(vless) => SavedVpnConfigs {
-            active_protocol: "vless".to_string(),
-            wireguard: None,
-            vless: Some(vless),
-        },
-    }
-}
-
 /// Try loading from legacy keyring entry ("wg-config").
 #[cfg(not(target_os = "android"))]
-fn load_legacy_keyring() -> Option<ProtocolConfig> {
+fn load_legacy_keyring() -> Option<WgConfig> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, "wg-config").ok()?;
     match entry.get_password() {
         Ok(config_str) => {
             info!("Legacy WG config loaded from OS keyring");
             match WgConfig::from_config_str(&config_str) {
-                Ok(wg) => Some(ProtocolConfig::WireGuard(wg)),
+                Ok(wg) => Some(wg),
                 Err(e) => {
                     warn!("Failed to parse legacy WG config from keyring: {e}");
                     None
@@ -280,30 +280,6 @@ fn load_configs_file() -> Option<SavedVpnConfigs> {
         }
         Err(e) => {
             warn!("Failed to read config file: {e}");
-            None
-        }
-    }
-}
-
-/// Try loading from legacy `wg.conf` file.
-fn load_legacy_config_file() -> Option<ProtocolConfig> {
-    let path = get_config_dir().ok()?.join(LEGACY_CONFIG_FILENAME);
-    if !path.exists() {
-        return None;
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(config_str) => {
-            info!("Legacy WG config loaded from file: {path:?}");
-            match WgConfig::from_config_str(&config_str) {
-                Ok(wg) => Some(ProtocolConfig::WireGuard(wg)),
-                Err(e) => {
-                    warn!("Failed to parse legacy WG config file: {e}");
-                    None
-                }
-            }
-        }
-        Err(e) => {
-            warn!("Failed to read legacy WG config file: {e}");
             None
         }
     }

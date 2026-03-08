@@ -39,6 +39,7 @@ const columns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'telegram_id', header: t('adminUsers.telegramId') },
   { accessorKey: 'active_plan', header: t('adminUsers.plan') },
   { accessorKey: 'peer_count', header: t('adminUsers.peers') },
+  { accessorKey: 'has_vless', header: 'VLESS' },
   { accessorKey: 'client_version', header: t('adminUsers.version') },
   { accessorKey: 'is_admin', header: t('adminUsers.admin') },
   { accessorKey: 'created_at', header: t('adminUsers.created') },
@@ -116,7 +117,7 @@ async function addUser() {
 </script>
 
 <template>
-  <div class="max-w-5xl mx-auto">
+  <div class="max-w-7xl mx-auto">
     <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
       <h1 class="text-2xl font-bold">{{ t('adminUsers.title') }}</h1>
       <div class="flex items-center gap-2 w-full sm:w-auto">
@@ -174,6 +175,13 @@ async function addUser() {
               variant="subtle"
             />
             <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
+          </template>
+          <template #has_vless-cell="{ row }">
+            <UIcon
+              :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+              :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
+              class="size-4"
+            />
           </template>
           <template #client_version-cell="{ row }">
             <span v-if="row.original.client_version" class="text-xs">{{
@@ -243,8 +251,16 @@ async function addUser() {
               <span v-else class="text-xs text-[var(--ui-text-muted)]">&mdash;</span>
             </div>
           </div>
-          <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
+          <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)] items-center">
             <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
+            <span class="flex items-center gap-1">
+              VLESS
+              <UIcon
+                :name="user.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+                :class="user.has_vless ? 'text-green-500' : ''"
+                class="size-3.5"
+              />
+            </span>
             <span v-if="user.client_version">v{{ user.client_version }}</span>
             <span>{{ formatDate(user.created_at) }}</span>
           </div>

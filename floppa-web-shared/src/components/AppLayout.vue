@@ -134,6 +134,12 @@ const navItems = computed(() => {
       children: [
         { label: t('nav.overview'), icon: 'i-lucide-bar-chart-3', to: '/admin' },
         { label: t('nav.peers'), icon: 'i-lucide-link', to: '/admin/peers' },
+        { label: t('nav.vless'), icon: 'i-lucide-globe', to: '/admin/vless' },
+        {
+          label: t('nav.installations'),
+          icon: 'i-lucide-monitor-smartphone',
+          to: '/admin/installations',
+        },
         { label: t('nav.users'), icon: 'i-lucide-users', to: '/admin/users' },
         { label: t('nav.plans'), icon: 'i-lucide-list', to: '/admin/plans' },
       ],
@@ -160,6 +166,12 @@ const mobileNavItems = computed(() => {
     items.push(
       { label: t('nav.overview'), icon: 'i-lucide-bar-chart-3', to: '/admin' },
       { label: t('nav.peers'), icon: 'i-lucide-link', to: '/admin/peers' },
+      { label: t('nav.vless'), icon: 'i-lucide-globe', to: '/admin/vless' },
+      {
+        label: t('nav.installations'),
+        icon: 'i-lucide-monitor-smartphone',
+        to: '/admin/installations',
+      },
       { label: t('nav.users'), icon: 'i-lucide-users', to: '/admin/users' },
       { label: t('nav.plans'), icon: 'i-lucide-list', to: '/admin/plans' },
     )

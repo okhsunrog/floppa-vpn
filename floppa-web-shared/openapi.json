@@ -259,6 +259,116 @@
         }
       }
     },
+    "/installations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List all app installations (admin only)",
+        "operationId": "list_installations",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InstallationSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/installations/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Delete an app installation (admin only)",
+        "operationId": "delete_installation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Installation ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installation deleted"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Installation not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/me": {
       "get": {
         "tags": [
@@ -295,12 +405,58 @@
         ]
       }
     },
+    "/me/installations": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Upsert an app installation (device registration)",
+        "operationId": "upsert_my_installation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertInstallationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstallationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/me/peers": {
       "get": {
         "tags": [
           "user"
         ],
-        "summary": "List current user's peers",
+        "summary": "List current user's peers and VLESS info",
         "operationId": "get_my_peers",
         "responses": {
           "200": {
@@ -308,10 +464,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/MyPeer"
-                  }
+                  "$ref": "#/components/schemas/MyPeersResponse"
                 }
               }
             }
@@ -1591,6 +1744,67 @@
         ]
       }
     },
+    "/users/{id}/vless-config/regenerate": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Regenerate VLESS UUID for a user (admin only). Old UUID stops working immediately.",
+        "operationId": "regenerate_admin_vless_config",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "VLESS config regenerated"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found or has no VLESS config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/version": {
       "get": {
         "tags": [
@@ -1609,6 +1823,55 @@
             }
           }
         }
+      }
+    },
+    "/vless-peers": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List all users with VLESS configs (admin only)",
+        "operationId": "list_vless_peers",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/VlessPeerSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     }
   },
@@ -1698,6 +1961,13 @@
               "string",
               "null"
             ]
+          },
+          "installation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -1840,6 +2110,113 @@
           }
         }
       },
+      "InstallationResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "device_id",
+          "last_seen_at",
+          "created_at"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "InstallationSummary": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "device_id",
+          "last_seen_at",
+          "created_at",
+          "has_wg",
+          "has_vless"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_vless": {
+            "type": "boolean"
+          },
+          "has_wg": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "MeResponse": {
         "type": "object",
         "required": [
@@ -1960,6 +2337,31 @@
           }
         }
       },
+      "MyPeersResponse": {
+        "type": "object",
+        "required": [
+          "peers"
+        ],
+        "properties": {
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MyPeer"
+            }
+          },
+          "vless": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VlessInfo",
+                "description": "VLESS info (None if VLESS not configured on server)"
+              }
+            ]
+          }
+        }
+      },
       "MySubscription": {
         "type": "object",
         "required": [
@@ -2060,7 +2462,8 @@
           "assigned_ip",
           "sync_status",
           "download_bytes",
-          "upload_bytes"
+          "upload_bytes",
+          "has_vless"
         ],
         "properties": {
           "assigned_ip": {
@@ -2088,6 +2491,9 @@
             "type": "integer",
             "format": "int64"
           },
+          "has_vless": {
+            "type": "boolean"
+          },
           "id": {
             "type": "integer",
             "format": "int64"
@@ -2098,6 +2504,12 @@
               "null"
             ],
             "format": "date-time"
+          },
+          "plan_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "sync_status": {
             "type": "string"
@@ -2431,6 +2843,35 @@
           }
         }
       },
+      "UpsertInstallationRequest": {
+        "type": "object",
+        "required": [
+          "device_id"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "UserDetail": {
         "type": "object",
         "required": [
@@ -2492,6 +2933,16 @@
               "string",
               "null"
             ]
+          },
+          "vless": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VlessAdminInfo"
+              }
+            ]
           }
         }
       },
@@ -2502,7 +2953,8 @@
           "telegram_id",
           "is_admin",
           "created_at",
-          "peer_count"
+          "peer_count",
+          "has_vless"
         ],
         "properties": {
           "active_plan": {
@@ -2526,6 +2978,9 @@
               "string",
               "null"
             ]
+          },
+          "has_vless": {
+            "type": "boolean"
           },
           "id": {
             "type": "integer",
@@ -2581,6 +3036,27 @@
           }
         }
       },
+      "VlessAdminInfo": {
+        "type": "object",
+        "required": [
+          "has_uuid",
+          "download_bytes",
+          "upload_bytes"
+        ],
+        "properties": {
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_uuid": {
+            "type": "boolean"
+          },
+          "upload_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "VlessConfigResponse": {
         "type": "object",
         "required": [
@@ -2589,6 +3065,78 @@
         "properties": {
           "uri": {
             "type": "string"
+          }
+        }
+      },
+      "VlessInfo": {
+        "type": "object",
+        "required": [
+          "has_uuid",
+          "download_bytes",
+          "upload_bytes"
+        ],
+        "properties": {
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_uuid": {
+            "type": "boolean",
+            "description": "Whether the user has generated a VLESS UUID"
+          },
+          "upload_bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "VlessPeerSummary": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "download_bytes",
+          "upload_bytes",
+          "has_wg"
+        ],
+        "properties": {
+          "app_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "download_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "has_wg": {
+            "type": "boolean"
+          },
+          "plan_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "upload_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

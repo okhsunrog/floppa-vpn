@@ -12,10 +12,22 @@ use tauri::{AppHandle, State};
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
 
-/// Get the persistent device UUID (created on first call)
+/// Get the persistent device ID.
+/// Android: ANDROID_ID (stable across reinstalls, per signing key).
+/// Desktop: random UUID persisted in config dir.
 #[tauri::command]
 #[specta::specta]
-pub fn get_device_id() -> Result<String, String> {
+pub fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_vpn::VpnExt;
+        return app
+            .vpn()
+            .get_device_id()
+            .map_err(|e| format!("Failed to get ANDROID_ID: {e}"));
+    }
+
+    #[cfg(not(target_os = "android"))]
     vpn_config::get_or_create_device_id()
 }
 

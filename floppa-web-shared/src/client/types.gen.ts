@@ -26,6 +26,7 @@ export type AuthUserInfo = {
 export type CreatePeerRequest = {
     device_id?: string | null;
     device_name?: string | null;
+    installation_id?: number | null;
 };
 
 export type CreatePeerResponse = {
@@ -72,6 +73,30 @@ export type ExchangeTelegramLoginCodeRequest = {
     code: string;
 };
 
+export type InstallationResponse = {
+    app_version?: string | null;
+    created_at: string;
+    device_id: string;
+    device_name?: string | null;
+    id: number;
+    last_seen_at: string;
+    platform?: string | null;
+};
+
+export type InstallationSummary = {
+    app_version?: string | null;
+    created_at: string;
+    device_id: string;
+    device_name?: string | null;
+    has_vless: boolean;
+    has_wg: boolean;
+    id: number;
+    last_seen_at: string;
+    platform?: string | null;
+    user_id: number;
+    username?: string | null;
+};
+
 export type MeResponse = {
     first_name?: string | null;
     id: number;
@@ -97,6 +122,11 @@ export type MyPeer = {
     last_handshake?: string | null;
     sync_status: string;
     upload_bytes: number;
+};
+
+export type MyPeersResponse = {
+    peers: Array<MyPeer>;
+    vless?: null | VlessInfo;
 };
 
 export type MySubscription = {
@@ -126,8 +156,10 @@ export type PeerSummary = {
     device_id?: string | null;
     device_name?: string | null;
     download_bytes: number;
+    has_vless: boolean;
     id: number;
     last_handshake?: string | null;
+    plan_name?: string | null;
     sync_status: string;
     upload_bytes: number;
     user_id: number;
@@ -215,6 +247,13 @@ export type UpdatePlanRequest = {
     trial_days?: number | null;
 };
 
+export type UpsertInstallationRequest = {
+    app_version?: string | null;
+    device_id: string;
+    device_name?: string | null;
+    platform?: string | null;
+};
+
 export type UserDetail = {
     created_at: string;
     first_name?: string | null;
@@ -226,6 +265,7 @@ export type UserDetail = {
     subscriptions: Array<SubscriptionDetail>;
     telegram_id: number;
     username?: string | null;
+    vless?: null | VlessAdminInfo;
 };
 
 export type UserSummary = {
@@ -233,6 +273,7 @@ export type UserSummary = {
     client_version?: string | null;
     created_at: string;
     first_name?: string | null;
+    has_vless: boolean;
     id: number;
     is_admin: boolean;
     last_name?: string | null;
@@ -248,8 +289,34 @@ export type VersionInfo = {
     version: string;
 };
 
+export type VlessAdminInfo = {
+    download_bytes: number;
+    has_uuid: boolean;
+    upload_bytes: number;
+};
+
 export type VlessConfigResponse = {
     uri: string;
+};
+
+export type VlessInfo = {
+    download_bytes: number;
+    /**
+     * Whether the user has generated a VLESS UUID
+     */
+    has_uuid: boolean;
+    upload_bytes: number;
+};
+
+export type VlessPeerSummary = {
+    app_version?: string | null;
+    device_name?: string | null;
+    download_bytes: number;
+    has_wg: boolean;
+    plan_name?: string | null;
+    upload_bytes: number;
+    user_id: number;
+    username?: string | null;
 };
 
 export type TelegramLoginData = {
@@ -395,6 +462,68 @@ export type GetPublicConfigResponses = {
 
 export type GetPublicConfigResponse = GetPublicConfigResponses[keyof GetPublicConfigResponses];
 
+export type ListInstallationsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/installations';
+};
+
+export type ListInstallationsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+};
+
+export type ListInstallationsError = ListInstallationsErrors[keyof ListInstallationsErrors];
+
+export type ListInstallationsResponses = {
+    200: Array<InstallationSummary>;
+};
+
+export type ListInstallationsResponse = ListInstallationsResponses[keyof ListInstallationsResponses];
+
+export type DeleteInstallationData = {
+    body?: never;
+    path: {
+        /**
+         * Installation ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/installations/{id}';
+};
+
+export type DeleteInstallationErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * Installation not found
+     */
+    404: ApiError;
+};
+
+export type DeleteInstallationError = DeleteInstallationErrors[keyof DeleteInstallationErrors];
+
+export type DeleteInstallationResponses = {
+    /**
+     * Installation deleted
+     */
+    200: unknown;
+};
+
 export type GetMeData = {
     body?: never;
     path?: never;
@@ -417,6 +546,28 @@ export type GetMeResponses = {
 
 export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
 
+export type UpsertMyInstallationData = {
+    body: UpsertInstallationRequest;
+    path?: never;
+    query?: never;
+    url: '/me/installations';
+};
+
+export type UpsertMyInstallationErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type UpsertMyInstallationError = UpsertMyInstallationErrors[keyof UpsertMyInstallationErrors];
+
+export type UpsertMyInstallationResponses = {
+    200: InstallationResponse;
+};
+
+export type UpsertMyInstallationResponse = UpsertMyInstallationResponses[keyof UpsertMyInstallationResponses];
+
 export type GetMyPeersData = {
     body?: never;
     path?: never;
@@ -434,7 +585,7 @@ export type GetMyPeersErrors = {
 export type GetMyPeersError = GetMyPeersErrors[keyof GetMyPeersErrors];
 
 export type GetMyPeersResponses = {
-    200: Array<MyPeer>;
+    200: MyPeersResponse;
 };
 
 export type GetMyPeersResponse = GetMyPeersResponses[keyof GetMyPeersResponses];
@@ -1106,6 +1257,42 @@ export type SetSubscriptionResponses = {
     200: unknown;
 };
 
+export type RegenerateAdminVlessConfigData = {
+    body?: never;
+    path: {
+        /**
+         * User ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/users/{id}/vless-config/regenerate';
+};
+
+export type RegenerateAdminVlessConfigErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * User not found or has no VLESS config
+     */
+    404: ApiError;
+};
+
+export type RegenerateAdminVlessConfigError = RegenerateAdminVlessConfigErrors[keyof RegenerateAdminVlessConfigErrors];
+
+export type RegenerateAdminVlessConfigResponses = {
+    /**
+     * VLESS config regenerated
+     */
+    200: unknown;
+};
+
 export type GetVersionData = {
     body?: never;
     path?: never;
@@ -1118,3 +1305,29 @@ export type GetVersionResponses = {
 };
 
 export type GetVersionResponse = GetVersionResponses[keyof GetVersionResponses];
+
+export type ListVlessPeersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/vless-peers';
+};
+
+export type ListVlessPeersErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+};
+
+export type ListVlessPeersError = ListVlessPeersErrors[keyof ListVlessPeersErrors];
+
+export type ListVlessPeersResponses = {
+    200: Array<VlessPeerSummary>;
+};
+
+export type ListVlessPeersResponse = ListVlessPeersResponses[keyof ListVlessPeersResponses];

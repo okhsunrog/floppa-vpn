@@ -241,6 +241,7 @@ pub struct SpeedTracker {
     prev_tx_bytes: u64,
     prev_rx_bytes: u64,
     prev_time: std::time::Instant,
+    has_baseline: bool,
 }
 
 impl SpeedTracker {
@@ -249,12 +250,25 @@ impl SpeedTracker {
             prev_tx_bytes: 0,
             prev_rx_bytes: 0,
             prev_time: std::time::Instant::now(),
+            has_baseline: false,
         }
     }
 
     /// Update with new cumulative byte counts and return computed speeds (bytes/sec)
     pub fn update(&mut self, tx_bytes: u64, rx_bytes: u64) -> (f64, f64) {
         let now = std::time::Instant::now();
+
+        // First sample after reset: just store the baseline, don't compute speed.
+        // Without this, reconnecting to an already-running tunnel would divide
+        // the full cumulative byte count by a tiny elapsed time → huge spike.
+        if !self.has_baseline {
+            self.prev_tx_bytes = tx_bytes;
+            self.prev_rx_bytes = rx_bytes;
+            self.prev_time = now;
+            self.has_baseline = true;
+            return (0.0, 0.0);
+        }
+
         let elapsed = now.duration_since(self.prev_time).as_secs_f64();
 
         let (tx_speed, rx_speed) = if elapsed > 0.1 {

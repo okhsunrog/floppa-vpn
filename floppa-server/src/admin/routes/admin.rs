@@ -81,6 +81,7 @@ pub struct UserSummary {
     active_plan: Option<String>,
     peer_count: i64,
     client_version: Option<String>,
+    has_vless: bool,
 }
 
 /// List all users (admin only)
@@ -113,7 +114,8 @@ pub(super) async fn list_users(
             u.created_at,
             (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,
             (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!",
-            (SELECT MAX(p.client_version) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as client_version
+            (SELECT MAX(ai.app_version) FROM app_installations ai WHERE ai.user_id = u.id) as client_version,
+            (u.vless_uuid IS NOT NULL) as "has_vless!"
         FROM users u
         ORDER BY u.created_at DESC
         "#,
@@ -225,7 +227,15 @@ pub struct UserDetail {
     is_admin: bool,
     created_at: chrono::DateTime<Utc>,
     peers: Vec<PeerDetail>,
+    vless: Option<VlessAdminInfo>,
     subscriptions: Vec<SubscriptionDetail>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct VlessAdminInfo {
+    has_uuid: bool,
+    download_bytes: i64,
+    upload_bytes: i64,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -284,9 +294,12 @@ pub(super) async fn get_user(
 
     let peer_rows = sqlx::query!(
         r#"
-        SELECT id, public_key, assigned_ip, sync_status, last_handshake, device_name, device_id
-        FROM peers WHERE user_id = $1 AND sync_status != 'removed'
-        ORDER BY created_at DESC
+        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status, p.last_handshake,
+               ai.device_name, ai.device_id AS "device_id?"
+        FROM peers p
+        LEFT JOIN app_installations ai ON p.installation_id = ai.id
+        WHERE p.user_id = $1 AND p.sync_status != 'removed'
+        ORDER BY p.created_at DESC
         "#,
         id
     )
@@ -335,6 +348,28 @@ pub(super) async fn get_user(
     .fetch_all(&state.pool)
     .await?;
 
+    // VLESS info (only if server has VLESS configured)
+    let vless = if state.config.vless.is_some() {
+        let has_uuid =
+            sqlx::query_scalar!("SELECT vless_uuid IS NOT NULL FROM users WHERE id = $1", id)
+                .fetch_one(&state.pool)
+                .await?
+                .unwrap_or(false);
+
+        let (download_bytes, upload_bytes) =
+            vm_client::user_vless_traffic(&state.http_client, &state.vm_url, id, 30)
+                .await
+                .unwrap_or((0, 0));
+
+        Some(VlessAdminInfo {
+            has_uuid,
+            download_bytes,
+            upload_bytes,
+        })
+    } else {
+        None
+    };
+
     Ok(Json(UserDetail {
         id: user.id,
         telegram_id: user.telegram_id,
@@ -345,6 +380,7 @@ pub(super) async fn get_user(
         is_admin: user.is_admin,
         created_at: user.created_at,
         peers,
+        vless,
         subscriptions,
     }))
 }
@@ -496,6 +532,8 @@ pub struct PeerSummary {
     device_name: Option<String>,
     device_id: Option<String>,
     client_version: Option<String>,
+    plan_name: Option<String>,
+    has_vless: bool,
 }
 
 /// List all peers (admin only)
@@ -516,9 +554,14 @@ pub(super) async fn list_peers(
 ) -> Result<Json<Vec<PeerSummary>>, ApiError> {
     let rows = sqlx::query!(
         r#"
-        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username, p.assigned_ip, p.sync_status, p.last_handshake, p.device_name, p.device_id, p.client_version
+        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
+               p.assigned_ip, p.sync_status, p.last_handshake,
+               ai.device_name, ai.device_id AS "device_id?", ai.app_version AS client_version,
+               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,
+               (u.vless_uuid IS NOT NULL) AS "has_vless!"
         FROM peers p
         JOIN users u ON p.user_id = u.id
+        LEFT JOIN app_installations ai ON p.installation_id = ai.id
         WHERE p.sync_status != 'removed'
         ORDER BY p.last_handshake DESC NULLS LAST
         "#,
@@ -547,6 +590,83 @@ pub(super) async fn list_peers(
                 device_name: r.device_name,
                 device_id: r.device_id,
                 client_version: r.client_version,
+                plan_name: r.plan_name,
+                has_vless: r.has_vless,
+            }
+        })
+        .collect();
+
+    Ok(Json(peers))
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct VlessPeerSummary {
+    user_id: i64,
+    username: Option<String>,
+    device_name: Option<String>,
+    app_version: Option<String>,
+    plan_name: Option<String>,
+    download_bytes: i64,
+    upload_bytes: i64,
+    has_wg: bool,
+}
+
+/// List all users with VLESS configs (admin only)
+#[utoipa::path(
+    get,
+    path = "/vless-peers",
+    tag = "admin",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = Vec<VlessPeerSummary>),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+    )
+)]
+pub(super) async fn list_vless_peers(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<VlessPeerSummary>>, ApiError> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT u.id,
+               COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
+               latest_ai.device_name,
+               latest_ai.app_version,
+               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,
+               EXISTS(SELECT 1 FROM peers p WHERE p.user_id = u.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS "has_wg!"
+        FROM users u
+        LEFT JOIN LATERAL (
+            SELECT ai.device_name, ai.app_version
+            FROM app_installations ai
+            WHERE ai.user_id = u.id
+            ORDER BY ai.last_seen_at DESC
+            LIMIT 1
+        ) latest_ai ON true
+        WHERE u.vless_uuid IS NOT NULL
+        ORDER BY u.id
+        "#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    let traffic = vm_client::all_vless_traffic(&state.http_client, &state.vm_url, 30)
+        .await
+        .unwrap_or_default();
+
+    let peers: Vec<VlessPeerSummary> = rows
+        .into_iter()
+        .map(|r| {
+            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            VlessPeerSummary {
+                user_id: r.id,
+                username: r.username,
+                device_name: r.device_name,
+                app_version: r.app_version,
+                plan_name: r.plan_name,
+                download_bytes: download,
+                upload_bytes: upload,
+                has_wg: r.has_wg,
             }
         })
         .collect();
@@ -582,6 +702,134 @@ pub(super) async fn delete_admin_peer(
 
     if result.rows_affected() == 0 {
         return Err(ApiError::not_found("Peer not found or not active"));
+    }
+
+    Ok(StatusCode::OK)
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct InstallationSummary {
+    id: i64,
+    user_id: i64,
+    username: Option<String>,
+    device_id: String,
+    device_name: Option<String>,
+    platform: Option<String>,
+    app_version: Option<String>,
+    last_seen_at: chrono::DateTime<Utc>,
+    created_at: chrono::DateTime<Utc>,
+    has_wg: bool,
+    has_vless: bool,
+}
+
+/// List all app installations (admin only)
+#[utoipa::path(
+    get,
+    path = "/installations",
+    tag = "admin",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = Vec<InstallationSummary>),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+    )
+)]
+pub(super) async fn list_installations(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<InstallationSummary>>, ApiError> {
+    let rows: Vec<InstallationSummary> = sqlx::query_as!(
+        InstallationSummary,
+        r#"
+        SELECT ai.id, ai.user_id,
+               COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
+               ai.device_id, ai.device_name, ai.platform, ai.app_version,
+               ai.last_seen_at, ai.created_at,
+               EXISTS(SELECT 1 FROM peers p WHERE p.installation_id = ai.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS "has_wg!",
+               (u.vless_uuid IS NOT NULL) AS "has_vless!"
+        FROM app_installations ai
+        JOIN users u ON ai.user_id = u.id
+        ORDER BY ai.last_seen_at DESC
+        "#,
+    )
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(rows))
+}
+
+/// Delete an app installation (admin only)
+#[utoipa::path(
+    delete,
+    path = "/installations/{id}",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "Installation ID")),
+    responses(
+        (status = 200, description = "Installation deleted"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "Installation not found"),
+    )
+)]
+pub(super) async fn delete_installation(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let mut tx = state.pool.begin().await?;
+
+    // Unlink peers from this installation
+    sqlx::query!(
+        "UPDATE peers SET installation_id = NULL WHERE installation_id = $1",
+        id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let result = sqlx::query!("DELETE FROM app_installations WHERE id = $1", id)
+        .execute(&mut *tx)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("Installation not found"));
+    }
+
+    tx.commit().await?;
+
+    Ok(StatusCode::OK)
+}
+
+/// Regenerate VLESS UUID for a user (admin only). Old UUID stops working immediately.
+#[utoipa::path(
+    post,
+    path = "/users/{id}/vless-config/regenerate",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "User ID")),
+    responses(
+        (status = 200, description = "VLESS config regenerated"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "User not found or has no VLESS config"),
+    )
+)]
+pub(super) async fn regenerate_admin_vless_config(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(user_id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let new_uuid = uuid::Uuid::new_v4().to_string();
+    let result = sqlx::query!(
+        "UPDATE users SET vless_uuid = $1 WHERE id = $2 AND vless_uuid IS NOT NULL",
+        &new_uuid,
+        user_id
+    )
+    .execute(&state.pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found("User not found or has no VLESS config"));
     }
 
     Ok(StatusCode::OK)

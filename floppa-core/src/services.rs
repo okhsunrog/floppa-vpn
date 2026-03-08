@@ -117,8 +117,7 @@ pub struct CreatePeerContext<'a> {
 
 /// Client-provided options when creating a peer.
 pub struct CreatePeerOptions {
-    pub device_name: Option<String>,
-    pub device_id: Option<String>,
+    pub installation_id: Option<i64>,
 }
 
 /// Result of peer creation.
@@ -141,10 +140,7 @@ pub async fn create_peer(
     user_id: i64,
     options: Option<CreatePeerOptions>,
 ) -> Result<CreatePeerResult> {
-    let (device_name, device_id) = match &options {
-        Some(opts) => (opts.device_name.as_deref(), opts.device_id.as_deref()),
-        None => (None, None),
-    };
+    let installation_id = options.as_ref().and_then(|o| o.installation_id);
 
     // Transaction: check limit + allocate resources + insert peer atomically
     let mut tx = ctx.pool.begin().await?;
@@ -185,16 +181,15 @@ pub async fn create_peer(
 
     let peer_id = sqlx::query_scalar!(
         r#"
-        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, device_name, device_id)
-        VALUES ($1, $2, $3, $4, 'pending_add', $5, $6)
+        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id)
+        VALUES ($1, $2, $3, $4, 'pending_add', $5)
         RETURNING id
         "#,
         user_id,
         public_key.as_base64(),
         &encrypted_private_key,
         &assigned_ip,
-        device_name,
-        device_id,
+        installation_id,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -259,7 +254,7 @@ where
     Err(FloppaError::NoAvailableIps)
 }
 
-/// Find an active peer by device_id for a given user.
+/// Find an active peer by device_id for a given user (via app_installations JOIN).
 pub async fn find_peer_by_device_id(
     pool: &DbPool,
     user_id: i64,
@@ -267,8 +262,9 @@ pub async fn find_peer_by_device_id(
 ) -> Result<Option<i64>> {
     let peer_id = sqlx::query_scalar!(
         r#"
-        SELECT id FROM peers
-        WHERE user_id = $1 AND device_id = $2 AND sync_status NOT IN ('removed', 'pending_remove')
+        SELECT p.id FROM peers p
+        JOIN app_installations ai ON p.installation_id = ai.id
+        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.sync_status NOT IN ('removed', 'pending_remove')
         "#,
         user_id,
         device_id,
@@ -277,6 +273,39 @@ pub async fn find_peer_by_device_id(
     .await?;
 
     Ok(peer_id)
+}
+
+/// Upsert an app installation record. Updates last_seen_at and optional fields on conflict.
+pub async fn upsert_installation(
+    pool: &DbPool,
+    user_id: i64,
+    device_id: &str,
+    device_name: Option<&str>,
+    platform: Option<&str>,
+    app_version: Option<&str>,
+) -> Result<crate::models::AppInstallation> {
+    let row = sqlx::query_as!(
+        crate::models::AppInstallation,
+        r#"
+        INSERT INTO app_installations (user_id, device_id, device_name, platform, app_version)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (user_id, device_id) DO UPDATE SET
+            device_name = COALESCE($3, app_installations.device_name),
+            platform = COALESCE($4, app_installations.platform),
+            app_version = COALESCE($5, app_installations.app_version),
+            last_seen_at = NOW()
+        RETURNING id, user_id, device_id, device_name, platform, app_version, last_seen_at, created_at
+        "#,
+        user_id,
+        device_id,
+        device_name,
+        platform,
+        app_version,
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row)
 }
 
 /// Generate a WireGuard client configuration string.
@@ -676,7 +705,7 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../migrations")]
-    async fn test_create_peer_with_device_info(pool: DbPool) {
+    async fn test_create_peer_with_installation(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
 
@@ -684,23 +713,29 @@ mod tests {
         let user_id = seed_user(&pool, 11111).await;
         seed_subscription(&pool, user_id, plan_id).await;
 
+        let installation = upsert_installation(
+            &pool,
+            user_id,
+            "test-device-uuid",
+            Some("Pixel 9"),
+            Some("android"),
+            None,
+        )
+        .await
+        .unwrap();
+
         let options = Some(CreatePeerOptions {
-            device_name: Some("Pixel 9".into()),
-            device_id: Some("test-device-uuid".into()),
+            installation_id: Some(installation.id),
         });
 
         let result = create_peer(&ctx, user_id, options).await.unwrap();
 
-        let row = sqlx::query!(
-            "SELECT device_name, device_id FROM peers WHERE id = $1",
-            result.id
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let row = sqlx::query!("SELECT installation_id FROM peers WHERE id = $1", result.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
 
-        assert_eq!(row.device_name.as_deref(), Some("Pixel 9"));
-        assert_eq!(row.device_id.as_deref(), Some("test-device-uuid"));
+        assert_eq!(row.installation_id, Some(installation.id));
     }
 
     // ── find_peer_by_device_id ──
@@ -709,9 +744,14 @@ mod tests {
     async fn test_find_peer_by_device_id_found(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
+        let installation = upsert_installation(&pool, user_id, "dev-123", None, None, None)
+            .await
+            .unwrap();
+
         let peer_id = sqlx::query_scalar!(
-            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, device_id) VALUES ($1, 'key1', '10.0.0.2', 'active', 'dev-123') RETURNING id",
+            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, installation_id) VALUES ($1, 'key1', '10.0.0.2', 'active', $2) RETURNING id",
             user_id,
+            installation.id,
         )
         .fetch_one(&pool)
         .await
@@ -737,9 +777,14 @@ mod tests {
     async fn test_find_peer_by_device_id_ignores_removed(pool: DbPool) {
         let user_id = seed_user(&pool, 11111).await;
 
+        let installation = upsert_installation(&pool, user_id, "dev-123", None, None, None)
+            .await
+            .unwrap();
+
         sqlx::query!(
-            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, device_id) VALUES ($1, 'key1', '10.0.0.2', 'removed', 'dev-123')",
+            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, installation_id) VALUES ($1, 'key1', '10.0.0.2', 'removed', $2)",
             user_id,
+            installation.id,
         )
         .execute(&pool)
         .await

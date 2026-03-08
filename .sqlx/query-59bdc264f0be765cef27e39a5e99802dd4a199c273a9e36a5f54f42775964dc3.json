@@ -1,0 +1,80 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               p.assigned_ip, p.sync_status, p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\", ai.app_version AS client_version,\n               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,\n               (u.vless_uuid IS NOT NULL) AS \"has_vless!\"\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.sync_status != 'removed'\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "username",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "assigned_ip",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "sync_status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_handshake",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "device_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "device_id?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "client_version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "plan_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "has_vless!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "59bdc264f0be765cef27e39a5e99802dd4a199c273a9e36a5f54f42775964dc3"
+}

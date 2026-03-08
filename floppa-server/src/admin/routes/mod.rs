@@ -68,6 +68,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(auth::telegram_mini_app_auth))
     // User endpoints (authenticated)
     .routes(routes!(user::get_me))
+    .routes(routes!(user::upsert_my_installation))
     .routes(routes!(user::get_my_peers, user::create_my_peer))
     .routes(routes!(user::delete_my_peer))
     .routes(routes!(user::get_my_peer_config))
@@ -86,6 +87,10 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(admin::remove_peer))
     .routes(routes!(admin::list_peers))
     .routes(routes!(admin::delete_admin_peer))
+    .routes(routes!(admin::list_vless_peers))
+    .routes(routes!(admin::regenerate_admin_vless_config))
+    .routes(routes!(admin::list_installations))
+    .routes(routes!(admin::delete_installation))
     .routes(routes!(plans::list_plans, plans::create_plan))
     .routes(routes!(plans::update_plan, plans::delete_plan))
 }

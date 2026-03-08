@@ -9,8 +9,10 @@ import {
   getMyPeerByDevice,
   getMyPeerConfig,
   getMyVlessConfig,
+  upsertMyInstallation,
 } from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
+import { platform } from '@tauri-apps/plugin-os'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
@@ -64,6 +66,20 @@ async function doServerSync(): Promise<SyncResult> {
     // which looks identical to a 404 and would wrongly revoke cached config.
     if (meQueryError.value) {
       return { outcome: 'offline' }
+    }
+
+    // Register/update this device installation
+    try {
+      await upsertMyInstallation({
+        body: {
+          device_id: vpn.deviceId!,
+          device_name: vpn.deviceName ?? undefined,
+          platform: await platform(),
+          app_version: __APP_VERSION__,
+        },
+      })
+    } catch {
+      // Non-critical — continue with peer sync even if installation upsert fails
     }
 
     // Remember active protocol before sync (setActiveConfig switches to last-set protocol).

@@ -57,6 +57,32 @@ Denies the are_notifications_enabled command without any pre-configured scope.
 <tr>
 <td>
 
+`vpn:allow-get-device-id`
+
+</td>
+<td>
+
+Enables the get_device_id command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`vpn:deny-get-device-id`
+
+</td>
+<td>
+
+Denies the get_device_id command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
 `vpn:allow-get-device-name`
 
 </td>

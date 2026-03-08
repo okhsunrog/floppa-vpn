@@ -11,6 +11,7 @@ const COMMANDS: &[&str] = &[
     "request_disable_battery_optimization",
     "are_notifications_enabled",
     "open_notification_settings",
+    "get_device_id",
     "get_device_name",
     "set_status_bar_style",
 ];

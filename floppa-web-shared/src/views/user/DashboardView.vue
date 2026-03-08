@@ -22,8 +22,11 @@ const loading = computed(() => meStatus.value === 'pending' || peersStatus.value
 const error = computed(() => meError.value || peersError.value)
 
 const totalTraffic = computed(() => {
-  if (!peers.value) return 0
-  return peers.value.reduce((sum, p) => sum + p.download_bytes + p.upload_bytes, 0)
+  const wg = peers.value?.peers?.reduce((sum, p) => sum + p.download_bytes + p.upload_bytes, 0) ?? 0
+  const vl = peers.value?.vless
+    ? peers.value.vless.download_bytes + peers.value.vless.upload_bytes
+    : 0
+  return wg + vl
 })
 
 const hasSubscription = computed(() => !!me.value?.subscription)
@@ -138,7 +141,7 @@ const daysRemaining = computed(() => {
           <div class="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-4">
             <StatsCard
               :label="t('userDashboard.activeConfigs')"
-              :value="peers?.length ?? 0"
+              :value="peers?.peers?.length ?? 0"
               icon="i-lucide-key"
             />
             <StatsCard

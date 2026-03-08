@@ -87,6 +87,12 @@ pub struct DeviceNameResponse {
     pub name: String,
 }
 
+/// Device ID response from Android plugin (ANDROID_ID).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceIdResponse {
+    pub id: String,
+}
+
 /// Event payload when VPN stops.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
