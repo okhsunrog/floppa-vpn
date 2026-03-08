@@ -34,6 +34,8 @@ memory-serve = "2.1.0"
 form_urlencoded = "1.2.2"
 semver = "1.0.27"
 uuid = { version = "1.22.0", features = ["v4"] }
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 [build-dependencies]
 chrono.workspace = true

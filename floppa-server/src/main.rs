@@ -35,6 +35,13 @@ async fn main() -> Result<()> {
         VERSION, GIT_HASH, BUILD_TIME
     );
 
+    // Start Prometheus metrics exporter
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(([127, 0, 0, 1], 9102))
+        .install()
+        .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
+    info!("Metrics exporter listening on 127.0.0.1:9102");
+
     let config = Config::from_env()?;
     let secrets = Secrets::from_env()?;
 

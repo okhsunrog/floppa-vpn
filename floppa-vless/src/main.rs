@@ -40,6 +40,13 @@ async fn main() -> anyhow::Result<()> {
 
     info!("floppa-vless starting on {}", config.server.listen_addr);
 
+    // Start Prometheus metrics exporter
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(([0, 0, 0, 0], 9103))
+        .install()
+        .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
+    info!("Metrics exporter listening on 0.0.0.0:9103");
+
     // Database connection
     let pool = PgPoolOptions::new()
         .max_connections(10)

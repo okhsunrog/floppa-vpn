@@ -31,6 +31,11 @@ pub async fn flush_traffic(auth: &MultiUserAuthenticator, pool: &PgPool) -> anyh
         )
         .execute(pool)
         .await?;
+
+        // Record traffic in Prometheus counters (keyed by user_id)
+        let uid = user_id.to_string();
+        metrics::counter!("vless_tx_bytes_total", "user_id" => uid.clone()).increment(*tx_delta);
+        metrics::counter!("vless_rx_bytes_total", "user_id" => uid).increment(*rx_delta);
     }
 
     info!(users = deltas.len(), "Flushed traffic stats");

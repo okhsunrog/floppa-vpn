@@ -48,5 +48,9 @@ toml = "0.8"
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 
+# Metrics / observability
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", features = ["http-listener"] }
+
 # Shared crate
 floppa-core = { path = "floppa-core" }

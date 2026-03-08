@@ -41,6 +41,13 @@ async fn main() -> Result<()> {
         "WireGuard interface ready"
     );
 
+    // Start Prometheus metrics exporter
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(([127, 0, 0, 1], 9101))
+        .install()
+        .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
+    info!("Metrics exporter listening on 127.0.0.1:9101");
+
     // Connect to database
     let pool = db::init_pool(&secrets.database_url).await?;
     info!("Connected to database");
