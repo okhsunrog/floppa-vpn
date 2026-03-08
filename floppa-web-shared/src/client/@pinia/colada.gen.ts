@@ -5,7 +5,7 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
 import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallation, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getMe, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMyVlessConfig, getPublicConfig, getStats, getUser, getVersion, listInstallations, listPeers, listPlans, listUsers, listVlessPeers, type Options, regenerateAdminVlessConfig, regenerateMyVlessConfig, removePeer, sendMyPeerConfig, setSubscription, startTelegramDeepLinkLogin, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan, upsertMyInstallation } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetMeData, GetMyPeerByDeviceData, GetMyPeerConfigData, GetMyPeersData, GetMyVlessConfigData, GetPublicConfigData, GetStatsData, GetUserData, GetVersionData, ListInstallationsData, ListPeersData, ListPlansData, ListUsersData, ListVlessPeersData, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetSubscriptionData, SetSubscriptionError, StartTelegramDeepLinkLoginData, TelegramDeepLinkCallbackData, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
+import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetMeData, GetMeError, GetMeResponse, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListUsersData, ListUsersError, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetSubscriptionData, SetSubscriptionError, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
 
 /**
  * Authenticate via Telegram Login Widget
@@ -61,7 +61,7 @@ export const telegramDeepLinkCallbackQueryKey = (options?: Options<TelegramDeepL
 /**
  * Telegram widget callback for deep-link flow.
  */
-export const telegramDeepLinkCallbackQuery = defineQueryOptions((options?: Options<TelegramDeepLinkCallbackData>) => ({
+export const telegramDeepLinkCallbackQuery = defineQueryOptions<Options<TelegramDeepLinkCallbackData>, unknown, TelegramDeepLinkCallbackError>((options?: Options<TelegramDeepLinkCallbackData>) => ({
     key: telegramDeepLinkCallbackQueryKey(options),
     query: async (context) => {
         const { data } = await telegramDeepLinkCallback({
@@ -106,7 +106,7 @@ export const startTelegramDeepLinkLoginQueryKey = (options: Options<StartTelegra
 /**
  * Render the Telegram login page for deep-link flow.
  */
-export const startTelegramDeepLinkLoginQuery = defineQueryOptions((options: Options<StartTelegramDeepLinkLoginData>) => ({
+export const startTelegramDeepLinkLoginQuery = defineQueryOptions<Options<StartTelegramDeepLinkLoginData>, unknown, StartTelegramDeepLinkLoginError>((options: Options<StartTelegramDeepLinkLoginData>) => ({
     key: startTelegramDeepLinkLoginQueryKey(options),
     query: async (context) => {
         const { data } = await startTelegramDeepLinkLogin({
@@ -123,7 +123,7 @@ export const getPublicConfigQueryKey = (options?: Options<GetPublicConfigData>) 
 /**
  * Get public configuration
  */
-export const getPublicConfigQuery = defineQueryOptions((options?: Options<GetPublicConfigData>) => ({
+export const getPublicConfigQuery = defineQueryOptions<Options<GetPublicConfigData>, GetPublicConfigResponse, Error>((options?: Options<GetPublicConfigData>) => ({
     key: getPublicConfigQueryKey(options),
     query: async (context) => {
         const { data } = await getPublicConfig({
@@ -140,7 +140,7 @@ export const listInstallationsQueryKey = (options?: Options<ListInstallationsDat
 /**
  * List all app installations (admin only)
  */
-export const listInstallationsQuery = defineQueryOptions((options?: Options<ListInstallationsData>) => ({
+export const listInstallationsQuery = defineQueryOptions<Options<ListInstallationsData>, ListInstallationsResponse, ListInstallationsError>((options?: Options<ListInstallationsData>) => ({
     key: listInstallationsQueryKey(options),
     query: async (context) => {
         const { data } = await listInstallations({
@@ -171,7 +171,7 @@ export const getMeQueryKey = (options?: Options<GetMeData>) => createQueryKey('g
 /**
  * Get current authenticated user info
  */
-export const getMeQuery = defineQueryOptions((options?: Options<GetMeData>) => ({
+export const getMeQuery = defineQueryOptions<Options<GetMeData>, GetMeResponse, GetMeError>((options?: Options<GetMeData>) => ({
     key: getMeQueryKey(options),
     query: async (context) => {
         const { data } = await getMe({
@@ -202,7 +202,7 @@ export const getMyPeersQueryKey = (options?: Options<GetMyPeersData>) => createQ
 /**
  * List current user's peers and VLESS info
  */
-export const getMyPeersQuery = defineQueryOptions((options?: Options<GetMyPeersData>) => ({
+export const getMyPeersQuery = defineQueryOptions<Options<GetMyPeersData>, GetMyPeersResponse, GetMyPeersError>((options?: Options<GetMyPeersData>) => ({
     key: getMyPeersQueryKey(options),
     query: async (context) => {
         const { data } = await getMyPeers({
@@ -233,7 +233,7 @@ export const getMyPeerByDeviceQueryKey = (options: Options<GetMyPeerByDeviceData
 /**
  * Get a peer by device_id for the current user
  */
-export const getMyPeerByDeviceQuery = defineQueryOptions((options: Options<GetMyPeerByDeviceData>) => ({
+export const getMyPeerByDeviceQuery = defineQueryOptions<Options<GetMyPeerByDeviceData>, GetMyPeerByDeviceResponse, GetMyPeerByDeviceError>((options: Options<GetMyPeerByDeviceData>) => ({
     key: getMyPeerByDeviceQueryKey(options),
     query: async (context) => {
         const { data } = await getMyPeerByDevice({
@@ -264,7 +264,7 @@ export const getMyPeerConfigQueryKey = (options: Options<GetMyPeerConfigData>) =
 /**
  * Get WireGuard config for a peer owned by the current user
  */
-export const getMyPeerConfigQuery = defineQueryOptions((options: Options<GetMyPeerConfigData>) => ({
+export const getMyPeerConfigQuery = defineQueryOptions<Options<GetMyPeerConfigData>, GetMyPeerConfigResponse, GetMyPeerConfigError>((options: Options<GetMyPeerConfigData>) => ({
     key: getMyPeerConfigQueryKey(options),
     query: async (context) => {
         const { data } = await getMyPeerConfig({
@@ -295,7 +295,7 @@ export const getMyVlessConfigQueryKey = (options?: Options<GetMyVlessConfigData>
 /**
  * Get VLESS config for the current user (generates UUID on first call)
  */
-export const getMyVlessConfigQuery = defineQueryOptions((options?: Options<GetMyVlessConfigData>) => ({
+export const getMyVlessConfigQuery = defineQueryOptions<Options<GetMyVlessConfigData>, GetMyVlessConfigResponse, GetMyVlessConfigError>((options?: Options<GetMyVlessConfigData>) => ({
     key: getMyVlessConfigQueryKey(options),
     query: async (context) => {
         const { data } = await getMyVlessConfig({
@@ -326,7 +326,7 @@ export const listPeersQueryKey = (options?: Options<ListPeersData>) => createQue
 /**
  * List all peers (admin only)
  */
-export const listPeersQuery = defineQueryOptions((options?: Options<ListPeersData>) => ({
+export const listPeersQuery = defineQueryOptions<Options<ListPeersData>, ListPeersResponse, ListPeersError>((options?: Options<ListPeersData>) => ({
     key: listPeersQueryKey(options),
     query: async (context) => {
         const { data } = await listPeers({
@@ -357,7 +357,7 @@ export const listPlansQueryKey = (options?: Options<ListPlansData>) => createQue
 /**
  * List all plans (admin only)
  */
-export const listPlansQuery = defineQueryOptions((options?: Options<ListPlansData>) => ({
+export const listPlansQuery = defineQueryOptions<Options<ListPlansData>, ListPlansResponse, ListPlansError>((options?: Options<ListPlansData>) => ({
     key: listPlansQueryKey(options),
     query: async (context) => {
         const { data } = await listPlans({
@@ -416,7 +416,7 @@ export const getStatsQueryKey = (options?: Options<GetStatsData>) => createQuery
 /**
  * Get system statistics (admin only)
  */
-export const getStatsQuery = defineQueryOptions((options?: Options<GetStatsData>) => ({
+export const getStatsQuery = defineQueryOptions<Options<GetStatsData>, GetStatsResponse, GetStatsError>((options?: Options<GetStatsData>) => ({
     key: getStatsQueryKey(options),
     query: async (context) => {
         const { data } = await getStats({
@@ -433,7 +433,7 @@ export const listUsersQueryKey = (options?: Options<ListUsersData>) => createQue
 /**
  * List all users (admin only)
  */
-export const listUsersQuery = defineQueryOptions((options?: Options<ListUsersData>) => ({
+export const listUsersQuery = defineQueryOptions<Options<ListUsersData>, ListUsersResponse, ListUsersError>((options?: Options<ListUsersData>) => ({
     key: listUsersQueryKey(options),
     query: async (context) => {
         const { data } = await listUsers({
@@ -465,7 +465,7 @@ export const getUserQueryKey = (options: Options<GetUserData>) => createQueryKey
 /**
  * Get user details (admin only)
  */
-export const getUserQuery = defineQueryOptions((options: Options<GetUserData>) => ({
+export const getUserQuery = defineQueryOptions<Options<GetUserData>, GetUserResponse, GetUserError>((options: Options<GetUserData>) => ({
     key: getUserQueryKey(options),
     query: async (context) => {
         const { data } = await getUser({
@@ -536,7 +536,7 @@ export const regenerateAdminVlessConfigMutation = (options?: Partial<Options<Reg
 
 export const getVersionQueryKey = (options?: Options<GetVersionData>) => createQueryKey('getVersion', options);
 
-export const getVersionQuery = defineQueryOptions((options?: Options<GetVersionData>) => ({
+export const getVersionQuery = defineQueryOptions<Options<GetVersionData>, GetVersionResponse, Error>((options?: Options<GetVersionData>) => ({
     key: getVersionQueryKey(options),
     query: async (context) => {
         const { data } = await getVersion({
@@ -553,7 +553,7 @@ export const listVlessPeersQueryKey = (options?: Options<ListVlessPeersData>) =>
 /**
  * List all users with VLESS configs (admin only)
  */
-export const listVlessPeersQuery = defineQueryOptions((options?: Options<ListVlessPeersData>) => ({
+export const listVlessPeersQuery = defineQueryOptions<Options<ListVlessPeersData>, ListVlessPeersResponse, ListVlessPeersError>((options?: Options<ListVlessPeersData>) => ({
     key: listVlessPeersQueryKey(options),
     query: async (context) => {
         const { data } = await listVlessPeers({
