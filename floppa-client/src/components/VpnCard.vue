@@ -5,7 +5,11 @@ import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pinia/colada.gen'
-import { getMyPeerByDevice, getMyPeerConfig } from 'floppa-web-shared/client/sdk.gen'
+import {
+  getMyPeerByDevice,
+  getMyPeerConfig,
+  getMyVlessConfig,
+} from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -62,6 +66,10 @@ async function doServerSync(): Promise<SyncResult> {
       return { outcome: 'offline' }
     }
 
+    // Remember active protocol before sync (setActiveConfig switches to last-set protocol)
+    const prevProtocol = vpn.activeProtocol
+
+    // 1. Fetch WireGuard peer
     const { data: peer } = await getMyPeerByDevice({
       path: { device_id: vpn.deviceId! },
     })
@@ -72,35 +80,47 @@ async function doServerSync(): Promise<SyncResult> {
         throwOnError: true,
       })
       await vpn.setActiveConfig(configStr)
-      return { outcome: 'ok' }
-    }
-
-    // Backend reachable but peer not found (404) — clear stale config and re-create
-    if (vpn.hasConfig) {
-      await vpn.clearConfig()
-    }
-
-    // No peer — try to create
-    if (!me.value?.subscription) {
-      return { outcome: 'error', errorKey: 'vpn.noSubscription' }
-    }
-
-    try {
-      const response = await createPeerMut.mutateAsync({
-        body: {
-          device_id: vpn.deviceId,
-          device_name: vpn.deviceName,
-        },
-      })
-      await vpn.setActiveConfig(response.config)
-      return { outcome: 'ok' }
-    } catch (e: unknown) {
-      const errorCode = (e as Record<string, unknown>)?.error
-      if (errorCode === 'no_active_subscription' || errorCode === 'subscription_expired') {
+    } else {
+      // No peer — try to create
+      if (!me.value?.subscription) {
         return { outcome: 'error', errorKey: 'vpn.noSubscription' }
       }
-      return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
+
+      try {
+        const response = await createPeerMut.mutateAsync({
+          body: {
+            device_id: vpn.deviceId,
+            device_name: vpn.deviceName,
+          },
+        })
+        await vpn.setActiveConfig(response.config)
+      } catch (e: unknown) {
+        const errorCode = (e as Record<string, unknown>)?.error
+        if (errorCode === 'no_active_subscription' || errorCode === 'subscription_expired') {
+          return { outcome: 'error', errorKey: 'vpn.noSubscription' }
+        }
+        return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
+      }
     }
+
+    // 2. Fetch VLESS config (if available on server)
+    try {
+      const { data: vlessConfig } = await getMyVlessConfig()
+      if (vlessConfig?.uri) {
+        await vpn.setActiveConfig(vlessConfig.uri)
+      }
+    } catch {
+      // VLESS not available on server — skip silently
+    }
+
+    // 3. Restore previously active protocol
+    if (vpn.availableProtocols.includes(prevProtocol)) {
+      await vpn.setProtocol(prevProtocol)
+    } else if (vpn.availableProtocols.length > 0) {
+      await vpn.setProtocol(vpn.availableProtocols[0]!)
+    }
+
+    return { outcome: 'ok' }
   } catch {
     return { outcome: 'offline' }
   }
@@ -253,7 +273,7 @@ function getConnectionDuration(): string {
   return formatDuration(seconds)
 }
 
-function formatHandshake(secs: number | null | undefined): string {
+function formatLastPacket(secs: number | null | undefined): string {
   if (secs == null || secs < 0) return '--'
   if (secs < 60) return `${secs}s`
   const m = Math.floor(secs / 60)
@@ -261,43 +281,11 @@ function formatHandshake(secs: number | null | undefined): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`
 }
 
-const handshakeDotClass = computed(() => {
-  const secs = vpn.connectionInfo?.last_handshake
-  if (secs == null || secs < 0 || secs > 180) return 'bg-red-500'
-  if (secs > 135) return 'bg-yellow-500'
+const healthDotClass = computed(() => {
+  const secs = vpn.connectionInfo?.last_packet_received
+  if (secs == null || secs < 0 || secs > 150) return 'bg-red-500'
+  if (secs > 120) return 'bg-yellow-500'
   return 'bg-green-500'
-})
-
-// VLESS health tracking: traffic-based indicator
-const prevRxBytes = ref(0)
-const lastTrafficTime = ref(Date.now())
-
-watch(
-  () => vpn.connectionInfo?.stats.rx_bytes,
-  (newRx) => {
-    if (newRx != null && newRx > prevRxBytes.value) {
-      lastTrafficTime.value = Date.now()
-    }
-    prevRxBytes.value = newRx ?? 0
-  },
-)
-
-// Reset traffic tracking when disconnecting
-watch(
-  () => vpn.isConnected,
-  (connected) => {
-    if (!connected) {
-      prevRxBytes.value = 0
-      lastTrafficTime.value = Date.now()
-    }
-  },
-)
-
-const vlessHealthDotClass = computed(() => {
-  const elapsed = (Date.now() - lastTrafficTime.value) / 1000
-  if (elapsed < 30) return 'bg-green-500'
-  if (elapsed < 120) return 'bg-yellow-500'
-  return 'bg-neutral-400'
 })
 </script>
 
@@ -361,28 +349,10 @@ const vlessHealthDotClass = computed(() => {
           Server: {{ vpn.connectionInfo.server_endpoint }}
         </span>
         <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
-        <!-- WireGuard: show handshake dot + time -->
-        <span
-          v-if="vpn.connectionInfo.protocol === 'wireguard'"
-          class="inline-flex items-center justify-center gap-1.5"
-        >
-          {{ t('vpn.handshake') }}:
-          <span class="size-2 rounded-full" :class="handshakeDotClass" />
-          {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
-        </span>
-        <!-- VLESS: show traffic-based health indicator -->
-        <span
-          v-else-if="vpn.connectionInfo.protocol === 'vless'"
-          class="inline-flex items-center justify-center gap-1.5"
-        >
-          {{ t('vpn.connectionHealth') }}:
-          <span class="size-2 rounded-full" :class="vlessHealthDotClass" />
-        </span>
-        <!-- Unknown protocol: show handshake if available -->
-        <span v-else class="inline-flex items-center justify-center gap-1.5">
-          {{ t('vpn.handshake') }}:
-          <span class="size-2 rounded-full" :class="handshakeDotClass" />
-          {{ formatHandshake(vpn.connectionInfo.last_handshake) }}
+        <span class="inline-flex items-center justify-center gap-1.5">
+          {{ t('vpn.lastActivity') }}:
+          <span class="size-2 rounded-full" :class="healthDotClass" />
+          {{ formatLastPacket(vpn.connectionInfo.last_packet_received) }}
         </span>
       </div>
 
@@ -404,6 +374,27 @@ const vlessHealthDotClass = computed(() => {
         class="w-full max-w-[200px] mt-2"
         @click="handleConnect"
       />
+
+      <!-- Protocol toggle (only show when multiple protocols available) -->
+      <div v-if="vpn.availableProtocols.length > 1" class="mt-3">
+        <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.protocol') }}</div>
+        <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
+          <button
+            v-for="proto in vpn.availableProtocols"
+            :key="proto"
+            :disabled="vpn.isConnected || vpn.isLoading"
+            class="px-4 py-1.5 text-sm rounded-md transition-all"
+            :class="
+              vpn.activeProtocol === proto
+                ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
+                : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+            "
+            @click="vpn.setProtocol(proto)"
+          >
+            {{ t(`vpn.${proto}`) }}
+          </button>
+        </div>
+      </div>
     </div>
   </UCard>
 

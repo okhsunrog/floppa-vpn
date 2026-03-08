@@ -1,4 +1,4 @@
-use super::state::{ProtocolConfig, WgConfig};
+use super::state::{ProtocolConfig, SavedVpnConfigs, WgConfig};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -91,15 +91,12 @@ pub fn get_device_name() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Save VPN config to OS keyring (fallback to file on Android / keyring failure).
-///
-/// The config is serialized as JSON with a protocol tag so we can support
-/// multiple protocols in the future.
-pub fn save_config(config: &ProtocolConfig) {
-    let json = match serde_json::to_string(config) {
+/// Save all VPN configs to OS keyring (fallback to file on Android / keyring failure).
+pub fn save_configs(configs: &SavedVpnConfigs) {
+    let json = match serde_json::to_string(configs) {
         Ok(j) => j,
         Err(e) => {
-            warn!("Failed to serialize config: {e}");
+            warn!("Failed to serialize configs: {e}");
             return;
         }
     };
@@ -109,7 +106,7 @@ pub fn save_config(config: &ProtocolConfig) {
         match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
             Ok(entry) => match entry.set_password(&json) {
                 Ok(()) => {
-                    info!("VPN config saved to OS keyring");
+                    info!("VPN configs saved to OS keyring");
                     return;
                 }
                 Err(e) => warn!("Keyring save failed, falling back to file: {e}"),
@@ -122,22 +119,22 @@ pub fn save_config(config: &ProtocolConfig) {
     save_config_file(&json);
 }
 
-/// Load VPN config from OS keyring (fallback to file).
+/// Load VPN configs from OS keyring (fallback to file).
 ///
-/// Supports both the new JSON format and legacy WG `.conf` files.
-pub fn load_config() -> Option<ProtocolConfig> {
+/// Backwards-compatible: migrates old single-config format to dual-config.
+pub fn load_configs() -> Option<SavedVpnConfigs> {
     #[cfg(not(target_os = "android"))]
     {
         match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
             Ok(entry) => match entry.get_password() {
                 Ok(stored) => {
                     info!("VPN config loaded from OS keyring");
-                    return parse_stored_config(&stored);
+                    return parse_stored_configs(&stored);
                 }
                 Err(keyring::Error::NoEntry) => {
                     // Also check legacy keyring entry
                     if let Some(config) = load_legacy_keyring() {
-                        return Some(config);
+                        return Some(migrate_single_config(config));
                     }
                 }
                 Err(e) => warn!("Keyring load failed, trying file fallback: {e}"),
@@ -147,17 +144,16 @@ pub fn load_config() -> Option<ProtocolConfig> {
     }
 
     // File fallback — try new format first, then legacy
-    if let Some(config) = load_config_file() {
-        return Some(config);
+    if let Some(configs) = load_configs_file() {
+        return Some(configs);
     }
-    load_legacy_config_file()
+    load_legacy_config_file().map(migrate_single_config)
 }
 
 /// Delete saved VPN config from both keyring and file.
-pub fn delete_config() {
+pub fn delete_configs() {
     #[cfg(not(target_os = "android"))]
     {
-        // Delete new keyring entry
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
             match entry.delete_credential() {
                 Ok(()) => info!("VPN config deleted from OS keyring"),
@@ -165,7 +161,6 @@ pub fn delete_config() {
                 Err(e) => warn!("Failed to delete VPN config from keyring: {e}"),
             }
         }
-        // Also delete legacy keyring entry if it exists
         if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, "wg-config") {
             match entry.delete_credential() {
                 Ok(()) => info!("Legacy WG config deleted from OS keyring"),
@@ -175,7 +170,6 @@ pub fn delete_config() {
         }
     }
 
-    // Remove both new and legacy config files
     if let Ok(dir) = get_config_dir() {
         for filename in [CONFIG_FILENAME, LEGACY_CONFIG_FILENAME] {
             let path = dir.join(filename);
@@ -187,22 +181,44 @@ pub fn delete_config() {
     }
 }
 
-/// Parse a stored config string — try JSON first, fall back to legacy WG `.conf`.
-fn parse_stored_config(stored: &str) -> Option<ProtocolConfig> {
-    // Try JSON (new format)
+/// Parse stored configs — try new SavedVpnConfigs format first, fall back to old single ProtocolConfig, then legacy WG.
+fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
+    // Try new dual-config format
+    if let Ok(configs) = serde_json::from_str::<SavedVpnConfigs>(stored)
+        && configs.has_any()
+    {
+        return Some(configs);
+    }
+    // Try old single ProtocolConfig format
     if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
-        return Some(config);
+        return Some(migrate_single_config(config));
     }
     // Fall back to legacy WG config format
     match WgConfig::from_config_str(stored) {
         Ok(wg) => {
-            info!("Loaded legacy WireGuard config, will re-save in new format");
-            Some(ProtocolConfig::WireGuard(wg))
+            info!("Loaded legacy WireGuard config, migrating to new format");
+            Some(migrate_single_config(ProtocolConfig::WireGuard(wg)))
         }
         Err(e) => {
             warn!("Failed to parse stored config: {e}");
             None
         }
+    }
+}
+
+/// Migrate a single ProtocolConfig to the new dual-config format.
+fn migrate_single_config(config: ProtocolConfig) -> SavedVpnConfigs {
+    match config {
+        ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
+            active_protocol: "wireguard".to_string(),
+            wireguard: Some(wg),
+            vless: None,
+        },
+        ProtocolConfig::Vless(vless) => SavedVpnConfigs {
+            active_protocol: "vless".to_string(),
+            wireguard: None,
+            vless: Some(vless),
+        },
     }
 }
 
@@ -252,7 +268,7 @@ fn save_config_file(json: &str) {
     info!("VPN config saved to file: {path:?}");
 }
 
-fn load_config_file() -> Option<ProtocolConfig> {
+fn load_configs_file() -> Option<SavedVpnConfigs> {
     let path = get_config_dir().ok()?.join(CONFIG_FILENAME);
     if !path.exists() {
         return None;
@@ -260,7 +276,7 @@ fn load_config_file() -> Option<ProtocolConfig> {
     match std::fs::read_to_string(&path) {
         Ok(json) => {
             info!("VPN config loaded from file: {path:?}");
-            parse_stored_config(&json)
+            parse_stored_configs(&json)
         }
         Err(e) => {
             warn!("Failed to read config file: {e}");

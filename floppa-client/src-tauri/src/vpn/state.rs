@@ -218,7 +218,7 @@ pub struct ConnectionInfo {
     pub server_endpoint: Option<String>,
     pub assigned_ip: Option<String>,
     pub connected_at: Option<i64>, // Unix timestamp
-    pub last_handshake: Option<i64>,
+    pub last_packet_received: Option<i64>,
     pub stats: TrafficStats,
 }
 
@@ -230,7 +230,7 @@ impl Default for ConnectionInfo {
             server_endpoint: None,
             assigned_ip: None,
             connected_at: None,
-            last_handshake: None,
+            last_packet_received: None,
             stats: TrafficStats::default(),
         }
     }
@@ -454,9 +454,48 @@ impl ProtocolConfig {
     }
 }
 
+/// Dual-config storage: holds both WG and VLESS configs with an active protocol selector.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SavedVpnConfigs {
+    /// Currently active protocol: "wireguard" or "vless"
+    pub active_protocol: String,
+    /// Cached WireGuard config (if any)
+    pub wireguard: Option<WgConfig>,
+    /// Cached VLESS config (if any)
+    #[serde(default)]
+    pub vless: Option<VlessVpnConfig>,
+}
+
+impl SavedVpnConfigs {
+    /// Get the active ProtocolConfig for the connect flow.
+    pub fn active_config(&self) -> Option<ProtocolConfig> {
+        match self.active_protocol.as_str() {
+            "vless" => self.vless.clone().map(ProtocolConfig::Vless),
+            _ => self.wireguard.clone().map(ProtocolConfig::WireGuard),
+        }
+    }
+
+    /// Which protocols have cached configs.
+    pub fn available_protocols(&self) -> Vec<String> {
+        let mut protocols = Vec::new();
+        if self.wireguard.is_some() {
+            protocols.push("wireguard".to_string());
+        }
+        if self.vless.is_some() {
+            protocols.push("vless".to_string());
+        }
+        protocols
+    }
+
+    /// Whether any config is stored.
+    pub fn has_any(&self) -> bool {
+        self.wireguard.is_some() || self.vless.is_some()
+    }
+}
+
 /// Global VPN state
 pub struct VpnState {
-    pub config: RwLock<Option<ProtocolConfig>>,
+    pub configs: RwLock<SavedVpnConfigs>,
     pub connection: RwLock<ConnectionInfo>,
     pub speed_tracker: RwLock<SpeedTracker>,
 }
@@ -464,7 +503,7 @@ pub struct VpnState {
 impl VpnState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
-            config: RwLock::new(None),
+            configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
         })
@@ -474,7 +513,7 @@ impl VpnState {
 impl Default for VpnState {
     fn default() -> Self {
         Self {
-            config: RwLock::new(None),
+            configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
         }

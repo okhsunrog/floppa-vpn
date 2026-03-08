@@ -75,7 +75,7 @@ impl VpnBackend for InProcessBackend {
         Some(VpnFullInfo {
             is_running: self.tunnel_manager.is_running().await,
             stats: self.tunnel_manager.get_stats().await,
-            last_handshake: self.tunnel_manager.get_last_handshake().await,
+            last_packet_received: self.tunnel_manager.get_last_packet_received().await,
             connected_secs: None,
         })
     }

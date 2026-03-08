@@ -132,7 +132,7 @@ impl VpnBackend for AndroidIpcBackend {
                     }),
                     _ => None,
                 },
-                last_handshake: info.last_handshake,
+                last_packet_received: info.last_packet_received,
                 connected_secs: info.connected_secs,
             }),
             Err(e) => {

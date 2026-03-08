@@ -543,7 +543,7 @@
         ],
         "responses": {
           "200": {
-            "description": "WireGuard config file",
+            "description": "WireGuard .conf",
             "content": {
               "text/plain": {
                 "schema": {
@@ -625,6 +625,118 @@
           },
           "502": {
             "description": "Failed to send via Telegram",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/vless-config": {
+      "get": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Get VLESS config for the current user (generates UUID on first call)",
+        "operationId": "get_my_vless_config",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VlessConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VLESS not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "No active subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/vless-config/regenerate": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Regenerate VLESS UUID for the current user (old UUID stops working immediately)",
+        "operationId": "regenerate_my_vless_config",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VlessConfigResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VLESS not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "No active subscription",
             "content": {
               "application/json": {
                 "schema": {
@@ -2513,6 +2625,17 @@
             "type": "string"
           },
           "version": {
+            "type": "string"
+          }
+        }
+      },
+      "VlessConfigResponse": {
+        "type": "object",
+        "required": [
+          "uri"
+        ],
+        "properties": {
+          "uri": {
             "type": "string"
           }
         }

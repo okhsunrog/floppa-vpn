@@ -2,7 +2,8 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
 use super::state::{
-    ConnectionInfo, ConnectionStatus, ProtocolConfig, VlessVpnConfig, VpnState, WgConfig,
+    ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs, VlessVpnConfig, VpnState,
+    WgConfig,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -35,7 +36,7 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
     vpn_config::get_device_name()
 }
 
-/// Parse a config string (WireGuard or VLESS URI), set it as active, and persist it.
+/// Parse a config string (WireGuard or VLESS URI), store under the right protocol key, and persist.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_config(
@@ -44,19 +45,21 @@ pub async fn set_active_config(
 ) -> Result<(), String> {
     info!("Setting active config");
     let trimmed = config_str.trim();
-    let config = if trimmed.starts_with("vless://") {
+    let mut configs = state.configs.write().await;
+    if trimmed.starts_with("vless://") {
         let vless = VlessVpnConfig::from_uri(trimmed)?;
-        ProtocolConfig::Vless(vless)
+        configs.vless = Some(vless);
+        configs.active_protocol = "vless".to_string();
     } else {
         let wg = WgConfig::from_config_str(&config_str)?;
-        ProtocolConfig::WireGuard(wg)
+        configs.wireguard = Some(wg);
+        configs.active_protocol = "wireguard".to_string();
     };
-    *state.config.write().await = Some(config.clone());
-    vpn_config::save_config(&config);
+    vpn_config::save_configs(&configs);
     Ok(())
 }
 
-/// Clear the active config from memory and delete persisted config. Disconnects first if connected.
+/// Clear all configs from memory and delete persisted config. Disconnects first if connected.
 #[tauri::command]
 #[specta::specta]
 pub async fn clear_config(
@@ -69,31 +72,32 @@ pub async fn clear_config(
     if status != ConnectionStatus::Disconnected {
         disconnect(app, state.clone(), backend, platform).await?;
     }
-    *state.config.write().await = None;
-    vpn_config::delete_config();
+    *state.configs.write().await = SavedVpnConfigs::default();
+    vpn_config::delete_configs();
     Ok(())
 }
 
-/// Load persisted VPN config into memory (called on startup).
+/// Load persisted VPN configs into memory (called on startup).
 #[tauri::command]
 #[specta::specta]
 pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, String> {
-    if state.config.read().await.is_some() {
+    if state.configs.read().await.has_any() {
         return Ok(true);
     }
-    if let Some(config) = vpn_config::load_config() {
-        *state.config.write().await = Some(config);
+    if let Some(configs) = vpn_config::load_configs() {
+        *state.configs.write().await = configs;
         Ok(true)
     } else {
         Ok(false)
     }
 }
 
-/// Get current saved config (without private key for security)
+/// Get active protocol's config (without private key for security)
 #[tauri::command]
 #[specta::specta]
 pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<ConfigSafe>, String> {
-    let config = state.config.read().await;
+    let configs = state.configs.read().await;
+    let config = configs.active_config();
     Ok(config.as_ref().map(|c| ConfigSafe {
         protocol: c.protocol_name().to_string(),
         address: c.address().to_string(),
@@ -108,6 +112,37 @@ pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<Config
         },
         mtu: Some(c.get_mtu()),
     }))
+}
+
+/// Switch the active protocol (must disconnect first)
+#[tauri::command]
+#[specta::specta]
+pub async fn set_active_protocol(
+    protocol: String,
+    state: State<'_, Arc<VpnState>>,
+) -> Result<(), String> {
+    let mut configs = state.configs.write().await;
+    match protocol.as_str() {
+        "wireguard" if configs.wireguard.is_some() => {
+            configs.active_protocol = "wireguard".to_string();
+        }
+        "vless" if configs.vless.is_some() => {
+            configs.active_protocol = "vless".to_string();
+        }
+        _ => return Err(format!("No cached config for protocol '{protocol}'")),
+    }
+    vpn_config::save_configs(&configs);
+    Ok(())
+}
+
+/// Get list of protocols that have cached configs
+#[tauri::command]
+#[specta::specta]
+pub async fn get_available_protocols(
+    state: State<'_, Arc<VpnState>>,
+) -> Result<Vec<String>, String> {
+    let configs = state.configs.read().await;
+    Ok(configs.available_protocols())
 }
 
 /// Safe config info (no private keys or secrets)
@@ -213,8 +248,12 @@ pub async fn connect(
         }
     }
 
-    let proto_config = state.config.read().await;
-    let proto_config = proto_config.as_ref().ok_or("No active config")?.clone();
+    let proto_config = state
+        .configs
+        .read()
+        .await
+        .active_config()
+        .ok_or("No active config")?;
 
     {
         let mut conn = state.connection.write().await;
@@ -545,7 +584,7 @@ async fn wait_for_handshake(
     let start = std::time::Instant::now();
     loop {
         if let Some(info) = backend.get_all_info().await
-            && let Some(secs) = info.last_handshake
+            && let Some(secs) = info.last_packet_received
             && secs < 10
         {
             return Ok(());
@@ -634,7 +673,8 @@ pub async fn get_connection_info(
         // Auto-detect: on Android the :vpn process can outlive the app.
         // If the tunnel is running, show Connected so the user can disconnect.
         ConnectionStatus::Disconnected if is_running => {
-            let config = state.config.read().await;
+            let configs = state.configs.read().await;
+            let config = configs.active_config();
             conn.status = ConnectionStatus::Connected;
             let connected_at = info
                 .as_ref()
@@ -642,8 +682,8 @@ pub async fn get_connection_info(
                 .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
                 .unwrap_or_else(|| chrono::Utc::now().timestamp());
             conn.connected_at = Some(connected_at);
-            conn.last_handshake = info.as_ref().and_then(|i| i.last_handshake);
-            if let Some(cfg) = config.as_ref() {
+            conn.last_packet_received = info.as_ref().and_then(|i| i.last_packet_received);
+            if let Some(ref cfg) = config {
                 conn.protocol = Some(cfg.protocol_name().to_string());
                 conn.server_endpoint = Some(cfg.endpoint_str().to_string());
                 conn.assigned_ip = Some(cfg.address().to_string());
@@ -674,7 +714,7 @@ pub async fn get_connection_info(
                         rx_bytes_per_sec: rx_speed,
                     };
                 }
-                conn.last_handshake = info.last_handshake;
+                conn.last_packet_received = info.last_packet_received;
             }
         }
         _ => {}

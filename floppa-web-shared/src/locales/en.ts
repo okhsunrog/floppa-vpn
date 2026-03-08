@@ -313,8 +313,10 @@ export default {
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
-    handshake: 'Handshake',
-    connectionHealth: 'Health',
+    lastActivity: 'Last activity',
     duration: 'Duration',
+    protocol: 'Protocol',
+    wireguard: 'WireGuard',
+    vless: 'VLESS',
   },
 }

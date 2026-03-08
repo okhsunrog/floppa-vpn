@@ -33,7 +33,7 @@ struct VpnRpcServer {
 impl VpnRpc for VpnRpcServer {
     async fn get_full_info(self, _ctx: Context) -> TunnelInfo {
         let is_running = self.tunnel_manager.is_running().await;
-        let last_handshake = self.tunnel_manager.get_last_handshake().await;
+        let last_packet_received = self.tunnel_manager.get_last_packet_received().await;
         let connected_secs = self
             .tunnel_manager
             .get_connection_duration()
@@ -42,7 +42,7 @@ impl VpnRpc for VpnRpcServer {
         let stats = self.tunnel_manager.get_stats().await;
         TunnelInfo {
             is_running,
-            last_handshake,
+            last_packet_received,
             connected_secs,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
             rx_bytes: stats.as_ref().map(|s| s.rx_bytes),

@@ -30,21 +30,16 @@ pub struct User {
     pub trial_used_at: Option<DateTime<Utc>>,
 }
 
-/// VPN peer (WireGuard or VLESS)
+/// WireGuard VPN peer
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Peer {
     pub id: i64,
     pub user_id: i64,
-    /// Protocol type: "wireguard" or "vless"
-    pub protocol: String,
-    /// WireGuard public key (NULL for VLESS peers)
-    pub public_key: Option<String>,
-    /// Encrypted WireGuard private key (NULL for VLESS peers)
+    pub public_key: String,
+    /// Encrypted WireGuard private key
     pub private_key_encrypted: Option<String>,
-    /// Assigned IP within VPN subnet, e.g. "10.100.0.5" (NULL for VLESS peers)
-    pub assigned_ip: Option<String>,
-    /// VLESS UUID (NULL for WireGuard peers)
-    pub vless_uuid: Option<String>,
+    /// Assigned IP within VPN subnet, e.g. "10.100.0.5"
+    pub assigned_ip: String,
     pub sync_status: PeerSyncStatus,
     pub created_at: DateTime<Utc>,
     /// Last WireGuard handshake time (updated by daemon)

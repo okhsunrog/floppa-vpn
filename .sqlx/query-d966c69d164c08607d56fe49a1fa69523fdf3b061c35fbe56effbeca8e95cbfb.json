@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT u.id as user_id, u.vless_uuid,\n               pl.default_speed_limit_mbps as speed_limit_mbps\n        FROM users u\n        JOIN subscriptions s ON s.user_id = u.id\n        JOIN plans pl ON s.plan_id = pl.id\n        WHERE u.vless_uuid IS NOT NULL\n          AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "vless_uuid",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "speed_limit_mbps",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "d966c69d164c08607d56fe49a1fa69523fdf3b061c35fbe56effbeca8e95cbfb"
+}

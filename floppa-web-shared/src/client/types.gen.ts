@@ -256,6 +256,10 @@ export type VersionInfo = {
     version: string;
 };
 
+export type VlessConfigResponse = {
+    uri: string;
+};
+
 export type TelegramLoginData = {
     body: TelegramAuthData;
     path?: never;
@@ -567,7 +571,7 @@ export type GetMyPeerConfigError = GetMyPeerConfigErrors[keyof GetMyPeerConfigEr
 
 export type GetMyPeerConfigResponses = {
     /**
-     * WireGuard config file
+     * WireGuard .conf
      */
     200: string;
 };
@@ -609,6 +613,66 @@ export type SendMyPeerConfigResponses = {
      */
     200: unknown;
 };
+
+export type GetMyVlessConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/vless-config';
+};
+
+export type GetMyVlessConfigErrors = {
+    /**
+     * VLESS not configured
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * No active subscription
+     */
+    402: ApiError;
+};
+
+export type GetMyVlessConfigError = GetMyVlessConfigErrors[keyof GetMyVlessConfigErrors];
+
+export type GetMyVlessConfigResponses = {
+    200: VlessConfigResponse;
+};
+
+export type GetMyVlessConfigResponse = GetMyVlessConfigResponses[keyof GetMyVlessConfigResponses];
+
+export type RegenerateMyVlessConfigData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/vless-config/regenerate';
+};
+
+export type RegenerateMyVlessConfigErrors = {
+    /**
+     * VLESS not configured
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * No active subscription
+     */
+    402: ApiError;
+};
+
+export type RegenerateMyVlessConfigError = RegenerateMyVlessConfigErrors[keyof RegenerateMyVlessConfigErrors];
+
+export type RegenerateMyVlessConfigResponses = {
+    200: VlessConfigResponse;
+};
+
+export type RegenerateMyVlessConfigResponse = RegenerateMyVlessConfigResponses[keyof RegenerateMyVlessConfigResponses];
 
 export type ListPeersData = {
     body?: never;

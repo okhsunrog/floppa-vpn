@@ -50,7 +50,7 @@ impl Default for TrafficSection {
 }
 
 fn default_flush_interval() -> u64 {
-    60
+    30
 }
 
 fn default_sync_interval() -> u64 {

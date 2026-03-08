@@ -279,13 +279,13 @@ impl GotatunTunnel {
         Ok(stats)
     }
 
-    /// Get last handshake time (seconds ago)
-    pub async fn get_last_handshake(&self) -> Option<i64> {
+    /// Get time since last packet was received (seconds ago)
+    pub async fn get_last_packet_received(&self) -> Option<i64> {
         let device = self.device.as_ref()?;
         let peers = device.peers().await;
 
         for peer_stats in peers {
-            if let Some(duration) = peer_stats.stats.last_handshake {
+            if let Some(duration) = peer_stats.stats.last_packet_received {
                 return Some(duration.as_secs() as i64);
             }
         }
@@ -342,10 +342,12 @@ impl ActiveTunnel {
         }
     }
 
-    async fn get_last_handshake(&self) -> Option<i64> {
+    async fn get_last_packet_received(&self) -> Option<i64> {
         match self {
-            Self::WireGuard(t) => t.get_last_handshake().await,
-            Self::Vless(_) => None,
+            Self::WireGuard(t) => t.get_last_packet_received().await,
+            Self::Vless(t) => t
+                .time_since_last_packet_received()
+                .map(|d| d.as_secs() as i64),
         }
     }
 
@@ -491,10 +493,10 @@ impl TunnelManager {
         }
     }
 
-    pub async fn get_last_handshake(&self) -> Option<i64> {
+    pub async fn get_last_packet_received(&self) -> Option<i64> {
         let tunnel_guard = self.tunnel.read().await;
         if let Some(tunnel) = tunnel_guard.as_ref() {
-            tunnel.get_last_handshake().await
+            tunnel.get_last_packet_received().await
         } else {
             None
         }

@@ -24,7 +24,7 @@ async getDeviceName() : Promise<string> {
     return await TAURI_INVOKE("get_device_name");
 },
 /**
- * Parse a WireGuard config string, set it as the active config, and persist it.
+ * Parse a config string (WireGuard or VLESS URI), store under the right protocol key, and persist.
  */
 async setActiveConfig(configStr: string) : Promise<Result<null, string>> {
     try {
@@ -35,7 +35,7 @@ async setActiveConfig(configStr: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Clear the active config from memory and delete persisted config. Disconnects first if connected.
+ * Clear all configs from memory and delete persisted config. Disconnects first if connected.
  */
 async clearConfig() : Promise<Result<null, string>> {
     try {
@@ -46,7 +46,7 @@ async clearConfig() : Promise<Result<null, string>> {
 }
 },
 /**
- * Load persisted WireGuard config into memory (called on startup).
+ * Load persisted VPN configs into memory (called on startup).
  */
 async loadSavedConfig() : Promise<Result<boolean, string>> {
     try {
@@ -57,11 +57,33 @@ async loadSavedConfig() : Promise<Result<boolean, string>> {
 }
 },
 /**
- * Get current saved config (without private key for security)
+ * Get active protocol's config (without private key for security)
  */
-async getConfig() : Promise<Result<WgConfigSafe | null, string>> {
+async getConfig() : Promise<Result<ConfigSafe | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_config") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Switch the active protocol (must disconnect first)
+ */
+async setActiveProtocol(protocol: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_active_protocol", { protocol }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Get list of protocols that have cached configs
+ */
+async getAvailableProtocols() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_available_protocols") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -196,9 +218,13 @@ async setStatusBarStyle(isDark: boolean) : Promise<Result<null, string>> {
  */
 export type AppInfo = { package_name: string; label: string; is_system: boolean; icon: string | null }
 /**
+ * Safe config info (no private keys or secrets)
+ */
+export type ConfigSafe = { protocol: string; address: string; dns: string | null; server_endpoint: string; allowed_ips: string; mtu: number | null }
+/**
  * Connection information
  */
-export type ConnectionInfo = { status: ConnectionStatus; protocol: string | null; server_endpoint: string | null; assigned_ip: string | null; connected_at: number | null; last_handshake: number | null; stats: TrafficStats }
+export type ConnectionInfo = { status: ConnectionStatus; protocol: string | null; server_endpoint: string | null; assigned_ip: string | null; connected_at: number | null; last_packet_received: number | null; stats: TrafficStats }
 /**
  * Connection status enum
  */
@@ -215,10 +241,6 @@ export type SplitMode = "all" | "include" | "exclude"
  * Traffic statistics
  */
 export type TrafficStats = { tx_bytes: number; rx_bytes: number; tx_bytes_per_sec: number; rx_bytes_per_sec: number }
-/**
- * Safe config info (no private key)
- */
-export type WgConfigSafe = { address: string; dns: string | null; peer_endpoint: string; allowed_ips: string; mtu: number | null }
 
 /** tauri-specta globals **/
 
