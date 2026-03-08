@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 floppa-core = { path = "../floppa-core" }
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "f8f27b2" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "404b933" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }
 

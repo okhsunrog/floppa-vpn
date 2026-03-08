@@ -21,7 +21,7 @@ ipnetwork = "0.21"
 anyhow = "1"
 dirs = "6"
 open = "5"
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "f8f27b2" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "404b933" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log = "0.2.0"

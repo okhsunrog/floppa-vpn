@@ -135,7 +135,7 @@ openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
     cd floppa-web-shared && bun run openapi-ts
 
-android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
 android_pkg := "dev.okhsunrog.floppa_vpn"
 
 # Optional: set ADB_DEVICE env var or pass device=SERIAL to target a specific device
@@ -144,7 +144,7 @@ adb_cmd := if env("ADB_DEVICE", "") != "" { "adb -s " + env("ADB_DEVICE", "") } 
 
 # Build Android APK (release, aarch64)
 build-android:
-    cd floppa-client && bun tauri android build --apk --target aarch64
+    cd floppa-client && bun tauri android build --target aarch64 --split-per-abi --apk
 
 # Build and install Android APK on connected device
 deploy-android device="": build-android

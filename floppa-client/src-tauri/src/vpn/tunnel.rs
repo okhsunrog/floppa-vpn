@@ -5,7 +5,9 @@ use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
 use gotatun::udp::socket::UdpSocketFactory;
 use gotatun::x25519;
+#[cfg(not(target_os = "android"))]
 use shoes_lite::tun::TunServerConfig;
+#[cfg(not(target_os = "android"))]
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -482,10 +484,15 @@ impl TunnelManager {
         config: &shoes_lite::api::VlessConfig,
         tun_fd: i32,
     ) -> Result<(), String> {
+        info!(
+            "Starting VLESS tunnel from fd={}, server={}, sni={}, mtu={:?}",
+            tun_fd, config.server_addr, config.server_name, config.mtu
+        );
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
         let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd).await?;
+        info!("VLESS tunnel started successfully from fd={}", tun_fd);
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
         Ok(())
     }

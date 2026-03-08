@@ -13,6 +13,7 @@ pub fn init_tracing() {
     #[cfg(not(debug_assertions))]
     let filter = filter
         .add_directive("floppa_client_lib=debug".parse().unwrap())
+        .add_directive("shoes_lite=info".parse().unwrap())
         .add_directive("webview=info".parse().unwrap())
         .add_directive("log=info".parse().unwrap())
         .add_directive("gotatun=info".parse().unwrap())

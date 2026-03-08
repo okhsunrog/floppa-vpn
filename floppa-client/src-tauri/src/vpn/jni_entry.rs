@@ -164,6 +164,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
                 #[cfg(not(debug_assertions))]
                 let filter = filter
                     .add_directive("floppa_client_lib=debug".parse().unwrap())
+                    .add_directive("shoes_lite=info".parse().unwrap())
                     .add_directive("gotatun=info".parse().unwrap())
                     .add_directive("tarpc=warn".parse().unwrap())
                     .add_directive("warn".parse().unwrap());
