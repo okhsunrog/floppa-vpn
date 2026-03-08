@@ -171,10 +171,46 @@ jobs:
             floppa-client/src-tauri/target/release/bundle/nsis/floppa-vpn-*.exe
             floppa-client/src-tauri/target/release/bundle/msi/floppa-vpn-*.msi
 
+  arch-linux:
+    name: Arch Linux Package
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install git
+        run: pacman -Sy --noconfirm git
+
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed \
+            base-devel rust nodejs openssl appmenu-gtk-module librsvg \
+            cairo desktop-file-utils gdk-pixbuf2 glib2 gtk3 hicolor-icon-theme \
+            libsoup3 pango webkit2gtk-4.1 libappindicator-gtk3 libcap
+          curl -fsSL https://bun.sh/install | bash
+          cp /root/.bun/bin/bun /usr/local/bin/
+
+      - name: Build package
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+          cd scripts/arch
+          su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -p PKGBUILD-local --noconfirm"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: scripts/arch/*.pkg.tar.zst
+
   release:
     name: Create GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, linux, windows]
+    needs: [android, linux, windows, arch-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,4 +235,5 @@ jobs:
             release-artifacts/**/*.deb
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi
+            release-artifacts/**/*.pkg.tar.zst
             floppa-client/src/changelog.json
