@@ -23,7 +23,7 @@ const error = computed(() => meError.value || peersError.value)
 
 const totalTraffic = computed(() => {
   if (!peers.value) return 0
-  return peers.value.reduce((sum, p) => sum + p.tx_bytes + p.rx_bytes, 0)
+  return peers.value.reduce((sum, p) => sum + p.download_bytes + p.upload_bytes, 0)
 })
 
 const hasSubscription = computed(() => !!me.value?.subscription)

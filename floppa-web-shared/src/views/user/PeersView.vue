@@ -273,17 +273,21 @@ async function downloadConfig() {
           </div>
           <div class="flex gap-6 mb-3">
             <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-arrow-up" class="text-green-500" />
+              <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
               <div>
-                <span class="font-medium">{{ formatBytes(peer.tx_bytes) }}</span>
-                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">TX</span>
+                <span class="font-medium">{{ formatBytes(peer.download_bytes) }}</span>
+                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                  t('traffic.download')
+                }}</span>
               </div>
             </div>
             <div class="flex items-center gap-2">
-              <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
+              <UIcon name="i-lucide-arrow-up" class="text-green-500" />
               <div>
-                <span class="font-medium">{{ formatBytes(peer.rx_bytes) }}</span>
-                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">RX</span>
+                <span class="font-medium">{{ formatBytes(peer.upload_bytes) }}</span>
+                <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
+                  t('traffic.upload')
+                }}</span>
               </div>
             </div>
           </div>

@@ -40,15 +40,15 @@ const { data: stats, status, error } = useQuery(getStatsQuery())
           large
         />
         <StatsCard
-          :label="t('adminDashboard.totalTx')"
-          :value="formatBytes(stats.total_tx_bytes)"
-          icon="i-lucide-arrow-up"
+          :label="t('adminDashboard.totalDownload')"
+          :value="formatBytes(stats.total_download_bytes)"
+          icon="i-lucide-arrow-down"
           large
         />
         <StatsCard
-          :label="t('adminDashboard.totalRx')"
-          :value="formatBytes(stats.total_rx_bytes)"
-          icon="i-lucide-arrow-down"
+          :label="t('adminDashboard.totalUpload')"
+          :value="formatBytes(stats.total_upload_bytes)"
+          icon="i-lucide-arrow-up"
           large
         />
       </div>

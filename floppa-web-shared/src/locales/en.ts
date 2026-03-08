@@ -12,8 +12,8 @@ export default {
     disconnecting: 'Disconnecting',
   },
   traffic: {
-    tx: 'TX',
-    rx: 'RX',
+    download: 'Download',
+    upload: 'Upload',
   },
   common: {
     cancel: 'Cancel',
@@ -76,8 +76,8 @@ export default {
     totalUsers: 'Total Users',
     activePeers: 'Active Peers',
     subscriptions: 'Subscriptions',
-    totalTx: 'Total TX',
-    totalRx: 'Total RX',
+    totalDownload: 'Total Download',
+    totalUpload: 'Total Upload',
     users: 'Users',
     usersDescription: 'Manage users and subscriptions',
     plans: 'Plans',
@@ -97,6 +97,8 @@ export default {
     peerDeleted: 'Peer deleted',
     deleteFailed: 'Failed to delete peer',
     version: 'Version',
+    download: 'Download',
+    upload: 'Upload',
   },
   adminUsers: {
     title: 'Users',

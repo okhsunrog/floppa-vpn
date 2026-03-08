@@ -66,8 +66,11 @@ async function doServerSync(): Promise<SyncResult> {
       return { outcome: 'offline' }
     }
 
-    // Remember active protocol before sync (setActiveConfig switches to last-set protocol)
-    const prevProtocol = vpn.activeProtocol
+    // Remember active protocol before sync (setActiveConfig switches to last-set protocol).
+    // On first start (no localStorage, no loaded config), leave null so we default to
+    // the first available protocol (VLESS) after sync.
+    const prevProtocol =
+      localStorage.getItem('preferredProtocol') ?? (vpn.hasConfig ? vpn.activeProtocol : null)
 
     // 1. Fetch WireGuard peer
     const { data: peer } = await getMyPeerByDevice({
@@ -113,8 +116,8 @@ async function doServerSync(): Promise<SyncResult> {
       // VLESS not available on server — skip silently
     }
 
-    // 3. Restore previously active protocol
-    if (vpn.availableProtocols.includes(prevProtocol)) {
+    // 3. Restore previously active protocol (or default to first available)
+    if (prevProtocol && vpn.availableProtocols.includes(prevProtocol)) {
       await vpn.setProtocol(prevProtocol)
     } else if (vpn.availableProtocols.length > 0) {
       await vpn.setProtocol(vpn.availableProtocols[0]!)
@@ -281,6 +284,11 @@ function formatLastPacket(secs: number | null | undefined): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`
 }
 
+function selectProtocol(proto: string) {
+  vpn.setProtocol(proto)
+  localStorage.setItem('preferredProtocol', proto)
+}
+
 const healthDotClass = computed(() => {
   const secs = vpn.connectionInfo?.last_packet_received
   if (secs == null || secs < 0 || secs > 150) return 'bg-red-500'
@@ -389,7 +397,7 @@ const healthDotClass = computed(() => {
                 ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
                 : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
             "
-            @click="vpn.setProtocol(proto)"
+            @click="selectProtocol(proto)"
           >
             {{ t(`vpn.${proto}`) }}
           </button>

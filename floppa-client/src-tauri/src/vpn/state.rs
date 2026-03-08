@@ -475,14 +475,14 @@ impl SavedVpnConfigs {
         }
     }
 
-    /// Which protocols have cached configs.
+    /// Which protocols have cached configs (VLESS first as default).
     pub fn available_protocols(&self) -> Vec<String> {
         let mut protocols = Vec::new();
-        if self.wireguard.is_some() {
-            protocols.push("wireguard".to_string());
-        }
         if self.vless.is_some() {
             protocols.push("vless".to_string());
+        }
+        if self.wireguard.is_some() {
+            protocols.push("wireguard".to_string());
         }
         protocols
     }

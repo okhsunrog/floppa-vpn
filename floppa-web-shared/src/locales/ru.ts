@@ -12,8 +12,8 @@ export default {
     disconnecting: 'Отключение',
   },
   traffic: {
-    tx: 'TX',
-    rx: 'RX',
+    download: 'Скачано',
+    upload: 'Загружено',
   },
   common: {
     cancel: 'Отмена',
@@ -76,8 +76,8 @@ export default {
     totalUsers: 'Пользователей',
     activePeers: 'Активных пиров',
     subscriptions: 'Подписок',
-    totalTx: 'Всего TX',
-    totalRx: 'Всего RX',
+    totalDownload: 'Всего скачано',
+    totalUpload: 'Всего загружено',
     users: 'Пользователи',
     usersDescription: 'Управление пользователями и подписками',
     plans: 'Тарифы',
@@ -97,6 +97,8 @@ export default {
     peerDeleted: 'Пир удалён',
     deleteFailed: 'Не удалось удалить пир',
     version: 'Версия',
+    download: 'Скачано',
+    upload: 'Загружено',
   },
   adminUsers: {
     title: 'Пользователи',

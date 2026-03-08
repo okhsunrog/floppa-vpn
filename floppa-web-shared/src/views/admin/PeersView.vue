@@ -67,8 +67,8 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
   { accessorKey: 'device_name', header: t('adminPeers.device') },
   { accessorKey: 'client_version', header: t('adminPeers.version') },
   { accessorKey: 'sync_status', header: t('adminPeers.status') },
-  { accessorKey: 'tx_bytes', header: 'TX' },
-  { accessorKey: 'rx_bytes', header: 'RX' },
+  { accessorKey: 'download_bytes', header: t('adminPeers.download') },
+  { accessorKey: 'upload_bytes', header: t('adminPeers.upload') },
   { accessorKey: 'last_handshake', header: t('adminPeers.lastSeen') },
   { id: 'actions', header: '' },
 ])
@@ -124,11 +124,11 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           <template #sync_status-cell="{ row }">
             <StatusBadge :status="row.original.sync_status as PeerSyncStatus" />
           </template>
-          <template #tx_bytes-cell="{ row }">
-            {{ formatBytes(row.original.tx_bytes) }}
+          <template #download_bytes-cell="{ row }">
+            {{ formatBytes(row.original.download_bytes) }}
           </template>
-          <template #rx_bytes-cell="{ row }">
-            {{ formatBytes(row.original.rx_bytes) }}
+          <template #upload_bytes-cell="{ row }">
+            {{ formatBytes(row.original.upload_bytes) }}
           </template>
           <template #last_handshake-cell="{ row }">
             <span v-if="row.original.last_handshake">{{
@@ -195,8 +195,8 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
             >
           </div>
           <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)]">
-            <span>TX: {{ formatBytes(peer.tx_bytes) }}</span>
-            <span>RX: {{ formatBytes(peer.rx_bytes) }}</span>
+            <span>↓ {{ formatBytes(peer.download_bytes) }}</span>
+            <span>↑ {{ formatBytes(peer.upload_bytes) }}</span>
             <span v-if="peer.last_handshake">{{ formatDateTime(peer.last_handshake) }}</span>
             <span v-else>{{ t('common.neverConnected') }}</span>
           </div>
