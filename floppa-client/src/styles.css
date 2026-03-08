@@ -39,6 +39,19 @@ html::after {
   height: var(--safe-area-inset-bottom, 0px);
 }
 
+/*
+ * Modals (z-50 via vite.config.ts) render above the masks (z-40) and use
+ * position: fixed centered in the full viewport. Constrain their max-height
+ * so they never extend behind the safe area zones on Android.
+ * The :not(.inset-y-0) excludes slideovers which span the full viewport height.
+ * On desktop --safe-area-inset-* defaults to 0px, so this is a no-op.
+ */
+[role='dialog'][data-slot='content']:not(.inset-y-0) {
+  max-height: calc(
+    100dvh - 2rem - var(--safe-area-inset-top, 0px) - var(--safe-area-inset-bottom, 0px)
+  ) !important;
+}
+
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;

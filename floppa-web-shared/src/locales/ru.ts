@@ -52,6 +52,7 @@ export default {
     plans: 'Тарифы',
     logout: 'Выйти',
     settings: 'Настройки',
+    navigation: 'Навигация',
     theme: {
       light: 'Светлая',
       dark: 'Тёмная',
@@ -369,5 +370,6 @@ export default {
     protocol: 'Протокол',
     wireguard: 'WireGuard',
     vless: 'VLESS',
+    server: 'Сервер',
   },
 }

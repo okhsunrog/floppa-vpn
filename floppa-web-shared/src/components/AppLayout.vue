@@ -234,7 +234,7 @@ const mobileNavItems = computed(() => {
       v-model:open="mobileMenuOpen"
       side="left"
       :close="true"
-      description="Navigation"
+      :description="t('nav.navigation')"
       :ui="{
         overlay: 'z-50',
         content: 'z-50 pt-[var(--safe-area-inset-top,0px)] pb-[var(--safe-area-inset-bottom,0px)]',

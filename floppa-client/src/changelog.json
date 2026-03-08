@@ -2,6 +2,19 @@
   "version": "0.4.0",
   "sections": [
     {
+      "type": "notes",
+      "items": [
+        {
+          "en": "Follow project news, new features, and promotions in our Telegram channel: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)",
+          "ru": "Следите за новостями проекта, новыми фичами и акциями в нашем Telegram-канале: [t.me/floppa_vpn_channel](https://t.me/floppa_vpn_channel)"
+        },
+        {
+          "en": "You can now buy a subscription via our Telegram bot: [t.me/FloppaVpnBot](https://t.me/FloppaVpnBot)",
+          "ru": "Теперь можно купить подписку через нашего Telegram-бота: [t.me/FloppaVpnBot](https://t.me/FloppaVpnBot)"
+        }
+      ]
+    },
+    {
       "type": "added",
       "items": [
         {

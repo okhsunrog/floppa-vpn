@@ -52,6 +52,7 @@ export default {
     plans: 'Plans',
     logout: 'Logout',
     settings: 'Settings',
+    navigation: 'Navigation',
     theme: {
       light: 'Light',
       dark: 'Dark',
@@ -368,5 +369,6 @@ export default {
     protocol: 'Protocol',
     wireguard: 'WireGuard',
     vless: 'VLESS',
+    server: 'Server',
   },
 }

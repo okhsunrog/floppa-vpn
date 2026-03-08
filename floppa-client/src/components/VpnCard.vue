@@ -370,7 +370,7 @@ const healthDotClass = computed(() => {
           IP: {{ vpn.connectionInfo.assigned_ip }}
         </span>
         <span v-if="vpn.connectionInfo.server_endpoint">
-          Server: {{ vpn.connectionInfo.server_endpoint }}
+          {{ t('vpn.server') }}: {{ vpn.connectionInfo.server_endpoint }}
         </span>
         <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
         <span class="inline-flex items-center justify-center gap-1.5">

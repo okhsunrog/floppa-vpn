@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { openUrl } from '@tauri-apps/plugin-opener'
+import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { useUpdateStore, type ChangelogItem } from '../stores/updateStore'
 
 const { t, locale } = useI18n()
@@ -56,6 +57,14 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
 <template>
   <UModal v-model:open="updateStore.changelogModalOpen">
     <template #header>
+      <VisuallyHidden>
+        <DialogTitle>{{
+          t('changelog.title', { version: updateStore.changelog?.version ?? '' })
+        }}</DialogTitle>
+        <DialogDescription>{{
+          t('changelog.title', { version: updateStore.changelog?.version ?? '' })
+        }}</DialogDescription>
+      </VisuallyHidden>
       <div class="flex items-center gap-1">
         <UButton
           icon="i-lucide-chevron-left"

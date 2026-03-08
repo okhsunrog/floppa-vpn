@@ -26,8 +26,16 @@ export default defineConfig({
     // reka-ui), the plugin injects bogus `import { options } from 'useResizable.js'` causing
     // white screens and "can't access lexical declaration before initialization" errors.
     // `ignore` prevents "options" from being auto-imported. `exclude` skips transforming SDK files.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ui() plugin type mismatch with Vite's PluginOption
-    ui({ autoImport: { ignore: ['options'], exclude: [/floppa-web-shared\/src\/client/, /node_modules/] } }) as any,
+     
+    ui({
+      autoImport: { ignore: ['options'], exclude: [/floppa-web-shared\/src\/client/, /node_modules/] },
+      ui: {
+        // Ensure all modals/slideovers render above the sticky navbar (z-40)
+        modal: { slots: { overlay: 'z-50', content: 'z-50' } },
+        slideover: { slots: { overlay: 'z-50', content: 'z-50' } },
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ui() type mismatch with Vite's PluginOption
+    }) as any,
     ...(!isProduction ? [vueDevTools()] : []),
   ],
 
