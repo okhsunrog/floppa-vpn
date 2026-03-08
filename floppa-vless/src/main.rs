@@ -149,12 +149,11 @@ async fn main() -> anyhow::Result<()> {
         registry::periodic_sync_loop(sync_pool, sync_auth, sync_interval).await;
     });
 
-    // 3. Traffic stats flush
-    let flush_pool = pool.clone();
+    // 3. Traffic stats flush (to Prometheus counters)
     let flush_auth = authenticator.clone();
     let flush_interval = config.traffic.flush_interval_secs;
     let flush_handle = tokio::spawn(async move {
-        stats::flush_loop(flush_pool, flush_auth, flush_interval).await;
+        stats::flush_loop(flush_auth, flush_interval).await;
     });
 
     // Start TCP listener
@@ -216,9 +215,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Flush remaining traffic stats before exit
-    if let Err(e) = stats::flush_traffic(&authenticator, &pool).await {
-        error!("Final traffic flush failed: {e:#}");
-    }
+    stats::flush_traffic(&authenticator);
 
     info!("floppa-vless stopped");
     Ok(())

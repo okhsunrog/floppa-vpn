@@ -451,17 +451,16 @@ async fn update_traffic_stats(
             metrics::counter!("wg_rx_bytes_total", "user_id" => uid).increment(delta_rx);
         }
 
-        sqlx::query!(
-            "UPDATE peers SET tx_bytes = tx_bytes + $1, rx_bytes = rx_bytes + $2, \
-             traffic_used_bytes = traffic_used_bytes + $1 + $2, last_handshake = $3 \
-             WHERE public_key = $4 AND sync_status = 'active'",
-            delta_tx as i64,
-            delta_rx as i64,
-            *last_handshake,
-            public_key,
-        )
-        .execute(pool)
-        .await?;
+        // Update last_handshake only (traffic tracking moved to VictoriaMetrics)
+        if let Some(handshake) = last_handshake {
+            sqlx::query!(
+                "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
+                *handshake,
+                public_key,
+            )
+            .execute(pool)
+            .await?;
+        }
     }
 
     Ok(())
