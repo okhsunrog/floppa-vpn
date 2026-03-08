@@ -81,6 +81,11 @@ tracing-logcat = "0.1.0"
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+
 [patch.crates-io]
 wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "e7764f3" }
 
