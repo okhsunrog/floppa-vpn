@@ -134,9 +134,24 @@ pub fn format_status(msgs: &Messages, plan: &str, expires: &str) -> String {
     )
 }
 
-/// Format plan button text: "Premium — 250 ⭐ / 30 days"
-pub fn format_plan_button(msgs: &Messages, name: &str, stars: i32, days: i32) -> String {
-    format!("{name} — {stars} ⭐ / {days} {}", msgs.buy_plan_days)
+/// Format plan button text: "Premium — 250 ⭐ (~450 ₽) / 30 days"
+pub fn format_plan_button(
+    msgs: &Messages,
+    name: &str,
+    stars: i32,
+    days: i32,
+    stars_rub_rate: Option<f64>,
+) -> String {
+    match stars_rub_rate {
+        Some(rate) => {
+            let rub = (stars as f64 * rate).round() as i64;
+            format!(
+                "{name} — {stars} ⭐ (~{rub} ₽) / {days} {}",
+                msgs.buy_plan_days
+            )
+        }
+        None => format!("{name} — {stars} ⭐ / {days} {}", msgs.buy_plan_days),
+    }
 }
 
 /// Format invoice title: "Premium (30 days)"

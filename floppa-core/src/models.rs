@@ -71,8 +71,6 @@ pub struct Plan {
     pub default_speed_limit_mbps: Option<i32>,
     /// Maximum number of WireGuard peers allowed
     pub max_peers: i32,
-    /// Price in rubles (0 = free)
-    pub price_rub: i32,
     /// Whether this plan is visible to users (false = admin-only like "friends")
     pub is_public: bool,
     /// If set, this is a trial plan with auto-expiration

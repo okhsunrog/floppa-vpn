@@ -36,7 +36,7 @@ sha2 = "0.10"
 hex = "0.4"
 
 # Telegram bot
-teloxide = { version = "0.13", features = ["macros"] }
+teloxide = { version = "0.17", features = ["macros"] }
 
 # Database (PostgreSQL)
 sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"] }

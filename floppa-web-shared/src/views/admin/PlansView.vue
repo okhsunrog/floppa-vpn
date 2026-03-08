@@ -35,9 +35,10 @@ const planForm = ref<CreatePlanRequest>({
   display_name: '',
   default_speed_limit_mbps: null,
   max_peers: 1,
-  price_rub: 0,
   is_public: true,
   trial_days: null,
+  price_stars: null,
+  period_days: null,
 })
 
 // Confirm delete state
@@ -53,9 +54,10 @@ function openNewPlanDialog() {
     display_name: '',
     default_speed_limit_mbps: null,
     max_peers: 1,
-    price_rub: 0,
     is_public: true,
     trial_days: null,
+    price_stars: null,
+    period_days: null,
   }
   planDialog.value = true
 }
@@ -68,9 +70,10 @@ function openEditPlanDialog(plan: Plan) {
     display_name: plan.display_name,
     default_speed_limit_mbps: plan.default_speed_limit_mbps ?? null,
     max_peers: plan.max_peers,
-    price_rub: plan.price_rub,
     is_public: plan.is_public,
     trial_days: plan.trial_days ?? null,
+    price_stars: plan.price_stars ?? null,
+    period_days: plan.period_days ?? null,
   }
   planDialog.value = true
 }
@@ -90,11 +93,14 @@ async function savePlan() {
         display_name: planForm.value.display_name,
         default_speed_limit_mbps: planForm.value.default_speed_limit_mbps,
         max_peers: planForm.value.max_peers,
-        price_rub: planForm.value.price_rub,
         is_public: planForm.value.is_public,
         trial_days: planForm.value.trial_days,
+        price_stars: planForm.value.price_stars,
+        period_days: planForm.value.period_days,
         clear_speed_limit: planForm.value.default_speed_limit_mbps == null,
         clear_trial_days: planForm.value.trial_days == null,
+        clear_price_stars: planForm.value.price_stars == null,
+        clear_period_days: planForm.value.period_days == null,
       }
       const updated = await updateMut.mutateAsync({
         path: { id: editingPlanId.value },
@@ -156,17 +162,13 @@ async function doDeletePlan() {
   pendingDeletePlan.value = null
 }
 
-function formatPrice(rub: number): string {
-  if (rub === 0) return t('common.free')
-  return `${rub} ₽`
-}
-
 const columns = computed<TableColumn<Plan>[]>(() => [
   { accessorKey: 'name', header: t('adminPlans.name') },
   { accessorKey: 'display_name', header: t('adminPlans.displayName') },
   { accessorKey: 'default_speed_limit_mbps', header: t('adminPlans.speed') },
   { accessorKey: 'max_peers', header: t('adminPlans.maxPeers') },
-  { accessorKey: 'price_rub', header: t('adminPlans.price') },
+  { accessorKey: 'price_stars', header: t('adminPlans.price') },
+  { accessorKey: 'period_days', header: t('adminPlans.period') },
   { accessorKey: 'trial_days', header: t('adminPlans.trial') },
   { accessorKey: 'is_public', header: t('adminPlans.public') },
   { id: 'actions', header: t('adminPlans.actions') },
@@ -200,8 +202,15 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 : t('common.unlimited')
             }}
           </template>
-          <template #price_rub-cell="{ row }">
-            {{ formatPrice(row.original.price_rub) }}
+          <template #price_stars-cell="{ row }">
+            {{ row.original.price_stars ? `${row.original.price_stars} ⭐` : '-' }}
+          </template>
+          <template #period_days-cell="{ row }">
+            {{
+              row.original.period_days
+                ? t('adminPlans.days', { n: row.original.period_days })
+                : t('adminPlans.permanent')
+            }}
           </template>
           <template #trial_days-cell="{ row }">
             {{
@@ -282,7 +291,13 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.maxPeers') }}</span>
             <span>{{ plan.max_peers }}</span>
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.price') }}</span>
-            <span>{{ formatPrice(plan.price_rub) }}</span>
+            <span>{{ plan.price_stars ? `${plan.price_stars} ⭐` : '-' }}</span>
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.period') }}</span>
+            <span>{{
+              plan.period_days
+                ? t('adminPlans.days', { n: plan.period_days })
+                : t('adminPlans.permanent')
+            }}</span>
             <span v-if="plan.trial_days" class="text-[var(--ui-text-muted)]">{{
               t('adminPlans.trial')
             }}</span>
@@ -343,11 +358,31 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
-              <label class="text-sm font-medium">{{
-                t('adminPlans.priceLabel', { currency: '₽' })
-              }}</label>
-              <UInput type="number" v-model.number="planForm.price_rub" :min="0" />
+              <label class="text-sm font-medium">{{ t('adminPlans.priceLabel') }}</label>
+              <UInput
+                type="number"
+                :model-value="planForm.price_stars?.toString()"
+                @update:model-value="
+                  (v: string | number) => (planForm.price_stars = v === '' ? null : Number(v))
+                "
+                placeholder="-"
+                :min="1"
+              />
             </div>
+            <div class="flex flex-col gap-1.5">
+              <label class="text-sm font-medium">{{ t('adminPlans.periodDays') }}</label>
+              <UInput
+                type="number"
+                :model-value="planForm.period_days?.toString()"
+                @update:model-value="
+                  (v: string | number) => (planForm.period_days = v === '' ? null : Number(v))
+                "
+                :placeholder="t('adminPlans.permanent')"
+                :min="1"
+              />
+            </div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
               <label class="text-sm font-medium">{{ t('adminPlans.trialDays') }}</label>
               <UInput

@@ -2025,10 +2025,6 @@
             ],
             "format": "int32"
           },
-          "price_rub": {
-            "type": "integer",
-            "format": "int32"
-          },
           "price_stars": {
             "type": [
               "integer",
@@ -2537,7 +2533,6 @@
           "name",
           "display_name",
           "max_peers",
-          "price_rub",
           "is_public"
         ],
         "properties": {
@@ -2570,10 +2565,6 @@
               "integer",
               "null"
             ],
-            "format": "int32"
-          },
-          "price_rub": {
-            "type": "integer",
             "format": "int32"
           },
           "price_stars": {
@@ -2814,13 +2805,6 @@
             "format": "int32"
           },
           "period_days": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int32"
-          },
-          "price_rub": {
             "type": [
               "integer",
               "null"

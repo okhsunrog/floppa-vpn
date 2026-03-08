@@ -42,7 +42,6 @@ export type CreatePlanRequest = {
     max_peers?: number;
     name: string;
     period_days?: number | null;
-    price_rub?: number;
     price_stars?: number | null;
     trial_days?: number | null;
 };
@@ -174,7 +173,6 @@ export type Plan = {
     max_peers: number;
     name: string;
     period_days?: number | null;
-    price_rub: number;
     price_stars?: number | null;
     trial_days?: number | null;
 };
@@ -242,7 +240,6 @@ export type UpdatePlanRequest = {
     is_public?: boolean | null;
     max_peers?: number | null;
     period_days?: number | null;
-    price_rub?: number | null;
     price_stars?: number | null;
     trial_days?: number | null;
 };

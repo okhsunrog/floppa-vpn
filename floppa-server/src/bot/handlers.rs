@@ -138,7 +138,7 @@ async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     Ok(())
 }
 
-async fn buy(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
+async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerResult {
     let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
 
     let plans = billing::get_purchasable_plans(&pool).await?;
@@ -148,11 +148,19 @@ async fn buy(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
         return Ok(());
     }
 
+    let stars_rub_rate = config.bot.as_ref().and_then(|b| b.stars_rub_rate);
+
     let buttons: Vec<Vec<InlineKeyboardButton>> = plans
         .iter()
         .map(|p| {
             vec![InlineKeyboardButton::callback(
-                i18n::format_plan_button(msgs, &p.display_name, p.price_stars, p.period_days),
+                i18n::format_plan_button(
+                    msgs,
+                    &p.display_name,
+                    p.price_stars,
+                    p.period_days,
+                    stars_rub_rate,
+                ),
                 format!("buy:{}", p.id),
             )]
         })
@@ -201,7 +209,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
 
         let msgs = i18n::for_lang(Some(lang));
 
-        bot.answer_callback_query(&q.id).await?;
+        bot.answer_callback_query(q.id.clone()).await?;
 
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.lang_set)
@@ -247,7 +255,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
         let proration =
             billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
 
-        bot.answer_callback_query(&q.id).await?;
+        bot.answer_callback_query(q.id.clone()).await?;
 
         let chat_id = q
             .message
@@ -290,7 +298,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             title,
             description,
             payload,
-            "",    // empty provider_token for Telegram Stars
             "XTR", // Telegram Stars currency
             vec![LabeledPrice::new(
                 &plan.display_name,
@@ -307,7 +314,7 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
     let (plan_id, payload_user_id) = match billing::parse_invoice_payload(&q.invoice_payload) {
         Some(ids) => ids,
         None => {
-            bot.answer_pre_checkout_query(&q.id, false)
+            bot.answer_pre_checkout_query(q.id.clone(), false)
                 .error_message("Invalid invoice")
                 .await?;
             return Ok(());
@@ -325,7 +332,7 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
     let plan = match plan {
         Some(p) => p,
         None => {
-            bot.answer_pre_checkout_query(&q.id, false)
+            bot.answer_pre_checkout_query(q.id.clone(), false)
                 .error_message("Plan no longer available")
                 .await?;
             return Ok(());
@@ -341,7 +348,7 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
     let user = match user {
         Some(u) => u,
         None => {
-            bot.answer_pre_checkout_query(&q.id, false)
+            bot.answer_pre_checkout_query(q.id.clone(), false)
                 .error_message("User not found. Please /start first.")
                 .await?;
             return Ok(());
@@ -349,7 +356,7 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
     };
 
     if user.id != payload_user_id {
-        bot.answer_pre_checkout_query(&q.id, false)
+        bot.answer_pre_checkout_query(q.id.clone(), false)
             .error_message("User mismatch. Please try again.")
             .await?;
         return Ok(());
@@ -361,13 +368,13 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
         billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
 
     if q.total_amount as i32 != proration.payable_stars {
-        bot.answer_pre_checkout_query(&q.id, false)
+        bot.answer_pre_checkout_query(q.id.clone(), false)
             .error_message("Price has changed. Please try again.")
             .await?;
         return Ok(());
     }
 
-    bot.answer_pre_checkout_query(&q.id, true).await?;
+    bot.answer_pre_checkout_query(q.id.clone(), true).await?;
 
     Ok(())
 }
@@ -438,7 +445,7 @@ async fn handle_successful_payment(
             user_id,
             plan_id,
             period_days,
-            telegram_charge_id: &payment.telegram_payment_charge_id,
+            telegram_charge_id: &payment.telegram_payment_charge_id.0,
             invoice_payload: &payment.invoice_payload,
             amount: payment.total_amount as i32,
             credit_amount: proration.credit_stars,

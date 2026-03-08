@@ -684,7 +684,7 @@ mod tests {
 
         // Plan with max_peers=1
         let plan_id = sqlx::query_scalar!(
-            "INSERT INTO plans (name, display_name, max_peers, price_rub) VALUES ('limited', 'Limited', 1, 0) RETURNING id"
+            "INSERT INTO plans (name, display_name, max_peers) VALUES ('limited', 'Limited', 1) RETURNING id"
         )
         .fetch_one(&pool)
         .await

@@ -19,6 +19,7 @@ total_bandwidth_mbps = 1000  # Total available bandwidth for all peers
 [bot]
 username = "YourBotUsername"  # Bot username for Telegram Login Widget (without @)
 # web_app_url = "https://vpn.example.com"  # Public URL for Telegram Mini App button (optional)
+# stars_rub_rate = 1.8  # Approximate Stars→RUB rate for /buy display (optional)
 
 [auth]
 jwt_expiration_hours = 168  # 1 week (optional, default is 168)

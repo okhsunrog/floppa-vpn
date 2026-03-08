@@ -130,6 +130,8 @@ pub struct BotConfig {
     pub username: Option<String>,
     /// Public URL where floppa-face is served (for Telegram Mini App)
     pub web_app_url: Option<String>,
+    /// Approximate Stars-to-RUB rate for displaying ruble equivalent in /buy (e.g. 1.8)
+    pub stars_rub_rate: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
