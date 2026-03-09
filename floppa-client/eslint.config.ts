@@ -13,6 +13,14 @@ export default defineConfigWithVueTs(
     ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/src-tauri/**'],
   },
 
+  {
+    languageOptions: {
+      parserOptions: {
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+
   pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,
   skipFormatting,

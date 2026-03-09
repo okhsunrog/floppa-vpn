@@ -39,7 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.is_admin ?? false)
 
   function cacheAvatar(url: string) {
-    fetch(url, { mode: 'cors' })
+    fetch(url, { mode: 'cors', signal: AbortSignal.timeout(10_000) })
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.blob()

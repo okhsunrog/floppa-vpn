@@ -11,6 +11,14 @@ export default defineConfigWithVueTs(
 
   globalIgnores(['src/client/**']),
 
+  {
+    languageOptions: {
+      parserOptions: {
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
+
   ...pluginVue.configs['flat/essential'],
   vueTsConfigs.recommended,
 

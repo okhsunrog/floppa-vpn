@@ -7,6 +7,7 @@
 
     "paths": {
       "@/*": ["./src/*"],
+      "#build/ui/*": ["./node_modules/.nuxt-ui/ui/*"],
       "floppa-web-shared": ["../floppa-web-shared/src/index.ts"],
       "floppa-web-shared/*": ["../floppa-web-shared/src/*"]
     }
