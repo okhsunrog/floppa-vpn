@@ -122,6 +122,10 @@ async fn main() -> Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     info!("Listening on {}", addr);
 
+    // Spawn background notification checker (every 30 min)
+    bot::notifications::spawn(pool.clone(), bot.clone(), config.clone());
+    info!("Notification checker started");
+
     // Build teloxide dispatcher
     let handler = bot::handlers::schema();
     let mut dispatcher = Dispatcher::builder(bot, handler)

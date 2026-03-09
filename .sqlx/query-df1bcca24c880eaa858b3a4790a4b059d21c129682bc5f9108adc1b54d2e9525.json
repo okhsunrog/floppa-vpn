@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            s.id as subscription_id,\n            u.telegram_id,\n            u.language,\n            CASE\n                WHEN s.expires_at <= NOW() THEN 'expiry_now'\n                ELSE 'expiry_1d_before'\n            END as \"kind!\"\n        FROM subscriptions s\n        JOIN users u ON s.user_id = u.id\n        WHERE s.expires_at IS NOT NULL\n          -- Expires within next 25 hours OR expired within last 25 hours\n          AND s.expires_at BETWEEN NOW() - INTERVAL '25 hours' AND NOW() + INTERVAL '25 hours'\n          -- No newer subscription for this user\n          AND NOT EXISTS (\n              SELECT 1 FROM subscriptions s2\n              WHERE s2.user_id = s.user_id\n                AND s2.id != s.id\n                AND (s2.expires_at IS NULL OR s2.expires_at > s.expires_at)\n          )\n          -- Not already notified with this kind\n          AND NOT EXISTS (\n              SELECT 1 FROM notification_log nl\n              WHERE nl.subscription_id = s.id\n                AND nl.kind = CASE\n                    WHEN s.expires_at <= NOW() THEN 'expiry_now'\n                    ELSE 'expiry_1d_before'\n                END\n          )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "subscription_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "telegram_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "language",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "kind!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "df1bcca24c880eaa858b3a4790a4b059d21c129682bc5f9108adc1b54d2e9525"
+}

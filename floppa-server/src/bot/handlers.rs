@@ -170,8 +170,9 @@ async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerRes
         .collect();
 
     let keyboard = InlineKeyboardMarkup::new(buttons);
+    let text = i18n::format_plans_message(msgs, msgs.buy_choose_plan, &plans);
 
-    bot.send_message(msg.chat.id, msgs.buy_choose_plan)
+    bot.send_message(msg.chat.id, text)
         .reply_markup(keyboard)
         .await?;
 

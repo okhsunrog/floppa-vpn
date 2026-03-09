@@ -1,6 +1,7 @@
 /// Simple struct-based i18n for the Telegram bot.
 /// Resolves language: DB preference → Telegram language_code → English.
 use floppa_core::DbPool;
+use floppa_core::billing::PurchasablePlan;
 
 #[allow(dead_code)]
 pub struct Messages {
@@ -20,7 +21,11 @@ pub struct Messages {
     pub buy_no_plans: &'static str,
     pub buy_success: &'static str,
     pub buy_error: &'static str,
-    pub buy_plan_days: &'static str, // "days" / "дней"
+    pub buy_plan_days: &'static str,  // "days" / "дней"
+    pub buy_up_to_mbps: &'static str, // "up to {} Mbps" / "до {} Мбит/с"
+    pub buy_no_speed_limit: &'static str,
+    pub buy_wg_configs: &'static str, // "{} WireGuard configs" / "{} конфигов WireGuard"
+    pub buy_wg_vless_note: &'static str,
 
     // /lang
     pub lang_prompt: &'static str,
@@ -30,6 +35,10 @@ pub struct Messages {
     pub vless_your_config: &'static str,
     pub vless_not_configured: &'static str,
     pub vless_no_user: &'static str,
+
+    // notifications
+    pub notify_expires_tomorrow: &'static str,
+    pub notify_expired: &'static str,
 
     // fallback
     pub unknown_message: &'static str,
@@ -50,11 +59,16 @@ static EN: Messages = Messages {
     no_subscription_short: "No active subscription.\n\nUse /buy to purchase a plan.",
     permanent: "Permanent",
 
-    buy_choose_plan: "Choose a plan to purchase:",
+    buy_choose_plan: "Choose a plan:",
     buy_no_plans: "No plans available for purchase at this time.",
     buy_success: "Payment successful! Your subscription has been activated.",
     buy_error: "Payment processing failed. Please try again or contact support.",
     buy_plan_days: "days",
+    buy_up_to_mbps: "up to {} Mbps",
+    buy_no_speed_limit: "unlimited speed",
+    buy_wg_configs: "{} WireGuard configs",
+    buy_wg_vless_note: "Speed limit applies per WireGuard config. \
+                        VLESS has no device limit, but the speed is shared across all devices.",
 
     lang_prompt: "Choose your language:",
     lang_set: "Language set to English",
@@ -63,6 +77,9 @@ static EN: Messages = Messages {
 
     vless_not_configured: "VLESS is not configured on this server.",
     vless_no_user: "Please use /start first.",
+
+    notify_expires_tomorrow: "Your subscription expires tomorrow!\n\nRenew now:",
+    notify_expired: "Your subscription has expired.\n\nChoose a plan to continue:",
 
     unknown_message: "I only understand commands:\n\n\
                       /start — open the app\n\
@@ -86,11 +103,16 @@ static RU: Messages = Messages {
     no_subscription_short: "Нет активной подписки.\n\nИспользуйте /buy для покупки тарифа.",
     permanent: "Бессрочно",
 
-    buy_choose_plan: "Выберите тариф для покупки:",
+    buy_choose_plan: "Выберите тариф:",
     buy_no_plans: "Сейчас нет тарифов, доступных для покупки.",
     buy_success: "Оплата прошла успешно! Подписка активирована.",
     buy_error: "Ошибка обработки платежа. Попробуйте снова или обратитесь в поддержку.",
     buy_plan_days: "дней",
+    buy_up_to_mbps: "до {} Мбит/с",
+    buy_no_speed_limit: "без ограничения скорости",
+    buy_wg_configs: "{} конфигов WireGuard",
+    buy_wg_vless_note: "Лимит скорости — на каждый WireGuard конфиг отдельно. \
+                        VLESS — без лимита устройств, но скорость общая на все.",
 
     lang_prompt: "Выберите язык:",
     lang_set: "Язык изменён на русский",
@@ -99,6 +121,9 @@ static RU: Messages = Messages {
 
     vless_not_configured: "VLESS не настроен на этом сервере.",
     vless_no_user: "Сначала используйте /start.",
+
+    notify_expires_tomorrow: "Ваша подписка истекает завтра!\n\nПродлите сейчас:",
+    notify_expired: "Ваша подписка истекла.\n\nВыберите тариф для продления:",
 
     unknown_message: "Я понимаю только команды:\n\n\
                       /start — открыть приложение\n\
@@ -194,4 +219,22 @@ pub fn format_buy_success(msgs: &Messages, plan: &str, expires: &str) -> String 
         "{}\n\n{}: {}\n{}: {}",
         msgs.buy_success, msgs.status_plan, plan, msgs.status_expires, expires
     )
+}
+
+/// Build the full buy/notification message: header + plan descriptions + WG/VLESS note.
+pub fn format_plans_message(msgs: &Messages, header: &str, plans: &[PurchasablePlan]) -> String {
+    let mut text = header.to_string();
+    text.push('\n');
+
+    for p in plans {
+        let speed = match p.default_speed_limit_mbps {
+            Some(mbps) => msgs.buy_up_to_mbps.replace("{}", &mbps.to_string()),
+            None => msgs.buy_no_speed_limit.to_string(),
+        };
+        let configs = msgs.buy_wg_configs.replace("{}", &p.max_peers.to_string());
+        text.push_str(&format!("\n📋 {} — {}, {}", p.display_name, speed, configs));
+    }
+
+    text.push_str(&format!("\n\nℹ️ {}", msgs.buy_wg_vless_note));
+    text
 }
