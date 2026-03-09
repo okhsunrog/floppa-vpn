@@ -33,6 +33,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# Auto-generated type declarations (Nuxt UI unplugin)
+auto-imports.d.ts
+components.d.ts
+
 # IDE
 .idea/
 
