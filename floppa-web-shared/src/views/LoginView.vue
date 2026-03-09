@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getPublicConfigQuery } from '../client/@pinia/colada.gen'
-import { telegramLogin, telegramMiniAppAuth } from '../client/sdk.gen'
+import { telegramLogin, telegramMiniAppAuth, exchangeTelegramLoginCode } from '../client/sdk.gen'
 import type { TelegramAuthData } from '../client/types.gen'
 import { useAuthStore } from '../stores'
 import TelegramLoginButton from '../components/TelegramLoginButton.vue'
@@ -29,6 +29,9 @@ const { t } = useI18n()
 const { data: config, status, error: configError } = useQuery(getPublicConfigQuery())
 const loginError = ref<string | null>(null)
 const miniAppLoading = ref(false)
+const manualCode = ref('')
+const manualCodeLoading = ref(false)
+const manualCodeError = ref<string | null>(null)
 
 // Detect Telegram Mini App environment
 function getTelegramInitData(): string | null {
@@ -99,6 +102,25 @@ function startDeepLinkLogin() {
     emit('deep-link-login', props.deepLinkLoginUrl)
   }
 }
+
+async function handleManualCode() {
+  const code = manualCode.value.trim()
+  if (!code) return
+  manualCodeError.value = null
+  manualCodeLoading.value = true
+  try {
+    const { data: response } = await exchangeTelegramLoginCode({
+      body: { code },
+      throwOnError: true,
+    })
+    auth.setAuth(response.token, response.user)
+    router.push('/')
+  } catch {
+    manualCodeError.value = t('login.codeInvalid')
+  } finally {
+    manualCodeLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -142,19 +164,34 @@ function startDeepLinkLogin() {
             <UButton color="primary" icon="i-lucide-send" @click="startDeepLinkLogin">
               {{ t('login.continueInBrowser') }}
             </UButton>
-            <div class="flex flex-col gap-1.5 mt-1">
-              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-                {{ t('login.browserHint') }}
+            <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs mt-1">
+              {{ t('login.browserHint') }}
+            </p>
+            <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
+              {{ t('login.vpnHint') }}
+            </p>
+
+            <!-- Manual code fallback -->
+            <div class="w-full border-t border-[var(--ui-border)] pt-3 mt-2">
+              <p class="text-xs text-[var(--ui-text-muted)] text-center mb-2">
+                {{ t('login.codeFallbackHint') }}
               </p>
-              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-                {{ t('login.retryHint') }}
-              </p>
-              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-                {{ t('login.browserChangeHint') }}
-              </p>
-              <p class="text-xs text-[var(--ui-text-muted)] text-center max-w-xs">
-                {{ t('login.vpnHint') }}
-              </p>
+              <div class="flex gap-2">
+                <UInput
+                  v-model="manualCode"
+                  :placeholder="t('login.codePlaceholder')"
+                  class="flex-1"
+                  @keydown.enter="handleManualCode"
+                />
+                <UButton
+                  :loading="manualCodeLoading"
+                  :disabled="!manualCode.trim()"
+                  @click="handleManualCode"
+                >
+                  {{ t('login.codeSubmit') }}
+                </UButton>
+              </div>
+              <UAlert v-if="manualCodeError" color="error" :title="manualCodeError" class="mt-2" />
             </div>
           </div>
 

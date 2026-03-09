@@ -2,7 +2,7 @@ use axum::{
     Json,
     extract::{Query, State},
     http::HeaderMap,
-    response::{Html, Redirect},
+    response::Html,
 };
 use chrono::{Duration, Utc};
 use floppa_core::services;
@@ -248,12 +248,14 @@ pub(super) async fn start_telegram_deep_link_login(
 }
 
 /// Telegram widget callback for deep-link flow.
+/// Returns an HTML landing page that auto-opens the app via deep link,
+/// with a manual button and copy-code fallback for browsers that block custom schemes.
 #[utoipa::path(
     get,
     path = "/auth/telegram/callback",
     tag = "auth",
     responses(
-        (status = 307, description = "Redirect to deep link with temporary code"),
+        (status = 200, description = "HTML page that redirects to deep link"),
         (status = 400, body = ApiError, description = "Invalid or expired state"),
         (status = 401, body = ApiError, description = "Invalid Telegram auth payload"),
         (status = 500, body = ApiError, description = "Internal server error"),
@@ -262,7 +264,7 @@ pub(super) async fn start_telegram_deep_link_login(
 pub(super) async fn telegram_deep_link_callback(
     State(state): State<AppState>,
     Query(query): Query<TelegramDeepLinkCallbackQuery>,
-) -> Result<Redirect, ApiError> {
+) -> Result<Html<String>, ApiError> {
     let now = Utc::now();
     let login_state = {
         let mut login_states = state.telegram_login_states.write().await;
@@ -303,11 +305,108 @@ pub(super) async fn telegram_deep_link_callback(
     } else {
         '?'
     };
-    let redirect_uri = format!(
+    let deep_link_uri = format!(
         "{}{}code={}",
         login_state.redirect_uri, separator, login_code
     );
-    Ok(Redirect::temporary(&redirect_uri))
+
+    let html = format!(
+        r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Floppa VPN — Login</title>
+    <style>
+      * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+      body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+             color: #111827; background: #f5f5f5; min-height: 100vh; display: flex;
+             align-items: center; justify-content: center; padding: 24px; }}
+      .card {{ background: #fff; border-radius: 12px; padding: 32px 24px; max-width: 420px;
+               width: 100%; text-align: center; box-shadow: 0 2px 12px rgba(0,0,0,0.08); }}
+      h1 {{ font-size: 22px; margin-bottom: 4px; }}
+      .hint {{ color: #6b7280; font-size: 14px; margin-bottom: 20px; }}
+      .btn {{ display: block; width: 100%; padding: 12px; border: none; border-radius: 8px;
+              font-size: 16px; font-weight: 600; cursor: pointer; text-decoration: none;
+              text-align: center; margin-bottom: 12px; }}
+      .btn-primary {{ background: #16a34a; color: #fff; }}
+      .btn-primary:active {{ background: #15803d; }}
+      .divider {{ border: none; border-top: 1px solid #e5e7eb; margin: 16px 0; }}
+      .code-label {{ color: #6b7280; font-size: 13px; margin-bottom: 8px; }}
+      .code-box {{ background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 8px;
+                   padding: 12px 16px; font-family: 'SF Mono', Monaco, Consolas, monospace;
+                   font-size: 13px; word-break: break-all; color: #374151;
+                   text-align: left; margin-bottom: 12px; user-select: all; }}
+      .btn-copy {{ display: inline-flex; align-items: center; gap: 8px; padding: 8px 20px;
+                   background: transparent; border: 1px solid #d1d5db; border-radius: 8px;
+                   color: #374151; font-size: 14px; font-weight: 500; cursor: pointer; }}
+      .btn-copy:active {{ background: #f3f4f6; }}
+      .btn-copy svg {{ width: 16px; height: 16px; }}
+      .copied {{ color: #16a34a; font-size: 13px; margin-top: 8px; min-height: 20px; }}
+      @media (prefers-color-scheme: dark) {{
+        body {{ background: #111; color: #f3f4f6; }}
+        .card {{ background: #1f2937; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }}
+        .hint {{ color: #9ca3af; }}
+        .btn-primary {{ background: #22c55e; color: #052e16; }}
+        .btn-primary:active {{ background: #16a34a; }}
+        .divider {{ border-color: #374151; }}
+        .code-label {{ color: #9ca3af; }}
+        .code-box {{ background: #111827; border-color: #374151; color: #d1d5db; }}
+        .btn-copy {{ border-color: #4b5563; color: #d1d5db; }}
+        .btn-copy:active {{ background: #374151; }}
+        .copied {{ color: #4ade80; }}
+      }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Floppa VPN</h1>
+      <p class="hint">Opening the app&hellip;</p>
+      <a class="btn btn-primary" id="open" href="{deep_link}">Open Floppa VPN</a>
+      <hr class="divider" />
+      <p class="code-label">Paste this into the app:</p>
+      <div class="code-box" id="code-box">{code}</div>
+      <button class="btn-copy" id="copy" onclick="copyCode()">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+             stroke-width="1.5" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round"
+                d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125
+                   1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125
+                   1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621
+                   0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06
+                   9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5
+                   10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m0
+                   0a2.625 2.625 0 1 1 5.25 0" />
+        </svg>
+        Copy Code
+      </button>
+      <p class="copied" id="copied"></p>
+    </div>
+    <script>
+      window.location.href = "{deep_link}";
+
+      function copyCode() {{
+        navigator.clipboard.writeText("{code}").then(function() {{
+          document.getElementById("copied").textContent = "Copied!";
+        }}, function() {{
+          var t = document.createElement("textarea");
+          t.value = "{code}";
+          document.body.appendChild(t);
+          t.select();
+          document.execCommand("copy");
+          document.body.removeChild(t);
+          document.getElementById("copied").textContent = "Copied!";
+        }});
+      }}
+    </script>
+  </body>
+</html>"#,
+        deep_link = html_escape_attr(&deep_link_uri),
+        code = html_escape_attr(&login_code),
+    );
+
+    Ok(Html(html))
 }
 
 /// Exchange one-time login code for JWT + user payload.
