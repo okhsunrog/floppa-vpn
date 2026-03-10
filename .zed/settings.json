@@ -1,0 +1,13 @@
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "linkedProjects": [
+          "Cargo.toml",
+          "floppa-client/src-tauri/Cargo.toml",
+          "tauri-plugin-vpn/Cargo.toml"
+        ]
+      }
+    }
+  }
+}

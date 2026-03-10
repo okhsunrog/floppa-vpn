@@ -1,7 +1,8 @@
 pub mod logging;
 pub mod vpn;
 
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 #[allow(unused_imports)]
@@ -9,6 +10,13 @@ use tracing::{info, warn};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;
 use vpn::{PlatformImpl, VpnState, get_platform};
+
+/// Log directory, set once at startup. Used by log export commands.
+static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn get_log_dir() -> Option<&'static PathBuf> {
+    LOG_DIR.get()
+}
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Clone, serde::Serialize)]
@@ -40,6 +48,10 @@ pub fn run() {
             vpn::commands::open_notification_settings,
             vpn::commands::get_safe_area_insets,
             vpn::commands::set_status_bar_style,
+            vpn::commands::get_log_dir,
+            vpn::commands::export_logs,
+            vpn::commands::set_diagnostic_mode,
+            vpn::commands::get_diagnostic_mode,
         ])
         .events(tauri_specta::collect_events![]);
 
@@ -89,16 +101,27 @@ pub fn run() {
 
     builder = builder
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_android_fs::init())
         .manage(vpn_state.clone())
         .manage(platform)
         .invoke_handler(specta_builder.invoke_handler());
+
+    // Desktop-only: fs and dialog plugins
+    #[cfg(not(target_os = "android"))]
+    {
+        builder = builder
+            .plugin(tauri_plugin_fs::init())
+            .plugin(tauri_plugin_dialog::init());
+    }
+
+    // Android-only: android_fs plugin
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(tauri_plugin_android_fs::init());
+    }
 
     // Desktop-only plugins (not needed on mobile)
     #[cfg(not(mobile))]
@@ -119,8 +142,14 @@ pub fn run() {
 
     let app = builder
         .setup(move |#[allow(unused_variables)] app| {
-            // init tracing/logging
-            logging::init_tracing();
+            // Set up log directory and init tracing with file logging
+            let log_dir = app
+                .path()
+                .app_data_dir()
+                .expect("Failed to get app data dir")
+                .join("logs");
+            logging::init_tracing(&log_dir);
+            let _ = LOG_DIR.set(log_dir);
             info!("Logging initialized.");
 
             // Initialize config dir from Tauri path resolver
