@@ -60,6 +60,8 @@ export const telegramDeepLinkCallbackQueryKey = (options?: Options<TelegramDeepL
 
 /**
  * Telegram widget callback for deep-link flow.
+ * Returns an HTML landing page that auto-opens the app via deep link,
+ * with a manual button and copy-code fallback for browsers that block custom schemes.
  */
 export const telegramDeepLinkCallbackQuery = defineQueryOptions<Options<TelegramDeepLinkCallbackData>, unknown, TelegramDeepLinkCallbackError>((options?: Options<TelegramDeepLinkCallbackData>) => ({
     key: telegramDeepLinkCallbackQueryKey(options),

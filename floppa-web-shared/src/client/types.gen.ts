@@ -376,6 +376,13 @@ export type TelegramDeepLinkCallbackErrors = {
 
 export type TelegramDeepLinkCallbackError = TelegramDeepLinkCallbackErrors[keyof TelegramDeepLinkCallbackErrors];
 
+export type TelegramDeepLinkCallbackResponses = {
+    /**
+     * HTML page that redirects to deep link
+     */
+    200: unknown;
+};
+
 export type ExchangeTelegramLoginCodeData = {
     body: ExchangeTelegramLoginCodeRequest;
     path?: never;

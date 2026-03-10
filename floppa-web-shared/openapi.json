@@ -62,11 +62,11 @@
         "tags": [
           "auth"
         ],
-        "summary": "Telegram widget callback for deep-link flow.",
+        "summary": "Telegram widget callback for deep-link flow.\nReturns an HTML landing page that auto-opens the app via deep link,\nwith a manual button and copy-code fallback for browsers that block custom schemes.",
         "operationId": "telegram_deep_link_callback",
         "responses": {
-          "307": {
-            "description": "Redirect to deep link with temporary code"
+          "200": {
+            "description": "HTML page that redirects to deep link"
           },
           "400": {
             "description": "Invalid or expired state",
