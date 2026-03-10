@@ -138,6 +138,7 @@ pub fn stop_vpn_service() {
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
+    log_dir: JString<'local>,
 ) {
     let _ = env.with_env(|env: &mut Env<'local>| -> Result<(), jni::errors::Error> {
         // Store JavaVM for later JNI calls
@@ -146,42 +147,9 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
             let _ = JAVA_VM.set(vm);
         }
 
-        // Initialize logging via tracing-logcat
-        {
-            use tracing_logcat::{LogcatMakeWriter, LogcatTag};
-            use tracing_subscriber::EnvFilter;
-            use tracing_subscriber::prelude::*;
-
-            let tag = LogcatTag::Fixed("FloppaVPN".to_owned());
-            if let Ok(writer) = LogcatMakeWriter::new(tag) {
-                let filter = EnvFilter::from_default_env();
-
-                #[cfg(debug_assertions)]
-                let filter = filter
-                    .add_directive("floppa_client_lib=trace".parse().unwrap())
-                    .add_directive("debug".parse().unwrap());
-
-                #[cfg(not(debug_assertions))]
-                let filter = filter
-                    .add_directive("floppa_client_lib=debug".parse().unwrap())
-                    .add_directive("shoes_lite=info".parse().unwrap())
-                    .add_directive("gotatun=info".parse().unwrap())
-                    .add_directive("tarpc=warn".parse().unwrap())
-                    .add_directive("warn".parse().unwrap());
-
-                let logcat_layer = tracing_subscriber::fmt::layer()
-                    .with_ansi(false)
-                    .with_target(true)
-                    .with_file(false)
-                    .with_line_number(false)
-                    .with_writer(writer);
-
-                let _ = tracing_subscriber::registry()
-                    .with(filter)
-                    .with(logcat_layer)
-                    .try_init();
-            }
-        }
+        // Initialize logging with file layer
+        let log_dir_str: String = log_dir.mutf8_chars(env)?.to_string();
+        crate::logging::init_tracing_vpn_process(std::path::Path::new(&log_dir_str));
 
         // Set a panic hook to ensure panics are logged to logcat
         std::panic::set_hook(Box::new(|info| {

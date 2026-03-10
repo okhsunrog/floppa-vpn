@@ -5,13 +5,44 @@ import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
+import { commands } from '../bindings'
 
 const { t } = useI18n()
+const toast = useToast()
 const vpn = useVpnStore()
 const settings = useSettingsStore()
 const updateStore = useUpdateStore()
 const permissions = useAndroidPermissions()
 const appVersion = __APP_VERSION__
+
+const diagnosticMode = ref(false)
+const exportingLogs = ref(false)
+
+// diagnosticMode init is in the main onMounted below
+
+async function toggleDiagnosticMode(enabled: boolean) {
+  diagnosticMode.value = enabled
+  await commands.setDiagnosticMode(enabled)
+}
+
+async function shareLogs() {
+  exportingLogs.value = true
+  try {
+    const result = await commands.exportLogs()
+    if (result.status === 'error') {
+      toast.add({ title: t('settings.logsExportFailed'), color: 'error' })
+      return
+    }
+    if (result.data) {
+      toast.add({ title: t('settings.logsExported'), color: 'success' })
+    }
+  } catch (e) {
+    console.error('Failed to export logs:', e)
+    toast.add({ title: t('settings.logsExportFailed'), color: 'error' })
+  } finally {
+    exportingLogs.value = false
+  }
+}
 
 const searchQuery = ref('')
 const showSystemApps = ref(false)
@@ -37,13 +68,16 @@ const modeOptions = computed(() => [
   },
 ])
 
-onMounted(() => {
+onMounted(async () => {
   if (vpn.isAndroid) {
     permissions.checkBatteryOptimization()
     permissions.checkNotifications()
     // App list is preloaded at startup (VpnCard); this is a fallback
     settings.loadApps()
   }
+
+  // Load diagnostic mode state
+  diagnosticMode.value = await commands.getDiagnosticMode()
 })
 
 const filteredApps = computed(() => {
@@ -367,6 +401,49 @@ function selectMode(mode: SplitMode) {
           size="sm"
           @click="updateStore.openChangelogForCurrent()"
         />
+      </div>
+    </UCard>
+
+    <!-- Diagnostics -->
+    <UCard class="mt-4">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-stethoscope" class="size-5" />
+          <span class="font-semibold">{{ t('settings.diagnostics') }}</span>
+        </div>
+      </template>
+
+      <p class="text-sm text-[var(--ui-text-muted)] mb-4">
+        {{ t('settings.diagnosticsDescription') }}
+      </p>
+
+      <div class="flex flex-col gap-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium">{{ t('settings.diagnosticMode') }}</p>
+            <p class="text-xs text-[var(--ui-text-muted)]">
+              {{ t('settings.diagnosticModeDescription') }}
+            </p>
+          </div>
+          <USwitch :model-value="diagnosticMode" @update:model-value="toggleDiagnosticMode" />
+        </div>
+
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium">{{ t('settings.shareLogs') }}</p>
+            <p class="text-xs text-[var(--ui-text-muted)]">
+              {{ t('settings.shareLogsDescription') }}
+            </p>
+          </div>
+          <UButton
+            :label="t('settings.shareLogs')"
+            icon="i-lucide-share"
+            variant="soft"
+            size="sm"
+            :loading="exportingLogs"
+            @click="shareLogs"
+          />
+        </div>
       </div>
     </UCard>
   </div>

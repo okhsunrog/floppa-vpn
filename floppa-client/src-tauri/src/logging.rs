@@ -1,41 +1,90 @@
-use tracing_subscriber::{EnvFilter, prelude::*};
+use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tracing_subscriber::reload;
+use tracing_subscriber::{EnvFilter, Layer, prelude::*};
 
-pub fn init_tracing() {
-    let filter = EnvFilter::from_default_env();
+static DIAGNOSTIC_MODE: AtomicBool = AtomicBool::new(false);
 
+type FilterHandle = reload::Handle<EnvFilter, tracing_subscriber::Registry>;
+static RELOAD_HANDLE: std::sync::OnceLock<FilterHandle> = std::sync::OnceLock::new();
+
+// ---------------------------------------------------------------------------
+// Filters
+// ---------------------------------------------------------------------------
+
+fn normal_filter() -> EnvFilter {
     #[cfg(debug_assertions)]
-    let filter = filter
-        .add_directive("floppa_client_lib=trace".parse().unwrap())
-        .add_directive("webview=trace".parse().unwrap())
-        .add_directive("tauri=info".parse().unwrap())
-        .add_directive("debug".parse().unwrap());
+    {
+        EnvFilter::from_default_env()
+            .add_directive("floppa_client_lib=trace".parse().unwrap())
+            .add_directive("webview=trace".parse().unwrap())
+            .add_directive("tauri=info".parse().unwrap())
+            .add_directive("debug".parse().unwrap())
+    }
 
     #[cfg(not(debug_assertions))]
-    let filter = filter
-        .add_directive("floppa_client_lib=debug".parse().unwrap())
-        .add_directive("shoes_lite=info".parse().unwrap())
-        .add_directive("webview=info".parse().unwrap())
-        .add_directive("log=info".parse().unwrap())
-        .add_directive("gotatun=info".parse().unwrap())
-        .add_directive("tarpc=warn".parse().unwrap())
-        .add_directive("warn".parse().unwrap());
+    {
+        EnvFilter::from_default_env()
+            .add_directive("floppa_client_lib=debug".parse().unwrap())
+            .add_directive("shoes_lite=info".parse().unwrap())
+            .add_directive("webview=info".parse().unwrap())
+            .add_directive("log=info".parse().unwrap())
+            .add_directive("gotatun=info".parse().unwrap())
+            .add_directive("tarpc=warn".parse().unwrap())
+            .add_directive("warn".parse().unwrap())
+    }
+}
+
+fn diagnostic_filter() -> EnvFilter {
+    EnvFilter::from_default_env()
+        .add_directive("floppa_client_lib=trace".parse().unwrap())
+        .add_directive("shoes_lite=debug".parse().unwrap())
+        .add_directive("gotatun=debug".parse().unwrap())
+        .add_directive("webview=debug".parse().unwrap())
+        .add_directive("log=debug".parse().unwrap())
+        .add_directive("tarpc=info".parse().unwrap())
+        .add_directive("debug".parse().unwrap())
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+pub fn set_diagnostic_mode(enabled: bool) {
+    DIAGNOSTIC_MODE.store(enabled, Ordering::Relaxed);
+    if let Some(handle) = RELOAD_HANDLE.get() {
+        let filter = if enabled {
+            diagnostic_filter()
+        } else {
+            normal_filter()
+        };
+        let _ = handle.reload(filter);
+    }
+}
+
+pub fn is_diagnostic_mode() -> bool {
+    DIAGNOSTIC_MODE.load(Ordering::Relaxed)
+}
+
+/// Initialize tracing for the main UI process.
+///
+/// Outputs go to a rotating log file (`floppa-ui`) plus either stdout
+/// (desktop) or logcat (Android).
+pub fn init_tracing(log_dir: &Path) {
+    let _ = std::fs::create_dir_all(log_dir);
+
+    let file_layer = build_file_layer(log_dir, "floppa-ui");
+
+    let (filter, reload_handle) = reload::Layer::new(normal_filter());
+    let _ = RELOAD_HANDLE.set(reload_handle);
 
     #[cfg(target_os = "android")]
     {
-        use tracing_logcat::{LogcatMakeWriter, LogcatTag};
-        let tag = LogcatTag::Fixed("FloppaVPN".to_owned());
-        let logcat_writer = LogcatMakeWriter::new(tag).expect("Failed to init logcat writer");
-
-        let logcat_layer = tracing_subscriber::fmt::layer()
-            .with_ansi(false)
-            .with_target(true)
-            .with_file(false)
-            .with_line_number(false)
-            .with_writer(logcat_writer);
-
         let _ = tracing_subscriber::registry()
             .with(filter)
-            .with(logcat_layer)
+            .with(build_logcat_layer())
+            .with(file_layer)
             .try_init();
     }
 
@@ -49,9 +98,78 @@ pub fn init_tracing() {
         let _ = tracing_subscriber::registry()
             .with(filter)
             .with(stdout_layer)
+            .with(file_layer)
             .try_init();
     }
 }
+
+/// Initialize tracing for the Android `:vpn` process (separate from UI).
+///
+/// Outputs go to a rotating log file (`floppa-vpn`) plus logcat.
+#[cfg(target_os = "android")]
+pub fn init_tracing_vpn_process(log_dir: &Path) {
+    let _ = std::fs::create_dir_all(log_dir);
+
+    let file_layer = build_file_layer(log_dir, "floppa-vpn");
+
+    let _ = tracing_subscriber::registry()
+        .with(normal_filter())
+        .with(build_logcat_layer())
+        .with(file_layer)
+        .try_init();
+}
+
+// ---------------------------------------------------------------------------
+// Shared layer builders
+// ---------------------------------------------------------------------------
+
+/// Create a size-rotating file layer (2 MB per file, 1 backup).
+fn build_file_layer<S>(log_dir: &Path, prefix: &str) -> Box<dyn Layer<S> + Send + Sync>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    let file_writer = logroller::LogRollerBuilder::new(log_dir, Path::new(prefix))
+        .rotation(logroller::Rotation::SizeBased(logroller::RotationSize::MB(
+            2,
+        )))
+        .max_keep_files(1)
+        .build()
+        .expect("Failed to create log file writer");
+
+    tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_target(true)
+        .with_file(false)
+        .with_line_number(false)
+        .with_writer(Mutex::new(file_writer))
+        .boxed()
+}
+
+/// Create a logcat layer tagged `FloppaVPN`.
+#[cfg(target_os = "android")]
+fn build_logcat_layer<S>() -> Option<Box<dyn Layer<S> + Send + Sync>>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    use tracing_logcat::{LogcatMakeWriter, LogcatTag};
+
+    let tag = LogcatTag::Fixed("FloppaVPN".to_owned());
+    let logcat_writer = LogcatMakeWriter::new(tag).ok()?;
+
+    Some(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_target(true)
+            .with_file(false)
+            .with_line_number(false)
+            .with_writer(logcat_writer)
+            .boxed(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Desktop-only custom formatter
+// ---------------------------------------------------------------------------
 
 /// Custom formatter that resolves the real source for log-crate events.
 ///
@@ -61,8 +179,6 @@ pub fn init_tracing() {
 ///
 /// Tauri's WebView interception produces targets like
 /// `webview:error@http://localhost:1420/...` — we strip the URL suffix.
-///
-/// Only needed on desktop — on Android the target is already short.
 #[cfg(not(target_os = "android"))]
 struct ShortTargetFormat;
 
@@ -79,36 +195,26 @@ where
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         let meta = event.metadata();
-        let level = meta.level();
         let target = meta.target();
 
         // For log-crate events (target "log"), extract the real source from
-        // the log.target field that tracing-log stores.
-        let mut real_target = String::new();
-        if target == "log" {
+        // the `log.target` field that tracing-log stores.
+        let real_target = if target == "log" {
             let mut visitor = LogTargetVisitor::default();
             event.record(&mut visitor);
-            if let Some(t) = visitor.log_target {
-                real_target = t;
-            }
-        }
-
-        let short_target = if !real_target.is_empty() {
-            // Shorten webview targets from log.target too
-            if real_target.starts_with("webview") {
-                "webview"
-            } else {
-                &real_target
-            }
-        } else if target.starts_with("webview") {
-            // Tauri WebView interception: "webview:LEVEL@URL" → "webview"
-            "webview"
+            visitor.log_target.unwrap_or_default()
         } else {
-            target
+            String::new()
         };
 
-        // ANSI colors for log levels
-        let (color, level_str) = match *level {
+        let short_target = match () {
+            _ if !real_target.is_empty() && real_target.starts_with("webview") => "webview",
+            _ if !real_target.is_empty() => &real_target,
+            _ if target.starts_with("webview") => "webview",
+            _ => target,
+        };
+
+        let (color, level_str) = match *meta.level() {
             tracing::Level::ERROR => ("\x1b[31m", "ERROR"),
             tracing::Level::WARN => ("\x1b[33m", " WARN"),
             tracing::Level::INFO => ("\x1b[32m", " INFO"),
