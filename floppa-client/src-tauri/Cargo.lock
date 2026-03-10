@@ -1674,6 +1674,7 @@ dependencies = [
  "tun",
  "uuid",
  "windows 0.62.2",
+ "wintun-bindings",
 ]
 
 [[package]]
@@ -2358,7 +2359,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 [[package]]
 name = "hickory-net"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
+source = "git+https://github.com/hickory-dns/hickory-dns#b4a402c0799db444f85c6dfef6424fa89ff957b6"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2390,7 +2391,7 @@ dependencies = [
 [[package]]
 name = "hickory-proto"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
+source = "git+https://github.com/hickory-dns/hickory-dns#b4a402c0799db444f85c6dfef6424fa89ff957b6"
 dependencies = [
  "data-encoding",
  "idna",
@@ -2409,7 +2410,7 @@ dependencies = [
 [[package]]
 name = "hickory-resolver"
 version = "0.26.0-alpha.1"
-source = "git+https://github.com/hickory-dns/hickory-dns#a838bff01cff986a56976fb5c8aff09412011356"
+source = "git+https://github.com/hickory-dns/hickory-dns#b4a402c0799db444f85c6dfef6424fa89ff957b6"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -2571,7 +2572,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -5477,7 +5478,7 @@ checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 [[package]]
 name = "shoes-lite"
 version = "0.2.8"
-source = "git+https://github.com/okhsunrog/shoes-lite?rev=a8b5c12#a8b5c120bcb7231397146d6413cd4ec4b5536150"
+source = "git+https://github.com/okhsunrog/shoes-lite?rev=d2fdeb2#d2fdeb2ae172f7ef2cf3b6274bf05c5939b9c843"
 dependencies = [
  "async-trait",
  "aws-lc-rs",

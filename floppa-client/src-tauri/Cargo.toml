@@ -55,7 +55,7 @@ tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "27.1.0"
 # VLESS+REALITY protocol support
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "a8b5c12" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "d2fdeb2" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 
@@ -69,6 +69,7 @@ windows = { version = "0.62", features = [
     "Win32_Networking_WinSock"
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
+wintun-bindings = "0.7"
 
 [target.'cfg(target_os = "android")'.dependencies]
 futures = "0.3.32"

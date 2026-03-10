@@ -135,8 +135,32 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    async fn prepare_tun(&self, _iface: &str) -> Result<(), String> {
-        // Windows tunnel creation is handled by Wintun in-process.
+    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
+        // Clean up any stale Wintun adapter left behind by a crash, force-kill,
+        // or a previous failed TUN creation (e.g. adapter created but session failed).
+        let wintun_path = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("wintun.dll")));
+
+        if let Some(ref path) = wintun_path {
+            match unsafe { wintun_bindings::load_from_path(path) } {
+                Ok(wintun) => {
+                    match wintun_bindings::Adapter::open(&wintun, iface) {
+                        Ok(adapter) => {
+                            info!("Found stale Wintun adapter '{iface}', closing it");
+                            drop(adapter); // WintunCloseAdapter is called in Drop
+                        }
+                        Err(_) => {
+                            // No stale adapter — nothing to clean up
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to load wintun.dll for stale adapter cleanup: {e}");
+                }
+            }
+        }
+
         Ok(())
     }
 
