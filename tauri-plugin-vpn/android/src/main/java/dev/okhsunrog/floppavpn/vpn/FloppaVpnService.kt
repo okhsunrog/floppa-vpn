@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.io.File
 
 /**
  * Android VpnService implementation for Floppa VPN.
@@ -47,7 +48,7 @@ class FloppaVpnService : VpnService() {
     }
 
     // Native methods implemented in Rust (vpn/jni_entry.rs)
-    private external fun nativeInit()
+    private external fun nativeInit(logDir: String)
 
     private external fun nativeStartTunnel(tunFd: Int, protocolConfig: String, socketPath: String)
 
@@ -59,7 +60,9 @@ class FloppaVpnService : VpnService() {
         super.onCreate()
         instance = this
         createNotificationChannel()
-        nativeInit()
+        val logDir = File(applicationInfo.dataDir, "logs")
+        logDir.mkdirs()
+        nativeInit(logDir.absolutePath)
         Log.i(TAG, "VPN service created (separate :vpn process)")
     }
 

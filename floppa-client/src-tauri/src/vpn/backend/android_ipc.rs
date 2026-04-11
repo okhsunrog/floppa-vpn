@@ -114,6 +114,18 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
+    async fn set_log_config(&self, config: &crate::logging::LogConfig) {
+        if let Ok(client) = self.get_client().await {
+            if let Err(e) = client
+                .set_log_config(tarpc::context::current(), config.clone())
+                .await
+            {
+                warn!("Failed to set log config on VPN process: {e}");
+                self.invalidate_client().await;
+            }
+        }
+    }
+
     async fn get_all_info(&self) -> Option<VpnFullInfo> {
         let client = match self.get_client().await {
             Ok(c) => {

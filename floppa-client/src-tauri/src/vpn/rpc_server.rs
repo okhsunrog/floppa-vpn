@@ -62,6 +62,10 @@ impl VpnRpc for VpnRpcServer {
     async fn ping(self, _ctx: Context) -> Result<(), String> {
         self.tunnel_manager.ping().await
     }
+
+    async fn set_log_config(self, _ctx: Context, config: crate::logging::LogConfig) {
+        crate::logging::apply_log_config(&config);
+    }
 }
 
 /// Start the tarpc server on a Unix domain socket.

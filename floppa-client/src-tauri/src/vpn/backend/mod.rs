@@ -68,6 +68,10 @@ pub trait VpnBackend: Send + Sync {
     /// Ping the VLESS server through the proxy chain (bypasses TUN).
     /// Updates `last_packet_received` on success so the health dot reflects connectivity.
     async fn ping(&self) -> Result<(), String>;
+
+    /// Propagate log config to the tunnel process.
+    /// Default no-op for desktop (same-process, handled by logging module directly).
+    async fn set_log_config(&self, _config: &crate::logging::LogConfig) {}
 }
 
 /// Create the appropriate VPN backend for the current platform.

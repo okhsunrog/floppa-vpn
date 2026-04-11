@@ -207,6 +207,7 @@ pub async fn connect(
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
 ) -> Result<(), String> {
+    let connect_start = std::time::Instant::now();
     info!("Connecting to VPN");
 
     // Guard: only allow connect from Disconnected
@@ -256,6 +257,14 @@ pub async fn connect(
     )
     .await;
 
+    if result.is_ok() {
+        info!(
+            phase = "total",
+            duration_ms = connect_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            "Total connect time"
+        );
+    }
+
     result
 }
 
@@ -270,6 +279,7 @@ async fn connect_android(
 ) -> Result<(), String> {
     use tauri_plugin_vpn::VpnExt;
 
+    let phase_start = std::time::Instant::now();
     let granted = app
         .vpn()
         .prepare()
@@ -310,6 +320,13 @@ async fn connect_android(
         _ => {}
     }
 
+    info!(
+        phase = "vpn_prepare",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "Android VPN prepared"
+    );
+
+    let phase_start = std::time::Instant::now();
     if let Err(e) = app.vpn().start(vpn_config) {
         error!("VPN start failed: {e}");
         let mut conn = state.connection.write().await;
@@ -347,11 +364,18 @@ async fn connect_android(
         }
     }
 
+    info!(
+        phase = "tunnel_start",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "Android tunnel started"
+    );
+
     {
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::VerifyingConnection;
     }
 
+    let phase_start = std::time::Instant::now();
     match &config {
         ProtocolConfig::WireGuard(_) => {
             info!("Tunnel up on Android, verifying WireGuard handshake...");
@@ -384,6 +408,12 @@ async fn connect_android(
         }
     }
 
+    info!(
+        phase = "verify",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "Connection verified"
+    );
+
     state.speed_tracker.write().await.reset();
     let mut conn = state.connection.write().await;
     conn.status = ConnectionStatus::Connected;
@@ -406,6 +436,7 @@ async fn connect_desktop(
 ) -> Result<(), String> {
     use super::platform::Platform;
 
+    let phase_start = std::time::Instant::now();
     let endpoint = tokio::net::lookup_host(config.endpoint_str())
         .await
         .map_err(|e| {
@@ -422,7 +453,13 @@ async fn connect_desktop(
             )
         })?;
     let endpoint_ip = endpoint.ip();
+    info!(
+        phase = "dns_resolve",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "DNS resolution complete"
+    );
 
+    let phase_start = std::time::Instant::now();
     if let Err(e) = platform.prepare_tun(INTERFACE_NAME).await {
         error!("Failed to prepare TUN interface: {e}");
         let mut conn = state.connection.write().await;
@@ -430,9 +467,16 @@ async fn connect_desktop(
         return Err(format!("Failed to prepare TUN interface: {e}"));
     }
 
+    info!(
+        phase = "tun_prepare",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "TUN interface prepared"
+    );
+
     let tun_params = platform.tun_params();
 
     // Try starting with fwmark; if it fails due to permissions, retry without.
+    let phase_start = std::time::Instant::now();
     let start_result = match backend
         .start(&config, INTERFACE_NAME, &tun_params, endpoint)
         .await
@@ -453,6 +497,11 @@ async fn connect_desktop(
 
     match start_result {
         Ok(()) => {
+            info!(
+                phase = "tunnel_start",
+                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                "Tunnel started"
+            );
             let addr = config.address_network()?;
             if let Err(e) = platform.configure_address(INTERFACE_NAME, addr).await {
                 error!("Failed to configure address: {e}");
@@ -494,6 +543,7 @@ async fn connect_desktop(
                 conn.status = ConnectionStatus::VerifyingConnection;
             }
 
+            let phase_start = std::time::Instant::now();
             match &config {
                 ProtocolConfig::WireGuard(_) => {
                     info!("Tunnel up, verifying WireGuard handshake...");
@@ -525,6 +575,12 @@ async fn connect_desktop(
                     }
                 }
             }
+
+            info!(
+                phase = "verify",
+                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                "Connection verified"
+            );
 
             state.speed_tracker.write().await.reset();
             let mut conn = state.connection.write().await;
@@ -844,6 +900,126 @@ pub async fn set_status_bar_style(
     {
         Ok(())
     }
+}
+
+/// Get the log directory path
+#[tauri::command]
+#[specta::specta]
+pub fn get_log_dir() -> Result<String, String> {
+    crate::get_log_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Log directory not initialized".to_string())
+}
+
+/// Export all log files as a tar.gz archive via native save dialog.
+/// Returns `true` if saved successfully, `false` if the user cancelled.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_logs(app: AppHandle) -> Result<bool, String> {
+    let log_dir = crate::get_log_dir().ok_or("Log directory not initialized")?;
+    let archive_buf = build_log_archive(log_dir)?;
+
+    let timestamp = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string();
+    let filename = format!("floppa-logs-{timestamp}.tar.gz");
+
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_dialog::DialogExt;
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app.dialog()
+            .file()
+            .set_file_name(&filename)
+            .add_filter("Archive", &["tar.gz", "gz"])
+            .save_file(move |path| {
+                let _ = tx.send(path);
+            });
+
+        let file_path = rx.await.map_err(|_| "Dialog closed unexpectedly")?;
+        let Some(file_path) = file_path else {
+            return Ok(false);
+        };
+
+        let path = file_path
+            .into_path()
+            .map_err(|e| format!("Invalid save path: {e}"))?;
+
+        std::fs::write(&path, &archive_buf).map_err(|e| format!("Failed to write archive: {e}"))?;
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        use tauri_plugin_android_fs::AndroidFsExt;
+
+        let api = app.android_fs_async();
+        let uri = api
+            .file_picker()
+            .save_file(None, &filename, Some("application/gzip"), false)
+            .await
+            .map_err(|e| format!("Save dialog failed: {e}"))?;
+
+        let Some(uri) = uri else {
+            return Ok(false);
+        };
+
+        api.write(&uri, &archive_buf)
+            .await
+            .map_err(|e| format!("Failed to write archive: {e}"))?;
+    }
+
+    Ok(true)
+}
+
+fn build_log_archive(log_dir: &std::path::Path) -> Result<Vec<u8>, String> {
+    let mut archive_buf = Vec::new();
+    {
+        let gz_encoder =
+            flate2::write::GzEncoder::new(&mut archive_buf, flate2::Compression::default());
+        let mut tar_builder = tar::Builder::new(gz_encoder);
+
+        let entries =
+            std::fs::read_dir(log_dir).map_err(|e| format!("Failed to read log dir: {e}"))?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("floppa-"))
+            {
+                if let Some(name) = path.file_name() {
+                    tar_builder
+                        .append_path_with_name(&path, name)
+                        .map_err(|e| format!("Failed to add file to archive: {e}"))?;
+                }
+            }
+        }
+
+        tar_builder
+            .finish()
+            .map_err(|e| format!("Failed to finalize archive: {e}"))?;
+    }
+    Ok(archive_buf)
+}
+
+/// Get the current log configuration.
+#[tauri::command]
+#[specta::specta]
+pub fn get_log_config() -> crate::logging::LogConfig {
+    crate::logging::get_log_config()
+}
+
+/// Apply a new log configuration. Persists to disk and propagates to VPN process.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_log_config(
+    config: crate::logging::LogConfig,
+    backend: State<'_, Arc<dyn VpnBackend>>,
+) -> Result<(), String> {
+    crate::logging::apply_log_config(&config);
+    backend.set_log_config(&config).await;
+    info!("Log config updated");
+    Ok(())
 }
 
 /// Get safe area insets (status bar, nav bar heights) in dp

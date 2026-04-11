@@ -322,6 +322,25 @@ export default {
     notificationPrompt: 'Включить уведомления для отображения статуса VPN?',
     about: 'О приложении',
     version: 'Версия {version}',
+    diagnostics: 'Диагностика',
+    diagnosticsDescription:
+      'Настройте уровень логирования для каждого компонента, чтобы помочь в диагностике проблем.',
+    logComponentApp: 'Приложение',
+    logComponentTunnel: 'Туннель',
+    logComponentWebview: 'WebView',
+    logComponentIpc: 'IPC (Android)',
+    advancedLogFilter: 'Расширенный фильтр',
+    advancedLogFilterDescription:
+      'Задайте фильтр в формате RUST_LOG. Он заменяет настройки по компонентам выше.',
+    customFilterPlaceholder: 'напр. floppa_client_lib=trace,gotatun=debug',
+    customFilterActive:
+      'Пользовательский фильтр активен — настройки компонентов выше игнорируются.',
+    apply: 'Применить',
+    logConfigSaveFailed: 'Не удалось сохранить настройки логирования',
+    shareLogs: 'Поделиться логами',
+    shareLogsDescription: 'Экспорт файлов логов в виде архива для отладки',
+    logsExported: 'Логи успешно экспортированы',
+    logsExportFailed: 'Не удалось экспортировать логи',
   },
   update: {
     available: 'Доступно обновление: v{version}',
