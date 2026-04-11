@@ -50,8 +50,8 @@ pub fn run() {
             vpn::commands::set_status_bar_style,
             vpn::commands::get_log_dir,
             vpn::commands::export_logs,
-            vpn::commands::set_diagnostic_mode,
-            vpn::commands::get_diagnostic_mode,
+            vpn::commands::get_log_config,
+            vpn::commands::set_log_config,
         ])
         .events(tauri_specta::collect_events![]);
 

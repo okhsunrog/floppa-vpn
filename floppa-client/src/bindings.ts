@@ -66,13 +66,21 @@ export const commands = {
 	 *  Returns `true` if saved successfully, `false` if the user cancelled.
 	 */
 	exportLogs: () => typedError<boolean, string>(__TAURI_INVOKE("export_logs")),
-	// Enable or disable diagnostic mode (verbose logging)
-	setDiagnosticMode: (enabled: boolean) => __TAURI_INVOKE<void>("set_diagnostic_mode", { enabled }),
-	// Get current diagnostic mode state
-	getDiagnosticMode: () => __TAURI_INVOKE<boolean>("get_diagnostic_mode"),
+	// Get the current log configuration.
+	getLogConfig: () => __TAURI_INVOKE<LogConfig>("get_log_config"),
+	// Apply a new log configuration. Persists to disk and propagates to VPN process.
+	setLogConfig: (config: LogConfig) => typedError<null, string>(__TAURI_INVOKE("set_log_config", { config })),
 };
 
-/* Types */// Information about an installed app (for split tunneling UI)
+/* Types */// Persistent logging configuration with per-component verbosity levels.
+export type LogConfig = {
+	components: Record<string, LogLevel>,
+	custom_filter: string | null,
+};
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+// Information about an installed app (for split tunneling UI)
 export type AppInfo = {
 	package_name: string,
 	label: string,

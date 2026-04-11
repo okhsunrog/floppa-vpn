@@ -15,14 +15,72 @@ const updateStore = useUpdateStore()
 const permissions = useAndroidPermissions()
 const appVersion = __APP_VERSION__
 
-const diagnosticMode = ref(false)
 const exportingLogs = ref(false)
+const showAdvancedLog = ref(false)
+const customFilterInput = ref('')
+const savingLogConfig = ref(false)
 
-// diagnosticMode init is in the main onMounted below
+// Log config type matching Rust LogConfig
+type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+interface LogConfig {
+  components: Record<string, LogLevel>
+  custom_filter: string | null
+}
 
-async function toggleDiagnosticMode(enabled: boolean) {
-  diagnosticMode.value = enabled
-  await commands.setDiagnosticMode(enabled)
+const logConfig = ref<LogConfig>({
+  components: { app: 'debug', tunnel: 'info', webview: 'info', ipc: 'warn' },
+  custom_filter: null,
+})
+
+const componentDefs = computed(() => [
+  { id: 'app', label: t('settings.logComponentApp'), icon: 'i-lucide-code' },
+  { id: 'tunnel', label: t('settings.logComponentTunnel'), icon: 'i-lucide-shield' },
+  { id: 'webview', label: t('settings.logComponentWebview'), icon: 'i-lucide-globe' },
+  { id: 'ipc', label: t('settings.logComponentIpc'), icon: 'i-lucide-cable' },
+])
+
+const levelOptions = [
+  { label: 'Trace', value: 'trace' as LogLevel },
+  { label: 'Debug', value: 'debug' as LogLevel },
+  { label: 'Info', value: 'info' as LogLevel },
+  { label: 'Warn', value: 'warn' as LogLevel },
+  { label: 'Error', value: 'error' as LogLevel },
+]
+
+async function loadLogConfig() {
+  logConfig.value = await commands.getLogConfig()
+  customFilterInput.value = logConfig.value.custom_filter ?? ''
+}
+
+async function updateComponentLevel(componentId: string, level: LogLevel) {
+  logConfig.value.components[componentId] = level
+  logConfig.value.custom_filter = null
+  customFilterInput.value = ''
+  await saveLogConfig()
+}
+
+async function applyCustomFilter() {
+  logConfig.value.custom_filter = customFilterInput.value || null
+  await saveLogConfig()
+}
+
+async function clearCustomFilter() {
+  customFilterInput.value = ''
+  logConfig.value.custom_filter = null
+  await saveLogConfig()
+}
+
+async function saveLogConfig() {
+  savingLogConfig.value = true
+  try {
+    const result = await commands.setLogConfig(logConfig.value)
+    if (result.status === 'error') {
+      console.error('Failed to save log config:', result.error)
+      toast.add({ title: t('settings.logConfigSaveFailed'), color: 'error' })
+    }
+  } finally {
+    savingLogConfig.value = false
+  }
 }
 
 async function shareLogs() {
@@ -76,8 +134,7 @@ onMounted(async () => {
     settings.loadApps()
   }
 
-  // Load diagnostic mode state
-  diagnosticMode.value = await commands.getDiagnosticMode()
+  await loadLogConfig()
 })
 
 const filteredApps = computed(() => {
@@ -417,17 +474,75 @@ function selectMode(mode: SplitMode) {
         {{ t('settings.diagnosticsDescription') }}
       </p>
 
-      <div class="flex flex-col gap-4">
-        <div class="flex items-center justify-between">
-          <div>
-            <p class="text-sm font-medium">{{ t('settings.diagnosticMode') }}</p>
-            <p class="text-xs text-[var(--ui-text-muted)]">
-              {{ t('settings.diagnosticModeDescription') }}
-            </p>
+      <div class="flex flex-col gap-3">
+        <!-- Per-component log level selectors -->
+        <div v-for="comp in componentDefs" :key="comp.id" class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <UIcon :name="comp.icon" class="size-4 text-[var(--ui-text-muted)]" />
+            <span class="text-sm font-medium">{{ comp.label }}</span>
           </div>
-          <USwitch :model-value="diagnosticMode" @update:model-value="toggleDiagnosticMode" />
+          <USelect
+            :model-value="logConfig.components[comp.id] ?? 'info'"
+            :items="levelOptions"
+            value-key="value"
+            class="w-28"
+            size="sm"
+            :disabled="logConfig.custom_filter != null"
+            @update:model-value="(v: string) => updateComponentLevel(comp.id, v as LogLevel)"
+          />
         </div>
 
+        <!-- Advanced: custom RUST_LOG filter -->
+        <UDivider class="my-1" />
+
+        <button
+          class="flex items-center gap-2 text-sm text-[var(--ui-text-muted)] cursor-pointer"
+          @click="showAdvancedLog = !showAdvancedLog"
+        >
+          <UIcon
+            :name="showAdvancedLog ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+            class="size-4"
+          />
+          {{ t('settings.advancedLogFilter') }}
+        </button>
+
+        <div v-if="showAdvancedLog" class="flex flex-col gap-2">
+          <p class="text-xs text-[var(--ui-text-muted)]">
+            {{ t('settings.advancedLogFilterDescription') }}
+          </p>
+          <div class="flex gap-2">
+            <UInput
+              v-model="customFilterInput"
+              :placeholder="t('settings.customFilterPlaceholder')"
+              class="flex-1"
+              size="sm"
+            />
+            <UButton
+              :label="t('settings.apply')"
+              size="sm"
+              :loading="savingLogConfig"
+              @click="applyCustomFilter"
+            />
+            <UButton
+              v-if="logConfig.custom_filter"
+              icon="i-lucide-x"
+              size="sm"
+              variant="ghost"
+              @click="clearCustomFilter"
+            />
+          </div>
+          <UAlert
+            v-if="logConfig.custom_filter"
+            color="info"
+            variant="soft"
+            :title="t('settings.customFilterActive')"
+            class="text-xs"
+          />
+        </div>
+
+        <UDivider class="my-1" />
+
+        <!-- Share logs -->
         <div class="flex items-center justify-between">
           <div>
             <p class="text-sm font-medium">{{ t('settings.shareLogs') }}</p>

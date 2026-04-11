@@ -260,7 +260,7 @@ pub async fn connect(
     if result.is_ok() {
         info!(
             phase = "total",
-            duration_ms = connect_start.elapsed().as_millis() as u64,
+            duration_ms = connect_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
             "Total connect time"
         );
     }
@@ -322,7 +322,7 @@ async fn connect_android(
 
     info!(
         phase = "vpn_prepare",
-        duration_ms = phase_start.elapsed().as_millis() as u64,
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "Android VPN prepared"
     );
 
@@ -366,7 +366,7 @@ async fn connect_android(
 
     info!(
         phase = "tunnel_start",
-        duration_ms = phase_start.elapsed().as_millis() as u64,
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "Android tunnel started"
     );
 
@@ -410,7 +410,7 @@ async fn connect_android(
 
     info!(
         phase = "verify",
-        duration_ms = phase_start.elapsed().as_millis() as u64,
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "Connection verified"
     );
 
@@ -455,7 +455,7 @@ async fn connect_desktop(
     let endpoint_ip = endpoint.ip();
     info!(
         phase = "dns_resolve",
-        duration_ms = phase_start.elapsed().as_millis() as u64,
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "DNS resolution complete"
     );
 
@@ -469,7 +469,7 @@ async fn connect_desktop(
 
     info!(
         phase = "tun_prepare",
-        duration_ms = phase_start.elapsed().as_millis() as u64,
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "TUN interface prepared"
     );
 
@@ -499,7 +499,7 @@ async fn connect_desktop(
         Ok(()) => {
             info!(
                 phase = "tunnel_start",
-                duration_ms = phase_start.elapsed().as_millis() as u64,
+                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 "Tunnel started"
             );
             let addr = config.address_network()?;
@@ -578,7 +578,7 @@ async fn connect_desktop(
 
             info!(
                 phase = "verify",
-                duration_ms = phase_start.elapsed().as_millis() as u64,
+                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
                 "Connection verified"
             );
 
@@ -1002,22 +1002,24 @@ fn build_log_archive(log_dir: &std::path::Path) -> Result<Vec<u8>, String> {
     Ok(archive_buf)
 }
 
-/// Enable or disable diagnostic mode (verbose logging)
+/// Get the current log configuration.
 #[tauri::command]
 #[specta::specta]
-pub fn set_diagnostic_mode(enabled: bool) {
-    crate::logging::set_diagnostic_mode(enabled);
-    info!(
-        "Diagnostic mode {}",
-        if enabled { "enabled" } else { "disabled" }
-    );
+pub fn get_log_config() -> crate::logging::LogConfig {
+    crate::logging::get_log_config()
 }
 
-/// Get current diagnostic mode state
+/// Apply a new log configuration. Persists to disk and propagates to VPN process.
 #[tauri::command]
 #[specta::specta]
-pub fn get_diagnostic_mode() -> bool {
-    crate::logging::is_diagnostic_mode()
+pub async fn set_log_config(
+    config: crate::logging::LogConfig,
+    backend: State<'_, Arc<dyn VpnBackend>>,
+) -> Result<(), String> {
+    crate::logging::apply_log_config(&config);
+    backend.set_log_config(&config).await;
+    info!("Log config updated");
+    Ok(())
 }
 
 /// Get safe area insets (status bar, nav bar heights) in dp
