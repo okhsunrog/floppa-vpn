@@ -42,6 +42,12 @@ fn default_protocol() -> String {
     "wireguard".to_string()
 }
 
+/// `GET /me/peers` returns an object wrapping the peer list (not a bare array).
+#[derive(Debug, Deserialize)]
+struct MyPeersResponse {
+    peers: Vec<MyPeer>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreatePeerResponse {
     pub id: i64,
@@ -128,7 +134,11 @@ impl ApiClient {
             bail!("GET /me/peers failed: {}", resp.status());
         }
 
-        resp.json().await.context("Failed to parse peers response")
+        let body: MyPeersResponse = resp
+            .json()
+            .await
+            .context("Failed to parse peers response")?;
+        Ok(body.peers)
     }
 
     pub async fn create_peer(
