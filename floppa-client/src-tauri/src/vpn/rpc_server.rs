@@ -66,6 +66,20 @@ impl VpnRpc for VpnRpcServer {
     async fn set_log_config(self, _ctx: Context, config: crate::logging::LogConfig) {
         crate::logging::apply_log_config(&config);
     }
+
+    async fn start_log_capture(self, _ctx: Context, capture_id: String) {
+        let Some(log_dir) = crate::logging::get_log_dir() else {
+            warn!("Cannot start VPN log capture: log directory not initialized");
+            return;
+        };
+        if let Err(e) = crate::logging::start_file_capture(log_dir, "vpn", &capture_id) {
+            warn!("Failed to start VPN log capture: {e}");
+        }
+    }
+
+    async fn stop_log_capture(self, _ctx: Context) {
+        let _ = crate::logging::stop_file_capture();
+    }
 }
 
 /// Start the tarpc server on a Unix domain socket.

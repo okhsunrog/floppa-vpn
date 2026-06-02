@@ -27,4 +27,10 @@ pub trait VpnRpc {
 
     /// Apply a new log configuration in the VPN process.
     async fn set_log_config(config: crate::logging::LogConfig);
+
+    /// Start writing VPN process logs into a diagnostic capture.
+    async fn start_log_capture(capture_id: String);
+
+    /// Stop writing VPN process logs into a diagnostic capture.
+    async fn stop_log_capture();
 }

@@ -126,6 +126,27 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
+    async fn start_log_capture(&self, capture_id: &str) {
+        if let Ok(client) = self.get_client().await {
+            if let Err(e) = client
+                .start_log_capture(tarpc::context::current(), capture_id.to_string())
+                .await
+            {
+                warn!("Failed to start log capture on VPN process: {e}");
+                self.invalidate_client().await;
+            }
+        }
+    }
+
+    async fn stop_log_capture(&self) {
+        if let Ok(client) = self.get_client().await {
+            if let Err(e) = client.stop_log_capture(tarpc::context::current()).await {
+                warn!("Failed to stop log capture on VPN process: {e}");
+                self.invalidate_client().await;
+            }
+        }
+    }
+
     async fn get_all_info(&self) -> Option<VpnFullInfo> {
         let client = match self.get_client().await {
             Ok(c) => {

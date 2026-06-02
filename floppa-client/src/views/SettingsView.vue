@@ -16,35 +16,35 @@ const permissions = useAndroidPermissions()
 const appVersion = __APP_VERSION__
 
 const exportingLogs = ref(false)
+const captureBusy = ref(false)
 const showAdvancedLog = ref(false)
 const customFilterInput = ref('')
 const savingLogConfig = ref(false)
 
 // Log config type matching Rust LogConfig
-type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+type LogProfile = 'normal' | 'verbose'
 interface LogConfig {
-  components: Record<string, LogLevel>
+  profile: LogProfile
   custom_filter: string | null
+  custom_filter_enabled: boolean
+}
+
+interface LogCaptureStatus {
+  active: boolean
+  capture_id: string | null
 }
 
 const logConfig = ref<LogConfig>({
-  components: { app: 'debug', tunnel: 'info', webview: 'info', ipc: 'warn' },
+  profile: 'normal',
   custom_filter: null,
+  custom_filter_enabled: false,
 })
 
-const componentDefs = computed(() => [
-  { id: 'app', label: t('settings.logComponentApp'), icon: 'i-lucide-code' },
-  { id: 'tunnel', label: t('settings.logComponentTunnel'), icon: 'i-lucide-shield' },
-  { id: 'webview', label: t('settings.logComponentWebview'), icon: 'i-lucide-globe' },
-  { id: 'ipc', label: t('settings.logComponentIpc'), icon: 'i-lucide-cable' },
-])
+const captureStatus = ref<LogCaptureStatus>({ active: false, capture_id: null })
 
-const levelOptions = [
-  { label: 'Trace', value: 'trace' as LogLevel },
-  { label: 'Debug', value: 'debug' as LogLevel },
-  { label: 'Info', value: 'info' as LogLevel },
-  { label: 'Warn', value: 'warn' as LogLevel },
-  { label: 'Error', value: 'error' as LogLevel },
+const profileOptions = [
+  { label: 'Normal', value: 'normal' as LogProfile },
+  { label: 'Verbose', value: 'verbose' as LogProfile },
 ]
 
 async function loadLogConfig() {
@@ -52,21 +52,30 @@ async function loadLogConfig() {
   customFilterInput.value = logConfig.value.custom_filter ?? ''
 }
 
-async function updateComponentLevel(componentId: string, level: LogLevel) {
-  logConfig.value.components[componentId] = level
-  logConfig.value.custom_filter = null
-  customFilterInput.value = ''
+async function loadCaptureStatus() {
+  captureStatus.value = await commands.getLogCaptureStatus()
+}
+
+async function updateLogProfile(profile: LogProfile) {
+  logConfig.value.profile = profile
   await saveLogConfig()
 }
 
 async function applyCustomFilter() {
   logConfig.value.custom_filter = customFilterInput.value || null
+  logConfig.value.custom_filter_enabled = Boolean(logConfig.value.custom_filter)
+  await saveLogConfig()
+}
+
+async function setCustomFilterEnabled(enabled: boolean) {
+  logConfig.value.custom_filter_enabled = enabled
   await saveLogConfig()
 }
 
 async function clearCustomFilter() {
   customFilterInput.value = ''
   logConfig.value.custom_filter = null
+  logConfig.value.custom_filter_enabled = false
   await saveLogConfig()
 }
 
@@ -80,6 +89,23 @@ async function saveLogConfig() {
     }
   } finally {
     savingLogConfig.value = false
+  }
+}
+
+async function toggleCapture() {
+  captureBusy.value = true
+  try {
+    const result = captureStatus.value.active
+      ? await commands.stopLogCapture()
+      : await commands.startLogCapture()
+    if (result.status === 'error') {
+      toast.add({ title: result.error, color: 'error' })
+      return
+    }
+    captureStatus.value = result.data
+    await loadLogConfig()
+  } finally {
+    captureBusy.value = false
   }
 }
 
@@ -135,6 +161,7 @@ onMounted(async () => {
   }
 
   await loadLogConfig()
+  await loadCaptureStatus()
 })
 
 const filteredApps = computed(() => {
@@ -474,25 +501,25 @@ function selectMode(mode: SplitMode) {
         {{ t('settings.diagnosticsDescription') }}
       </p>
 
-      <div class="flex flex-col gap-3">
-        <!-- Per-component log level selectors -->
-        <div v-for="comp in componentDefs" :key="comp.id" class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <UIcon :name="comp.icon" class="size-4 text-[var(--ui-text-muted)]" />
-            <span class="text-sm font-medium">{{ comp.label }}</span>
+      <div class="flex flex-col gap-4">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t('settings.logProfile') }}</p>
+            <p class="text-xs text-[var(--ui-text-muted)]">
+              {{ t('settings.logProfileDescription') }}
+            </p>
           </div>
           <USelect
-            :model-value="logConfig.components[comp.id] ?? 'info'"
-            :items="levelOptions"
+            :model-value="logConfig.profile"
+            :items="profileOptions"
             value-key="value"
-            class="w-28"
+            class="w-32 shrink-0"
             size="sm"
-            :disabled="logConfig.custom_filter != null"
-            @update:model-value="(v: string) => updateComponentLevel(comp.id, v as LogLevel)"
+            :disabled="savingLogConfig || captureStatus.active"
+            @update:model-value="(v: string) => updateLogProfile(v as LogProfile)"
           />
         </div>
 
-        <!-- Advanced: custom RUST_LOG filter -->
         <UDivider class="my-1" />
 
         <button
@@ -506,10 +533,16 @@ function selectMode(mode: SplitMode) {
           {{ t('settings.advancedLogFilter') }}
         </button>
 
-        <div v-if="showAdvancedLog" class="flex flex-col gap-2">
+        <div v-if="showAdvancedLog" class="flex flex-col gap-3">
           <p class="text-xs text-[var(--ui-text-muted)]">
             {{ t('settings.advancedLogFilterDescription') }}
           </p>
+          <USwitch
+            :model-value="logConfig.custom_filter_enabled"
+            :label="t('settings.customFilterEnabled')"
+            :disabled="!logConfig.custom_filter || savingLogConfig || captureStatus.active"
+            @update:model-value="(v: boolean) => setCustomFilterEnabled(v)"
+          />
           <div class="flex gap-2">
             <UInput
               v-model="customFilterInput"
@@ -521,6 +554,7 @@ function selectMode(mode: SplitMode) {
               :label="t('settings.apply')"
               size="sm"
               :loading="savingLogConfig"
+              :disabled="captureStatus.active"
               @click="applyCustomFilter"
             />
             <UButton
@@ -528,11 +562,12 @@ function selectMode(mode: SplitMode) {
               icon="i-lucide-x"
               size="sm"
               variant="ghost"
+              :disabled="captureStatus.active"
               @click="clearCustomFilter"
             />
           </div>
           <UAlert
-            v-if="logConfig.custom_filter"
+            v-if="logConfig.custom_filter_enabled"
             color="info"
             variant="soft"
             :title="t('settings.customFilterActive')"
@@ -542,20 +577,44 @@ function selectMode(mode: SplitMode) {
 
         <UDivider class="my-1" />
 
-        <!-- Share logs -->
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between gap-4">
           <div>
-            <p class="text-sm font-medium">{{ t('settings.shareLogs') }}</p>
+            <p class="text-sm font-medium">{{ t('settings.logCapture') }}</p>
             <p class="text-xs text-[var(--ui-text-muted)]">
-              {{ t('settings.shareLogsDescription') }}
+              {{
+                captureStatus.active
+                  ? t('settings.logCaptureActive', { id: captureStatus.capture_id })
+                  : t('settings.logCaptureDescription')
+              }}
             </p>
           </div>
           <UButton
-            :label="t('settings.shareLogs')"
+            :label="
+              captureStatus.active ? t('settings.stopLogCapture') : t('settings.startLogCapture')
+            "
+            :icon="captureStatus.active ? 'i-lucide-square' : 'i-lucide-circle-dot'"
+            :color="captureStatus.active ? 'error' : 'primary'"
+            variant="soft"
+            size="sm"
+            :loading="captureBusy"
+            @click="toggleCapture"
+          />
+        </div>
+
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm font-medium">{{ t('settings.exportLatestCapture') }}</p>
+            <p class="text-xs text-[var(--ui-text-muted)]">
+              {{ t('settings.exportLatestCaptureDescription') }}
+            </p>
+          </div>
+          <UButton
+            :label="t('settings.exportLogs')"
             icon="i-lucide-share"
             variant="soft"
             size="sm"
             :loading="exportingLogs"
+            :disabled="captureStatus.active || !captureStatus.capture_id"
             @click="shareLogs"
           />
         </div>
