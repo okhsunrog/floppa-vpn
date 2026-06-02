@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -30,6 +30,16 @@ const filteredPeers = computed(() => {
       p.device_name?.toLowerCase().includes(q) ||
       p.device_id?.toLowerCase().includes(q),
   )
+})
+
+// Client-side pagination (the list query returns all rows).
+const PAGE_SIZE = 100
+const page = ref(1)
+const paginatedPeers = computed(() =>
+  filteredPeers.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
+watch(search, () => {
+  page.value = 1
 })
 
 function confirmDeletePeer(peerId: number, peerIp: string) {
@@ -94,7 +104,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
       <!-- Desktop table -->
       <div class="hidden md:block">
         <UTable
-          :data="filteredPeers"
+          :data="paginatedPeers"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
           @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
@@ -175,7 +185,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           {{ t('adminPeers.noPeers') }}
         </div>
         <UCard
-          v-for="peer in filteredPeers"
+          v-for="peer in paginatedPeers"
           :key="peer.id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
           @click="router.push(`/admin/users/${peer.user_id}`)"
@@ -221,6 +231,14 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
             </span>
           </div>
         </UCard>
+      </div>
+
+      <div v-if="filteredPeers.length > PAGE_SIZE" class="flex justify-center mt-4">
+        <UPagination
+          v-model:page="page"
+          :total="filteredPeers.length"
+          :items-per-page="PAGE_SIZE"
+        />
       </div>
     </template>
 

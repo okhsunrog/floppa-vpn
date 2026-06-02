@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -35,6 +35,16 @@ const filteredInstallations = computed(() => {
       i.device_id.toLowerCase().includes(q) ||
       i.platform?.toLowerCase().includes(q),
   )
+})
+
+// Client-side pagination (the list query returns all rows).
+const PAGE_SIZE = 100
+const page = ref(1)
+const paginatedInstallations = computed(() =>
+  filteredInstallations.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
+watch(search, () => {
+  page.value = 1
 })
 
 function confirmDelete(id: number, deviceName: string | null | undefined) {
@@ -98,7 +108,7 @@ const columns = computed<TableColumn<InstallationSummary>[]>(() => [
       <!-- Desktop table -->
       <div class="hidden md:block">
         <UTable
-          :data="filteredInstallations"
+          :data="paginatedInstallations"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
           @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
@@ -169,7 +179,7 @@ const columns = computed<TableColumn<InstallationSummary>[]>(() => [
           {{ t('adminInstallations.noInstallations') }}
         </div>
         <UCard
-          v-for="inst in filteredInstallations"
+          v-for="inst in paginatedInstallations"
           :key="inst.id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
           @click="router.push(`/admin/users/${inst.user_id}`)"
@@ -215,6 +225,14 @@ const columns = computed<TableColumn<InstallationSummary>[]>(() => [
             <span>{{ formatDateTime(inst.last_seen_at) }}</span>
           </div>
         </UCard>
+      </div>
+
+      <div v-if="filteredInstallations.length > PAGE_SIZE" class="flex justify-center mt-4">
+        <UPagination
+          v-model:page="page"
+          :total="filteredInstallations.length"
+          :items-per-page="PAGE_SIZE"
+        />
       </div>
     </template>
 

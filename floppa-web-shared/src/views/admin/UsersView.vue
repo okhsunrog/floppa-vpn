@@ -29,6 +29,17 @@ const filteredUsers = computed(() => {
   )
 })
 
+// Client-side pagination (the list query returns all rows).
+const PAGE_SIZE = 100
+const page = ref(1)
+const paginatedUsers = computed(() =>
+  filteredUsers.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
+// Reset to the first page whenever the filter changes.
+watch(search, () => {
+  page.value = 1
+})
+
 function displayName(u: UserSummary): string {
   if (u.first_name) return u.last_name ? `${u.first_name} ${u.last_name}` : u.first_name
   return u.username || '-'
@@ -37,13 +48,16 @@ function displayName(u: UserSummary): string {
 // Server-cached avatars as data URLs, keyed by user id (Telegram CDN is unreachable from clients).
 // Fetched in one batch when the user list loads.
 const avatars = ref<Record<string, string>>({})
+// Fetch avatars only for the currently visible page (and only those not already cached), so the
+// base64 payload stays bounded regardless of total user count.
 watch(
-  users,
+  paginatedUsers,
   async (list) => {
-    if (!list?.length) return
+    const missing = list.filter((u) => !(String(u.id) in avatars.value)).map((u) => u.id)
+    if (!missing.length) return
     try {
-      const { data } = await getAvatarsBatch({ body: { user_ids: list.map((u) => u.id) } })
-      if (data) avatars.value = data
+      const { data } = await getAvatarsBatch({ body: { user_ids: missing } })
+      if (data) avatars.value = { ...avatars.value, ...data }
     } catch {
       // best-effort
     }
@@ -162,7 +176,7 @@ async function addUser() {
       <!-- Desktop table -->
       <div class="hidden md:block">
         <UTable
-          :data="filteredUsers"
+          :data="paginatedUsers"
           :columns="columns"
           @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.id}`)"
           class="[&_tbody_tr]:cursor-pointer"
@@ -232,7 +246,7 @@ async function addUser() {
           {{ t('adminUsers.noUsers') }}
         </div>
         <UCard
-          v-for="user in filteredUsers"
+          v-for="user in paginatedUsers"
           :key="user.id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
           @click="router.push(`/admin/users/${user.id}`)"
@@ -283,6 +297,14 @@ async function addUser() {
             <span>{{ formatDate(user.created_at) }}</span>
           </div>
         </UCard>
+      </div>
+
+      <div v-if="filteredUsers.length > PAGE_SIZE" class="flex justify-center mt-4">
+        <UPagination
+          v-model:page="page"
+          :total="filteredUsers.length"
+          :items-per-page="PAGE_SIZE"
+        />
       </div>
     </template>
 
