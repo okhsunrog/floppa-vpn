@@ -9,6 +9,7 @@ import {
   setSubscriptionMutation,
   deleteSubscriptionMutation,
   deleteAdminPeerMutation,
+  setUserCredentialMutation,
 } from '../../client/@pinia/colada.gen'
 import { formatBytes, formatDateTime, formatSpeedLimit, handleExternalLinkClick } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
@@ -62,6 +63,36 @@ const error = computed(() => userError.value || plansError.value)
 const setSubMut = useMutation(setSubscriptionMutation())
 const deleteSubMut = useMutation(deleteSubscriptionMutation())
 const deletePeerMut = useMutation(deleteAdminPeerMutation())
+const setCredMut = useMutation(setUserCredentialMutation())
+
+// Recovery credential dialog (admin sets a login + password for the user)
+const credDialog = ref(false)
+const credLogin = ref('')
+const credPassword = ref('')
+
+async function setUserCredential() {
+  if (!user.value || !credLogin.value.trim() || !credPassword.value) return
+  try {
+    await setCredMut.mutateAsync({
+      path: { id: user.value.id },
+      body: { login: credLogin.value.trim(), password: credPassword.value },
+    })
+    credDialog.value = false
+    credLogin.value = ''
+    credPassword.value = ''
+    toast.add({
+      title: t('common.success'),
+      description: t('adminUserDetail.credentialSet'),
+      color: 'success',
+    })
+  } catch (e) {
+    toast.add({
+      title: t('common.error'),
+      description: e instanceof Error ? e.message : t('adminUserDetail.credentialFailed'),
+      color: 'error',
+    })
+  }
+}
 
 const submitting = computed(
   () =>
@@ -518,7 +549,64 @@ async function doRemovePeer() {
           </div>
         </template>
       </UCard>
+
+      <!-- Recovery Credential Section -->
+      <UCard class="mb-6">
+        <template #header>
+          <div class="flex justify-between items-center">
+            <div class="flex items-center gap-2 font-semibold">
+              <UIcon name="i-lucide-key-round" />
+              {{ t('adminUserDetail.recoveryCredential') }}
+            </div>
+            <UButton
+              :label="t('adminUserDetail.setCredential')"
+              icon="i-lucide-key"
+              size="sm"
+              @click="credDialog = true"
+            />
+          </div>
+        </template>
+        <p class="text-sm text-[var(--ui-text-muted)]">
+          {{ t('adminUserDetail.recoveryCredentialHint') }}
+        </p>
+      </UCard>
     </template>
+
+    <!-- Recovery Credential Dialog -->
+    <UModal v-model:open="credDialog" :title="t('adminUserDetail.setCredential')">
+      <template #body>
+        <div class="flex flex-col gap-3">
+          <p class="text-sm text-[var(--ui-text-muted)]">
+            {{ t('adminUserDetail.recoveryCredentialHint') }}
+          </p>
+          <UInput
+            v-model="credLogin"
+            :placeholder="t('login.loginPlaceholder')"
+            icon="i-lucide-user"
+          />
+          <UInput
+            v-model="credPassword"
+            type="password"
+            :placeholder="t('login.passwordPlaceholder')"
+            icon="i-lucide-lock"
+          />
+        </div>
+      </template>
+      <template #footer>
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="credDialog = false"
+        />
+        <UButton
+          :label="t('common.save')"
+          :loading="setCredMut.asyncStatus.value === 'loading'"
+          :disabled="!credLogin.trim() || !credPassword"
+          @click="setUserCredential"
+        />
+      </template>
+    </UModal>
 
     <!-- Set Subscription Dialog -->
     <UModal

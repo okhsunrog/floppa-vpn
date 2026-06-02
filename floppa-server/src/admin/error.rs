@@ -78,6 +78,21 @@ impl From<FloppaError> for ApiError {
                 message: "VLESS is not configured on this server".into(),
                 status: StatusCode::BAD_REQUEST,
             },
+            FloppaError::CredentialTaken => Self {
+                error: "login_taken".into(),
+                message: "This login is already taken".into(),
+                status: StatusCode::CONFLICT,
+            },
+            FloppaError::InvalidCredentials => Self {
+                error: "invalid_credentials".into(),
+                message: "Invalid login or password".into(),
+                status: StatusCode::UNAUTHORIZED,
+            },
+            FloppaError::InvalidLogin(msg) => Self {
+                error: "invalid_login".into(),
+                message: msg,
+                status: StatusCode::BAD_REQUEST,
+            },
             FloppaError::Encryption(_) | FloppaError::KeyGeneration(_) | FloppaError::Config(_) => {
                 Self {
                     error: "internal_error".into(),
@@ -135,6 +150,14 @@ impl ApiError {
             error: "bad_gateway".into(),
             message: msg.into(),
             status: StatusCode::BAD_GATEWAY,
+        }
+    }
+
+    pub fn too_many_requests(msg: impl Into<String>) -> Self {
+        Self {
+            error: "too_many_requests".into(),
+            message: msg.into(),
+            status: StatusCode::TOO_MANY_REQUESTS,
         }
     }
 }

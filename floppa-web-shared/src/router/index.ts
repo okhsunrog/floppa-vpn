@@ -21,6 +21,12 @@ export function createAppRoutes(): RouteRecordRaw[] {
       meta: { requiresAuth: true },
     },
     {
+      path: '/account',
+      name: 'account',
+      component: () => import('../views/user/AccountView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/admin',
       name: 'admin-dashboard',
       component: () => import('../views/admin/DashboardView.vue'),

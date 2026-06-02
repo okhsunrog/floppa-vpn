@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n                       created_at,\n                       (SELECT COUNT(*) FROM app_installations WHERE user_id = $1) AS \"devices!\",\n                       (SELECT p.display_name FROM subscriptions s\n                          JOIN plans p ON s.plan_id = p.id\n                          WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n                          LIMIT 1) AS plan\n                   FROM users WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 1,
+        "name": "devices!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "plan",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "0fe2f394d0284deb9250cc773b5f288ddfda0d9e912dac4bc77b466946fa7d95"
+}

@@ -18,7 +18,7 @@ type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 #[command(rename_rule = "lowercase", description = "Available commands:")]
 pub enum Command {
     #[command(description = "Start the bot")]
-    Start,
+    Start(String),
     #[command(description = "Check subscription status")]
     Status,
     #[command(description = "Purchase a subscription")]
@@ -33,7 +33,7 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
     use dptree::case;
 
     let command_handler = teloxide::filter_command::<Command, _>()
-        .branch(case![Command::Start].endpoint(start))
+        .branch(case![Command::Start(payload)].endpoint(start))
         .branch(case![Command::Status].endpoint(status))
         .branch(case![Command::Buy].endpoint(buy))
         .branch(case![Command::Vless].endpoint(vless))
@@ -64,7 +64,18 @@ async fn resolve_msg_lang(msg: &Message, pool: &DbPool) -> (i64, &'static i18n::
     (telegram_id, msgs)
 }
 
-async fn start(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerResult {
+async fn start(
+    bot: Bot,
+    msg: Message,
+    pool: DbPool,
+    config: Config,
+    payload: String,
+) -> HandlerResult {
+    // Deep-link account linking: /start link_<code>
+    if let Some(code) = payload.strip_prefix("link_") {
+        return start_with_link(bot, msg, pool, code.to_string()).await;
+    }
+
     let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
     let username = msg.from.as_ref().and_then(|u| u.username.clone());
     let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
@@ -101,6 +112,109 @@ async fn start(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerR
             .await?;
     } else {
         bot.send_message(msg.chat.id, text).await?;
+    }
+
+    Ok(())
+}
+
+/// Mark a link code consumed (idempotent). Returns true if this call consumed it.
+async fn consume_link_code(pool: &DbPool, code: &str, kind: &str) -> Result<bool, sqlx::Error> {
+    let res = sqlx::query!(
+        "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 WHERE code = $1 AND consumed_at IS NULL",
+        code,
+        kind,
+    )
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
+/// Handle `/start link_<code>`: attach this Telegram to the session account, or (if the Telegram
+/// already belongs to another account) offer a merge/recovery confirmation.
+async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> HandlerResult {
+    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let username = msg.from.as_ref().and_then(|u| u.username.clone());
+    let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+    let last_name = msg.from.as_ref().and_then(|u| u.last_name.clone());
+
+    // Resolve a valid, unconsumed, unexpired link code → the session account that minted it.
+    let pending = sqlx::query!(
+        "SELECT user_id FROM telegram_link_codes WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()",
+        code,
+    )
+    .fetch_optional(&pool)
+    .await?;
+    let Some(pending) = pending else {
+        bot.send_message(msg.chat.id, msgs.link_invalid).await?;
+        return Ok(());
+    };
+    let session_user_id = pending.user_id;
+
+    // Does this Telegram already belong to an account?
+    let existing = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+        .fetch_optional(&pool)
+        .await?;
+
+    match existing {
+        // Already this same account → nothing to do.
+        Some(row) if row.id == session_user_id => {
+            consume_link_code(&pool, &code, "simple").await?;
+            bot.send_message(msg.chat.id, msgs.link_already).await?;
+        }
+        // Belongs to a DIFFERENT established account → confirm merge/recovery.
+        Some(husk) => {
+            let info = sqlx::query!(
+                r#"SELECT
+                       created_at,
+                       (SELECT COUNT(*) FROM app_installations WHERE user_id = $1) AS "devices!",
+                       (SELECT p.display_name FROM subscriptions s
+                          JOIN plans p ON s.plan_id = p.id
+                          WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                          LIMIT 1) AS plan
+                   FROM users WHERE id = $1"#,
+                husk.id,
+            )
+            .fetch_one(&pool)
+            .await?;
+            let text = i18n::format_link_merge_prompt(
+                msgs,
+                info.created_at,
+                info.devices,
+                info.plan.as_deref(),
+            );
+            let keyboard = InlineKeyboardMarkup::new(vec![
+                vec![InlineKeyboardButton::callback(
+                    msgs.link_merge_confirm,
+                    format!("link_merge:{code}"),
+                )],
+                vec![InlineKeyboardButton::callback(
+                    msgs.link_merge_cancel,
+                    "link_cancel".to_string(),
+                )],
+            ]);
+            bot.send_message(msg.chat.id, text)
+                .reply_markup(keyboard)
+                .await?;
+        }
+        // Fresh Telegram → simple attach + real trial.
+        None => {
+            consume_link_code(&pool, &code, "simple").await?;
+            let granted = services::attach_telegram_simple(
+                &pool,
+                session_user_id,
+                telegram_id,
+                username.as_deref(),
+                first_name.as_deref(),
+                last_name.as_deref(),
+            )
+            .await?;
+            let mut text = msgs.link_success.to_string();
+            if granted {
+                text.push_str("\n\n");
+                text.push_str(msgs.trial_granted);
+            }
+            bot.send_message(msg.chat.id, text).await?;
+        }
     }
 
     Ok(())
@@ -296,6 +410,55 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
 
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.lang_set)
+                .await?;
+        }
+    } else if let Some(code) = data.strip_prefix("link_merge:") {
+        let telegram_id = q.from.id.0 as i64;
+        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
+        bot.answer_callback_query(q.id.clone()).await?;
+
+        // Re-validate the code (it may have expired while the button waited) and re-resolve the husk.
+        let pending = sqlx::query!(
+            "SELECT user_id FROM telegram_link_codes WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()",
+            code,
+        )
+        .fetch_optional(&pool)
+        .await?;
+        let result_text = if let Some(pending) = pending {
+            let husk = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+                .fetch_optional(&pool)
+                .await?;
+            let merged = match husk {
+                Some(h) if h.id != pending.user_id => {
+                    services::merge_telegram_into_session(&pool, pending.user_id, h.id).await?
+                }
+                _ => false,
+            };
+            sqlx::query!(
+                "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = 'merge' WHERE code = $1 AND consumed_at IS NULL",
+                code,
+            )
+            .execute(&pool)
+            .await?;
+            if merged {
+                msgs.link_merge_done
+            } else {
+                msgs.link_invalid
+            }
+        } else {
+            msgs.link_invalid
+        };
+
+        if let Some(msg) = q.message {
+            bot.edit_message_text(msg.chat().id, msg.id(), result_text)
+                .await?;
+        }
+    } else if data == "link_cancel" {
+        let telegram_id = q.from.id.0 as i64;
+        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
+        bot.answer_callback_query(q.id.clone()).await?;
+        if let Some(msg) = q.message {
+            bot.edit_message_text(msg.chat().id, msg.id(), msgs.link_cancelled)
                 .await?;
         }
     } else if let Some(plan_id_str) = data.strip_prefix("buy:") {
@@ -566,4 +729,24 @@ async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
     bot.send_message(msg.chat.id, msgs.unknown_message).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Command;
+    use teloxide::utils::command::BotCommands;
+
+    // Guards the deep-link split: a bare /start must still parse (new-user greeting path),
+    // and /start link_<code> must capture the payload.
+    #[test]
+    fn start_parses_with_and_without_payload() {
+        match Command::parse("/start", "floppabot") {
+            Ok(Command::Start(s)) => assert!(s.is_empty(), "bare /start payload should be empty"),
+            _ => panic!("bare /start did not parse to Start"),
+        }
+        match Command::parse("/start link_abc123", "floppabot") {
+            Ok(Command::Start(s)) => assert_eq!(s, "link_abc123"),
+            _ => panic!("/start link_ did not parse to Start"),
+        }
+    }
 }

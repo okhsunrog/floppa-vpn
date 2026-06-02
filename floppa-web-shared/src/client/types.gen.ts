@@ -4,6 +4,16 @@ export type ClientOptions = {
     baseUrl: `${string}://${string}` | (string & {});
 };
 
+export type AccountLoginRequest = {
+    login: string;
+    password: string;
+};
+
+export type AccountRegisterRequest = {
+    login: string;
+    password: string;
+};
+
 export type ApiError = {
     error: string;
     message: string;
@@ -96,14 +106,32 @@ export type InstallationSummary = {
     username?: string | null;
 };
 
+export type LinkPollResponse = {
+    linked: boolean;
+};
+
+export type LinkStartResponse = {
+    code: string;
+    deep_link: string;
+    expires_at: string;
+};
+
 export type MeResponse = {
     first_name?: string | null;
+    /**
+     * True if the user has set a login+password credential (for the "set a backup login" nudge).
+     */
+    has_credential: boolean;
     id: number;
     is_admin: boolean;
     last_name?: string | null;
     photo_url?: string | null;
     subscription?: null | MySubscription;
-    telegram_id: number;
+    telegram_id?: number | null;
+    /**
+     * True if a Telegram account is linked (can pay via Stars, gets bot notifications).
+     */
+    telegram_linked: boolean;
     username?: string | null;
 };
 
@@ -138,6 +166,10 @@ export type MySubscription = {
     max_peers: number;
     plan_display_name: string;
     plan_name: string;
+    /**
+     * Subscription origin: 'trial' | 'taster' | 'admin_grant' | 'purchase'.
+     */
+    source: string;
     speed_limit_mbps?: number | null;
     starts_at: string;
 };
@@ -186,6 +218,11 @@ export type PublicConfig = {
     telegram_bot_username?: string | null;
 };
 
+export type SetCredentialRequest = {
+    login: string;
+    password: string;
+};
+
 export type SetSubscriptionRequest = {
     /**
      * Duration in days. If omitted, uses the plan's trial_days (for trial plans).
@@ -197,6 +234,11 @@ export type SetSubscriptionRequest = {
      */
     permanent?: boolean;
     plan_id: number;
+};
+
+export type SetUserCredentialRequest = {
+    login: string;
+    password: string;
 };
 
 export type Stats = {
@@ -265,7 +307,7 @@ export type UserDetail = {
     peers: Array<PeerDetail>;
     photo_url?: string | null;
     subscriptions: Array<SubscriptionDetail>;
-    telegram_id: number;
+    telegram_id?: number | null;
     username?: string | null;
     vless?: null | VlessAdminInfo;
     /**
@@ -286,7 +328,7 @@ export type UserSummary = {
     last_name?: string | null;
     peer_count: number;
     photo_url?: string | null;
-    telegram_id: number;
+    telegram_id?: number | null;
     username?: string | null;
 };
 
@@ -325,6 +367,54 @@ export type VlessPeerSummary = {
     user_id: number;
     username?: string | null;
 };
+
+export type LoginAccountData = {
+    body: AccountLoginRequest;
+    path?: never;
+    query?: never;
+    url: '/auth/account/login';
+};
+
+export type LoginAccountErrors = {
+    /**
+     * Invalid login or password
+     */
+    401: ApiError;
+};
+
+export type LoginAccountError = LoginAccountErrors[keyof LoginAccountErrors];
+
+export type LoginAccountResponses = {
+    200: AuthResponse;
+};
+
+export type LoginAccountResponse = LoginAccountResponses[keyof LoginAccountResponses];
+
+export type RegisterAccountData = {
+    body: AccountRegisterRequest;
+    path?: never;
+    query?: never;
+    url: '/auth/account/register';
+};
+
+export type RegisterAccountErrors = {
+    /**
+     * Invalid login or password
+     */
+    400: ApiError;
+    /**
+     * Login already taken
+     */
+    409: ApiError;
+};
+
+export type RegisterAccountError = RegisterAccountErrors[keyof RegisterAccountErrors];
+
+export type RegisterAccountResponses = {
+    200: AuthResponse;
+};
+
+export type RegisterAccountResponse = RegisterAccountResponses[keyof RegisterAccountResponses];
 
 export type TelegramLoginData = {
     body: TelegramAuthData;
@@ -560,6 +650,39 @@ export type GetMeResponses = {
 
 export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
 
+export type SetMyCredentialData = {
+    body: SetCredentialRequest;
+    path?: never;
+    query?: never;
+    url: '/me/credentials';
+};
+
+export type SetMyCredentialErrors = {
+    /**
+     * Invalid login or password
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Login already taken
+     */
+    409: ApiError;
+};
+
+export type SetMyCredentialError = SetMyCredentialErrors[keyof SetMyCredentialErrors];
+
+export type SetMyCredentialResponses = {
+    /**
+     * Credential set
+     */
+    204: void;
+};
+
+export type SetMyCredentialResponse = SetMyCredentialResponses[keyof SetMyCredentialResponses];
+
 export type UpsertMyInstallationData = {
     body: UpsertInstallationRequest;
     path?: never;
@@ -581,6 +704,54 @@ export type UpsertMyInstallationResponses = {
 };
 
 export type UpsertMyInstallationResponse = UpsertMyInstallationResponses[keyof UpsertMyInstallationResponses];
+
+export type PollTelegramLinkData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/link/telegram/poll';
+};
+
+export type PollTelegramLinkErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type PollTelegramLinkError = PollTelegramLinkErrors[keyof PollTelegramLinkErrors];
+
+export type PollTelegramLinkResponses = {
+    200: LinkPollResponse;
+};
+
+export type PollTelegramLinkResponse = PollTelegramLinkResponses[keyof PollTelegramLinkResponses];
+
+export type StartTelegramLinkData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/link/telegram/start';
+};
+
+export type StartTelegramLinkErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Telegram already linked
+     */
+    409: ApiError;
+};
+
+export type StartTelegramLinkError = StartTelegramLinkErrors[keyof StartTelegramLinkErrors];
+
+export type StartTelegramLinkResponses = {
+    200: LinkStartResponse;
+};
+
+export type StartTelegramLinkResponse = StartTelegramLinkResponses[keyof StartTelegramLinkResponses];
 
 export type GetMyPeersData = {
     body?: never;
@@ -1154,6 +1325,48 @@ export type GetUserResponses = {
 };
 
 export type GetUserResponse = GetUserResponses[keyof GetUserResponses];
+
+export type SetUserCredentialData = {
+    body: SetUserCredentialRequest;
+    path: {
+        /**
+         * User id
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/users/{id}/credential';
+};
+
+export type SetUserCredentialErrors = {
+    /**
+     * Invalid login or password
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * Login already taken
+     */
+    409: ApiError;
+};
+
+export type SetUserCredentialError = SetUserCredentialErrors[keyof SetUserCredentialErrors];
+
+export type SetUserCredentialResponses = {
+    /**
+     * Credential set
+     */
+    204: void;
+};
+
+export type SetUserCredentialResponse = SetUserCredentialResponses[keyof SetUserCredentialResponses];
 
 export type RemovePeerData = {
     body?: never;

@@ -20,7 +20,7 @@ pub enum PeerSyncStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
     pub id: i64,
-    pub telegram_id: i64,
+    pub telegram_id: Option<i64>,
     pub username: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,

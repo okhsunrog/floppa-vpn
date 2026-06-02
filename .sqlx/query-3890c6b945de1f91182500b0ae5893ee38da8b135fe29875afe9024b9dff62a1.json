@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM app_installations h\n           USING app_installations s\n           WHERE h.user_id = $2 AND s.user_id = $1 AND h.device_id = s.device_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3890c6b945de1f91182500b0ae5893ee38da8b135fe29875afe9024b9dff62a1"
+}

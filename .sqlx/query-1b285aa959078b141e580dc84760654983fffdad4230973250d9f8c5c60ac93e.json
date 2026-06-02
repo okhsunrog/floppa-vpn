@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = 'merge' WHERE code = $1 AND consumed_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1b285aa959078b141e580dc84760654983fffdad4230973250d9f8c5c60ac93e"
+}

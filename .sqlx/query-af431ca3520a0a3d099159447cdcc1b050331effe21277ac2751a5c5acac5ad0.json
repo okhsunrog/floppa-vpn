@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO auth_identities (user_id, provider, provider_uid, secret_hash)\n           VALUES ($1, 'password', $2, $3)\n           ON CONFLICT (user_id, provider) DO UPDATE SET provider_uid = $2, secret_hash = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "af431ca3520a0a3d099159447cdcc1b050331effe21277ac2751a5c5acac5ad0"
+}

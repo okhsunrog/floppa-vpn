@@ -4,6 +4,8 @@ import { useRouter, useRoute } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useColorMode } from '@vueuse/core'
+import { useQuery } from '@pinia/colada'
+import { getMeQuery } from '../client/@pinia/colada.gen'
 import { useAuthStore } from '../stores'
 import ColorModeButton from './ColorModeButton.vue'
 
@@ -28,6 +30,12 @@ const navLabel = computed(() => {
   if (u.first_name) return u.last_name ? `${u.first_name} ${u.last_name}` : u.first_name
   return `User #${u.id}`
 })
+
+// Persistent nudge: a Telegram user with no backup login should set one while Telegram still works.
+const { data: me } = useQuery({ ...getMeQuery(), enabled: () => auth.isAuthenticated })
+const showBackupNudge = computed(
+  () => auth.isAuthenticated && !!me.value?.telegram_linked && !me.value?.has_credential,
+)
 
 const isMiniApp = Boolean(
   (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData,
@@ -121,6 +129,7 @@ const navItems = computed(() => {
   }[] = [
     { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
     { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
+    { label: t('nav.account'), icon: 'i-lucide-user-cog', to: '/account' },
   ]
 
   for (const item of props.extraNavItems) {
@@ -156,6 +165,7 @@ const mobileNavItems = computed(() => {
   const items: { label: string; icon: string; to: string }[] = [
     { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
     { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
+    { label: t('nav.account'), icon: 'i-lucide-user-cog', to: '/account' },
   ]
 
   for (const item of props.extraNavItems) {
@@ -328,6 +338,25 @@ const mobileNavItems = computed(() => {
     </USlideover>
 
     <main class="max-w-7xl mx-auto p-4 md:p-6">
+      <UAlert
+        v-if="showBackupNudge"
+        color="warning"
+        variant="subtle"
+        icon="i-lucide-shield-alert"
+        :title="t('nav.backupNudgeTitle')"
+        :description="t('nav.backupNudgeBody')"
+        :actions="[
+          {
+            label: t('nav.backupNudgeAction'),
+            color: 'warning',
+            variant: 'solid',
+            onClick: () => {
+              router.push('/account')
+            },
+          },
+        ]"
+        class="mb-4"
+      />
       <slot />
     </main>
   </UApp>

@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::net::Ipv4Addr;
 
 /// Result of user upsert operation.
+#[derive(Debug)]
 pub struct UpsertResult {
     pub id: i64,
     pub username: Option<String>,
@@ -42,7 +43,7 @@ pub async fn upsert_user(
         r#"
         INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)
         VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT (telegram_id) DO UPDATE SET
+        ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL DO UPDATE SET
             username = $2,
             first_name = COALESCE($3, users.first_name),
             last_name = COALESCE($4, users.last_name),
@@ -60,41 +61,7 @@ pub async fn upsert_user(
     .fetch_one(pool)
     .await?;
 
-    let mut trial_granted = false;
-
-    if row.trial_used_at.is_none() {
-        // Atomically claim trial — only one concurrent request can succeed
-        let claimed = sqlx::query!(
-            "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
-            row.id,
-        )
-        .execute(pool)
-        .await?;
-
-        if claimed.rows_affected() == 1 {
-            let basic_plan = sqlx::query!("SELECT id, trial_days FROM plans WHERE name = 'basic'")
-                .fetch_optional(pool)
-                .await?;
-
-            if let Some(plan) = basic_plan {
-                let days = plan.trial_days.unwrap_or(7) as i64;
-                let now = Utc::now();
-                let expires_at = now + Duration::days(days);
-
-                sqlx::query!(
-                    "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'trial')",
-                    row.id,
-                    plan.id,
-                    now,
-                    expires_at,
-                )
-                .execute(pool)
-                .await?;
-
-                trial_granted = true;
-            }
-        }
-    }
+    let trial_granted = grant_real_trial_if_unused(pool, row.id).await?;
 
     Ok(UpsertResult {
         id: row.id,
@@ -105,6 +72,421 @@ pub async fn upsert_user(
         is_admin: row.is_admin,
         trial_granted,
     })
+}
+
+/// Grant the one-time real trial (7-day "basic" plan) to a user if they haven't used it yet.
+///
+/// Atomically claims `trial_used_at`, so concurrent calls grant at most one trial.
+/// Returns whether a trial was granted on this call. Keyed on `user_id` so it works for
+/// both the Telegram signup path and the credential→Telegram link path.
+pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<bool> {
+    let claimed = sqlx::query!(
+        "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
+        user_id,
+    )
+    .execute(pool)
+    .await?;
+
+    if claimed.rows_affected() != 1 {
+        return Ok(false);
+    }
+
+    let basic_plan = sqlx::query!("SELECT id, trial_days FROM plans WHERE name = 'basic'")
+        .fetch_optional(pool)
+        .await?;
+
+    let Some(plan) = basic_plan else {
+        return Ok(false);
+    };
+
+    let days = plan.trial_days.unwrap_or(7) as i64;
+    let now = Utc::now();
+    let expires_at = now + Duration::days(days);
+    sqlx::query!(
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'trial')",
+        user_id,
+        plan.id,
+        now,
+        expires_at,
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(true)
+}
+
+/// Grant a short "taster" trial. Does NOT consume `trial_used_at` (so the user can still
+/// claim the real trial later via Telegram link). No-op if the 'taster' plan is missing.
+pub async fn grant_taster_trial(pool: &DbPool, user_id: i64, minutes: i64) -> Result<()> {
+    let taster_plan = sqlx::query!("SELECT id FROM plans WHERE name = 'taster'")
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(plan) = taster_plan {
+        let now = Utc::now();
+        let expires_at = now + Duration::minutes(minutes);
+        sqlx::query!(
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'taster')",
+            user_id,
+            plan.id,
+            now,
+            expires_at,
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// Validate a login and return `(normalized_uid_lowercase, display_form)`.
+fn normalize_login(login: &str) -> Result<(String, String)> {
+    let display = login.trim();
+    if display.len() < 3 || display.len() > 64 {
+        return Err(FloppaError::InvalidLogin("must be 3–64 characters".into()));
+    }
+    if !display
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+    {
+        return Err(FloppaError::InvalidLogin(
+            "only letters, digits, and . _ - are allowed".into(),
+        ));
+    }
+    Ok((display.to_lowercase(), display.to_string()))
+}
+
+/// Create a new credential (login + password) user with `telegram_id` NULL and grant a taster trial.
+pub async fn create_credential_user(
+    pool: &DbPool,
+    login: &str,
+    password: &str,
+    taster_minutes: i64,
+) -> Result<UpsertResult> {
+    let (uid, display) = normalize_login(login)?;
+    if password.len() < 8 {
+        return Err(FloppaError::InvalidLogin(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    let secret_hash = crate::password::hash_password(password)?;
+
+    let mut tx = pool.begin().await?;
+
+    let user = sqlx::query!(
+        "INSERT INTO users (telegram_id, username) VALUES (NULL, $1) \
+         RETURNING id, username, first_name, last_name, photo_url, is_admin",
+        display,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    let ins = sqlx::query!(
+        "INSERT INTO auth_identities (user_id, provider, provider_uid, secret_hash) VALUES ($1, 'password', $2, $3)",
+        user.id,
+        uid,
+        secret_hash,
+    )
+    .execute(&mut *tx)
+    .await;
+
+    match ins {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(db_err))
+            if db_err.constraint() == Some("auth_identities_provider_provider_uid_key") =>
+        {
+            return Err(FloppaError::CredentialTaken);
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    tx.commit().await?;
+
+    // Best-effort taster trial after commit (missing plan = no-op).
+    grant_taster_trial(pool, user.id, taster_minutes).await?;
+
+    Ok(UpsertResult {
+        id: user.id,
+        username: user.username,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        photo_url: user.photo_url,
+        is_admin: user.is_admin,
+        trial_granted: false,
+    })
+}
+
+/// Authenticate a login + password. Returns the `users.id` on success.
+///
+/// Runs a password verification even when the login is not found (constant-time-ish),
+/// to avoid leaking account existence via response timing. Returns `InvalidCredentials`
+/// for both "no such login" and "wrong password".
+pub async fn find_user_by_credential(pool: &DbPool, login: &str, password: &str) -> Result<i64> {
+    let uid = login.trim().to_lowercase();
+    let row = sqlx::query!(
+        "SELECT id, user_id, secret_hash FROM auth_identities WHERE provider = 'password' AND provider_uid = $1",
+        uid,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(r) = row else {
+        crate::password::dummy_verify(password);
+        return Err(FloppaError::InvalidCredentials);
+    };
+
+    let ok = r
+        .secret_hash
+        .as_deref()
+        .map(|h| crate::password::verify_password(password, h))
+        .unwrap_or(false);
+
+    if !ok {
+        return Err(FloppaError::InvalidCredentials);
+    }
+
+    let _ = sqlx::query!(
+        "UPDATE auth_identities SET last_login_at = NOW() WHERE id = $1",
+        r.id,
+    )
+    .execute(pool)
+    .await;
+
+    Ok(r.user_id)
+}
+
+/// Set (or change) the login+password credential for an existing user. Used by the backup-credential
+/// nudge and the account page. Upserts the user's single `password` identity.
+pub async fn set_credential_for_user(
+    pool: &DbPool,
+    user_id: i64,
+    login: &str,
+    password: &str,
+) -> Result<()> {
+    let (uid, _display) = normalize_login(login)?;
+    if password.len() < 8 {
+        return Err(FloppaError::InvalidLogin(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    let secret_hash = crate::password::hash_password(password)?;
+
+    let res = sqlx::query!(
+        r#"INSERT INTO auth_identities (user_id, provider, provider_uid, secret_hash)
+           VALUES ($1, 'password', $2, $3)
+           ON CONFLICT (user_id, provider) DO UPDATE SET provider_uid = $2, secret_hash = $3"#,
+        user_id,
+        uid,
+        secret_hash,
+    )
+    .execute(pool)
+    .await;
+
+    match res {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::Database(db_err))
+            if db_err.constraint() == Some("auth_identities_provider_provider_uid_key") =>
+        {
+            Err(FloppaError::CredentialTaken)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Attach a Telegram identity to an existing user that has no Telegram yet (branch A), filling in
+/// any missing profile fields, and grant the one-time real trial. The caller must have already
+/// verified that no OTHER row owns `tg_id`. Returns whether a real trial was granted on this call.
+pub async fn attach_telegram_simple(
+    pool: &DbPool,
+    user_id: i64,
+    tg_id: i64,
+    username: Option<&str>,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+) -> Result<bool> {
+    sqlx::query!(
+        r#"
+        UPDATE users SET
+            telegram_id = $2,
+            username   = COALESCE(username, $3),
+            first_name = COALESCE(first_name, $4),
+            last_name  = COALESCE(last_name, $5)
+        WHERE id = $1
+        "#,
+        user_id,
+        tg_id,
+        username,
+        first_name,
+        last_name,
+    )
+    .execute(pool)
+    .await?;
+
+    grant_real_trial_if_unused(pool, user_id).await
+}
+
+/// Merge the established Telegram account `husk_id` INTO the current-session account `survivor_id`
+/// (which must have no Telegram yet), then delete the husk. The survivor keeps its `id` so the
+/// caller's JWT stays valid (no logout). Every `user_id` FK is re-pointed BEFORE the delete to
+/// avoid `ON DELETE CASCADE` silently destroying data (and the RESTRICT on `payments`).
+///
+/// Returns `Ok(true)` on a successful merge, `Ok(false)` if the preconditions no longer hold
+/// (a race — survivor already has a Telegram, or the husk lost it); the transaction makes no
+/// changes in that case.
+pub async fn merge_telegram_into_session(
+    pool: &DbPool,
+    survivor_id: i64,
+    husk_id: i64,
+) -> Result<bool> {
+    if survivor_id == husk_id {
+        return Ok(false);
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Lock both rows and capture the husk's fields.
+    let husk = sqlx::query!(
+        r#"SELECT telegram_id, username, first_name, last_name, photo_url, language,
+                  is_admin, trial_used_at, created_at
+           FROM users WHERE id = $1 FOR UPDATE"#,
+        husk_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    let survivor = sqlx::query!(
+        "SELECT telegram_id FROM users WHERE id = $1 FOR UPDATE",
+        survivor_id,
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    // Preconditions: survivor has no Telegram, husk still owns one.
+    let Some(tg_id) = husk.telegram_id else {
+        tx.rollback().await?;
+        return Ok(false);
+    };
+    if survivor.telegram_id.is_some() {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    // 1. Reconcile user-level columns onto the survivor (LEAST ignores NULLs in Postgres, so an
+    //    already-used trial on either side marks the merged account as trial-used).
+    sqlx::query!(
+        r#"UPDATE users SET
+               is_admin      = is_admin OR $2,
+               trial_used_at = LEAST(trial_used_at, $3),
+               created_at    = LEAST(created_at, $4)
+           WHERE id = $1"#,
+        survivor_id,
+        husk.is_admin,
+        husk.trial_used_at,
+        husk.created_at,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // Revoke the husk's VLESS (fires the daemon notify) before it is deleted.
+    sqlx::query!("UPDATE users SET vless_uuid = NULL WHERE id = $1", husk_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 2. Free the husk's telegram_id before assigning it to the survivor (partial-unique).
+    sqlx::query!("UPDATE users SET telegram_id = NULL WHERE id = $1", husk_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 3. Move telegram_id + profile onto the survivor (COALESCE keeps the survivor's own values).
+    sqlx::query!(
+        r#"UPDATE users SET
+               telegram_id = $2,
+               username    = COALESCE(username, $3),
+               first_name  = COALESCE(first_name, $4),
+               last_name   = COALESCE(last_name, $5),
+               photo_url   = COALESCE(photo_url, $6),
+               language    = COALESCE(language, $7)
+           WHERE id = $1"#,
+        survivor_id,
+        tg_id,
+        husk.username,
+        husk.first_name,
+        husk.last_name,
+        husk.photo_url,
+        husk.language,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // 4. Re-point every child FK husk → survivor BEFORE deleting the husk.
+    // 4a. app_installations (UNIQUE(user_id, device_id)): re-point peers off doomed husk
+    //     installations, drop the duplicates, then move the rest.
+    sqlx::query!(
+        r#"UPDATE peers p SET installation_id = s.id
+           FROM app_installations h
+           JOIN app_installations s ON s.user_id = $1 AND s.device_id = h.device_id
+           WHERE h.user_id = $2 AND p.installation_id = h.id"#,
+        survivor_id,
+        husk_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        r#"DELETE FROM app_installations h
+           USING app_installations s
+           WHERE h.user_id = $2 AND s.user_id = $1 AND h.device_id = s.device_id"#,
+        survivor_id,
+        husk_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE app_installations SET user_id = $1 WHERE user_id = $2",
+        survivor_id,
+        husk_id,
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // 4b–4d. peers (CASCADE), payments (RESTRICT), subscriptions + notification_log (CASCADE).
+    sqlx::query!(
+        "UPDATE peers SET user_id = $1 WHERE user_id = $2",
+        survivor_id,
+        husk_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE payments SET user_id = $1 WHERE user_id = $2",
+        survivor_id,
+        husk_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE subscriptions SET user_id = $1 WHERE user_id = $2",
+        survivor_id,
+        husk_id
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query!(
+        "UPDATE notification_log SET user_id = $1 WHERE user_id = $2",
+        survivor_id,
+        husk_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // auth_identities + telegram_link_codes are intentionally NOT re-pointed: the husk's are
+    // discarded via ON DELETE CASCADE (survivor's own login credentials win, by design).
+
+    // 5. Delete the now-empty husk.
+    sqlx::query!("DELETE FROM users WHERE id = $1", husk_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Server-side context needed for peer creation.
@@ -429,6 +811,302 @@ mod tests {
         let result = generate_wg_config("KEY", "10.0.0.2", &config, "PUB");
 
         assert!(result.contains("DNS = 8.8.8.8, 1.1.1.1"));
+    }
+
+    // ── credential auth (login + password) ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_credential_user_and_login(pool: DbPool) {
+        let res = create_credential_user(&pool, "Alice", "hunter2hunter", 120)
+            .await
+            .unwrap();
+        assert!(!res.trial_granted);
+        assert_eq!(res.username.as_deref(), Some("Alice")); // display preserves case
+
+        // Login is case-insensitive on the normalized uid.
+        let uid = find_user_by_credential(&pool, "alice", "hunter2hunter")
+            .await
+            .unwrap();
+        assert_eq!(uid, res.id);
+
+        // Wrong password → InvalidCredentials.
+        let err = find_user_by_credential(&pool, "alice", "wrongpass1")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FloppaError::InvalidCredentials));
+
+        // Unknown login → InvalidCredentials (not a distinct "not found").
+        let err = find_user_by_credential(&pool, "nobody", "whatever1")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FloppaError::InvalidCredentials));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_credential_user_duplicate_login(pool: DbPool) {
+        create_credential_user(&pool, "bob", "password123", 120)
+            .await
+            .unwrap();
+        // Same login, different case → still taken.
+        let err = create_credential_user(&pool, "BOB", "password123", 120)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FloppaError::CredentialTaken));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_credential_user_gets_taster_not_real_trial(pool: DbPool) {
+        let res = create_credential_user(&pool, "carol", "password123", 120)
+            .await
+            .unwrap();
+
+        // The one-time real trial is NOT consumed (so it can be claimed later via Telegram link).
+        let trial_used: Option<chrono::DateTime<Utc>> =
+            sqlx::query_scalar!("SELECT trial_used_at FROM users WHERE id = $1", res.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(trial_used.is_none());
+
+        // A taster subscription exists.
+        let taster_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'taster'",
+            res.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(taster_count, Some(1));
+
+        // Now grant the real trial (as the Telegram-link path would) → succeeds once.
+        assert!(grant_real_trial_if_unused(&pool, res.id).await.unwrap());
+        assert!(!grant_real_trial_if_unused(&pool, res.id).await.unwrap());
+
+        let trial_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'trial'",
+            res.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(trial_count, Some(1));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_short_password_rejected(pool: DbPool) {
+        let err = create_credential_user(&pool, "dave", "short", 120)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FloppaError::InvalidLogin(_)));
+    }
+
+    // ── Telegram link + merge ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_attach_telegram_grants_real_trial(pool: DbPool) {
+        get_basic_plan_id(&pool).await;
+        let user = create_credential_user(&pool, "newbie", "password123", 120)
+            .await
+            .unwrap();
+
+        let granted =
+            attach_telegram_simple(&pool, user.id, 55555, Some("tguser"), Some("Tg"), None)
+                .await
+                .unwrap();
+        assert!(granted);
+
+        let tg = sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tg, Some(55555));
+
+        let trial_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'trial'",
+            user.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(trial_count, Some(1));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_telegram_into_session(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+
+        // Survivor: the fresh credential account the user is logged into (no Telegram, taster only).
+        let survivor = create_credential_user(&pool, "recover_me", "password123", 120)
+            .await
+            .unwrap();
+        let survivor_inst_a = sqlx::query_scalar!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devA') RETURNING id",
+            survivor.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Husk: the established Telegram account with a used trial, a subscription, peers, a payment,
+        // and two installations — one sharing device 'devA' with the survivor (must dedup).
+        let husk = seed_user(&pool, 99999).await;
+        sqlx::query!("UPDATE users SET trial_used_at = NOW() WHERE id = $1", husk)
+            .execute(&pool)
+            .await
+            .unwrap();
+        seed_subscription(&pool, husk, basic).await;
+        let husk_inst_a = sqlx::query_scalar!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devA') RETURNING id",
+            husk
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devB')",
+            husk
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A husk peer attached to the soon-to-be-deduped installation 'devA'.
+        sqlx::query!(
+            "INSERT INTO peers (user_id, public_key, assigned_ip, installation_id) VALUES ($1, 'PUBKEYHUSK', '10.0.0.50', $2)",
+            husk, husk_inst_a
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query!(
+            "INSERT INTO payments (user_id, plan_id, amount, invoice_payload, status) VALUES ($1, $2, 100, 'payload-1', 'completed')",
+            husk, basic
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let merged = merge_telegram_into_session(&pool, survivor.id, husk)
+            .await
+            .unwrap();
+        assert!(merged);
+
+        // Husk row is gone.
+        let husk_exists =
+            sqlx::query_scalar!("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", husk)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(husk_exists, Some(false));
+
+        // Survivor now owns the Telegram id and is marked trial-used (no re-trialing).
+        let row = sqlx::query!(
+            "SELECT telegram_id, trial_used_at FROM users WHERE id = $1",
+            survivor.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.telegram_id, Some(99999));
+        assert!(row.trial_used_at.is_some());
+
+        // Payment survived and re-pointed (RESTRICT would have failed the delete otherwise).
+        let payment_owner =
+            sqlx::query_scalar!("SELECT user_id FROM payments WHERE invoice_payload = 'payload-1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(payment_owner, survivor.id);
+
+        // The husk peer re-pointed, and its installation was re-pointed to the survivor's 'devA'
+        // (no FK violation, no duplicate (user_id, device_id)).
+        let peer = sqlx::query!(
+            "SELECT user_id, installation_id FROM peers WHERE public_key = 'PUBKEYHUSK'"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(peer.user_id, survivor.id);
+        assert_eq!(peer.installation_id, Some(survivor_inst_a));
+
+        // Survivor has both installations: its own 'devA' (deduped) and the moved 'devB'.
+        let devices: Vec<String> = sqlx::query_scalar!(
+            "SELECT device_id FROM app_installations WHERE user_id = $1 ORDER BY device_id",
+            survivor.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(devices, vec!["devA".to_string(), "devB".to_string()]);
+        let _ = husk_inst_a; // deduped away
+
+        // Survivor holds both subscriptions (its taster + the husk's basic).
+        let sub_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1",
+            survivor.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(sub_count, Some(2));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_aborts_when_survivor_already_linked(pool: DbPool) {
+        // Survivor already has a Telegram (race) → merge is a no-op returning false.
+        let survivor = seed_user(&pool, 111).await;
+        let husk = seed_user(&pool, 222).await;
+        let merged = merge_telegram_into_session(&pool, survivor, husk)
+            .await
+            .unwrap();
+        assert!(!merged);
+        // Both rows still exist, untouched.
+        let count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM users WHERE id IN ($1, $2)",
+            survivor,
+            husk
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, Some(2));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_set_credential_for_existing_user(pool: DbPool) {
+        // A Telegram user sets a backup login+password.
+        let tg_user = seed_user(&pool, 7001).await;
+        set_credential_for_user(&pool, tg_user, "backup_login", "password123")
+            .await
+            .unwrap();
+        assert_eq!(
+            find_user_by_credential(&pool, "backup_login", "password123")
+                .await
+                .unwrap(),
+            tg_user
+        );
+
+        // Changing it (upsert on user_id) replaces password + login.
+        set_credential_for_user(&pool, tg_user, "backup_login", "newpassword9")
+            .await
+            .unwrap();
+        assert!(
+            find_user_by_credential(&pool, "backup_login", "password123")
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            find_user_by_credential(&pool, "backup_login", "newpassword9")
+                .await
+                .unwrap(),
+            tg_user
+        );
+
+        // Another user can't take the same login.
+        let other = seed_user(&pool, 7002).await;
+        let err = set_credential_for_user(&pool, other, "backup_login", "password123")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FloppaError::CredentialTaken));
     }
 
     // ── upsert_user ──

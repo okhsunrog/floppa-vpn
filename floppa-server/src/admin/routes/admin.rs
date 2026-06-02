@@ -71,7 +71,7 @@ pub(super) async fn get_stats(
 #[derive(Serialize, ToSchema)]
 pub struct UserSummary {
     id: i64,
-    telegram_id: i64,
+    telegram_id: Option<i64>,
     username: Option<String>,
     first_name: Option<String>,
     last_name: Option<String>,
@@ -188,7 +188,7 @@ pub(super) async fn create_user(
     .await
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e
-            && db_err.constraint() == Some("users_telegram_id_key")
+            && db_err.constraint() == Some("users_telegram_id_unique")
         {
             return ApiError::conflict("User with this telegram_id already exists");
         }
@@ -216,10 +216,48 @@ pub(super) async fn create_user(
     ))
 }
 
+#[derive(Deserialize, ToSchema)]
+pub struct SetUserCredentialRequest {
+    login: String,
+    password: String,
+}
+
+/// Set (or reset) a login + password for a user — admin-issued recovery access.
+#[utoipa::path(
+    post,
+    path = "/users/{id}/credential",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "User id")),
+    request_body = SetUserCredentialRequest,
+    responses(
+        (status = 204, description = "Credential set"),
+        (status = 400, body = ApiError, description = "Invalid login or password"),
+        (status = 409, body = ApiError, description = "Login already taken"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+    )
+)]
+pub(super) async fn set_user_credential(
+    admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<SetUserCredentialRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    floppa_core::services::set_credential_for_user(&state.pool, id, &req.login, &req.password)
+        .await?;
+    tracing::warn!(
+        "Admin {} set a recovery credential for user {}",
+        admin.0.user_id,
+        id
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct UserDetail {
     id: i64,
-    telegram_id: i64,
+    telegram_id: Option<i64>,
     username: Option<String>,
     first_name: Option<String>,
     last_name: Option<String>,

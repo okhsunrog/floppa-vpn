@@ -45,6 +45,18 @@ pub struct Messages {
 
     // errors
     pub error_generic: &'static str,
+
+    // account linking (/start link_<code>)
+    pub link_invalid: &'static str,
+    pub link_already: &'static str,
+    pub link_success: &'static str,
+    /// Placeholders: {date}, {devices}, {plan}
+    pub link_merge_prompt: &'static str,
+    pub link_merge_warning: &'static str,
+    pub link_merge_confirm: &'static str,
+    pub link_merge_cancel: &'static str,
+    pub link_merge_done: &'static str,
+    pub link_cancelled: &'static str,
 }
 
 static EN: Messages = Messages {
@@ -89,6 +101,16 @@ static EN: Messages = Messages {
                       /lang — change language",
 
     error_generic: "An error occurred. Please try again later.",
+
+    link_invalid: "This link is invalid or has expired. Please try again from the app.",
+    link_already: "This Telegram is already linked to your account.",
+    link_success: "✅ Telegram linked! You can now buy plans and receive notifications here.",
+    link_merge_prompt: "This Telegram already has a Floppa VPN account (since {date}, {devices} device(s), plan: {plan}).",
+    link_merge_warning: "Merging will move it into the account you're signed in to on the app. This can't be undone.",
+    link_merge_confirm: "Merge & link",
+    link_merge_cancel: "Cancel",
+    link_merge_done: "✅ Merged! Your account has been recovered and linked.",
+    link_cancelled: "Cancelled. Nothing was changed.",
 };
 
 static RU: Messages = Messages {
@@ -133,6 +155,16 @@ static RU: Messages = Messages {
                       /lang — сменить язык",
 
     error_generic: "Произошла ошибка. Попробуйте позже.",
+
+    link_invalid: "Ссылка недействительна или истекла. Попробуйте снова из приложения.",
+    link_already: "Этот Telegram уже привязан к вашему аккаунту.",
+    link_success: "✅ Telegram привязан! Теперь здесь можно покупать тарифы и получать уведомления.",
+    link_merge_prompt: "К этому Telegram уже привязан аккаунт Floppa VPN (с {date}, устройств: {devices}, тариф: {plan}).",
+    link_merge_warning: "Объединение перенесёт его в аккаунт, в который вы вошли в приложении. Это необратимо.",
+    link_merge_confirm: "Объединить и привязать",
+    link_merge_cancel: "Отмена",
+    link_merge_done: "✅ Готово! Аккаунт восстановлен и привязан.",
+    link_cancelled: "Отменено. Ничего не изменено.",
 };
 
 /// Get messages for a language code string.
@@ -199,6 +231,21 @@ pub fn format_plan_button(
 /// Format invoice title: "Premium (30 days)"
 pub fn format_invoice_title(msgs: &Messages, name: &str, days: i32) -> String {
     format!("{name} ({days} {})", msgs.buy_plan_days)
+}
+
+/// Build the merge-confirmation prompt describing the established account being folded in.
+pub fn format_link_merge_prompt(
+    msgs: &Messages,
+    created: chrono::DateTime<chrono::Utc>,
+    devices: i64,
+    plan: Option<&str>,
+) -> String {
+    let body = msgs
+        .link_merge_prompt
+        .replace("{date}", &created.format("%Y-%m-%d").to_string())
+        .replace("{devices}", &devices.to_string())
+        .replace("{plan}", plan.unwrap_or("—"));
+    format!("{body}\n\n{}", msgs.link_merge_warning)
 }
 
 /// Format invoice description with optional proration info.

@@ -17,7 +17,11 @@ use super::AppState;
 #[derive(Serialize, ToSchema)]
 pub struct MeResponse {
     id: i64,
-    telegram_id: i64,
+    telegram_id: Option<i64>,
+    /// True if a Telegram account is linked (can pay via Stars, gets bot notifications).
+    telegram_linked: bool,
+    /// True if the user has set a login+password credential (for the "set a backup login" nudge).
+    has_credential: bool,
     username: Option<String>,
     first_name: Option<String>,
     last_name: Option<String>,
@@ -30,6 +34,8 @@ pub struct MeResponse {
 pub struct MySubscription {
     plan_name: String,
     plan_display_name: String,
+    /// Subscription origin: 'trial' | 'taster' | 'admin_grant' | 'purchase'.
+    source: String,
     starts_at: chrono::DateTime<Utc>,
     expires_at: Option<chrono::DateTime<Utc>>,
     speed_limit_mbps: Option<i32>,
@@ -127,7 +133,12 @@ pub(super) async fn get_me(
     State(state): State<AppState>,
 ) -> Result<Json<MeResponse>, ApiError> {
     let user = sqlx::query!(
-        "SELECT id, telegram_id, username, first_name, last_name, photo_url, is_admin FROM users WHERE id = $1",
+        r#"
+        SELECT
+            id, telegram_id, username, first_name, last_name, photo_url, is_admin,
+            EXISTS(SELECT 1 FROM auth_identities ai WHERE ai.user_id = users.id) AS "has_credential!"
+        FROM users WHERE id = $1
+        "#,
         auth.user_id
     )
     .fetch_one(&state.pool)
@@ -140,6 +151,7 @@ pub(super) async fn get_me(
         SELECT
             p.name as plan_name,
             p.display_name as plan_display_name,
+            s.source,
             s.starts_at,
             s.expires_at,
             p.default_speed_limit_mbps as speed_limit_mbps,
@@ -156,13 +168,132 @@ pub(super) async fn get_me(
 
     Ok(Json(MeResponse {
         id: user.id,
+        telegram_linked: user.telegram_id.is_some(),
         telegram_id: user.telegram_id,
+        has_credential: user.has_credential,
         username: user.username,
         first_name: user.first_name,
         last_name: user.last_name,
         photo_url: user.photo_url,
         is_admin: user.is_admin,
         subscription,
+    }))
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct SetCredentialRequest {
+    login: String,
+    password: String,
+}
+
+/// Set or change the login + password (backup access) for the current account.
+#[utoipa::path(
+    post,
+    path = "/me/credentials",
+    tag = "user",
+    security(("bearer" = [])),
+    request_body = SetCredentialRequest,
+    responses(
+        (status = 204, description = "Credential set"),
+        (status = 400, body = ApiError, description = "Invalid login or password"),
+        (status = 409, body = ApiError, description = "Login already taken"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn set_my_credential(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<SetCredentialRequest>,
+) -> Result<StatusCode, ApiError> {
+    services::set_credential_for_user(&state.pool, auth.user_id, &req.login, &req.password).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct LinkStartResponse {
+    code: String,
+    deep_link: String,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct LinkPollResponse {
+    linked: bool,
+}
+
+/// Start linking a Telegram account to the current account (returns a bot deep link + code).
+#[utoipa::path(
+    post,
+    path = "/me/link/telegram/start",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = LinkStartResponse),
+        (status = 409, body = ApiError, description = "Telegram already linked"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn start_telegram_link(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<LinkStartResponse>, ApiError> {
+    let already = sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", auth.user_id)
+        .fetch_one(&state.pool)
+        .await?;
+    if already.is_some() {
+        return Err(ApiError::conflict("Telegram is already linked"));
+    }
+
+    let username = state
+        .config
+        .bot
+        .as_ref()
+        .and_then(|b| b.username.as_deref())
+        .ok_or_else(|| ApiError::internal("Bot username not configured"))?;
+
+    // Opportunistic GC of expired codes, then mint a fresh one.
+    let _ = sqlx::query!("DELETE FROM telegram_link_codes WHERE expires_at < NOW()")
+        .execute(&state.pool)
+        .await;
+    let code = super::auth::generate_nonce();
+    let expires_at = Utc::now() + chrono::Duration::minutes(10);
+    sqlx::query!(
+        "INSERT INTO telegram_link_codes (code, user_id, expires_at) VALUES ($1, $2, $3)",
+        code,
+        auth.user_id,
+        expires_at,
+    )
+    .execute(&state.pool)
+    .await?;
+
+    let deep_link = format!("https://t.me/{username}?start=link_{code}");
+    Ok(Json(LinkStartResponse {
+        code,
+        deep_link,
+        expires_at,
+    }))
+}
+
+/// Poll whether the Telegram link has completed (the app calls this after opening the deep link).
+#[utoipa::path(
+    get,
+    path = "/me/link/telegram/poll",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = LinkPollResponse),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn poll_telegram_link(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<LinkPollResponse>, ApiError> {
+    let tg = sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", auth.user_id)
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(LinkPollResponse {
+        linked: tg.is_some(),
     }))
 }
 
@@ -504,11 +635,14 @@ pub(super) async fn send_my_peer_config(
     );
     let filename = format!("floppa-vpn-{}.conf", peer.assigned_ip);
 
-    // Get user's telegram_id
+    // Get user's telegram_id (None for credential-only accounts — they download the config directly)
     let telegram_id =
         sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", auth.user_id)
             .fetch_one(&state.pool)
-            .await?;
+            .await?
+            .ok_or_else(|| {
+                ApiError::bad_request("No Telegram linked — download the config directly instead")
+            })?;
 
     // Send config as document via Telegram bot
     let file = InputFile::memory(wg_config.into_bytes()).file_name(filename);

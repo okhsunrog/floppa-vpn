@@ -2,7 +2,7 @@
 
 import type { Client, Options as Options2, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteInstallationData, DeleteInstallationErrors, DeleteInstallationResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListInstallationsData, ListInstallationsErrors, ListInstallationsResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListVlessPeersData, ListVlessPeersErrors, ListVlessPeersResponses, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigErrors, RegenerateAdminVlessConfigResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramDeepLinkCallbackResponses, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses, UpsertMyInstallationData, UpsertMyInstallationErrors, UpsertMyInstallationResponses } from './types.gen';
+import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteInstallationData, DeleteInstallationErrors, DeleteInstallationResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListInstallationsData, ListInstallationsErrors, ListInstallationsResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListVlessPeersData, ListVlessPeersErrors, ListVlessPeersResponses, LoginAccountData, LoginAccountErrors, LoginAccountResponses, PollTelegramLinkData, PollTelegramLinkErrors, PollTelegramLinkResponses, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigErrors, RegenerateAdminVlessConfigResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RegisterAccountData, RegisterAccountErrors, RegisterAccountResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetMyCredentialData, SetMyCredentialErrors, SetMyCredentialResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, SetUserCredentialData, SetUserCredentialErrors, SetUserCredentialResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, StartTelegramLinkData, StartTelegramLinkErrors, StartTelegramLinkResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramDeepLinkCallbackResponses, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses, UpsertMyInstallationData, UpsertMyInstallationErrors, UpsertMyInstallationResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean> = Options2<TData, ThrowOnError> & {
     /**
@@ -17,6 +17,30 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      */
     meta?: Record<string, unknown>;
 };
+
+/**
+ * Log in with a login + password.
+ */
+export const loginAccount = <ThrowOnError extends boolean = false>(options: Options<LoginAccountData, ThrowOnError>) => (options.client ?? client).post<LoginAccountResponses, LoginAccountErrors, ThrowOnError>({
+    url: '/auth/account/login',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Register a new account with a login + password (no Telegram). Grants a short taster trial.
+ */
+export const registerAccount = <ThrowOnError extends boolean = false>(options: Options<RegisterAccountData, ThrowOnError>) => (options.client ?? client).post<RegisterAccountResponses, RegisterAccountErrors, ThrowOnError>({
+    url: '/auth/account/register',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Authenticate via Telegram Login Widget
@@ -87,6 +111,18 @@ export const deleteInstallation = <ThrowOnError extends boolean = false>(options
 export const getMe = <ThrowOnError extends boolean = false>(options?: Options<GetMeData, ThrowOnError>) => (options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({ url: '/me', ...options });
 
 /**
+ * Set or change the login + password (backup access) for the current account.
+ */
+export const setMyCredential = <ThrowOnError extends boolean = false>(options: Options<SetMyCredentialData, ThrowOnError>) => (options.client ?? client).post<SetMyCredentialResponses, SetMyCredentialErrors, ThrowOnError>({
+    url: '/me/credentials',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Upsert an app installation (device registration)
  */
 export const upsertMyInstallation = <ThrowOnError extends boolean = false>(options: Options<UpsertMyInstallationData, ThrowOnError>) => (options.client ?? client).post<UpsertMyInstallationResponses, UpsertMyInstallationErrors, ThrowOnError>({
@@ -97,6 +133,16 @@ export const upsertMyInstallation = <ThrowOnError extends boolean = false>(optio
         ...options.headers
     }
 });
+
+/**
+ * Poll whether the Telegram link has completed (the app calls this after opening the deep link).
+ */
+export const pollTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<PollTelegramLinkData, ThrowOnError>) => (options?.client ?? client).get<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError>({ url: '/me/link/telegram/poll', ...options });
+
+/**
+ * Start linking a Telegram account to the current account (returns a bot deep link + code).
+ */
+export const startTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<StartTelegramLinkData, ThrowOnError>) => (options?.client ?? client).post<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError>({ url: '/me/link/telegram/start', ...options });
 
 /**
  * List current user's peers and VLESS info
@@ -216,6 +262,18 @@ export const createUser = <ThrowOnError extends boolean = false>(options: Option
  * Get user details (admin only)
  */
 export const getUser = <ThrowOnError extends boolean = false>(options: Options<GetUserData, ThrowOnError>) => (options.client ?? client).get<GetUserResponses, GetUserErrors, ThrowOnError>({ url: '/users/{id}', ...options });
+
+/**
+ * Set (or reset) a login + password for a user — admin-issued recovery access.
+ */
+export const setUserCredential = <ThrowOnError extends boolean = false>(options: Options<SetUserCredentialData, ThrowOnError>) => (options.client ?? client).post<SetUserCredentialResponses, SetUserCredentialErrors, ThrowOnError>({
+    url: '/users/{id}/credential',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Remove all active peers for a user (admin only)

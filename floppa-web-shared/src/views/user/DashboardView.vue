@@ -30,6 +30,7 @@ const totalTraffic = computed(() => {
 })
 
 const hasSubscription = computed(() => !!me.value?.subscription)
+const isTaster = computed(() => me.value?.subscription?.source === 'taster')
 
 const isPermanent = computed(() => {
   return me.value?.subscription?.expires_at === null
@@ -55,6 +56,27 @@ const daysRemaining = computed(() => {
     <UAlert v-else-if="error && !props.skipLoadingSpinner" color="error" :title="error.message" />
     <Transition v-else-if="me" name="fade" appear>
       <div>
+        <!-- Taster: link Telegram to unlock the full trial -->
+        <UAlert
+          v-if="isTaster"
+          color="warning"
+          variant="subtle"
+          icon="i-lucide-hourglass"
+          :title="t('userDashboard.tasterTitle')"
+          :description="t('userDashboard.tasterBody')"
+          :actions="[
+            {
+              label: t('userDashboard.linkTelegram'),
+              color: 'warning',
+              variant: 'solid',
+              onClick: () => {
+                router.push('/account')
+              },
+            },
+          ]"
+          class="mb-4"
+        />
+
         <!-- User Info -->
         <UCard class="mb-4 bg-gradient-to-br from-[var(--ui-primary)] to-[var(--ui-primary)]/80">
           <div class="flex items-center gap-4 text-white">

@@ -24,7 +24,7 @@ const filteredUsers = computed(() => {
       u.username?.toLowerCase().includes(q) ||
       u.first_name?.toLowerCase().includes(q) ||
       u.last_name?.toLowerCase().includes(q) ||
-      u.telegram_id.toString().includes(q),
+      u.telegram_id?.toString().includes(q),
   )
 })
 

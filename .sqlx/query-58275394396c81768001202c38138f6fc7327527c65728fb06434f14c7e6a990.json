@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers p SET installation_id = s.id\n           FROM app_installations h\n           JOIN app_installations s ON s.user_id = $1 AND s.device_id = h.device_id\n           WHERE h.user_id = $2 AND p.installation_id = h.id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "58275394396c81768001202c38138f6fc7327527c65728fb06434f14c7e6a990"
+}

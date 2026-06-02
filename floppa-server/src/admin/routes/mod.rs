@@ -21,6 +21,9 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub(crate) use crate::admin::error::ApiError;
 
+/// Fixed-window rate-limit buckets: key → (count, window_start).
+type RateBuckets = Arc<RwLock<HashMap<String, (u32, chrono::DateTime<Utc>)>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
@@ -32,6 +35,8 @@ pub struct AppState {
     pub vm_url: String,
     telegram_login_states: Arc<RwLock<HashMap<String, PendingTelegramLoginState>>>,
     telegram_login_codes: Arc<RwLock<HashMap<String, PendingTelegramLoginCode>>>,
+    /// Fixed-window rate-limit counters for credential auth, keyed "register:<ip>" / "login:<ip>".
+    rate_buckets: RateBuckets,
 }
 
 #[derive(Clone)]
@@ -66,8 +71,13 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(auth::telegram_deep_link_callback))
     .routes(routes!(auth::exchange_telegram_login_code))
     .routes(routes!(auth::telegram_mini_app_auth))
+    .routes(routes!(auth::register_account))
+    .routes(routes!(auth::login_account))
     // User endpoints (authenticated)
     .routes(routes!(user::get_me))
+    .routes(routes!(user::set_my_credential))
+    .routes(routes!(user::start_telegram_link))
+    .routes(routes!(user::poll_telegram_link))
     .routes(routes!(user::upsert_my_installation))
     .routes(routes!(user::get_my_peers, user::create_my_peer))
     .routes(routes!(user::delete_my_peer))
@@ -82,6 +92,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(admin::get_stats))
     .routes(routes!(admin::list_users, admin::create_user))
     .routes(routes!(admin::get_user))
+    .routes(routes!(admin::set_user_credential))
     .routes(routes!(admin::set_subscription))
     .routes(routes!(admin::delete_subscription))
     .routes(routes!(admin::remove_peer))
@@ -127,6 +138,40 @@ async fn version_check_middleware(
     next.run(request).await
 }
 
+/// Extract the client IP from the leftmost X-Forwarded-For entry (server runs behind a proxy).
+pub(super) fn client_ip(headers: &axum::http::HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Fixed-window rate limit. Returns Err(429) once `max` requests for `key` occur within `window`.
+pub(super) async fn check_rate_limit(
+    state: &AppState,
+    key: String,
+    max: u32,
+    window: Duration,
+) -> Result<(), ApiError> {
+    let now = Utc::now();
+    let mut buckets = state.rate_buckets.write().await;
+    buckets.retain(|_, (_, start)| now - *start < window);
+    let entry = buckets.entry(key).or_insert((0, now));
+    if now - entry.1 >= window {
+        *entry = (0, now);
+    }
+    entry.0 += 1;
+    if entry.0 > max {
+        return Err(ApiError::too_many_requests(
+            "Too many attempts, please try again later",
+        ));
+    }
+    Ok(())
+}
+
 pub fn create_router(
     pool: DbPool,
     config: Config,
@@ -150,6 +195,7 @@ pub fn create_router(
         vm_url,
         telegram_login_states: Arc::new(RwLock::new(HashMap::new())),
         telegram_login_codes: Arc::new(RwLock::new(HashMap::new())),
+        rate_buckets: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let (router, _openapi) = openapi_router().with_state(state.clone()).split_for_parts();

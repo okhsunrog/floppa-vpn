@@ -37,7 +37,7 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
         r#"
         SELECT
             s.id as subscription_id,
-            u.telegram_id,
+            u.telegram_id as "telegram_id!",
             u.language,
             CASE
                 WHEN s.expires_at <= NOW() THEN 'expiry_now'
@@ -46,6 +46,8 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
         FROM subscriptions s
         JOIN users u ON s.user_id = u.id
         WHERE s.expires_at IS NOT NULL
+          -- Skip credential-only users (no Telegram chat to notify)
+          AND u.telegram_id IS NOT NULL
           -- Expires within next 25 hours OR expired within last 25 hours
           AND s.expires_at BETWEEN NOW() - INTERVAL '25 hours' AND NOW() + INTERVAL '25 hours'
           -- No newer subscription for this user

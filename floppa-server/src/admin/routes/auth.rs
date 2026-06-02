@@ -63,7 +63,7 @@ pub struct MiniAppAuthRequest {
     init_data: String,
 }
 
-fn generate_nonce() -> String {
+pub(super) fn generate_nonce() -> String {
     format!("{:032x}{:032x}", random::<u128>(), random::<u128>())
 }
 
@@ -94,25 +94,17 @@ fn html_escape_attr(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Upsert a Telegram user and create a JWT auth response.
-async fn upsert_and_create_jwt(
+/// Build a JWT + AuthResponse from an already-resolved user. Single point that signs the JWT;
+/// both the Telegram path and the credential (login+password) path converge here.
+fn build_auth_response(
     state: &AppState,
-    telegram_id: i64,
-    username: Option<&str>,
-    profile: services::TelegramProfile<'_>,
+    result: services::UpsertResult,
 ) -> Result<AuthResponse, ApiError> {
     let auth_secrets = state
         .secrets
         .auth
         .as_ref()
         .ok_or_else(|| ApiError::internal("Auth secrets not set"))?;
-
-    let is_config_admin = auth_secrets.admin_telegram_ids.contains(&telegram_id);
-
-    let result =
-        services::upsert_user(&state.pool, telegram_id, username, profile, is_config_admin)
-            .await
-            .map_err(|e| ApiError::internal(format!("Failed to upsert user: {e}")))?;
 
     let default_auth = floppa_core::AuthConfig::default();
     let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
@@ -137,6 +129,29 @@ async fn upsert_and_create_jwt(
             is_admin: result.is_admin,
         },
     })
+}
+
+/// Upsert a Telegram user and create a JWT auth response.
+async fn upsert_and_create_jwt(
+    state: &AppState,
+    telegram_id: i64,
+    username: Option<&str>,
+    profile: services::TelegramProfile<'_>,
+) -> Result<AuthResponse, ApiError> {
+    let is_config_admin = state
+        .secrets
+        .auth
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Auth secrets not set"))?
+        .admin_telegram_ids
+        .contains(&telegram_id);
+
+    let result =
+        services::upsert_user(&state.pool, telegram_id, username, profile, is_config_admin)
+            .await
+            .map_err(|e| ApiError::internal(format!("Failed to upsert user: {e}")))?;
+
+    build_auth_response(state, result)
 }
 
 async fn authenticate_telegram_user(
@@ -494,4 +509,124 @@ pub(super) async fn telegram_mini_app_auth(
     .await?;
 
     Ok(Json(auth_response))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AccountRegisterRequest {
+    login: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AccountLoginRequest {
+    login: String,
+    password: String,
+}
+
+/// Fetch a user's display fields by id, packaged as an `UpsertResult` for `build_auth_response`.
+async fn fetch_user_result(
+    state: &AppState,
+    user_id: i64,
+) -> Result<services::UpsertResult, ApiError> {
+    let u = sqlx::query!(
+        "SELECT id, username, first_name, last_name, photo_url, is_admin FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+
+    Ok(services::UpsertResult {
+        id: u.id,
+        username: u.username,
+        first_name: u.first_name,
+        last_name: u.last_name,
+        photo_url: u.photo_url,
+        is_admin: u.is_admin,
+        trial_granted: false,
+    })
+}
+
+fn taster_minutes(state: &AppState) -> i64 {
+    state
+        .config
+        .auth
+        .as_ref()
+        .map(|a| a.taster_trial_minutes)
+        .unwrap_or_else(|| floppa_core::AuthConfig::default().taster_trial_minutes)
+}
+
+/// Register a new account with a login + password (no Telegram). Grants a short taster trial.
+#[utoipa::path(
+    post,
+    path = "/auth/account/register",
+    tag = "auth",
+    request_body = AccountRegisterRequest,
+    responses(
+        (status = 200, body = AuthResponse),
+        (status = 400, body = ApiError, description = "Invalid login or password"),
+        (status = 409, body = ApiError, description = "Login already taken"),
+    )
+)]
+pub(super) async fn register_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AccountRegisterRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    let limit = state
+        .config
+        .auth
+        .as_ref()
+        .map(|a| a.register_rate_limit_per_hour)
+        .unwrap_or_else(|| floppa_core::AuthConfig::default().register_rate_limit_per_hour);
+    super::check_rate_limit(
+        &state,
+        format!("register:{}", super::client_ip(&headers)),
+        limit,
+        Duration::hours(1),
+    )
+    .await?;
+
+    let result = services::create_credential_user(
+        &state.pool,
+        &req.login,
+        &req.password,
+        taster_minutes(&state),
+    )
+    .await?;
+    Ok(Json(build_auth_response(&state, result)?))
+}
+
+/// Log in with a login + password.
+#[utoipa::path(
+    post,
+    path = "/auth/account/login",
+    tag = "auth",
+    request_body = AccountLoginRequest,
+    responses(
+        (status = 200, body = AuthResponse),
+        (status = 401, body = ApiError, description = "Invalid login or password"),
+    )
+)]
+pub(super) async fn login_account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AccountLoginRequest>,
+) -> Result<Json<AuthResponse>, ApiError> {
+    let limit = state
+        .config
+        .auth
+        .as_ref()
+        .map(|a| a.login_rate_limit_per_15min)
+        .unwrap_or_else(|| floppa_core::AuthConfig::default().login_rate_limit_per_15min);
+    super::check_rate_limit(
+        &state,
+        format!("login:{}", super::client_ip(&headers)),
+        limit,
+        Duration::minutes(15),
+    )
+    .await?;
+
+    let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
+    let result = fetch_user_result(&state, user_id).await?;
+    Ok(Json(build_auth_response(&state, result)?))
 }

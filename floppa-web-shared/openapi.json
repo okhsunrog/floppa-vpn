@@ -6,6 +6,98 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/auth/account/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log in with a login + password.",
+        "operationId": "login_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid login or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/account/register": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Register a new account with a login + password (no Telegram). Grants a short taster trial.",
+        "operationId": "register_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid login or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Login already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/auth/telegram": {
       "post": {
         "tags": [
@@ -405,6 +497,65 @@
         ]
       }
     },
+    "/me/credentials": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Set or change the login + password (backup access) for the current account.",
+        "operationId": "set_my_credential",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Credential set"
+          },
+          "400": {
+            "description": "Invalid login or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Login already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/me/installations": {
       "post": {
         "tags": [
@@ -435,6 +586,88 @@
           },
           "401": {
             "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/link/telegram/poll": {
+      "get": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Poll whether the Telegram link has completed (the app calls this after opening the deep link).",
+        "operationId": "poll_telegram_link",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkPollResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/link/telegram/start": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Start linking a Telegram account to the current account (returns a bot deep link + code).",
+        "operationId": "start_telegram_link",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkStartResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Telegram already linked",
             "content": {
               "application/json": {
                 "schema": {
@@ -1533,6 +1766,87 @@
         ]
       }
     },
+    "/users/{id}/credential": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Set (or reset) a login + password for a user — admin-issued recovery access.",
+        "operationId": "set_user_credential",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetUserCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Credential set"
+          },
+          "400": {
+            "description": "Invalid login or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Login already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/users/{id}/peer": {
       "delete": {
         "tags": [
@@ -1877,6 +2191,36 @@
   },
   "components": {
     "schemas": {
+      "AccountLoginRequest": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "AccountRegisterRequest": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "required": [
@@ -2213,11 +2557,43 @@
           }
         }
       },
+      "LinkPollResponse": {
+        "type": "object",
+        "required": [
+          "linked"
+        ],
+        "properties": {
+          "linked": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LinkStartResponse": {
+        "type": "object",
+        "required": [
+          "code",
+          "deep_link",
+          "expires_at"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "deep_link": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "MeResponse": {
         "type": "object",
         "required": [
           "id",
-          "telegram_id",
+          "telegram_linked",
+          "has_credential",
           "is_admin"
         ],
         "properties": {
@@ -2226,6 +2602,10 @@
               "string",
               "null"
             ]
+          },
+          "has_credential": {
+            "type": "boolean",
+            "description": "True if the user has set a login+password credential (for the \"set a backup login\" nudge)."
           },
           "id": {
             "type": "integer",
@@ -2257,8 +2637,15 @@
             ]
           },
           "telegram_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
+          },
+          "telegram_linked": {
+            "type": "boolean",
+            "description": "True if a Telegram account is linked (can pay via Stars, gets bot notifications)."
           },
           "username": {
             "type": [
@@ -2374,6 +2761,7 @@
         "required": [
           "plan_name",
           "plan_display_name",
+          "source",
           "starts_at",
           "max_peers"
         ],
@@ -2394,6 +2782,10 @@
           },
           "plan_name": {
             "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Subscription origin: 'trial' | 'taster' | 'admin_grant' | 'purchase'."
           },
           "speed_limit_mbps": {
             "type": [
@@ -2605,6 +2997,21 @@
           }
         }
       },
+      "SetCredentialRequest": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
       "SetSubscriptionRequest": {
         "type": "object",
         "required": [
@@ -2626,6 +3033,21 @@
           "plan_id": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "SetUserCredentialRequest": {
+        "type": "object",
+        "required": [
+          "login",
+          "password"
+        ],
+        "properties": {
+          "login": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
           }
         }
       },
@@ -2871,7 +3293,6 @@
         "type": "object",
         "required": [
           "id",
-          "telegram_id",
           "is_admin",
           "created_at",
           "wg_download_bytes",
@@ -2922,7 +3343,10 @@
             }
           },
           "telegram_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           },
           "username": {
@@ -2956,7 +3380,6 @@
         "type": "object",
         "required": [
           "id",
-          "telegram_id",
           "is_admin",
           "created_at",
           "peer_count",
@@ -3012,7 +3435,10 @@
             ]
           },
           "telegram_id": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           },
           "username": {

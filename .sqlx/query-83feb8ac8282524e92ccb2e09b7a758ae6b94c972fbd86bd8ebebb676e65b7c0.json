@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            p.name as plan_name,\n            p.display_name as plan_display_name,\n            s.starts_at,\n            s.expires_at,\n            p.default_speed_limit_mbps as speed_limit_mbps,\n            p.max_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LIMIT 1\n        ",
+  "query": "\n        SELECT\n            p.name as plan_name,\n            p.display_name as plan_display_name,\n            s.source,\n            s.starts_at,\n            s.expires_at,\n            p.default_speed_limit_mbps as speed_limit_mbps,\n            p.max_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LIMIT 1\n        ",
   "describe": {
     "columns": [
       {
@@ -15,21 +15,26 @@
       },
       {
         "ordinal": 2,
+        "name": "source",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
         "name": "starts_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "expires_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "speed_limit_mbps",
         "type_info": "Int4"
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "max_peers",
         "type_info": "Int4"
       }
@@ -43,10 +48,11 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false
     ]
   },
-  "hash": "ae4699f69dfacb0c884c21e5032768fe7570183a0688f2c5e7c40a97e208cfec"
+  "hash": "83feb8ac8282524e92ccb2e09b7a758ae6b94c972fbd86bd8ebebb676e65b7c0"
 }

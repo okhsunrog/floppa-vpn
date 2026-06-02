@@ -32,6 +32,15 @@ pub enum FloppaError {
     #[error("VLESS not configured on this server")]
     VlessNotConfigured,
 
+    #[error("Login already taken")]
+    CredentialTaken,
+
+    #[error("Invalid login or password")]
+    InvalidCredentials,
+
+    #[error("Invalid login: {0}")]
+    InvalidLogin(String),
+
     #[error("Config error: {0}")]
     Config(#[from] crate::config::ConfigError),
 }
