@@ -118,30 +118,24 @@ const locales = [
   { value: 'ru', label: 'Русский' },
 ] as const
 
-const navItems = computed(() => {
-  if (!auth.isAuthenticated) return []
+// Base nav shown to every authenticated user, plus any app-injected extras.
+const baseNavItems = computed(() =>
+  auth.isAuthenticated
+    ? [
+        { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
+        { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
+        { label: t('nav.account'), icon: 'i-lucide-user-cog', to: '/account' },
+        { label: t('nav.info'), icon: 'i-lucide-info', to: '/info' },
+        ...props.extraNavItems,
+      ]
+    : [],
+)
 
-  const items: {
-    label: string
-    icon: string
-    to?: string
-    children?: { label: string; icon: string; to: string }[]
-  }[] = [
-    { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
-    { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
-    { label: t('nav.account'), icon: 'i-lucide-user-cog', to: '/account' },
-    { label: t('nav.info'), icon: 'i-lucide-info', to: '/info' },
-  ]
-
-  for (const item of props.extraNavItems) {
-    items.push(item)
-  }
-
-  if (auth.isAdmin) {
-    items.push({
-      label: t('nav.admin'),
-      icon: 'i-lucide-settings',
-      children: [
+// Admin section links (empty for non-admins). Rendered nested on desktop, flat on mobile —
+// both views derive from this single list, so adding/removing a link can't desync them.
+const adminNavItems = computed(() =>
+  auth.isAuthenticated && auth.isAdmin
+    ? [
         { label: t('nav.overview'), icon: 'i-lucide-bar-chart-3', to: '/admin' },
         { label: t('nav.peers'), icon: 'i-lucide-link', to: '/admin/peers' },
         { label: t('nav.vless'), icon: 'i-lucide-globe', to: '/admin/vless' },
@@ -152,43 +146,22 @@ const navItems = computed(() => {
         },
         { label: t('nav.users'), icon: 'i-lucide-users', to: '/admin/users' },
         { label: t('nav.plans'), icon: 'i-lucide-list', to: '/admin/plans' },
-      ],
-    })
-  }
+      ]
+    : [],
+)
 
-  return items
-})
-
-// Flat nav items for mobile (no nested children)
-const mobileNavItems = computed(() => {
+// Desktop: admin links nested under a single "Admin" entry.
+const navItems = computed(() => {
   if (!auth.isAuthenticated) return []
-
-  const items: { label: string; icon: string; to: string }[] = [
-    { label: t('nav.dashboard'), icon: 'i-lucide-home', to: '/' },
-    { label: t('nav.myConfigs'), icon: 'i-lucide-key', to: '/peers' },
-    { label: t('nav.account'), icon: 'i-lucide-user-cog', to: '/account' },
-    { label: t('nav.info'), icon: 'i-lucide-info', to: '/info' },
-  ]
-
-  for (const item of props.extraNavItems) {
-    items.push(item)
+  const items: {
+    label: string
+    icon: string
+    to?: string
+    children?: { label: string; icon: string; to: string }[]
+  }[] = [...baseNavItems.value]
+  if (adminNavItems.value.length) {
+    items.push({ label: t('nav.admin'), icon: 'i-lucide-settings', children: adminNavItems.value })
   }
-
-  if (auth.isAdmin) {
-    items.push(
-      { label: t('nav.overview'), icon: 'i-lucide-bar-chart-3', to: '/admin' },
-      { label: t('nav.peers'), icon: 'i-lucide-link', to: '/admin/peers' },
-      { label: t('nav.vless'), icon: 'i-lucide-globe', to: '/admin/vless' },
-      {
-        label: t('nav.installations'),
-        icon: 'i-lucide-monitor-smartphone',
-        to: '/admin/installations',
-      },
-      { label: t('nav.users'), icon: 'i-lucide-users', to: '/admin/users' },
-      { label: t('nav.plans'), icon: 'i-lucide-list', to: '/admin/plans' },
-    )
-  }
-
   return items
 })
 </script>
@@ -260,17 +233,11 @@ const mobileNavItems = computed(() => {
         <div class="flex flex-col h-full">
           <nav class="flex flex-col gap-1">
             <template
-              v-for="section in (auth.isAdmin
-                ? [
-                    { items: mobileNavItems.slice(0, mobileNavItems.length - 6) },
-                    {
-                      label: t('nav.admin'),
-                      items: mobileNavItems.slice(mobileNavItems.length - 6),
-                    },
-                  ]
-                : [{ items: mobileNavItems }]) as {
+              v-for="section in (adminNavItems.length
+                ? [{ items: baseNavItems }, { label: t('nav.admin'), items: adminNavItems }]
+                : [{ items: baseNavItems }]) as {
                 label?: string
-                items: typeof mobileNavItems
+                items: typeof baseNavItems
               }[]"
               :key="section.label ?? 'main'"
             >
