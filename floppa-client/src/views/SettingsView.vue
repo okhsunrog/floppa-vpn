@@ -231,6 +231,11 @@ async function reconnectVpn() {
 function selectMode(mode: SplitMode) {
   settings.splitMode = mode
 }
+
+async function resetProtocol() {
+  await vpn.resetProtocolPreference()
+  toast.add({ title: t('settings.protocolPreferenceReset'), color: 'success' })
+}
 </script>
 
 <template>
@@ -253,7 +258,18 @@ function selectMode(mode: SplitMode) {
             {{ t('settings.autoSelectProtocolHint') }}
           </p>
         </div>
-        <USwitch v-model="settings.autoSelect" />
+        <div class="flex items-center gap-2 shrink-0">
+          <UButton
+            :label="t('settings.resetProtocolPreference')"
+            icon="i-lucide-rotate-ccw"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            :disabled="vpn.isLoading"
+            @click="resetProtocol"
+          />
+          <USwitch v-model="settings.autoSelect" />
+        </div>
       </div>
     </UCard>
 
