@@ -340,6 +340,10 @@ export default {
   },
   settings: {
     title: 'Settings',
+    protocolSelection: 'Protocol',
+    autoSelectProtocol: 'Auto-select protocol',
+    autoSelectProtocolHint:
+      'Automatically pick the fastest working protocol on connect. Turn off to choose manually.',
     splitTunneling: 'Split Tunneling',
     splitTunnelingDescription: 'Control which apps use the VPN tunnel',
     modeAll: 'All apps',
@@ -462,6 +466,9 @@ export default {
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
     allProtocolsFailed: "Couldn't connect with any protocol. Please try again later.",
+    tryingProtocol: 'Trying {protocol}… ({current}/{total})',
+    connectedVia: 'via {protocol}',
+    cancel: 'Cancel',
     lastActivity: 'Last transfer',
     duration: 'Duration',
     protocol: 'Protocol',

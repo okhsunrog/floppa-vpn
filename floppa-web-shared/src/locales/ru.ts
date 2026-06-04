@@ -339,6 +339,10 @@ export default {
   },
   settings: {
     title: 'Настройки',
+    protocolSelection: 'Протокол',
+    autoSelectProtocol: 'Автовыбор протокола',
+    autoSelectProtocolHint:
+      'Автоматически подбирать самый быстрый рабочий протокол при подключении. Выключите для ручного выбора.',
     splitTunneling: 'Раздельное туннелирование',
     splitTunnelingDescription: 'Управление приложениями, использующими VPN',
     modeAll: 'Все приложения',
@@ -462,6 +466,9 @@ export default {
     retry: 'Повторить',
     connectionFailed: 'Не удалось подключиться. Попробуйте позже.',
     allProtocolsFailed: 'Не удалось подключиться ни одним протоколом. Попробуйте позже.',
+    tryingProtocol: 'Пробую {protocol}… ({current}/{total})',
+    connectedVia: 'через {protocol}',
+    cancel: 'Отмена',
     lastActivity: 'Последний трафик',
     duration: 'Длительность',
     protocol: 'Протокол',
