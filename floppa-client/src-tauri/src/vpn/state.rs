@@ -277,7 +277,7 @@ pub struct TrafficStats {
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct ConnectionInfo {
     pub status: ConnectionStatus,
-    pub protocol: Option<String>,
+    pub protocol: Option<Protocol>,
     pub server_endpoint: Option<String>,
     pub assigned_ip: Option<String>,
     pub connected_at: Option<i64>, // Unix timestamp
@@ -725,21 +725,66 @@ impl ProtocolConfig {
         }
     }
 
-    /// Protocol name for display / persistence.
-    pub fn protocol_name(&self) -> &'static str {
+    /// Protocol of this config.
+    pub fn protocol_name(&self) -> Protocol {
         match self {
-            Self::WireGuard(_) => "wireguard",
-            Self::AmneziaWg(_) => "amneziawg",
-            Self::Vless(_) => "vless",
+            Self::WireGuard(_) => Protocol::WireGuard,
+            Self::AmneziaWg(_) => Protocol::AmneziaWg,
+            Self::Vless(_) => Protocol::Vless,
         }
+    }
+}
+
+/// VPN protocol. Canonical wire/persist/display tokens are "wireguard",
+/// "amneziawg", "vless" — pinned via explicit serde renames so existing
+/// persisted configs, the tarpc/IPC string form, and the frontend contract are
+/// unchanged. (`floppa-core::Protocol` only has two variants, so the client
+/// defines its own three-variant enum.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+pub enum Protocol {
+    #[default]
+    #[serde(rename = "wireguard")]
+    WireGuard,
+    #[serde(rename = "amneziawg")]
+    AmneziaWg,
+    #[serde(rename = "vless")]
+    Vless,
+}
+
+impl Protocol {
+    /// Canonical lowercase token, matching the serde rename / persisted form.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Self::WireGuard => "wireguard",
+            Self::AmneziaWg => "amneziawg",
+            Self::Vless => "vless",
+        }
+    }
+
+    /// Parse a canonical token back into a `Protocol`. Used at the tarpc/IPC
+    /// boundary, where the protocol travels as a `String` (bincode encodes enums
+    /// as a variant index, which would break across a version-skewed `:vpn`).
+    pub fn from_token(s: &str) -> Option<Self> {
+        match s {
+            "wireguard" => Some(Self::WireGuard),
+            "amneziawg" => Some(Self::AmneziaWg),
+            "vless" => Some(Self::Vless),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_token())
     }
 }
 
 /// Multi-config storage: holds WG, AmneziaWG, and VLESS configs with an active selector.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SavedVpnConfigs {
-    /// Currently active protocol: "amneziawg", "wireguard", or "vless"
-    pub active_protocol: String,
+    /// Currently active protocol.
+    pub active_protocol: Protocol,
     /// Cached WireGuard config (if any)
     pub wireguard: Option<WgConfig>,
     /// Cached AmneziaWG config (if any)
@@ -753,24 +798,31 @@ pub struct SavedVpnConfigs {
 impl SavedVpnConfigs {
     /// Get the active ProtocolConfig for the connect flow.
     pub fn active_config(&self) -> Option<ProtocolConfig> {
-        match self.active_protocol.as_str() {
-            "amneziawg" => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
-            "vless" => self.vless.clone().map(ProtocolConfig::Vless),
-            _ => self.wireguard.clone().map(ProtocolConfig::WireGuard),
+        self.config_for(self.active_protocol)
+    }
+
+    /// Get the saved config for a specific protocol, regardless of which is
+    /// currently active. Used by the connection auto-detect to label a surviving
+    /// tunnel from the protocol the backend actually reports.
+    pub fn config_for(&self, protocol: Protocol) -> Option<ProtocolConfig> {
+        match protocol {
+            Protocol::AmneziaWg => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
+            Protocol::Vless => self.vless.clone().map(ProtocolConfig::Vless),
+            Protocol::WireGuard => self.wireguard.clone().map(ProtocolConfig::WireGuard),
         }
     }
 
     /// Which protocols have cached configs. AmneziaWG is listed first — it is the default.
-    pub fn available_protocols(&self) -> Vec<String> {
+    pub fn available_protocols(&self) -> Vec<Protocol> {
         let mut protocols = Vec::new();
         if self.amneziawg.is_some() {
-            protocols.push("amneziawg".to_string());
+            protocols.push(Protocol::AmneziaWg);
         }
         if self.vless.is_some() {
-            protocols.push("vless".to_string());
+            protocols.push(Protocol::Vless);
         }
         if self.wireguard.is_some() {
-            protocols.push("wireguard".to_string());
+            protocols.push(Protocol::WireGuard);
         }
         protocols
     }

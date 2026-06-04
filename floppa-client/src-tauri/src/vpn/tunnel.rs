@@ -1,7 +1,7 @@
 //! GotatunTunnel - WireGuard tunnel using gotatun library
 
 use super::platform::TunParams;
-use super::state::{AwgObfuscation, TrafficStats, WgConfig};
+use super::state::{AwgObfuscation, Protocol, TrafficStats, WgConfig};
 use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
 use gotatun::udp::socket::UdpSocketFactory;
@@ -453,12 +453,17 @@ impl ActiveTunnel {
 /// Tunnel manager that owns the tunnel and provides thread-safe access
 pub struct TunnelManager {
     tunnel: RwLock<Option<ActiveTunnel>>,
+    /// Protocol of the running tunnel. Reported over IPC so the UI auto-detect
+    /// labels a surviving tunnel from the source of truth instead of guessing
+    /// from the local saved config.
+    protocol: RwLock<Option<Protocol>>,
 }
 
 impl TunnelManager {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             tunnel: RwLock::new(None),
+            protocol: RwLock::new(None),
         })
     }
 
@@ -485,6 +490,11 @@ impl TunnelManager {
 
         let tunnel = GotatunTunnel::new(config, interface_name, tun_params, endpoint, awg).await?;
         *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
+        *self.protocol.write().await = Some(if awg.is_some() {
+            Protocol::AmneziaWg
+        } else {
+            Protocol::WireGuard
+        });
 
         Ok(())
     }
@@ -517,6 +527,11 @@ impl TunnelManager {
 
         let tunnel = GotatunTunnel::from_fd(config, tun_fd, awg).await?;
         *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
+        *self.protocol.write().await = Some(if awg.is_some() {
+            Protocol::AmneziaWg
+        } else {
+            Protocol::WireGuard
+        });
 
         Ok(())
     }
@@ -557,6 +572,7 @@ impl TunnelManager {
 
         let tunnel = shoes_lite::api::VlessTunnel::start(config, tun_config).await?;
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
+        *self.protocol.write().await = Some(Protocol::Vless);
         Ok(())
     }
 
@@ -576,15 +592,22 @@ impl TunnelManager {
         let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd).await?;
         info!("VLESS tunnel started successfully from fd={}", tun_fd);
         *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
+        *self.protocol.write().await = Some(Protocol::Vless);
         Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
+        *self.protocol.write().await = None;
         if let Some(tunnel) = tunnel_guard.take() {
             tunnel.stop().await?;
         }
         Ok(())
+    }
+
+    /// Protocol of the running tunnel, or `None` if no tunnel is running.
+    pub async fn current_protocol(&self) -> Option<Protocol> {
+        *self.protocol.read().await
     }
 
     pub async fn is_running(&self) -> bool {
@@ -634,6 +657,7 @@ impl Default for TunnelManager {
     fn default() -> Self {
         Self {
             tunnel: RwLock::new(None),
+            protocol: RwLock::new(None),
         }
     }
 }

@@ -1,6 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { commands, type ConnectionInfo, type ConfigSafe, type ConnectError } from '../bindings'
+import {
+  commands,
+  type ConnectionInfo,
+  type ConfigSafe,
+  type ConnectError,
+  type Protocol,
+} from '../bindings'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
 import { i18n } from '../i18n'
@@ -26,7 +32,7 @@ export const useVpnStore = defineStore(
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
-    const availableProtocols = ref<string[]>([])
+    const availableProtocols = ref<Protocol[]>([])
 
     // What the user wants the tunnel to be. Auto-reconnect only fires while the
     // user intends to stay connected; an explicit disconnect flips this to
@@ -41,7 +47,7 @@ export const useVpnStore = defineStore(
     // Auto-protocol-select state. `attempt` describes the protocol currently being
     // probed (for the UI stepper); `abortGen` is bumped on disconnect so an
     // in-flight probe cycle bails instead of fighting a user-requested teardown.
-    const attempt = ref<{ protocol: string; index: number; total: number } | null>(null)
+    const attempt = ref<{ protocol: Protocol; index: number; total: number } | null>(null)
     let abortGen = 0
 
     // Re-entrancy guard for connect(): true for the whole duration of a connect
@@ -211,7 +217,7 @@ export const useVpnStore = defineStore(
      * protocol missing from the saved order, with the last-active (= last working)
      * protocol moved to the front so reconnects skip straight to it.
      */
-    function autoOrder(): string[] {
+    function autoOrder(): Protocol[] {
       const settings = useSettingsStore()
       const available = availableProtocols.value
       const ordered = settings.protocolOrder.filter((p) => available.includes(p))
@@ -376,7 +382,7 @@ export const useVpnStore = defineStore(
       }, delay)
     }
 
-    async function setProtocol(protocol: string) {
+    async function setProtocol(protocol: Protocol) {
       error.value = null
       try {
         const result = await commands.setActiveProtocol(protocol)

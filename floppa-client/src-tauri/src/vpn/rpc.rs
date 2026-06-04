@@ -11,6 +11,8 @@ pub struct TunnelInfo {
     pub connected_secs: Option<u64>,
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,
+    /// Protocol the tunnel was started with ("wireguard" | "amneziawg" | "vless").
+    pub protocol: Option<String>,
 }
 
 #[tarpc::service]

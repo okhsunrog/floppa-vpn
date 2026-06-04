@@ -15,7 +15,7 @@ import {
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { platform } from '@tauri-apps/plugin-os'
 import { useVpnStore } from '../stores/vpnStore'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useSettingsStore, type Protocol } from '../stores/settingsStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 
 const { t } = useI18n()
@@ -62,7 +62,7 @@ type SyncResult =
  * VPN store. `allowCreate=false` only loads a pre-existing peer (so the secondary protocol never
  * consumes a peer slot). Returns an error outcome on subscription/limit failures during create.
  */
-async function syncWgFamilyPeer(protocol: string, allowCreate: boolean): Promise<SyncResult> {
+async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promise<SyncResult> {
   const { data: peer } = await getMyPeerByDevice({
     path: { device_id: vpn.deviceId! },
     query: { protocol },
@@ -348,7 +348,7 @@ function formatLastPacket(secs: number | null | undefined): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`
 }
 
-function selectProtocol(proto: string) {
+function selectProtocol(proto: Protocol) {
   // setProtocol persists active_protocol (keyring/file) — the single source of truth.
   vpn.setProtocol(proto)
 }

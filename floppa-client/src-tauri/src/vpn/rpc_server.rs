@@ -40,12 +40,21 @@ impl VpnRpc for VpnRpcServer {
             .await
             .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
+        // TunnelInfo.protocol stays a String on the wire: bincode encodes enums as a
+        // variant index, which would break across a version-skewed :vpn. Send the
+        // canonical token; the client parses it back into Protocol.
+        let protocol = self
+            .tunnel_manager
+            .current_protocol()
+            .await
+            .map(|p| p.as_token().to_string());
         TunnelInfo {
             is_running,
             last_packet_received,
             connected_secs,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
             rx_bytes: stats.as_ref().map(|s| s.rx_bytes),
+            protocol,
         }
     }
 

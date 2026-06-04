@@ -2,8 +2,8 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
 use super::state::{
-    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
-    VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
+    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, Protocol, ProtocolConfig,
+    SavedVpnConfigs, VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -84,15 +84,15 @@ pub async fn set_active_config(
     if trimmed.starts_with("vless://") {
         let vless = VlessVpnConfig::from_uri(trimmed)?;
         configs.vless = Some(vless);
-        configs.active_protocol = "vless".to_string();
+        configs.active_protocol = Protocol::Vless;
     } else if config_str_is_amneziawg(&config_str) {
         let awg = AwgConfig::from_config_str(&config_str)?;
         configs.amneziawg = Some(awg);
-        configs.active_protocol = "amneziawg".to_string();
+        configs.active_protocol = Protocol::AmneziaWg;
     } else {
         let wg = WgConfig::from_config_str(&config_str)?;
         configs.wireguard = Some(wg);
-        configs.active_protocol = "wireguard".to_string();
+        configs.active_protocol = Protocol::WireGuard;
     };
     vpn_config::save_configs(&configs);
     Ok(())
@@ -138,7 +138,7 @@ pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<Config
     let configs = state.configs.read().await;
     let config = configs.active_config();
     Ok(config.as_ref().map(|c| ConfigSafe {
-        protocol: c.protocol_name().to_string(),
+        protocol: c.protocol_name(),
         address: c.address().to_string(),
         dns: match c {
             ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
@@ -159,22 +159,19 @@ pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<Config
 #[tauri::command]
 #[specta::specta]
 pub async fn set_active_protocol(
-    protocol: String,
+    protocol: Protocol,
     state: State<'_, Arc<VpnState>>,
 ) -> Result<(), String> {
     let mut configs = state.configs.write().await;
-    match protocol.as_str() {
-        "wireguard" if configs.wireguard.is_some() => {
-            configs.active_protocol = "wireguard".to_string();
-        }
-        "amneziawg" if configs.amneziawg.is_some() => {
-            configs.active_protocol = "amneziawg".to_string();
-        }
-        "vless" if configs.vless.is_some() => {
-            configs.active_protocol = "vless".to_string();
-        }
-        _ => return Err(format!("No cached config for protocol '{protocol}'")),
+    let has_config = match protocol {
+        Protocol::WireGuard => configs.wireguard.is_some(),
+        Protocol::AmneziaWg => configs.amneziawg.is_some(),
+        Protocol::Vless => configs.vless.is_some(),
+    };
+    if !has_config {
+        return Err(format!("No cached config for protocol '{protocol}'"));
     }
+    configs.active_protocol = protocol;
     vpn_config::save_configs(&configs);
     Ok(())
 }
@@ -184,7 +181,7 @@ pub async fn set_active_protocol(
 #[specta::specta]
 pub async fn get_available_protocols(
     state: State<'_, Arc<VpnState>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<Protocol>, String> {
     let configs = state.configs.read().await;
     Ok(configs.available_protocols())
 }
@@ -192,7 +189,7 @@ pub async fn get_available_protocols(
 /// Safe config info (no private keys or secrets)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
 pub struct ConfigSafe {
-    pub protocol: String,
+    pub protocol: Protocol,
     pub address: String,
     pub dns: Option<String>,
     pub server_endpoint: String,
@@ -476,7 +473,7 @@ async fn connect_android(
     state.speed_tracker.write().await.reset();
     let mut conn = state.connection.write().await;
     conn.status = ConnectionStatus::Connected;
-    conn.protocol = Some(config.protocol_name().to_string());
+    conn.protocol = Some(config.protocol_name());
     conn.connected_at = Some(chrono::Utc::now().timestamp());
     conn.server_endpoint = Some(config.endpoint_str().to_string());
     conn.assigned_ip = Some(config.address().to_string());
@@ -656,7 +653,7 @@ async fn connect_desktop(
             state.speed_tracker.write().await.reset();
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Connected;
-            conn.protocol = Some(config.protocol_name().to_string());
+            conn.protocol = Some(config.protocol_name());
             conn.connected_at = Some(chrono::Utc::now().timestamp());
             conn.server_endpoint = Some(config.endpoint_str().to_string());
             conn.assigned_ip = Some(config.address().to_string());
@@ -800,7 +797,15 @@ pub async fn get_connection_info(
         // If the tunnel is running, show Connected so the user can disconnect.
         ConnectionStatus::Disconnected if is_running => {
             let configs = state.configs.read().await;
-            let config = configs.active_config();
+            // Prefer the protocol the backend actually reports (source of truth) so a
+            // surviving tunnel is labelled correctly even if the locally-saved active
+            // protocol drifted. Fall back to the active config when the backend doesn't
+            // report a protocol (desktop, or an older :vpn build).
+            let config = info
+                .as_ref()
+                .and_then(|i| i.protocol)
+                .and_then(|p| configs.config_for(p))
+                .or_else(|| configs.active_config());
             let connected_at = info
                 .as_ref()
                 .and_then(|i| i.connected_secs)
@@ -809,7 +814,7 @@ pub async fn get_connection_info(
             conn.connected_at = Some(connected_at);
             conn.last_packet_received = info.as_ref().and_then(|i| i.last_packet_received);
             if let Some(ref cfg) = config {
-                conn.protocol = Some(cfg.protocol_name().to_string());
+                conn.protocol = Some(cfg.protocol_name());
                 conn.server_endpoint = Some(cfg.endpoint_str().to_string());
                 conn.assigned_ip = Some(cfg.address().to_string());
             }

@@ -15,7 +15,7 @@ mod android_ipc;
 mod ios;
 
 use super::platform::TunParams;
-use super::state::{ProtocolConfig, TrafficStats};
+use super::state::{Protocol, ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -27,6 +27,9 @@ pub struct VpnFullInfo {
     pub stats: Option<TrafficStats>,
     pub last_packet_received: Option<i64>,
     pub connected_secs: Option<u64>,
+    /// Protocol the running tunnel was started with, reported by the backend
+    /// (source of truth). `None` if unknown (e.g. iOS stub).
+    pub protocol: Option<Protocol>,
 }
 
 /// Backend for VPN tunnel management.

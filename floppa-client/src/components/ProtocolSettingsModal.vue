@@ -2,7 +2,7 @@
 import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDragAndDrop } from '@formkit/drag-and-drop/vue'
-import { useSettingsStore } from '../stores/settingsStore'
+import { useSettingsStore, type Protocol } from '../stores/settingsStore'
 import { useVpnStore } from '../stores/vpnStore'
 
 const open = defineModel<boolean>('open', { required: true })
@@ -13,7 +13,7 @@ const vpn = useVpnStore()
 const toast = useToast()
 
 // Local draggable list seeded from the persisted priority; synced back on reorder.
-const [listRef, order] = useDragAndDrop<string>([...settings.protocolOrder], {
+const [listRef, order] = useDragAndDrop<Protocol>([...settings.protocolOrder], {
   dragHandle: '.drag-handle',
 })
 

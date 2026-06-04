@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { commands, type AppInfo } from '../bindings'
+import { commands, type AppInfo, type Protocol, type SplitMode } from '../bindings'
 
-export type SplitMode = 'all' | 'include' | 'exclude'
+// Re-export the generated types so existing importers keep working and stay in
+// sync with the Rust source of truth (no hand-maintained duplicate unions).
+export type { SplitMode, Protocol }
 
 export const useSettingsStore = defineStore(
   'vpn-settings',
@@ -17,7 +19,7 @@ export const useSettingsStore = defineStore(
 
     // User-defined probe order for auto-select (most preferred first). Editable in
     // the Protocol settings modal; defaults to performance order.
-    const protocolOrder = ref<string[]>(['wireguard', 'amneziawg', 'vless'])
+    const protocolOrder = ref<Protocol[]>(['wireguard', 'amneziawg', 'vless'])
 
     // One-time guard: on upgrade to auto-select we forget the previously-used
     // protocol once (see VpnCard) so the cycle re-probes from the priority order.

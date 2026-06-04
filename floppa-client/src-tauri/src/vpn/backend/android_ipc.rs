@@ -14,7 +14,7 @@
 
 use super::{VpnBackend, VpnFullInfo};
 use crate::vpn::rpc::VpnRpcClient;
-use crate::vpn::state::{ProtocolConfig, TrafficStats};
+use crate::vpn::state::{Protocol, ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -178,6 +178,7 @@ impl VpnBackend for AndroidIpcBackend {
                 },
                 last_packet_received: info.last_packet_received,
                 connected_secs: info.connected_secs,
+                protocol: info.protocol.as_deref().and_then(Protocol::from_token),
             }),
             Err(e) => {
                 warn!("RPC get_full_info failed: {e}");

@@ -98,6 +98,7 @@ impl VpnBackend for InProcessBackend {
             stats: self.tunnel_manager.get_stats().await,
             last_packet_received: self.tunnel_manager.get_last_packet_received().await,
             connected_secs: None,
+            protocol: self.tunnel_manager.current_protocol().await,
         })
     }
 }

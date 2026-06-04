@@ -1,4 +1,4 @@
-use super::state::{SavedVpnConfigs, WgConfig};
+use super::state::{Protocol, SavedVpnConfigs, WgConfig};
 #[cfg(not(target_os = "android"))]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -135,7 +135,7 @@ pub fn load_configs() -> Option<SavedVpnConfigs> {
                     // Also check legacy keyring entry
                     if let Some(wg) = load_legacy_keyring() {
                         let configs = SavedVpnConfigs {
-                            active_protocol: "wireguard".to_string(),
+                            active_protocol: Protocol::WireGuard,
                             wireguard: Some(wg),
                             ..Default::default()
                         };
@@ -194,17 +194,17 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
     if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
         return Some(match config {
             ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
-                active_protocol: "wireguard".to_string(),
+                active_protocol: Protocol::WireGuard,
                 wireguard: Some(wg),
                 ..Default::default()
             },
             ProtocolConfig::AmneziaWg(awg) => SavedVpnConfigs {
-                active_protocol: "amneziawg".to_string(),
+                active_protocol: Protocol::AmneziaWg,
                 amneziawg: Some(awg),
                 ..Default::default()
             },
             ProtocolConfig::Vless(vless) => SavedVpnConfigs {
-                active_protocol: "vless".to_string(),
+                active_protocol: Protocol::Vless,
                 vless: Some(vless),
                 ..Default::default()
             },
@@ -215,7 +215,7 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
         Ok(wg) => {
             info!("Loaded legacy WireGuard config, migrating to new format");
             Some(SavedVpnConfigs {
-                active_protocol: "wireguard".to_string(),
+                active_protocol: Protocol::WireGuard,
                 wireguard: Some(wg),
                 ..Default::default()
             })
