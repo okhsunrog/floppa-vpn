@@ -283,6 +283,10 @@ pub struct ConnectionInfo {
     pub connected_at: Option<i64>, // Unix timestamp
     pub last_packet_received: Option<i64>,
     pub stats: TrafficStats,
+    /// Whether the configured DNS servers were successfully applied at connect time
+    /// (desktop only). `false` means DNS config failed, so queries may leak to the
+    /// local/ISP resolver — the UI should warn the user. Defaults to `true`.
+    pub dns_ok: bool,
 }
 
 impl Default for ConnectionInfo {
@@ -295,6 +299,7 @@ impl Default for ConnectionInfo {
             connected_at: None,
             last_packet_received: None,
             stats: TrafficStats::default(),
+            dns_ok: true,
         }
     }
 }

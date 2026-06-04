@@ -460,6 +460,16 @@ const healthDotClass = computed(() => {
         </span>
       </div>
 
+      <!-- DNS leak warning: connected, but the configured DNS couldn't be applied (desktop) -->
+      <UAlert
+        v-if="vpn.isConnected && vpn.connectionInfo && !vpn.connectionInfo.dns_ok"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-shield-alert"
+        :title="t('vpn.dnsLeak')"
+        class="mt-2 w-full max-w-sm"
+      />
+
       <UAlert v-if="vpn.error" color="error" :title="vpn.error" class="mt-2 w-full max-w-sm" />
       <UAlert
         v-else-if="setupError"

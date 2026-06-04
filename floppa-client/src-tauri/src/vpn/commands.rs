@@ -582,11 +582,19 @@ async fn connect_desktop(
             }
 
             let dns_servers = config.dns_servers();
-            if !dns_servers.is_empty()
-                && let Err(e) = platform.configure_dns(INTERFACE_NAME, &dns_servers).await
-            {
-                error!("Failed to configure DNS: {e}");
-            }
+            let dns_ok = if dns_servers.is_empty() {
+                true
+            } else {
+                match platform.configure_dns(INTERFACE_NAME, &dns_servers).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        // Connect anyway, but flag it so the UI can warn the user:
+                        // DNS queries may leak to the local/ISP resolver.
+                        warn!("Failed to configure DNS: {e} — connecting anyway, DNS may leak");
+                        false
+                    }
+                }
+            };
 
             // Protocol-specific verification
             {
@@ -642,6 +650,7 @@ async fn connect_desktop(
             conn.connected_at = Some(chrono::Utc::now().timestamp());
             conn.server_endpoint = Some(config.endpoint_str().to_string());
             conn.assigned_ip = Some(config.address().to_string());
+            conn.dns_ok = dns_ok;
             info!("Connected successfully");
             Ok(())
         }

@@ -123,6 +123,12 @@ export type ConnectionInfo = {
 	connected_at: number | null,
 	last_packet_received: number | null,
 	stats: TrafficStats,
+	/**
+	 *  Whether the configured DNS servers were successfully applied at connect time
+	 *  (desktop only). `false` means DNS config failed, so queries may leak to the
+	 *  local/ISP resolver — the UI should warn the user. Defaults to `true`.
+	 */
+	dns_ok: boolean,
 };
 
 /**  Connection status enum */

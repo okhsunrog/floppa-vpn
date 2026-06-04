@@ -181,6 +181,7 @@ export const useVpnStore = defineStore(
         connected_at: null,
         last_packet_received: null,
         stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
+        dns_ok: true,
       }
 
       // Poll status during connect to show intermediate states (connecting → verifying_connection)

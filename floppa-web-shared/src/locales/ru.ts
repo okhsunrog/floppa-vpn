@@ -487,5 +487,6 @@ export default {
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',
     server: 'Сервер',
+    dnsLeak: 'DNS не защищён — запросы могут идти в обход туннеля',
   },
 }

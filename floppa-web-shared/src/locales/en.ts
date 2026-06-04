@@ -486,5 +486,6 @@ export default {
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',
     server: 'Server',
+    dnsLeak: 'DNS not protected — queries may leak outside the tunnel',
   },
 }
