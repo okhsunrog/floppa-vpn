@@ -83,6 +83,76 @@ impl std::fmt::Display for ConnectError {
     }
 }
 
+/// Category of a non-connect command failure. Mirrors [`ConnectError`] so the
+/// frontend can branch on `code` instead of string-matching messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandErrorCode {
+    /// Rejected because another transition is already in progress.
+    Busy,
+    /// Not valid in the current state (e.g. disconnect when not connected).
+    InvalidState,
+    /// Referenced item doesn't exist (e.g. no cached config for a protocol).
+    NotFound,
+    /// Supplied input couldn't be parsed/validated (e.g. a malformed config).
+    InvalidConfig,
+    /// Unexpected internal / IO failure.
+    Internal,
+}
+
+/// Structured error returned from non-connect Tauri commands.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct CommandError {
+    pub code: CommandErrorCode,
+    pub message: String,
+}
+
+impl CommandError {
+    pub fn busy(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::Busy,
+            message: message.into(),
+        }
+    }
+    pub fn invalid_state(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::InvalidState,
+            message: message.into(),
+        }
+    }
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::NotFound,
+            message: message.into(),
+        }
+    }
+    pub fn invalid_config(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::InvalidConfig,
+            message: message.into(),
+        }
+    }
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::Internal,
+            message: message.into(),
+        }
+    }
+}
+
+/// `?`-propagated `String` errors (IO, lower layers) are unclassified → `internal`.
+impl From<String> for CommandError {
+    fn from(message: String) -> Self {
+        Self::internal(message)
+    }
+}
+
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
 /// WireGuard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct WgConfig {

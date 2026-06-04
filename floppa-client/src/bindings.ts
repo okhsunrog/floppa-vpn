@@ -15,9 +15,9 @@ export const commands = {
 	/**  Get the device name (Android: manufacturer+model, desktop: hostname) */
 	getDeviceName: () => __TAURI_INVOKE<string>("get_device_name"),
 	/**  Parse a config string (WireGuard or VLESS URI), store under the right protocol key, and persist. */
-	setActiveConfig: (configStr: string) => typedError<null, string>(__TAURI_INVOKE("set_active_config", { configStr })),
+	setActiveConfig: (configStr: string) => typedError<null, CommandError>(__TAURI_INVOKE("set_active_config", { configStr })),
 	/**  Clear all configs from memory and delete persisted config. Disconnects first if connected. */
-	clearConfig: () => typedError<null, string>(__TAURI_INVOKE("clear_config")),
+	clearConfig: () => typedError<null, CommandError>(__TAURI_INVOKE("clear_config")),
 	/**  Load persisted VPN configs into memory (called on startup). */
 	loadSavedConfig: () => typedError<boolean, string>(__TAURI_INVOKE("load_saved_config")),
 	/**  Get active protocol's config (without private key for security) */
@@ -30,13 +30,13 @@ export const commands = {
 	mtu: number | null,
 } | null, string>(__TAURI_INVOKE("get_config")),
 	/**  Switch the active protocol (must disconnect first) */
-	setActiveProtocol: (protocol: Protocol) => typedError<null, string>(__TAURI_INVOKE("set_active_protocol", { protocol })),
+	setActiveProtocol: (protocol: Protocol) => typedError<null, CommandError>(__TAURI_INVOKE("set_active_protocol", { protocol })),
 	/**  Get list of protocols that have cached configs */
 	getAvailableProtocols: () => typedError<Protocol[], string>(__TAURI_INVOKE("get_available_protocols")),
 	/**  Connect to VPN */
 	connect: (splitMode: "all" | "include" | "exclude" | null, selectedApps: string[] | null) => typedError<null, ConnectError>(__TAURI_INVOKE("connect", { splitMode, selectedApps })),
 	/**  Disconnect from VPN */
-	disconnect: () => typedError<null, string>(__TAURI_INVOKE("disconnect")),
+	disconnect: () => typedError<null, CommandError>(__TAURI_INVOKE("disconnect")),
 	/**  Get current connection info with live traffic stats */
 	getConnectionInfo: () => typedError<ConnectionInfo, string>(__TAURI_INVOKE("get_connection_info")),
 	/**  Get list of installed apps for split tunneling (Android only) */
@@ -89,6 +89,28 @@ export type AppInfo = {
 	is_system: boolean,
 	icon: string | null,
 };
+
+/**  Structured error returned from non-connect Tauri commands. */
+export type CommandError = {
+	code: CommandErrorCode,
+	message: string,
+};
+
+/**
+ *  Category of a non-connect command failure. Mirrors [`ConnectError`] so the
+ *  frontend can branch on `code` instead of string-matching messages.
+ */
+export type CommandErrorCode = 
+/**  Rejected because another transition is already in progress. */
+"busy" | 
+/**  Not valid in the current state (e.g. disconnect when not connected). */
+"invalid_state" | 
+/**  Referenced item doesn't exist (e.g. no cached config for a protocol). */
+"not_found" | 
+/**  Supplied input couldn't be parsed/validated (e.g. a malformed config). */
+"invalid_config" | 
+/**  Unexpected internal / IO failure. */
+"internal";
 
 /**  Safe config info (no private keys or secrets) */
 export type ConfigSafe = {

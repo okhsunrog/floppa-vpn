@@ -106,7 +106,7 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.setActiveConfig(configStr)
         if (result.status === 'error') {
-          error.value = result.error
+          error.value = result.error.message
           return
         }
         await loadConfig()
@@ -130,7 +130,7 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.clearConfig()
         if (result.status === 'error') {
-          error.value = result.error
+          error.value = result.error.message
           return
         }
         config.value = null
@@ -318,8 +318,14 @@ export const useVpnStore = defineStore(
 
       try {
         const result = await commands.disconnect()
-        if (result.status === 'error') {
-          error.value = result.error
+        // 'busy'/'invalid_state' just mean there's nothing to disconnect — not a
+        // user-facing error.
+        if (
+          result.status === 'error' &&
+          result.error.code !== 'busy' &&
+          result.error.code !== 'invalid_state'
+        ) {
+          error.value = result.error.message
         }
         await refreshStatus()
       } catch (e) {
@@ -387,7 +393,7 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.setActiveProtocol(protocol)
         if (result.status === 'error') {
-          error.value = result.error
+          error.value = result.error.message
           return
         }
         await loadConfig()

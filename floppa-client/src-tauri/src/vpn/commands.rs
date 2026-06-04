@@ -2,8 +2,8 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
 use super::state::{
-    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, Protocol, ProtocolConfig,
-    SavedVpnConfigs, VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
+    AwgConfig, CommandError, ConnectError, ConnectionInfo, ConnectionStatus, Protocol,
+    ProtocolConfig, SavedVpnConfigs, VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -77,20 +77,20 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
 pub async fn set_active_config(
     config_str: String,
     state: State<'_, Arc<VpnState>>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     info!("Setting active config");
     let trimmed = config_str.trim();
     let mut configs = state.configs.write().await;
     if trimmed.starts_with("vless://") {
-        let vless = VlessVpnConfig::from_uri(trimmed)?;
+        let vless = VlessVpnConfig::from_uri(trimmed).map_err(CommandError::invalid_config)?;
         configs.vless = Some(vless);
         configs.active_protocol = Protocol::Vless;
     } else if config_str_is_amneziawg(&config_str) {
-        let awg = AwgConfig::from_config_str(&config_str)?;
+        let awg = AwgConfig::from_config_str(&config_str).map_err(CommandError::invalid_config)?;
         configs.amneziawg = Some(awg);
         configs.active_protocol = Protocol::AmneziaWg;
     } else {
-        let wg = WgConfig::from_config_str(&config_str)?;
+        let wg = WgConfig::from_config_str(&config_str).map_err(CommandError::invalid_config)?;
         configs.wireguard = Some(wg);
         configs.active_protocol = Protocol::WireGuard;
     };
@@ -106,7 +106,7 @@ pub async fn clear_config(
     state: State<'_, Arc<VpnState>>,
     backend: State<'_, Arc<dyn VpnBackend>>,
     platform: State<'_, Arc<PlatformImpl>>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let status = state.connection.read().await.status;
     if status != ConnectionStatus::Disconnected {
         disconnect(app, state.clone(), backend, platform).await?;
@@ -161,7 +161,7 @@ pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<Config
 pub async fn set_active_protocol(
     protocol: Protocol,
     state: State<'_, Arc<VpnState>>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let mut configs = state.configs.write().await;
     let has_config = match protocol {
         Protocol::WireGuard => configs.wireguard.is_some(),
@@ -169,7 +169,9 @@ pub async fn set_active_protocol(
         Protocol::Vless => configs.vless.is_some(),
     };
     if !has_config {
-        return Err(format!("No cached config for protocol '{protocol}'"));
+        return Err(CommandError::not_found(format!(
+            "No cached config for protocol '{protocol}'"
+        )));
     }
     configs.active_protocol = protocol;
     vpn_config::save_configs(&configs);
@@ -713,7 +715,7 @@ pub async fn disconnect(
     state: State<'_, Arc<VpnState>>,
     backend: State<'_, Arc<dyn VpnBackend>>,
     platform: State<'_, Arc<PlatformImpl>>,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     info!("Disconnecting from VPN");
 
     // Guard + claim the transition atomically under a SINGLE write lock (same TOCTOU
@@ -722,8 +724,12 @@ pub async fn disconnect(
     {
         let mut conn = state.connection.write().await;
         match conn.status {
-            ConnectionStatus::Disconnecting => return Err("Already disconnecting".to_string()),
-            ConnectionStatus::Disconnected => return Err("Not connected".to_string()),
+            ConnectionStatus::Disconnecting => {
+                return Err(CommandError::busy("Already disconnecting"));
+            }
+            ConnectionStatus::Disconnected => {
+                return Err(CommandError::invalid_state("Not connected"));
+            }
             _ => {}
         }
         conn.status = ConnectionStatus::Disconnecting;
