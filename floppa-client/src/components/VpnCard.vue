@@ -397,6 +397,38 @@ const healthDotClass = computed(() => {
         class="text-xl font-semibold"
       />
 
+      <!-- Auto-select probe progress: which protocol we're trying + a stepper -->
+      <div v-if="vpn.attempt && vpn.attempt.total > 1" class="flex flex-col items-center gap-2">
+        <span class="text-sm text-[var(--ui-text-muted)]">
+          {{
+            t('vpn.tryingProtocol', {
+              protocol: t(`vpn.${vpn.attempt.protocol}`),
+              current: vpn.attempt.index,
+              total: vpn.attempt.total,
+            })
+          }}
+        </span>
+        <div class="flex gap-1.5">
+          <span
+            v-for="n in vpn.attempt.total"
+            :key="n"
+            class="size-2 rounded-full transition-colors"
+            :class="
+              n <= vpn.attempt.index ? 'bg-[var(--ui-primary)]' : 'bg-[var(--ui-bg-elevated)]'
+            "
+          />
+        </div>
+      </div>
+
+      <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
+      <UBadge
+        v-else-if="vpn.isConnected && settingsStore.autoSelect && vpn.connectionInfo?.protocol"
+        color="neutral"
+        variant="subtle"
+      >
+        {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.connectionInfo.protocol}`) }) }}
+      </UBadge>
+
       <div
         v-if="vpn.isConnected && vpn.connectionInfo"
         class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]"
@@ -423,7 +455,19 @@ const healthDotClass = computed(() => {
         class="mt-2 w-full max-w-sm"
       />
 
+      <!-- During an auto-select probe the button cancels the cycle -->
       <UButton
+        v-if="vpn.attempt"
+        :label="t('vpn.cancel')"
+        icon="i-lucide-x"
+        color="neutral"
+        variant="soft"
+        size="lg"
+        class="w-full max-w-[200px] mt-2"
+        @click="vpn.disconnect()"
+      />
+      <UButton
+        v-else
         :label="buttonLabel"
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
@@ -434,8 +478,8 @@ const healthDotClass = computed(() => {
         @click="handleConnect"
       />
 
-      <!-- Protocol toggle (only show when multiple protocols available) -->
-      <div v-if="vpn.availableProtocols.length > 1" class="mt-3">
+      <!-- Protocol toggle — manual mode only (auto-select hides it; the badge above shows the active protocol) -->
+      <div v-if="!settingsStore.autoSelect && vpn.availableProtocols.length > 1" class="mt-3">
         <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.protocol') }}</div>
         <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
           <button
