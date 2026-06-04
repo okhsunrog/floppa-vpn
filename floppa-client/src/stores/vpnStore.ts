@@ -9,6 +9,9 @@ const t = i18n.global.t
 
 const MAX_RECONNECT_ATTEMPTS = 3
 
+/** Result of a single connect attempt — success, or the typed failure category. */
+type ConnectOutcome = { ok: true } | { ok: false; error: ConnectError }
+
 export const useVpnStore = defineStore(
   'vpn',
   () => {
@@ -25,9 +28,13 @@ export const useVpnStore = defineStore(
     const deviceName = ref<string | null>(null)
     const availableProtocols = ref<string[]>([])
 
+    // What the user wants the tunnel to be. Auto-reconnect only fires while the
+    // user intends to stay connected; an explicit disconnect flips this to
+    // 'disconnected' so a clean teardown isn't mistaken for a dropped tunnel.
+    const userIntent = ref<'connected' | 'disconnected'>('disconnected')
+
     // Auto-reconnect state
     const reconnectAttempts = ref(0)
-    let userInitiatedDisconnect = false
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null
     let onReconnectFailed: (() => void) | null = null
 
@@ -92,7 +99,7 @@ export const useVpnStore = defineStore(
     async function clearConfig() {
       isLoading.value = true
       error.value = null
-      userInitiatedDisconnect = true
+      userIntent.value = 'disconnected'
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -133,13 +140,13 @@ export const useVpnStore = defineStore(
       }
     }
 
-    async function connect() {
-      if (!hasConfig.value || !config.value) {
-        error.value = t('vpn.noActiveConfig')
-        return
-      }
-      isLoading.value = true
-      error.value = null
+    /**
+     * Run a single connect attempt against the currently-active protocol.
+     * Shows optimistic 'connecting' status, polls intermediate states, and maps
+     * the typed command result to a ConnectOutcome. The caller owns isLoading,
+     * userIntent and the reconnect counters — this primitive only attempts.
+     */
+    async function runAttempt(): Promise<ConnectOutcome> {
       connectError.value = null
 
       // Optimistically set connecting status for instant UI feedback.
@@ -170,18 +177,36 @@ export const useVpnStore = defineStore(
           splitMode && settings.selectedApps.length > 0 ? [...settings.selectedApps] : null
 
         const result = await commands.connect(splitMode, selectedApps)
+        await refreshStatus()
         if (result.status === 'error') {
           connectError.value = result.error
-          error.value = result.error.message
-        } else {
-          userInitiatedDisconnect = false
-          reconnectAttempts.value = 0
+          return { ok: false, error: result.error }
         }
-        await refreshStatus()
+        return { ok: true }
+      } finally {
+        clearInterval(pollId)
+      }
+    }
+
+    async function connect() {
+      if (!hasConfig.value || !config.value) {
+        error.value = t('vpn.noActiveConfig')
+        return
+      }
+      isLoading.value = true
+      error.value = null
+      userIntent.value = 'connected'
+
+      try {
+        const outcome = await runAttempt()
+        if (outcome.ok) {
+          reconnectAttempts.value = 0
+        } else {
+          error.value = outcome.error.message
+        }
       } catch (e) {
         error.value = String(e)
       } finally {
-        clearInterval(pollId)
         isLoading.value = false
       }
     }
@@ -195,7 +220,7 @@ export const useVpnStore = defineStore(
       isLoading.value = true
       error.value = null
 
-      userInitiatedDisconnect = true
+      userIntent.value = 'disconnected'
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -225,7 +250,7 @@ export const useVpnStore = defineStore(
           if (
             prevStatus === 'connected' &&
             result.data.status === 'disconnected' &&
-            !userInitiatedDisconnect
+            userIntent.value === 'connected'
           ) {
             handleUnexpectedDisconnect()
           }
