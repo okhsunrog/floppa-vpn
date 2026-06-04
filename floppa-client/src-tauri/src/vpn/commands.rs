@@ -8,6 +8,7 @@ use super::state::{
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, State};
 #[allow(unused_imports)]
@@ -226,6 +227,12 @@ pub struct SafeAreaInsets {
 }
 
 const INTERFACE_NAME: &str = "floppa0";
+
+/// Consecutive unreachable polls (`get_all_info` → None) tolerated before a
+/// Connected/Verifying tunnel is treated as stopped. Guards against the Android
+/// UI↔:vpn IPC gap on app open being mistaken for a dropped tunnel (button flicker),
+/// while still detecting a genuinely dead :vpn process after a few seconds.
+const MAX_UNREACHABLE_POLLS: u32 = 5;
 
 /// Connect to VPN
 #[tauri::command]
@@ -737,7 +744,28 @@ pub async fn get_connection_info(
     let mut conn = state.connection.write().await;
 
     let info = backend.get_all_info().await;
-    let is_running = info.as_ref().is_some_and(|i| i.is_running);
+    // Some(true) = confirmed running, Some(false) = confirmed stopped,
+    // None = backend unreachable (e.g. Android UI process reconnecting to :vpn).
+    let running = info.as_ref().map(|i| i.is_running);
+    let is_running = running == Some(true);
+
+    // A single unreachable poll must NOT tear down a live tunnel — that conflation
+    // made the connect/disconnect button flicker on app open while IPC reconnected.
+    // Treat as stopped only on a confirmed Some(false), or after a sustained streak
+    // of unreachable polls (so a genuinely dead :vpn process is still detected).
+    let stopped = match running {
+        Some(true) => {
+            state.unreachable_polls.store(0, Ordering::Relaxed);
+            false
+        }
+        Some(false) => {
+            state.unreachable_polls.store(0, Ordering::Relaxed);
+            true
+        }
+        None => {
+            state.unreachable_polls.fetch_add(1, Ordering::Relaxed) + 1 >= MAX_UNREACHABLE_POLLS
+        }
+    };
 
     match conn.status {
         // Auto-detect: on Android the :vpn process can outlive the app.
@@ -776,13 +804,15 @@ pub async fn get_connection_info(
             }
         }
         // Tunnel died during connection verification
-        ConnectionStatus::VerifyingConnection if !is_running => {
+        ConnectionStatus::VerifyingConnection if stopped => {
             *conn = ConnectionInfo::default();
+            state.unreachable_polls.store(0, Ordering::Relaxed);
             info!("Tunnel stopped during connection verification, reset to Disconnected");
         }
         // Tunnel dropped while connected
-        ConnectionStatus::Connected if !is_running => {
+        ConnectionStatus::Connected if stopped => {
             *conn = ConnectionInfo::default();
+            state.unreachable_polls.store(0, Ordering::Relaxed);
         }
         // Normal connected state — update stats
         ConnectionStatus::Connected if is_running => {
