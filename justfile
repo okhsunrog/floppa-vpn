@@ -81,33 +81,25 @@ check-kotlin: ensure-ktfmt
     echo "ktfmt..."
     out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style --set-exit-if-changed --dry-run {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
 
-# Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
+# Run all checks (client + server). Use `just client-check` / `just server-check` to run one half.
 check:
     @just --unstable --fmt --check
-    @just check-rust
-    @just check-frontend
-    @just check-kotlin
+    @just client-check
+    @just server-check
 
-# Rust: fmt + clippy + tests (workspace + excluded crates)
-check-rust:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "rustfmt..."
-    cargo fmt --check
-    cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
-    cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
-    echo "clippy..."
-    cargo clippy --quiet -- -D warnings
-    echo "tests..."
-    output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
-
-# Frontend: format + type-check + lint + build
-check-frontend:
+# Client: tauri Rust crates (fmt + clippy) + shared/client frontend + build + Android Kotlin
+client-check:
     #!/usr/bin/env bash
     set -euo pipefail
     run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
-    for pkg in floppa-web-shared floppa-face floppa-client; do
-        echo "$pkg: format + typecheck + lint..."
+    echo "rustfmt (client crates)..."
+    cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
+    cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
+    echo "clippy (client crates)..."
+    cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
+    cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+    for pkg in floppa-web-shared floppa-client; do
+        echo "$pkg: format + type-check + lint..."
         cd "$pkg"
         run bun run --silent format:check
         run bun run --silent type-check
@@ -116,6 +108,24 @@ check-frontend:
     done
     echo "floppa-client: build..."
     run bash -c 'cd floppa-client && bun run --silent build'
+    just check-kotlin
+
+# Server: workspace Rust (fmt + clippy + tests) + admin panel frontend (floppa-face)
+server-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
+    echo "rustfmt (workspace)..."
+    cargo fmt --check
+    echo "clippy (workspace)..."
+    cargo clippy --quiet -- -D warnings
+    echo "tests (workspace)..."
+    output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
+    echo "floppa-face: format + type-check + lint..."
+    cd floppa-face
+    run bun run --silent format:check
+    run bun run --silent type-check
+    run bun run --silent lint:check
 
 # Format all code (Rust + frontend + Kotlin)
 fmt:
