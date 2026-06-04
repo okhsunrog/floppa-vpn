@@ -6,6 +6,7 @@ use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use tokio::sync::RwLock;
 
 /// Connection status enum
@@ -780,6 +781,10 @@ pub struct VpnState {
     pub configs: RwLock<SavedVpnConfigs>,
     pub connection: RwLock<ConnectionInfo>,
     pub speed_tracker: RwLock<SpeedTracker>,
+    /// Consecutive polls where the backend was unreachable (`get_all_info` → None).
+    /// Used by `get_connection_info` to avoid mistaking a transient IPC gap (UI
+    /// process reconnecting to the Android :vpn process) for a stopped tunnel.
+    pub unreachable_polls: AtomicU32,
 }
 
 impl VpnState {
@@ -788,6 +793,7 @@ impl VpnState {
             configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
+            unreachable_polls: AtomicU32::new(0),
         })
     }
 }
@@ -798,6 +804,7 @@ impl Default for VpnState {
             configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
+            unreachable_polls: AtomicU32::new(0),
         }
     }
 }
