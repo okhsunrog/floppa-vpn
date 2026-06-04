@@ -10,6 +10,11 @@ export const useSettingsStore = defineStore(
     const splitMode = ref<SplitMode>('all')
     const selectedApps = ref<string[]>([])
 
+    // When true (default), connecting auto-probes protocols in order and stays on
+    // the first that works. When false, the user picks the protocol manually via
+    // the switcher on the connection card.
+    const autoSelect = ref(true)
+
     // Cached app list (not persisted — fetched once per session)
     const cachedApps = ref<AppInfo[] | null>(null)
     const appsLoading = ref(false)
@@ -55,6 +60,7 @@ export const useSettingsStore = defineStore(
     return {
       splitMode,
       selectedApps,
+      autoSelect,
       cachedApps,
       appsLoading,
       toggleApp,
@@ -65,7 +71,7 @@ export const useSettingsStore = defineStore(
   },
   {
     persist: {
-      pick: ['splitMode', 'selectedApps'],
+      pick: ['splitMode', 'selectedApps', 'autoSelect'],
     },
   },
 )
