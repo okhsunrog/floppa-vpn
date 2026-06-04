@@ -374,6 +374,19 @@ export const useVpnStore = defineStore(
       }
     }
 
+    /**
+     * Forget the remembered protocol: reset the active protocol to the first
+     * preferred one that's available (per AUTO_PROTOCOL_ORDER), so auto-select
+     * probes from the top of the order again instead of sticking to the last
+     * working protocol.
+     */
+    async function resetProtocolPreference() {
+      const fallback =
+        AUTO_PROTOCOL_ORDER.find((p) => availableProtocols.value.includes(p)) ??
+        availableProtocols.value[0]
+      if (fallback) await setProtocol(fallback)
+    }
+
     function setOnReconnectFailed(cb: (() => void) | null) {
       onReconnectFailed = cb
     }
@@ -403,6 +416,7 @@ export const useVpnStore = defineStore(
       reconnect,
       refreshStatus,
       setProtocol,
+      resetProtocolPreference,
       setOnReconnectFailed,
     }
   },
