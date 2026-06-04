@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { commands, type ConnectionInfo, type ConfigSafe } from '../bindings'
+import { commands, type ConnectionInfo, type ConfigSafe, type ConnectError } from '../bindings'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
 import { i18n } from '../i18n'
@@ -16,6 +16,10 @@ export const useVpnStore = defineStore(
     const connectionInfo = ref<ConnectionInfo | null>(null)
     const isLoading = ref(false)
     const error = ref<string | null>(null)
+    // Structured error from the last connect() attempt — lets callers branch on
+    // the failure category (e.g. re-provision peer on 'verify_failed') instead of
+    // string-matching the human-readable message.
+    const connectError = ref<ConnectError | null>(null)
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
@@ -136,6 +140,7 @@ export const useVpnStore = defineStore(
       }
       isLoading.value = true
       error.value = null
+      connectError.value = null
 
       // Optimistically set connecting status for instant UI feedback.
       // TODO: consider replacing polling with Tauri events for real-time state sync:
@@ -166,7 +171,8 @@ export const useVpnStore = defineStore(
 
         const result = await commands.connect(splitMode, selectedApps)
         if (result.status === 'error') {
-          error.value = result.error
+          connectError.value = result.error
+          error.value = result.error.message
         } else {
           userInitiatedDisconnect = false
           reconnectAttempts.value = 0
@@ -285,6 +291,7 @@ export const useVpnStore = defineStore(
       connectionInfo,
       isLoading,
       error,
+      connectError,
       isConnected,
       hasConfig,
       isAndroid,
@@ -311,4 +318,4 @@ export const useVpnStore = defineStore(
   },
 )
 
-export type { ConnectionInfo, ConfigSafe }
+export type { ConnectionInfo, ConfigSafe, ConnectError }

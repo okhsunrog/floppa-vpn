@@ -2,8 +2,8 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
 use super::state::{
-    AwgConfig, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs, VlessVpnConfig,
-    VpnState, WgConfig, config_str_is_amneziawg,
+    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
+    VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -237,7 +237,7 @@ pub async fn connect(
     #[allow(unused_variables)] platform: State<'_, Arc<PlatformImpl>>,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     let connect_start = std::time::Instant::now();
     info!("Connecting to VPN");
 
@@ -247,10 +247,12 @@ pub async fn connect(
         match conn.status {
             ConnectionStatus::Disconnected => {}
             ConnectionStatus::Connecting | ConnectionStatus::VerifyingConnection => {
-                return Err("Already connecting".to_string());
+                return Err(ConnectError::busy("Already connecting"));
             }
-            ConnectionStatus::Connected => return Err("Already connected".to_string()),
-            ConnectionStatus::Disconnecting => return Err("Disconnecting in progress".to_string()),
+            ConnectionStatus::Connected => return Err(ConnectError::busy("Already connected")),
+            ConnectionStatus::Disconnecting => {
+                return Err(ConnectError::busy("Disconnecting in progress"));
+            }
         }
     }
 
@@ -259,7 +261,7 @@ pub async fn connect(
         .read()
         .await
         .active_config()
-        .ok_or("No active config")?;
+        .ok_or_else(|| ConnectError::tunnel("No active config"))?;
 
     {
         let mut conn = state.connection.write().await;
@@ -307,18 +309,18 @@ async fn connect_android(
     config: ProtocolConfig,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     use tauri_plugin_vpn::VpnExt;
 
     let phase_start = std::time::Instant::now();
     let granted = app
         .vpn()
         .prepare()
-        .map_err(|e| format!("VPN prepare failed: {e}"))?;
+        .map_err(|e| ConnectError::tunnel(format!("VPN prepare failed: {e}")))?;
     if !granted {
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err("VPN permission denied".to_string());
+        return Err(ConnectError::permission("VPN permission denied"));
     }
 
     // Serialize config for the Android VPN service (WG/AWG config text or vless:// URI)
@@ -364,7 +366,7 @@ async fn connect_android(
         error!("VPN start failed: {e}");
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err(format!("VPN start failed: {e}"));
+        return Err(ConnectError::tunnel(format!("VPN start failed: {e}")));
     }
 
     // Poll until connected or timeout
@@ -393,7 +395,7 @@ async fn connect_android(
             }
             let mut conn = state.connection.write().await;
             *conn = ConnectionInfo::default();
-            return Err("Connection timed out".to_string());
+            return Err(ConnectError::tunnel("Connection timed out"));
         }
     }
 
@@ -422,7 +424,9 @@ async fn connect_android(
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
-                return Err("Connection verification failed — config may be invalid".to_string());
+                return Err(ConnectError::verify(
+                    "Connection verification failed — config may be invalid",
+                ));
             }
         }
         ProtocolConfig::Vless(vless) => {
@@ -436,7 +440,9 @@ async fn connect_android(
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
-                return Err(format!("Connection verification failed: {e}"));
+                return Err(ConnectError::verify(format!(
+                    "Connection verification failed: {e}"
+                )));
             }
         }
     }
@@ -466,7 +472,7 @@ async fn connect_desktop(
     config: ProtocolConfig,
     _split_mode: Option<SplitMode>,
     _selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     use super::platform::Platform;
 
     let phase_start = std::time::Instant::now();
@@ -497,7 +503,9 @@ async fn connect_desktop(
         error!("Failed to prepare TUN interface: {e}");
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err(format!("Failed to prepare TUN interface: {e}"));
+        return Err(ConnectError::tunnel(format!(
+            "Failed to prepare TUN interface: {e}"
+        )));
     }
 
     info!(
@@ -541,7 +549,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             if let Err(e) = platform.add_endpoint_route(endpoint_ip).await {
@@ -550,7 +558,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             let allowed_ips = config.allowed_ips_networks();
@@ -560,7 +568,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             let dns_servers = config.dns_servers();
@@ -589,9 +597,9 @@ async fn connect_desktop(
                         let _ = backend.stop().await;
                         let mut conn = state.connection.write().await;
                         conn.status = ConnectionStatus::Disconnected;
-                        return Err(
-                            "Connection verification failed — config may be invalid".to_string()
-                        );
+                        return Err(ConnectError::verify(
+                            "Connection verification failed — config may be invalid",
+                        ));
                     }
                 }
                 ProtocolConfig::Vless(vless) => {
@@ -604,7 +612,9 @@ async fn connect_desktop(
                         let _ = backend.stop().await;
                         let mut conn = state.connection.write().await;
                         conn.status = ConnectionStatus::Disconnected;
-                        return Err(format!("Connection verification failed: {e}"));
+                        return Err(ConnectError::verify(format!(
+                            "Connection verification failed: {e}"
+                        )));
                     }
                 }
             }
@@ -629,7 +639,7 @@ async fn connect_desktop(
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Disconnected;
             error!("Connection failed: {e}");
-            Err(e)
+            Err(ConnectError::tunnel(e))
         }
     }
 }
