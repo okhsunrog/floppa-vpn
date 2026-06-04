@@ -301,7 +301,7 @@ export default {
     manageConfigs: 'Manage Configs',
     appAndPlans: 'Apps & plans',
     adminPanel: 'Admin Panel',
-    tasterTitle: 'Trial access for 1 hour',
+    tasterTitle: 'Trial access for {d}',
     tasterBody: 'Link Telegram to unlock the full 7-day trial.',
     linkTelegram: 'Link Telegram',
   },
