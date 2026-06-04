@@ -343,6 +343,8 @@ export default {
     autoSelectProtocol: 'Автовыбор протокола',
     autoSelectProtocolHint:
       'Автоматически подбирать самый быстрый рабочий протокол при подключении. Выключите для ручного выбора.',
+    resetProtocolPreference: 'Сбросить',
+    protocolPreferenceReset: 'Предпочтение протокола сброшено',
     splitTunneling: 'Раздельное туннелирование',
     splitTunnelingDescription: 'Управление приложениями, использующими VPN',
     modeAll: 'Все приложения',

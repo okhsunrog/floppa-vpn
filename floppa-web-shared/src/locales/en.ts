@@ -344,6 +344,8 @@ export default {
     autoSelectProtocol: 'Auto-select protocol',
     autoSelectProtocolHint:
       'Automatically pick the fastest working protocol on connect. Turn off to choose manually.',
+    resetProtocolPreference: 'Reset',
+    protocolPreferenceReset: 'Protocol preference reset',
     splitTunneling: 'Split Tunneling',
     splitTunnelingDescription: 'Control which apps use the VPN tunnel',
     modeAll: 'All apps',
