@@ -9,6 +9,11 @@ const t = i18n.global.t
 
 const MAX_RECONNECT_ATTEMPTS = 3
 
+// Auto-select probe order: most performant first, most censorship-resistant last.
+// The last working protocol is tried first (see autoOrder), so a working WireGuard
+// stays on WireGuard; a blocked one falls through to AmneziaWG then VLESS.
+const AUTO_PROTOCOL_ORDER = ['wireguard', 'amneziawg', 'vless']
+
 /** Result of a single connect attempt — success, or the typed failure category. */
 type ConnectOutcome = { ok: true } | { ok: false; error: ConnectError }
 
@@ -37,6 +42,12 @@ export const useVpnStore = defineStore(
     const reconnectAttempts = ref(0)
     let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null
     let onReconnectFailed: (() => void) | null = null
+
+    // Auto-protocol-select state. `attempt` describes the protocol currently being
+    // probed (for the UI stepper); `abortGen` is bumped on disconnect so an
+    // in-flight probe cycle bails instead of fighting a user-requested teardown.
+    const attempt = ref<{ protocol: string; index: number; total: number } | null>(null)
+    let abortGen = 0
 
     const isConnected = computed(() => connectionInfo.value?.status === 'connected')
     const hasConfig = computed(() => config.value !== null)
@@ -100,6 +111,8 @@ export const useVpnStore = defineStore(
       isLoading.value = true
       error.value = null
       userIntent.value = 'disconnected'
+      abortGen++
+      attempt.value = null
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -188,6 +201,52 @@ export const useVpnStore = defineStore(
       }
     }
 
+    /**
+     * Probe order for auto-select: preferred order (AUTO_PROTOCOL_ORDER) limited to
+     * protocols that actually have a cached config, with the last-active (= last
+     * working) protocol moved to the front so reconnects skip straight to it.
+     */
+    function autoOrder(): string[] {
+      const available = availableProtocols.value
+      const ordered = AUTO_PROTOCOL_ORDER.filter((p) => available.includes(p))
+      const remembered = config.value?.protocol
+      if (remembered && ordered.includes(remembered)) {
+        return [remembered, ...ordered.filter((p) => p !== remembered)]
+      }
+      return ordered
+    }
+
+    /**
+     * Auto-select: try each protocol in autoOrder() until one connects, then stay
+     * on it. Aborts cleanly if the user disconnects mid-cycle (abortGen). Leaves
+     * connectError set to the last failure so the caller can react (e.g. re-provision
+     * the peer when every protocol reports verify_failed).
+     */
+    async function runAutoCycle() {
+      const order = autoOrder()
+      const gen = abortGen
+      for (let i = 0; i < order.length; i++) {
+        if (gen !== abortGen) return
+        const proto = order[i]!
+        attempt.value = { protocol: proto, index: i + 1, total: order.length }
+        await setProtocol(proto)
+        const outcome = await runAttempt()
+        // User disconnected while this attempt was in flight — disconnect() already
+        // tore the tunnel down, so don't claim success or keep probing.
+        if (gen !== abortGen) {
+          attempt.value = null
+          return
+        }
+        if (outcome.ok) {
+          attempt.value = null
+          reconnectAttempts.value = 0
+          return
+        }
+      }
+      attempt.value = null
+      error.value = t('vpn.allProtocolsFailed')
+    }
+
     async function connect() {
       if (!hasConfig.value || !config.value) {
         error.value = t('vpn.noActiveConfig')
@@ -198,15 +257,21 @@ export const useVpnStore = defineStore(
       userIntent.value = 'connected'
 
       try {
-        const outcome = await runAttempt()
-        if (outcome.ok) {
-          reconnectAttempts.value = 0
+        const settings = useSettingsStore()
+        if (settings.autoSelect && availableProtocols.value.length > 1) {
+          await runAutoCycle()
         } else {
-          error.value = outcome.error.message
+          const outcome = await runAttempt()
+          if (outcome.ok) {
+            reconnectAttempts.value = 0
+          } else {
+            error.value = outcome.error.message
+          }
         }
       } catch (e) {
         error.value = String(e)
       } finally {
+        attempt.value = null
         isLoading.value = false
       }
     }
@@ -221,6 +286,8 @@ export const useVpnStore = defineStore(
       error.value = null
 
       userIntent.value = 'disconnected'
+      abortGen++
+      attempt.value = null
       reconnectAttempts.value = 0
       if (reconnectTimeoutId) {
         clearTimeout(reconnectTimeoutId)
@@ -317,6 +384,7 @@ export const useVpnStore = defineStore(
       isLoading,
       error,
       connectError,
+      attempt,
       isConnected,
       hasConfig,
       isAndroid,

@@ -461,6 +461,7 @@ export default {
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
+    allProtocolsFailed: "Couldn't connect with any protocol. Please try again later.",
     lastActivity: 'Last transfer',
     duration: 'Duration',
     protocol: 'Protocol',
