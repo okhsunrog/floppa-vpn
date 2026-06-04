@@ -6,6 +6,9 @@ import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 import { commands } from '../bindings'
+import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
+
+const protocolModalOpen = ref(false)
 
 const { t } = useI18n()
 const toast = useToast()
@@ -236,6 +239,36 @@ function selectMode(mode: SplitMode) {
 <template>
   <div class="max-w-3xl mx-auto">
     <h1 class="text-2xl font-bold mb-6">{{ t('settings.title') }}</h1>
+
+    <!-- Protocol selection (only when more than one protocol is available) -->
+    <UCard v-if="vpn.availableProtocols.length > 1" class="mb-4">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-shuffle" class="size-5" />
+          <span class="font-semibold">{{ t('settings.protocolSelection') }}</span>
+        </div>
+      </template>
+
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="text-sm font-medium">{{ t('settings.autoSelectProtocol') }}</p>
+          <p class="text-xs text-[var(--ui-text-muted)]">
+            {{ t('settings.autoSelectProtocolHint') }}
+          </p>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <UButton
+            :label="t('settings.configure')"
+            icon="i-lucide-sliders-horizontal"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            @click="protocolModalOpen = true"
+          />
+          <USwitch v-model="settings.autoSelect" />
+        </div>
+      </div>
+    </UCard>
 
     <!-- Notifications (Android only) -->
     <UCard v-if="vpn.isAndroid && permissions.notificationsEnabled.value !== null" class="mb-4">
@@ -627,5 +660,7 @@ function selectMode(mode: SplitMode) {
         />
       </div>
     </UCard>
+
+    <ProtocolSettingsModal v-model:open="protocolModalOpen" />
   </div>
 </template>

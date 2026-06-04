@@ -2,12 +2,13 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::{Platform, PlatformImpl};
 use super::state::{
-    AwgConfig, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs, VlessVpnConfig,
-    VpnState, WgConfig, config_str_is_amneziawg,
+    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
+    VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
 };
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, State};
 #[allow(unused_imports)]
@@ -227,6 +228,12 @@ pub struct SafeAreaInsets {
 
 const INTERFACE_NAME: &str = "floppa0";
 
+/// Consecutive unreachable polls (`get_all_info` → None) tolerated before a
+/// Connected/Verifying tunnel is treated as stopped. Guards against the Android
+/// UI↔:vpn IPC gap on app open being mistaken for a dropped tunnel (button flicker),
+/// while still detecting a genuinely dead :vpn process after a few seconds.
+const MAX_UNREACHABLE_POLLS: u32 = 5;
+
 /// Connect to VPN
 #[tauri::command]
 #[specta::specta]
@@ -237,7 +244,7 @@ pub async fn connect(
     #[allow(unused_variables)] platform: State<'_, Arc<PlatformImpl>>,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     let connect_start = std::time::Instant::now();
     info!("Connecting to VPN");
 
@@ -247,10 +254,12 @@ pub async fn connect(
         match conn.status {
             ConnectionStatus::Disconnected => {}
             ConnectionStatus::Connecting | ConnectionStatus::VerifyingConnection => {
-                return Err("Already connecting".to_string());
+                return Err(ConnectError::busy("Already connecting"));
             }
-            ConnectionStatus::Connected => return Err("Already connected".to_string()),
-            ConnectionStatus::Disconnecting => return Err("Disconnecting in progress".to_string()),
+            ConnectionStatus::Connected => return Err(ConnectError::busy("Already connected")),
+            ConnectionStatus::Disconnecting => {
+                return Err(ConnectError::busy("Disconnecting in progress"));
+            }
         }
     }
 
@@ -259,7 +268,7 @@ pub async fn connect(
         .read()
         .await
         .active_config()
-        .ok_or("No active config")?;
+        .ok_or_else(|| ConnectError::tunnel("No active config"))?;
 
     {
         let mut conn = state.connection.write().await;
@@ -307,18 +316,18 @@ async fn connect_android(
     config: ProtocolConfig,
     split_mode: Option<SplitMode>,
     selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     use tauri_plugin_vpn::VpnExt;
 
     let phase_start = std::time::Instant::now();
     let granted = app
         .vpn()
         .prepare()
-        .map_err(|e| format!("VPN prepare failed: {e}"))?;
+        .map_err(|e| ConnectError::tunnel(format!("VPN prepare failed: {e}")))?;
     if !granted {
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err("VPN permission denied".to_string());
+        return Err(ConnectError::permission("VPN permission denied"));
     }
 
     // Serialize config for the Android VPN service (WG/AWG config text or vless:// URI)
@@ -364,7 +373,7 @@ async fn connect_android(
         error!("VPN start failed: {e}");
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err(format!("VPN start failed: {e}"));
+        return Err(ConnectError::tunnel(format!("VPN start failed: {e}")));
     }
 
     // Poll until connected or timeout
@@ -393,7 +402,7 @@ async fn connect_android(
             }
             let mut conn = state.connection.write().await;
             *conn = ConnectionInfo::default();
-            return Err("Connection timed out".to_string());
+            return Err(ConnectError::tunnel("Connection timed out"));
         }
     }
 
@@ -422,7 +431,9 @@ async fn connect_android(
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
-                return Err("Connection verification failed — config may be invalid".to_string());
+                return Err(ConnectError::verify(
+                    "Connection verification failed — config may be invalid",
+                ));
             }
         }
         ProtocolConfig::Vless(vless) => {
@@ -436,7 +447,9 @@ async fn connect_android(
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
-                return Err(format!("Connection verification failed: {e}"));
+                return Err(ConnectError::verify(format!(
+                    "Connection verification failed: {e}"
+                )));
             }
         }
     }
@@ -466,7 +479,7 @@ async fn connect_desktop(
     config: ProtocolConfig,
     _split_mode: Option<SplitMode>,
     _selected_apps: Option<Vec<String>>,
-) -> Result<(), String> {
+) -> Result<(), ConnectError> {
     use super::platform::Platform;
 
     let phase_start = std::time::Instant::now();
@@ -497,7 +510,9 @@ async fn connect_desktop(
         error!("Failed to prepare TUN interface: {e}");
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err(format!("Failed to prepare TUN interface: {e}"));
+        return Err(ConnectError::tunnel(format!(
+            "Failed to prepare TUN interface: {e}"
+        )));
     }
 
     info!(
@@ -541,7 +556,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             if let Err(e) = platform.add_endpoint_route(endpoint_ip).await {
@@ -550,7 +565,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             let allowed_ips = config.allowed_ips_networks();
@@ -560,7 +575,7 @@ async fn connect_desktop(
                 let _ = backend.stop().await;
                 let mut conn = state.connection.write().await;
                 conn.status = ConnectionStatus::Disconnected;
-                return Err(e);
+                return Err(ConnectError::tunnel(e));
             }
 
             let dns_servers = config.dns_servers();
@@ -589,9 +604,9 @@ async fn connect_desktop(
                         let _ = backend.stop().await;
                         let mut conn = state.connection.write().await;
                         conn.status = ConnectionStatus::Disconnected;
-                        return Err(
-                            "Connection verification failed — config may be invalid".to_string()
-                        );
+                        return Err(ConnectError::verify(
+                            "Connection verification failed — config may be invalid",
+                        ));
                     }
                 }
                 ProtocolConfig::Vless(vless) => {
@@ -604,7 +619,9 @@ async fn connect_desktop(
                         let _ = backend.stop().await;
                         let mut conn = state.connection.write().await;
                         conn.status = ConnectionStatus::Disconnected;
-                        return Err(format!("Connection verification failed: {e}"));
+                        return Err(ConnectError::verify(format!(
+                            "Connection verification failed: {e}"
+                        )));
                     }
                 }
             }
@@ -629,7 +646,7 @@ async fn connect_desktop(
             let mut conn = state.connection.write().await;
             conn.status = ConnectionStatus::Disconnected;
             error!("Connection failed: {e}");
-            Err(e)
+            Err(ConnectError::tunnel(e))
         }
     }
 }
@@ -727,7 +744,28 @@ pub async fn get_connection_info(
     let mut conn = state.connection.write().await;
 
     let info = backend.get_all_info().await;
-    let is_running = info.as_ref().is_some_and(|i| i.is_running);
+    // Some(true) = confirmed running, Some(false) = confirmed stopped,
+    // None = backend unreachable (e.g. Android UI process reconnecting to :vpn).
+    let running = info.as_ref().map(|i| i.is_running);
+    let is_running = running == Some(true);
+
+    // A single unreachable poll must NOT tear down a live tunnel — that conflation
+    // made the connect/disconnect button flicker on app open while IPC reconnected.
+    // Treat as stopped only on a confirmed Some(false), or after a sustained streak
+    // of unreachable polls (so a genuinely dead :vpn process is still detected).
+    let stopped = match running {
+        Some(true) => {
+            state.unreachable_polls.store(0, Ordering::Relaxed);
+            false
+        }
+        Some(false) => {
+            state.unreachable_polls.store(0, Ordering::Relaxed);
+            true
+        }
+        None => {
+            state.unreachable_polls.fetch_add(1, Ordering::Relaxed) + 1 >= MAX_UNREACHABLE_POLLS
+        }
+    };
 
     match conn.status {
         // Auto-detect: on Android the :vpn process can outlive the app.
@@ -766,13 +804,15 @@ pub async fn get_connection_info(
             }
         }
         // Tunnel died during connection verification
-        ConnectionStatus::VerifyingConnection if !is_running => {
+        ConnectionStatus::VerifyingConnection if stopped => {
             *conn = ConnectionInfo::default();
+            state.unreachable_polls.store(0, Ordering::Relaxed);
             info!("Tunnel stopped during connection verification, reset to Disconnected");
         }
         // Tunnel dropped while connected
-        ConnectionStatus::Connected if !is_running => {
+        ConnectionStatus::Connected if stopped => {
             *conn = ConnectionInfo::default();
+            state.unreachable_polls.store(0, Ordering::Relaxed);
         }
         // Normal connected state — update stats
         ConnectionStatus::Connected if is_running => {
