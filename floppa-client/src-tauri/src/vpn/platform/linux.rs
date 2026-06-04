@@ -415,4 +415,22 @@ impl Platform for LinuxPlatform {
 
         Ok(())
     }
+
+    async fn reconcile_stale(&self, iface: &str) -> Result<(), String> {
+        // If a previous run crashed while connected, the persistent TUN is still up
+        // with the split-default routes installed, leaving the user with no internet
+        // until they reconnect. Bring it down (the kernel drops its dev routes) so
+        // plain internet works again. No-op if the interface doesn't exist (fresh
+        // install, or a clean previous exit that already tore it down).
+        let exists = Command::new("ip")
+            .args(["link", "show", "dev", iface])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if exists {
+            info!("Found leftover TUN {iface} from a previous session, bringing it down");
+            self.run_helper_ignore_errors(&["deconfigure", iface]);
+        }
+        Ok(())
+    }
 }

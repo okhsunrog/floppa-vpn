@@ -713,8 +713,10 @@ pub async fn disconnect(
         conn.status = ConnectionStatus::Disconnecting;
     }
 
-    let _ = platform.cleanup(INTERFACE_NAME).await;
-
+    // Stop the tunnel BEFORE removing routes/DNS. If routes were removed first, the
+    // physical default route would take over while the tunnel device is still up,
+    // briefly leaking traffic in cleartext. Stopping first blackholes any in-flight
+    // traffic instead (Linux: dead persistent TUN; Windows: adapter destroyed).
     if let Err(e) = backend.stop().await {
         error!("Backend stop failed: {e}");
         // IPC failed — fall back to Kotlin-side stop via ACTION_STOP intent
@@ -727,6 +729,8 @@ pub async fn disconnect(
             }
         }
     }
+
+    let _ = platform.cleanup(INTERFACE_NAME).await;
 
     let mut conn = state.connection.write().await;
     *conn = ConnectionInfo::default();

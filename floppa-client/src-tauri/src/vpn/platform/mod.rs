@@ -73,6 +73,14 @@ pub trait Platform: Send + Sync {
 
     /// Cleanup interface (remove address, routes, DNS, endpoint route)
     async fn cleanup(&self, iface: &str) -> Result<(), String>;
+
+    /// Best-effort cleanup of leftover interface state from a previous run that
+    /// exited abnormally (crash/kill — no graceful `RunEvent::Exit`). Called once
+    /// at startup. Default: no-op (platforms where the OS tears the tunnel down for
+    /// us, e.g. Android's VpnService or Windows' in-process adapter).
+    async fn reconcile_stale(&self, _iface: &str) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]

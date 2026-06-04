@@ -161,6 +161,22 @@ pub fn run() {
                 vpn::config::init_config_dir(config_dir);
             }
 
+            // Desktop: clean up any leftover TUN/routes from a previous run that
+            // exited abnormally (crash/kill — no graceful RunEvent::Exit). Without
+            // this, stale split-default routes on the persistent TUN leave the user
+            // with no internet until they reconnect. Runs once before the UI is
+            // interactive so it can't race a fresh connect.
+            #[cfg(not(target_os = "android"))]
+            {
+                use vpn::platform::Platform;
+                let platform = app.state::<Arc<PlatformImpl>>();
+                tauri::async_runtime::block_on(async {
+                    if let Err(e) = platform.reconcile_stale("floppa0").await {
+                        warn!("Startup reconcile failed: {e}");
+                    }
+                });
+            }
+
             #[cfg(not(mobile))]
             {
                 match app.deep_link().register_all() {
@@ -206,8 +222,9 @@ pub fn run() {
                 tauri::async_runtime::block_on(async {
                     if backend.get_all_info().await.is_some_and(|i| i.is_running) {
                         info!("App exiting with active VPN tunnel — cleaning up");
-                        let _ = platform.cleanup("floppa0").await;
+                        // Stop the tunnel before tearing down routes/DNS (see disconnect).
                         let _ = backend.stop().await;
+                        let _ = platform.cleanup("floppa0").await;
                         info!("VPN cleanup complete");
                     }
                 });

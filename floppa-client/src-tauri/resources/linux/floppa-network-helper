@@ -67,7 +67,9 @@ case "${1:-}" in
         [[ $# -eq 4 && "$3" == "via" ]] || { echo "Usage: add-route <dest> via <gateway>" >&2; exit 1; }
         validate_ip "$2"
         validate_ip "$4"
-        ip route add "$2" via "$4"
+        # replace (not add) so a leftover route from a prior crash doesn't make this
+        # fail with "File exists" — makes endpoint-route install idempotent.
+        ip route replace "$2" via "$4"
         ;;
 
     del-route)
@@ -85,7 +87,9 @@ case "${1:-}" in
         shift 2
         for dest in "$@"; do
             validate_ip "$dest"
-            ip route add "$dest" dev "$iface"
+            # replace (not add) so leftover routes from a prior crash are overwritten
+            # idempotently instead of failing with "File exists".
+            ip route replace "$dest" dev "$iface"
         done
         ;;
 
