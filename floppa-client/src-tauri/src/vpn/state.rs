@@ -153,6 +153,51 @@ impl std::fmt::Display for CommandError {
     }
 }
 
+/// Why a config string / URI failed to parse. Internal type — never crosses to the
+/// frontend (commands map it into [`CommandError::invalid_config`]); it just gives
+/// the parsers structured, precise failures instead of ad-hoc `format!` strings.
+#[derive(Debug, Clone)]
+pub enum ConfigParseError {
+    /// A required field was absent from the config.
+    MissingField(&'static str),
+    /// A field was present but its value was malformed.
+    InvalidField { field: &'static str, reason: String },
+    /// The overall config / URI shape was invalid.
+    Malformed(String),
+}
+
+impl ConfigParseError {
+    pub fn malformed(message: impl Into<String>) -> Self {
+        Self::Malformed(message.into())
+    }
+}
+
+impl std::fmt::Display for ConfigParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingField(field) => write!(f, "Missing {field}"),
+            Self::InvalidField { field, reason } => write!(f, "Invalid {field}: {reason}"),
+            Self::Malformed(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigParseError {}
+
+/// Keep `String`-returning callers (`config.rs`, JNI) working unchanged.
+impl From<ConfigParseError> for String {
+    fn from(e: ConfigParseError) -> Self {
+        e.to_string()
+    }
+}
+
+/// A bad config is a `CommandError::invalid_config` at the command surface.
+impl From<ConfigParseError> for CommandError {
+    fn from(e: ConfigParseError) -> Self {
+        CommandError::invalid_config(e.to_string())
+    }
+}
+
 /// WireGuard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct WgConfig {
@@ -237,7 +282,7 @@ impl WgConfig {
 
 impl WgConfig {
     /// Parse from WireGuard config file format
-    pub fn from_config_str(config: &str) -> Result<Self, String> {
+    pub fn from_config_str(config: &str) -> Result<Self, ConfigParseError> {
         let mut private_key = None;
         let mut address = None;
         let mut dns = None;
@@ -296,13 +341,14 @@ impl WgConfig {
         }
 
         Ok(WgConfig {
-            private_key: private_key.ok_or("Missing PrivateKey")?,
-            address: address.ok_or("Missing Address")?,
+            private_key: private_key.ok_or(ConfigParseError::MissingField("PrivateKey"))?,
+            address: address.ok_or(ConfigParseError::MissingField("Address"))?,
             dns,
             mtu,
-            peer_public_key: peer_public_key.ok_or("Missing Peer PublicKey")?,
+            peer_public_key: peer_public_key
+                .ok_or(ConfigParseError::MissingField("Peer PublicKey"))?,
             peer_preshared_key,
-            peer_endpoint: peer_endpoint.ok_or("Missing Peer Endpoint")?,
+            peer_endpoint: peer_endpoint.ok_or(ConfigParseError::MissingField("Peer Endpoint"))?,
             allowed_ips: allowed_ips.unwrap_or_else(|| "0.0.0.0/0, ::/0".to_string()),
             persistent_keepalive,
         })
@@ -466,8 +512,9 @@ pub struct VlessVpnConfig {
 
 impl VlessVpnConfig {
     /// Parse a VLESS URI and fill VPN-specific fields with defaults.
-    pub fn from_uri(uri: &str) -> Result<Self, String> {
-        let parsed = VlessConfig::from_uri(uri)?;
+    pub fn from_uri(uri: &str) -> Result<Self, ConfigParseError> {
+        let parsed = VlessConfig::from_uri(uri)
+            .map_err(|e| ConfigParseError::malformed(format!("Invalid VLESS URI: {e}")))?;
         Ok(Self {
             uri: uri.to_string(),
             uuid: parsed.uuid,
@@ -625,7 +672,7 @@ pub fn config_str_is_amneziawg(config: &str) -> bool {
 
 impl AwgConfig {
     /// Parse an AmneziaWG `.conf` (WireGuard config + obfuscation params).
-    pub fn from_config_str(config: &str) -> Result<Self, String> {
+    pub fn from_config_str(config: &str) -> Result<Self, ConfigParseError> {
         let wg = WgConfig::from_config_str(config)?;
         let mut obf = AwgObfuscation::default();
 

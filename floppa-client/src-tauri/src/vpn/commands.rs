@@ -82,15 +82,15 @@ pub async fn set_active_config(
     let trimmed = config_str.trim();
     let mut configs = state.configs.write().await;
     if trimmed.starts_with("vless://") {
-        let vless = VlessVpnConfig::from_uri(trimmed).map_err(CommandError::invalid_config)?;
+        let vless = VlessVpnConfig::from_uri(trimmed)?;
         configs.vless = Some(vless);
         configs.active_protocol = Protocol::Vless;
     } else if config_str_is_amneziawg(&config_str) {
-        let awg = AwgConfig::from_config_str(&config_str).map_err(CommandError::invalid_config)?;
+        let awg = AwgConfig::from_config_str(&config_str)?;
         configs.amneziawg = Some(awg);
         configs.active_protocol = Protocol::AmneziaWg;
     } else {
-        let wg = WgConfig::from_config_str(&config_str).map_err(CommandError::invalid_config)?;
+        let wg = WgConfig::from_config_str(&config_str)?;
         configs.wireguard = Some(wg);
         configs.active_protocol = Protocol::WireGuard;
     };
