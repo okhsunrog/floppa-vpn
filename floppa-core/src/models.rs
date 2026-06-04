@@ -100,8 +100,8 @@ pub struct Plan {
     pub max_peers: i32,
     /// Whether this plan is visible to users (false = admin-only like "friends")
     pub is_public: bool,
-    /// If set, this is a trial plan with auto-expiration
-    pub trial_days: Option<i32>,
+    /// If set, this is a trial plan; the subscription lasts this many minutes (auto-expires)
+    pub trial_minutes: Option<i32>,
     /// Price in Telegram Stars (None = not purchasable with Stars)
     pub price_stars: Option<i32>,
     /// Subscription period in days (None = admin-only permanent plan)

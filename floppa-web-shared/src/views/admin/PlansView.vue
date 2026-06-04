@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
@@ -10,6 +10,7 @@ import {
 } from '../../client/@pinia/colada.gen'
 import type { Plan, CreatePlanRequest, UpdatePlanRequest } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
+import { durationUnit } from '../../utils/format'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -36,10 +37,40 @@ const planForm = ref<CreatePlanRequest>({
   default_speed_limit_mbps: null,
   max_peers: 1,
   is_public: true,
-  trial_days: null,
+  trial_minutes: null,
   price_stars: null,
   period_days: null,
 })
+
+// Trial duration lives on the plan in minutes; the form edits it as a value + unit so
+// sub-day trials (e.g. the 2h taster) are easy to enter. `planForm.trial_minutes` stays
+// in sync via the watcher below and is what gets sent to the API.
+const TRIAL_UNIT_FACTOR = { minutes: 1, hours: 60, days: 1440 } as const
+const trialValue = ref<number | null>(null)
+const trialUnit = ref<'minutes' | 'hours' | 'days'>('days')
+watch([trialValue, trialUnit], () => {
+  planForm.value.trial_minutes =
+    trialValue.value == null ? null : trialValue.value * TRIAL_UNIT_FACTOR[trialUnit.value]
+})
+const trialUnitItems = computed(() => [
+  { label: t('adminPlans.unitMinutes'), value: 'minutes' },
+  { label: t('adminPlans.unitHours'), value: 'hours' },
+  { label: t('adminPlans.unitDays'), value: 'days' },
+])
+function formatTrial(min: number): string {
+  const { unit, n } = durationUnit(min)
+  return t(`adminPlans.${unit}`, { n })
+}
+function setTrialFromMinutes(min: number | null | undefined) {
+  if (min == null) {
+    trialValue.value = null
+    trialUnit.value = 'days'
+  } else {
+    const p = durationUnit(min)
+    trialValue.value = p.n
+    trialUnit.value = p.unit
+  }
+}
 
 // Confirm delete state
 const confirmOpen = ref(false)
@@ -55,10 +86,11 @@ function openNewPlanDialog() {
     default_speed_limit_mbps: null,
     max_peers: 1,
     is_public: true,
-    trial_days: null,
+    trial_minutes: null,
     price_stars: null,
     period_days: null,
   }
+  setTrialFromMinutes(null)
   planDialog.value = true
 }
 
@@ -71,10 +103,11 @@ function openEditPlanDialog(plan: Plan) {
     default_speed_limit_mbps: plan.default_speed_limit_mbps ?? null,
     max_peers: plan.max_peers,
     is_public: plan.is_public,
-    trial_days: plan.trial_days ?? null,
+    trial_minutes: plan.trial_minutes ?? null,
     price_stars: plan.price_stars ?? null,
     period_days: plan.period_days ?? null,
   }
+  setTrialFromMinutes(plan.trial_minutes)
   planDialog.value = true
 }
 
@@ -94,11 +127,11 @@ async function savePlan() {
         default_speed_limit_mbps: planForm.value.default_speed_limit_mbps,
         max_peers: planForm.value.max_peers,
         is_public: planForm.value.is_public,
-        trial_days: planForm.value.trial_days,
+        trial_minutes: planForm.value.trial_minutes,
         price_stars: planForm.value.price_stars,
         period_days: planForm.value.period_days,
         clear_speed_limit: planForm.value.default_speed_limit_mbps == null,
-        clear_trial_days: planForm.value.trial_days == null,
+        clear_trial_minutes: planForm.value.trial_minutes == null,
         clear_price_stars: planForm.value.price_stars == null,
         clear_period_days: planForm.value.period_days == null,
       }
@@ -165,7 +198,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
   { accessorKey: 'max_peers', header: t('adminPlans.maxPeers') },
   { accessorKey: 'price_stars', header: t('adminPlans.price') },
   { accessorKey: 'period_days', header: t('adminPlans.period') },
-  { accessorKey: 'trial_days', header: t('adminPlans.trial') },
+  { accessorKey: 'trial_minutes', header: t('adminPlans.trial') },
   { accessorKey: 'is_public', header: t('adminPlans.public') },
   { id: 'actions', header: t('adminPlans.actions') },
 ])
@@ -208,10 +241,8 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 : t('adminPlans.permanent')
             }}
           </template>
-          <template #trial_days-cell="{ row }">
-            {{
-              row.original.trial_days ? t('adminPlans.days', { n: row.original.trial_days }) : '-'
-            }}
+          <template #trial_minutes-cell="{ row }">
+            {{ row.original.trial_minutes ? formatTrial(row.original.trial_minutes) : '-' }}
           </template>
           <template #is_public-cell="{ row }">
             <UBadge
@@ -294,10 +325,10 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 ? t('adminPlans.days', { n: plan.period_days })
                 : t('adminPlans.permanent')
             }}</span>
-            <span v-if="plan.trial_days" class="text-[var(--ui-text-muted)]">{{
+            <span v-if="plan.trial_minutes" class="text-[var(--ui-text-muted)]">{{
               t('adminPlans.trial')
             }}</span>
-            <span v-if="plan.trial_days">{{ t('adminPlans.days', { n: plan.trial_days }) }}</span>
+            <span v-if="plan.trial_minutes">{{ formatTrial(plan.trial_minutes) }}</span>
           </div>
           <div class="mt-2">
             <UBadge
@@ -380,16 +411,25 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div class="flex flex-col gap-1.5">
-              <label class="text-sm font-medium">{{ t('adminPlans.trialDays') }}</label>
-              <UInput
-                type="number"
-                :model-value="planForm.trial_days?.toString()"
-                @update:model-value="
-                  (v: string | number) => (planForm.trial_days = v === '' ? null : Number(v))
-                "
-                :placeholder="t('adminPlans.notATrial')"
-                :min="1"
-              />
+              <label class="text-sm font-medium">{{ t('adminPlans.trialDuration') }}</label>
+              <div class="flex gap-2">
+                <UInput
+                  type="number"
+                  class="flex-1"
+                  :model-value="trialValue?.toString()"
+                  @update:model-value="
+                    (v: string | number) => (trialValue = v === '' ? null : Number(v))
+                  "
+                  :placeholder="t('adminPlans.notATrial')"
+                  :min="1"
+                />
+                <USelect
+                  v-model="trialUnit"
+                  :items="trialUnitItems"
+                  value-key="value"
+                  class="w-32"
+                />
+              </div>
             </div>
           </div>
           <UCheckbox v-model="planForm.is_public" :label="t('adminPlans.publicCheckbox')" />
