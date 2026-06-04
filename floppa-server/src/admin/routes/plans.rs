@@ -19,7 +19,7 @@ pub struct Plan {
     default_speed_limit_mbps: Option<i32>,
     max_peers: i32,
     is_public: bool,
-    trial_days: Option<i32>,
+    trial_minutes: Option<i32>,
     price_stars: Option<i32>,
     period_days: Option<i32>,
 }
@@ -35,7 +35,7 @@ pub struct CreatePlanRequest {
     #[serde(default = "default_is_public")]
     is_public: bool,
     #[serde(default)]
-    trial_days: Option<i32>,
+    trial_minutes: Option<i32>,
     #[serde(default)]
     price_stars: Option<i32>,
     #[serde(default)]
@@ -53,7 +53,7 @@ pub struct UpdatePlanRequest {
     #[serde(default)]
     is_public: Option<bool>,
     #[serde(default)]
-    trial_days: Option<i32>,
+    trial_minutes: Option<i32>,
     #[serde(default)]
     price_stars: Option<i32>,
     #[serde(default)]
@@ -61,7 +61,7 @@ pub struct UpdatePlanRequest {
     #[serde(default)]
     clear_speed_limit: bool,
     #[serde(default)]
-    clear_trial_days: bool,
+    clear_trial_minutes: bool,
     #[serde(default)]
     clear_price_stars: bool,
     #[serde(default)]
@@ -83,7 +83,7 @@ pub struct PublicPlan {
     display_name: String,
     default_speed_limit_mbps: Option<i32>,
     max_peers: i32,
-    trial_days: Option<i32>,
+    trial_minutes: Option<i32>,
     price_stars: Option<i32>,
     period_days: Option<i32>,
 }
@@ -103,7 +103,7 @@ pub(super) async fn list_public_plans(
 ) -> Result<Json<Vec<PublicPlan>>, ApiError> {
     let plans: Vec<PublicPlan> = sqlx::query_as!(
         PublicPlan,
-        "SELECT id, display_name, default_speed_limit_mbps, max_peers, trial_days, price_stars, period_days \
+        "SELECT id, display_name, default_speed_limit_mbps, max_peers, trial_minutes, price_stars, period_days \
          FROM plans WHERE is_public = true ORDER BY price_stars ASC NULLS FIRST, id ASC"
     )
     .fetch_all(&state.pool)
@@ -130,7 +130,7 @@ pub(super) async fn list_plans(
 ) -> Result<Json<Vec<Plan>>, ApiError> {
     let plans: Vec<Plan> = sqlx::query_as!(
         Plan,
-        "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id"
+        "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days FROM plans ORDER BY id"
     )
     .fetch_all(&state.pool)
     .await?;
@@ -171,16 +171,16 @@ pub(super) async fn create_plan(
     let plan: Plan = sqlx::query_as!(
         Plan,
         r#"
-        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days)
+        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days
+        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days
         "#,
         &req.name,
         &req.display_name,
         req.default_speed_limit_mbps,
         req.max_peers,
         req.is_public,
-        req.trial_days,
+        req.trial_minutes,
         req.price_stars,
         req.period_days
     )
@@ -230,11 +230,11 @@ pub(super) async fn update_plan(
             default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,
             max_peers = COALESCE($5, max_peers),
             is_public = COALESCE($6, is_public),
-            trial_days = CASE WHEN $7 THEN NULL ELSE COALESCE($8, trial_days) END,
+            trial_minutes = CASE WHEN $7 THEN NULL ELSE COALESCE($8, trial_minutes) END,
             price_stars = CASE WHEN $9 THEN NULL ELSE COALESCE($10, price_stars) END,
             period_days = CASE WHEN $11 THEN NULL ELSE COALESCE($12, period_days) END
         WHERE id = $1
-        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days
+        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days
         "#,
         id,
         req.display_name.as_deref(),
@@ -242,8 +242,8 @@ pub(super) async fn update_plan(
         req.default_speed_limit_mbps,
         req.max_peers,
         req.is_public,
-        req.clear_trial_days,
-        req.trial_days,
+        req.clear_trial_minutes,
+        req.trial_minutes,
         req.clear_price_stars,
         req.price_stars,
         req.clear_period_days,

@@ -158,7 +158,7 @@ pub struct CreateUserResponse {
     request_body = CreateUserRequest,
     responses(
         (status = 201, body = CreateUserResponse),
-        (status = 400, body = ApiError, description = "Days not specified and plan has no trial_days"),
+        (status = 400, body = ApiError, description = "Days not specified and plan has no trial duration"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
         (status = 404, body = ApiError, description = "Plan not found"),
@@ -437,7 +437,7 @@ pub(super) async fn get_user(
 #[derive(Deserialize, ToSchema)]
 pub struct SetSubscriptionRequest {
     plan_id: i32,
-    /// Duration in days. If omitted, uses the plan's trial_days (for trial plans).
+    /// Duration in days. If omitted, uses the plan's trial duration (for trial plans).
     /// Use `permanent: true` to create a subscription with no expiration.
     #[serde(default)]
     days: Option<i64>,
@@ -457,7 +457,7 @@ pub struct SetSubscriptionRequest {
     request_body = SetSubscriptionRequest,
     responses(
         (status = 200, description = "Subscription set"),
-        (status = 400, body = ApiError, description = "Days not specified and plan has no trial_days"),
+        (status = 400, body = ApiError, description = "Days not specified and plan has no trial duration"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
         (status = 404, body = ApiError, description = "Plan not found"),

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id",
+  "query": "SELECT id, display_name, default_speed_limit_mbps, max_peers, trial_minutes, price_stars, period_days FROM plans WHERE is_public = true ORDER BY price_stars ASC NULLS FIRST, id ASC",
   "describe": {
     "columns": [
       {
@@ -10,41 +10,31 @@
       },
       {
         "ordinal": 1,
-        "name": "name",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 2,
         "name": "display_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "default_speed_limit_mbps",
         "type_info": "Int4"
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "max_peers",
         "type_info": "Int4"
       },
       {
-        "ordinal": 5,
-        "name": "is_public",
-        "type_info": "Bool"
-      },
-      {
-        "ordinal": 6,
-        "name": "trial_days",
+        "ordinal": 4,
+        "name": "trial_minutes",
         "type_info": "Int4"
       },
       {
-        "ordinal": 7,
+        "ordinal": 5,
         "name": "price_stars",
         "type_info": "Int4"
       },
       {
-        "ordinal": 8,
+        "ordinal": 6,
         "name": "period_days",
         "type_info": "Int4"
       }
@@ -55,14 +45,12 @@
     "nullable": [
       false,
       false,
-      false,
       true,
-      false,
       false,
       true,
       true,
       true
     ]
   },
-  "hash": "56d04f97eee1c7e89bef73e968a0c835babaa8e57a4d97794508df5b76a67165"
+  "hash": "0afa08646f33fe0956c9d0062f0e7793a674ab83ee5defa07d23f0dd0f7a533f"
 }
