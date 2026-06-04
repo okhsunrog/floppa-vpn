@@ -237,6 +237,26 @@ function selectMode(mode: SplitMode) {
   <div class="max-w-3xl mx-auto">
     <h1 class="text-2xl font-bold mb-6">{{ t('settings.title') }}</h1>
 
+    <!-- Protocol selection (only when more than one protocol is available) -->
+    <UCard v-if="vpn.availableProtocols.length > 1" class="mb-4">
+      <template #header>
+        <div class="flex items-center gap-2">
+          <UIcon name="i-lucide-shuffle" class="size-5" />
+          <span class="font-semibold">{{ t('settings.protocolSelection') }}</span>
+        </div>
+      </template>
+
+      <div class="flex items-center justify-between gap-4">
+        <div>
+          <p class="text-sm font-medium">{{ t('settings.autoSelectProtocol') }}</p>
+          <p class="text-xs text-[var(--ui-text-muted)]">
+            {{ t('settings.autoSelectProtocolHint') }}
+          </p>
+        </div>
+        <USwitch v-model="settings.autoSelect" />
+      </div>
+    </UCard>
+
     <!-- Notifications (Android only) -->
     <UCard v-if="vpn.isAndroid && permissions.notificationsEnabled.value !== null" class="mb-4">
       <template #header>
