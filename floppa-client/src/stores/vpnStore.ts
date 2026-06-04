@@ -9,11 +9,6 @@ const t = i18n.global.t
 
 const MAX_RECONNECT_ATTEMPTS = 3
 
-// Auto-select probe order: most performant first, most censorship-resistant last.
-// The last working protocol is tried first (see autoOrder), so a working WireGuard
-// stays on WireGuard; a blocked one falls through to AmneziaWG then VLESS.
-const AUTO_PROTOCOL_ORDER = ['wireguard', 'amneziawg', 'vless']
-
 /** Result of a single connect attempt — success, or the typed failure category. */
 type ConnectOutcome = { ok: true } | { ok: false; error: ConnectError }
 
@@ -202,13 +197,18 @@ export const useVpnStore = defineStore(
     }
 
     /**
-     * Probe order for auto-select: preferred order (AUTO_PROTOCOL_ORDER) limited to
-     * protocols that actually have a cached config, with the last-active (= last
-     * working) protocol moved to the front so reconnects skip straight to it.
+     * Probe order for auto-select: the user-defined priority (settings.protocolOrder)
+     * limited to protocols that actually have a cached config, plus any available
+     * protocol missing from the saved order, with the last-active (= last working)
+     * protocol moved to the front so reconnects skip straight to it.
      */
     function autoOrder(): string[] {
+      const settings = useSettingsStore()
       const available = availableProtocols.value
-      const ordered = AUTO_PROTOCOL_ORDER.filter((p) => available.includes(p))
+      const ordered = settings.protocolOrder.filter((p) => available.includes(p))
+      for (const p of available) {
+        if (!ordered.includes(p)) ordered.push(p)
+      }
       const remembered = config.value?.protocol
       if (remembered && ordered.includes(remembered)) {
         return [remembered, ...ordered.filter((p) => p !== remembered)]
@@ -381,8 +381,9 @@ export const useVpnStore = defineStore(
      * working protocol.
      */
     async function resetProtocolPreference() {
+      const settings = useSettingsStore()
       const fallback =
-        AUTO_PROTOCOL_ORDER.find((p) => availableProtocols.value.includes(p)) ??
+        settings.protocolOrder.find((p) => availableProtocols.value.includes(p)) ??
         availableProtocols.value[0]
       if (fallback) await setProtocol(fallback)
     }

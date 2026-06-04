@@ -15,6 +15,14 @@ export const useSettingsStore = defineStore(
     // the switcher on the connection card.
     const autoSelect = ref(true)
 
+    // User-defined probe order for auto-select (most preferred first). Editable in
+    // the Protocol settings modal; defaults to performance order.
+    const protocolOrder = ref<string[]>(['wireguard', 'amneziawg', 'vless'])
+
+    // One-time guard: on upgrade to auto-select we forget the previously-used
+    // protocol once (see VpnCard) so the cycle re-probes from the priority order.
+    const protocolDefaultsApplied = ref(false)
+
     // Cached app list (not persisted — fetched once per session)
     const cachedApps = ref<AppInfo[] | null>(null)
     const appsLoading = ref(false)
@@ -61,6 +69,8 @@ export const useSettingsStore = defineStore(
       splitMode,
       selectedApps,
       autoSelect,
+      protocolOrder,
+      protocolDefaultsApplied,
       cachedApps,
       appsLoading,
       toggleApp,
@@ -71,7 +81,7 @@ export const useSettingsStore = defineStore(
   },
   {
     persist: {
-      pick: ['splitMode', 'selectedApps', 'autoSelect'],
+      pick: ['splitMode', 'selectedApps', 'autoSelect', 'protocolOrder', 'protocolDefaultsApplied'],
     },
   },
 )
