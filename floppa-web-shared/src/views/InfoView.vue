@@ -9,6 +9,7 @@ import { useAuthStore } from '../stores'
 import changelogData from '../changelog.json'
 import logoUrl from '../assets/logo.png'
 import ColorModeButton from '../components/ColorModeButton.vue'
+import { durationUnit } from '../utils/format'
 
 // `landing` is shown to logged-out visitors (web home, with a Login CTA);
 // `tab` is the in-app Info tab for authenticated users.
@@ -25,6 +26,12 @@ const props = withDefaults(
 const { t, locale } = useI18n()
 const router = useRouter()
 const auth = useAuthStore()
+
+// Trial duration is stored in minutes; render it in the largest whole unit.
+function formatTrialBadge(minutes: number): string {
+  const { unit, n } = durationUnit(minutes)
+  return t('info.trialBadge', { d: t(`info.${unit}`, { n }) })
+}
 
 const GITHUB_URL = 'https://github.com/okhsunrog/floppa-vpn'
 const CHANNEL_URL = 'https://t.me/floppa_vpn_channel'
@@ -173,10 +180,10 @@ function onChangelogClick(event: MouseEvent) {
           <div class="flex items-baseline justify-between mb-2">
             <span class="font-semibold text-lg">{{ plan.display_name }}</span>
             <UBadge
-              v-if="plan.trial_days"
+              v-if="plan.trial_minutes"
               color="success"
               variant="subtle"
-              :label="t('info.trialBadge', { n: plan.trial_days })"
+              :label="formatTrialBadge(plan.trial_minutes)"
             />
           </div>
           <div class="text-2xl font-bold mb-3">

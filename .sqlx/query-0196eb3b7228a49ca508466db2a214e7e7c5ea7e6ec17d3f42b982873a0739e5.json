@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, trial_days FROM plans WHERE name = 'basic'",
+  "query": "SELECT id, trial_minutes FROM plans WHERE name = $1",
   "describe": {
     "columns": [
       {
@@ -10,17 +10,19 @@
       },
       {
         "ordinal": 1,
-        "name": "trial_days",
+        "name": "trial_minutes",
         "type_info": "Int4"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false,
       true
     ]
   },
-  "hash": "cc583d1a3a400c4e356dc17f805573e3a56378305dfc9e51e434cf3f91fa53f8"
+  "hash": "0196eb3b7228a49ca508466db2a214e7e7c5ea7e6ec17d3f42b982873a0739e5"
 }

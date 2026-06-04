@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            max_peers = COALESCE($5, max_peers),\n            is_public = COALESCE($6, is_public),\n            trial_days = CASE WHEN $7 THEN NULL ELSE COALESCE($8, trial_days) END,\n            price_stars = CASE WHEN $9 THEN NULL ELSE COALESCE($10, price_stars) END,\n            period_days = CASE WHEN $11 THEN NULL ELSE COALESCE($12, period_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days\n        ",
+  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -35,7 +35,7 @@
       },
       {
         "ordinal": 6,
-        "name": "trial_days",
+        "name": "trial_minutes",
         "type_info": "Int4"
       },
       {
@@ -51,17 +51,13 @@
     ],
     "parameters": {
       "Left": [
-        "Int4",
         "Text",
-        "Bool",
+        "Text",
         "Int4",
         "Int4",
         "Bool",
-        "Bool",
         "Int4",
-        "Bool",
         "Int4",
-        "Bool",
         "Int4"
       ]
     },
@@ -77,5 +73,5 @@
       true
     ]
   },
-  "hash": "46daf9a1e4405fc87975b2d20b1e67b4aeaaa1c96418ed448f8f108833d9b580"
+  "hash": "cd25196c8f9629a171a16fb3505edc039610701a38bb2ee2f3e7b889bfdfe3cb"
 }

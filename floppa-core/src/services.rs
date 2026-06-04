@@ -75,40 +75,52 @@ pub async fn upsert_user(
     })
 }
 
-/// Grant the one-time real trial (7-day "basic" plan) to a user if they haven't used it yet.
-///
-/// Atomically claims `trial_used_at`, so concurrent calls grant at most one trial.
-/// Returns whether a trial was granted on this call. Keyed on `user_id` so it works for
-/// both the Telegram signup path and the credential→Telegram link path.
-pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<bool> {
-    let claimed = sqlx::query!(
-        "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
-        user_id,
-    )
-    .execute(pool)
-    .await?;
-
-    if claimed.rows_affected() != 1 {
-        return Ok(false);
+/// Grant a trial subscription on `plan_name` for the duration stored on that plan
+/// (`trial_minutes`). When `consume_real_trial` is true, atomically claims the user's
+/// one-time `trial_used_at` first and no-ops if it was already used. Returns whether a
+/// subscription was granted. No-op (returns false) if the plan is missing or has no
+/// `trial_minutes`.
+async fn grant_trial(
+    pool: &DbPool,
+    user_id: i64,
+    plan_name: &str,
+    source: &str,
+    consume_real_trial: bool,
+) -> Result<bool> {
+    if consume_real_trial {
+        let claimed = sqlx::query!(
+            "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
+            user_id,
+        )
+        .execute(pool)
+        .await?;
+        if claimed.rows_affected() != 1 {
+            return Ok(false);
+        }
     }
 
-    let basic_plan = sqlx::query!("SELECT id, trial_days FROM plans WHERE name = 'basic'")
-        .fetch_optional(pool)
-        .await?;
-
-    let Some(plan) = basic_plan else {
+    let plan = sqlx::query!(
+        "SELECT id, trial_minutes FROM plans WHERE name = $1",
+        plan_name
+    )
+    .fetch_optional(pool)
+    .await?;
+    let Some(plan) = plan else {
+        return Ok(false);
+    };
+    let Some(minutes) = plan.trial_minutes else {
         return Ok(false);
     };
 
-    let days = plan.trial_days.unwrap_or(7) as i64;
     let now = Utc::now();
-    let expires_at = now + Duration::days(days);
+    let expires_at = now + Duration::minutes(minutes as i64);
     sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'trial')",
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5)",
         user_id,
         plan.id,
         now,
         expires_at,
+        source,
     )
     .execute(pool)
     .await?;
@@ -116,28 +128,22 @@ pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<b
     Ok(true)
 }
 
-/// Grant a short "taster" trial. Does NOT consume `trial_used_at` (so the user can still
-/// claim the real trial later via Telegram link). No-op if the 'taster' plan is missing.
-pub async fn grant_taster_trial(pool: &DbPool, user_id: i64, minutes: i64) -> Result<()> {
-    let taster_plan = sqlx::query!("SELECT id FROM plans WHERE name = 'taster'")
-        .fetch_optional(pool)
-        .await?;
+/// Grant the one-time real trial (the "basic" plan's `trial_minutes`) if not yet used.
+///
+/// Atomically claims `trial_used_at`, so concurrent calls grant at most one trial. Returns
+/// whether a trial was granted on this call. Keyed on `user_id` so it works for both the
+/// Telegram signup path and the credential→Telegram link path.
+pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<bool> {
+    grant_trial(pool, user_id, "basic", "trial", true).await
+}
 
-    if let Some(plan) = taster_plan {
-        let now = Utc::now();
-        let expires_at = now + Duration::minutes(minutes);
-        sqlx::query!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'taster')",
-            user_id,
-            plan.id,
-            now,
-            expires_at,
-        )
-        .execute(pool)
-        .await?;
-    }
-
-    Ok(())
+/// Grant the short "taster" trial (the "taster" plan's `trial_minutes`). Does NOT consume
+/// `trial_used_at`, so the user can still claim the real trial later via Telegram link.
+/// No-op if the 'taster' plan is missing or has no `trial_minutes`.
+pub async fn grant_taster_trial(pool: &DbPool, user_id: i64) -> Result<()> {
+    grant_trial(pool, user_id, "taster", "taster", false)
+        .await
+        .map(|_| ())
 }
 
 /// Validate a login and return `(normalized_uid_lowercase, display_form)`.
@@ -162,7 +168,6 @@ pub async fn create_credential_user(
     pool: &DbPool,
     login: &str,
     password: &str,
-    taster_minutes: i64,
 ) -> Result<UpsertResult> {
     let (uid, display) = normalize_login(login)?;
     if password.len() < 8 {
@@ -203,8 +208,8 @@ pub async fn create_credential_user(
 
     tx.commit().await?;
 
-    // Best-effort taster trial after commit (missing plan = no-op).
-    grant_taster_trial(pool, user.id, taster_minutes).await?;
+    // Best-effort taster trial after commit (duration from the 'taster' plan; missing = no-op).
+    grant_taster_trial(pool, user.id).await?;
 
     Ok(UpsertResult {
         id: user.id,
@@ -972,7 +977,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_create_credential_user_and_login(pool: DbPool) {
-        let res = create_credential_user(&pool, "Alice", "hunter2hunter", 120)
+        let res = create_credential_user(&pool, "Alice", "hunter2hunter")
             .await
             .unwrap();
         assert!(!res.trial_granted);
@@ -999,11 +1004,11 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_create_credential_user_duplicate_login(pool: DbPool) {
-        create_credential_user(&pool, "bob", "password123", 120)
+        create_credential_user(&pool, "bob", "password123")
             .await
             .unwrap();
         // Same login, different case → still taken.
-        let err = create_credential_user(&pool, "BOB", "password123", 120)
+        let err = create_credential_user(&pool, "BOB", "password123")
             .await
             .unwrap_err();
         assert!(matches!(err, FloppaError::CredentialTaken));
@@ -1011,7 +1016,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_credential_user_gets_taster_not_real_trial(pool: DbPool) {
-        let res = create_credential_user(&pool, "carol", "password123", 120)
+        let res = create_credential_user(&pool, "carol", "password123")
             .await
             .unwrap();
 
@@ -1049,7 +1054,7 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_short_password_rejected(pool: DbPool) {
-        let err = create_credential_user(&pool, "dave", "short", 120)
+        let err = create_credential_user(&pool, "dave", "short")
             .await
             .unwrap_err();
         assert!(matches!(err, FloppaError::InvalidLogin(_)));
@@ -1060,7 +1065,7 @@ mod tests {
     #[sqlx::test(migrations = "../migrations")]
     async fn test_attach_telegram_grants_real_trial(pool: DbPool) {
         get_basic_plan_id(&pool).await;
-        let user = create_credential_user(&pool, "newbie", "password123", 120)
+        let user = create_credential_user(&pool, "newbie", "password123")
             .await
             .unwrap();
 
@@ -1091,7 +1096,7 @@ mod tests {
         let basic = get_basic_plan_id(&pool).await;
 
         // Survivor: the fresh credential account the user is logged into (no Telegram, taster only).
-        let survivor = create_credential_user(&pool, "recover_me", "password123", 120)
+        let survivor = create_credential_user(&pool, "recover_me", "password123")
             .await
             .unwrap();
         let survivor_inst_a = sqlx::query_scalar!(

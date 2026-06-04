@@ -324,10 +324,6 @@ pub struct AuthConfig {
     /// JWT token expiration in hours (default: 24 * 7 = 1 week)
     #[serde(default = "default_jwt_expiration_hours")]
     pub jwt_expiration_hours: u64,
-    /// Taster (short) trial granted on credential account creation, in minutes.
-    /// Does NOT consume the one-time real trial (which is granted on first Telegram link).
-    #[serde(default = "default_taster_trial_minutes")]
-    pub taster_trial_minutes: i64,
     /// Max account-registration attempts per IP per hour.
     #[serde(default = "default_register_rate_limit_per_hour")]
     pub register_rate_limit_per_hour: u32,
@@ -338,10 +334,6 @@ pub struct AuthConfig {
 
 fn default_jwt_expiration_hours() -> u64 {
     24 * 7 // 1 week
-}
-
-fn default_taster_trial_minutes() -> i64 {
-    120 // 2 hours — enough to connect and link Telegram through the VPN
 }
 
 fn default_register_rate_limit_per_hour() -> u32 {

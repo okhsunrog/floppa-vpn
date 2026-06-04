@@ -61,7 +61,7 @@ export type CreatePlanRequest = {
     name: string;
     period_days?: number | null;
     price_stars?: number | null;
-    trial_days?: number | null;
+    trial_minutes?: number | null;
 };
 
 export type CreateUserRequest = {
@@ -227,7 +227,7 @@ export type Plan = {
     name: string;
     period_days?: number | null;
     price_stars?: number | null;
-    trial_days?: number | null;
+    trial_minutes?: number | null;
 };
 
 export type PublicConfig = {
@@ -253,7 +253,7 @@ export type PublicPlan = {
     max_peers: number;
     period_days?: number | null;
     price_stars?: number | null;
-    trial_days?: number | null;
+    trial_minutes?: number | null;
 };
 
 export type SetCredentialRequest = {
@@ -263,7 +263,7 @@ export type SetCredentialRequest = {
 
 export type SetSubscriptionRequest = {
     /**
-     * Duration in days. If omitted, uses the plan's trial_days (for trial plans).
+     * Duration in days. If omitted, uses the plan's trial duration (for trial plans).
      * Use `permanent: true` to create a subscription with no expiration.
      */
     days?: number | null;
@@ -319,14 +319,14 @@ export type UpdatePlanRequest = {
     clear_period_days?: boolean;
     clear_price_stars?: boolean;
     clear_speed_limit?: boolean;
-    clear_trial_days?: boolean;
+    clear_trial_minutes?: boolean;
     default_speed_limit_mbps?: number | null;
     display_name?: string | null;
     is_public?: boolean | null;
     max_peers?: number | null;
     period_days?: number | null;
     price_stars?: number | null;
-    trial_days?: number | null;
+    trial_minutes?: number | null;
 };
 
 export type UpsertInstallationRequest = {
@@ -1400,7 +1400,7 @@ export type CreateUserData = {
 
 export type CreateUserErrors = {
     /**
-     * Days not specified and plan has no trial_days
+     * Days not specified and plan has no trial duration
      */
     400: ApiError;
     /**
@@ -1596,7 +1596,7 @@ export type SetSubscriptionData = {
 
 export type SetSubscriptionErrors = {
     /**
-     * Days not specified and plan has no trial_days
+     * Days not specified and plan has no trial duration
      */
     400: ApiError;
     /**
