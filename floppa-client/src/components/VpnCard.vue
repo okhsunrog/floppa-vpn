@@ -278,7 +278,7 @@ async function handleConnect() {
   await vpn.connect()
 
   // If connection verification failed, check with server whether our peer still exists
-  if (vpn.error?.includes('verification failed') && vpn.deviceId) {
+  if (vpn.connectError?.code === 'verify_failed' && vpn.deviceId) {
     // Keep UI in loading state while we check server and potentially recreate
     vpn.error = null
     vpn.isLoading = true
