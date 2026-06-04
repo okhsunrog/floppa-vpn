@@ -431,6 +431,11 @@ async fn connect_android(
                 info!("No handshake after 5s — peer likely invalid, stopping tunnel");
                 if let Err(e) = backend.stop().await {
                     error!("Failed to stop tunnel after verification failure: {e}");
+                    // IPC stop failed — fall back to Kotlin-side stop so the foreground
+                    // VpnService + tunnel don't keep running while the UI shows disconnected.
+                    if let Err(e2) = app.vpn().stop() {
+                        error!("Kotlin stop also failed: {e2}");
+                    }
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
@@ -447,6 +452,11 @@ async fn connect_android(
                 info!("VLESS connectivity check failed: {e}");
                 if let Err(e) = backend.stop().await {
                     error!("Failed to stop tunnel after verification failure: {e}");
+                    // IPC stop failed — fall back to Kotlin-side stop so the foreground
+                    // VpnService + tunnel don't keep running while the UI shows disconnected.
+                    if let Err(e2) = app.vpn().stop() {
+                        error!("Kotlin stop also failed: {e2}");
+                    }
                 }
                 let mut conn = state.connection.write().await;
                 *conn = ConnectionInfo::default();
