@@ -44,6 +44,14 @@ export const useVpnStore = defineStore(
     const attempt = ref<{ protocol: string; index: number; total: number } | null>(null)
     let abortGen = 0
 
+    // Re-entrancy guard for connect(): true for the whole duration of a connect
+    // cycle. The auto-reconnect timer, a user tap, and the status poll can each
+    // call connect() concurrently; without this each would spin its own probe +
+    // poll loop and race on shared state. Intentionally NOT isLoading — the UI also
+    // toggles isLoading around the verify-failed peer-recreation flow, so reusing it
+    // here would wrongly block that legitimate second connect().
+    let connectInFlight = false
+
     const isConnected = computed(() => connectionInfo.value?.status === 'connected')
     const hasConfig = computed(() => config.value !== null)
     const activeProtocol = computed(() => config.value?.protocol ?? 'wireguard')
@@ -248,10 +256,14 @@ export const useVpnStore = defineStore(
     }
 
     async function connect() {
+      // Re-entrancy guard: bail as a pure no-op if a connect cycle is already
+      // running, so overlapping callers don't each spin a probe + poll loop.
+      if (connectInFlight) return
       if (!hasConfig.value || !config.value) {
         error.value = t('vpn.noActiveConfig')
         return
       }
+      connectInFlight = true
       isLoading.value = true
       error.value = null
       userIntent.value = 'connected'
@@ -264,7 +276,9 @@ export const useVpnStore = defineStore(
           const outcome = await runAttempt()
           if (outcome.ok) {
             reconnectAttempts.value = 0
-          } else {
+          } else if (outcome.error.code !== 'busy') {
+            // 'busy' = the backend already has a transition in progress; it's not a
+            // user-facing failure, so don't surface it as an error.
             error.value = outcome.error.message
           }
         }
@@ -273,6 +287,7 @@ export const useVpnStore = defineStore(
       } finally {
         attempt.value = null
         isLoading.value = false
+        connectInFlight = false
       }
     }
 

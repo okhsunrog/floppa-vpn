@@ -248,9 +248,12 @@ pub async fn connect(
     let connect_start = std::time::Instant::now();
     info!("Connecting to VPN");
 
-    // Guard: only allow connect from Disconnected
+    // Guard + claim the transition atomically: check the status and set Connecting
+    // under a SINGLE write lock. A read-lock guard followed by a separate write lock
+    // (with an .await in between) is a TOCTOU — two concurrent connect() calls could
+    // both observe Disconnected and both proceed to start a tunnel.
     {
-        let conn = state.connection.read().await;
+        let mut conn = state.connection.write().await;
         match conn.status {
             ConnectionStatus::Disconnected => {}
             ConnectionStatus::Connecting | ConnectionStatus::VerifyingConnection => {
@@ -261,19 +264,19 @@ pub async fn connect(
                 return Err(ConnectError::busy("Disconnecting in progress"));
             }
         }
-    }
-
-    let proto_config = state
-        .configs
-        .read()
-        .await
-        .active_config()
-        .ok_or_else(|| ConnectError::tunnel("No active config"))?;
-
-    {
-        let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Connecting;
     }
+
+    // We now exclusively own the transition (status == Connecting). If no config is
+    // available, roll the claim back to Disconnected before returning.
+    let proto_config = match state.configs.read().await.active_config() {
+        Some(config) => config,
+        None => {
+            let mut conn = state.connection.write().await;
+            conn.status = ConnectionStatus::Disconnected;
+            return Err(ConnectError::tunnel("No active config"));
+        }
+    };
 
     #[cfg(target_os = "android")]
     let result = connect_android(
@@ -697,18 +700,16 @@ pub async fn disconnect(
 ) -> Result<(), String> {
     info!("Disconnecting from VPN");
 
-    // Guard: reject if not connected or already disconnecting
+    // Guard + claim the transition atomically under a SINGLE write lock (same TOCTOU
+    // reasoning as connect): check the status and set Disconnecting together so two
+    // concurrent disconnect() calls can't both pass the guard.
     {
-        let conn = state.connection.read().await;
+        let mut conn = state.connection.write().await;
         match conn.status {
             ConnectionStatus::Disconnecting => return Err("Already disconnecting".to_string()),
             ConnectionStatus::Disconnected => return Err("Not connected".to_string()),
             _ => {}
         }
-    }
-
-    {
-        let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnecting;
     }
 
@@ -741,8 +742,11 @@ pub async fn get_connection_info(
     state: State<'_, Arc<VpnState>>,
     backend: State<'_, Arc<dyn VpnBackend>>,
 ) -> Result<ConnectionInfo, String> {
-    let mut conn = state.connection.write().await;
-
+    // Fetch backend info WITHOUT holding the connection lock. On Android this is a
+    // tarpc round-trip that can block up to the RPC deadline; holding the connection
+    // write lock across it would stall every concurrent connect/disconnect for that
+    // whole duration. Compute the derived reachability state first, then take the
+    // lock only to apply the transition.
     let info = backend.get_all_info().await;
     // Some(true) = confirmed running, Some(false) = confirmed stopped,
     // None = backend unreachable (e.g. Android UI process reconnecting to :vpn).
@@ -767,6 +771,7 @@ pub async fn get_connection_info(
         }
     };
 
+    let mut conn = state.connection.write().await;
     match conn.status {
         // Auto-detect: on Android the :vpn process can outlive the app.
         // If the tunnel is running, show Connected so the user can disconnect.

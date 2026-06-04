@@ -262,6 +262,10 @@ onMounted(async () => {
   }
 
   statusInterval = setInterval(async () => {
+    // Skip while a connect/disconnect cycle is in flight: that flow runs its own
+    // 500ms status poll (runAttempt), so polling here too would just duplicate IPC
+    // round-trips and race on connectionInfo.
+    if (vpn.isLoading) return
     // Always poll on Android to detect surviving :vpn process after app kill.
     // On desktop the UI process owns the tunnel, so only poll when connected.
     if (vpn.isConnected || vpn.isAndroid) {
