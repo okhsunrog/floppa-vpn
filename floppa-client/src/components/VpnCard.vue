@@ -129,10 +129,10 @@ async function doServerSync(): Promise<SyncResult> {
     }
 
     // Remember active protocol before sync (setActiveConfig switches to last-set protocol).
-    // On first start (no localStorage, no loaded config), leave null so we default to
-    // the first available protocol after sync — AmneziaWG, which is listed first.
-    const prevProtocol =
-      localStorage.getItem('preferredProtocol') ?? (vpn.hasConfig ? vpn.activeProtocol : null)
+    // Source of truth is the persisted active_protocol (loaded into config on mount).
+    // On first start (no loaded config) leave null so we default to the first available
+    // protocol after sync — AmneziaWG, which is listed first.
+    const prevProtocol = vpn.hasConfig ? vpn.activeProtocol : null
 
     // AmneziaWG is the default wg-family protocol when the server offers it; WireGuard otherwise.
     let amneziaAvailable = false
@@ -336,8 +336,8 @@ function formatLastPacket(secs: number | null | undefined): string {
 }
 
 function selectProtocol(proto: string) {
+  // setProtocol persists active_protocol (keyring/file) — the single source of truth.
   vpn.setProtocol(proto)
-  localStorage.setItem('preferredProtocol', proto)
 }
 
 const healthDotClass = computed(() => {
