@@ -248,6 +248,15 @@ onMounted(async () => {
   await vpn.loadConfig()
   await vpn.refreshStatus()
 
+  // One-time on upgrade to auto-select: enable it and forget the previously-used
+  // protocol so the cycle re-probes from the configured priority instead of
+  // inheriting an old manual pick. Runs before sync so the reset is what gets restored.
+  if (!settingsStore.protocolDefaultsApplied) {
+    settingsStore.autoSelect = true
+    await vpn.resetProtocolPreference()
+    settingsStore.protocolDefaultsApplied = true
+  }
+
   if (vpn.deviceId) {
     await setupAutoPeer()
   }
