@@ -6,6 +6,13 @@ import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 import { commands } from '../bindings'
+import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
+
+const protocolModalOpen = ref(false)
+
+function openProtocolModal() {
+  protocolModalOpen.value = true
+}
 
 const { t } = useI18n()
 const toast = useToast()
@@ -231,11 +238,6 @@ async function reconnectVpn() {
 function selectMode(mode: SplitMode) {
   settings.splitMode = mode
 }
-
-async function resetProtocol() {
-  await vpn.resetProtocolPreference()
-  toast.add({ title: t('settings.protocolPreferenceReset'), color: 'success' })
-}
 </script>
 
 <template>
@@ -260,13 +262,12 @@ async function resetProtocol() {
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <UButton
-            :label="t('settings.resetProtocolPreference')"
-            icon="i-lucide-rotate-ccw"
+            :label="t('settings.configure')"
+            icon="i-lucide-sliders-horizontal"
             color="neutral"
             variant="ghost"
             size="sm"
-            :disabled="vpn.isLoading"
-            @click="resetProtocol"
+            @click="openProtocolModal"
           />
           <USwitch v-model="settings.autoSelect" />
         </div>
@@ -663,5 +664,7 @@ async function resetProtocol() {
         />
       </div>
     </UCard>
+
+    <ProtocolSettingsModal v-model:open="protocolModalOpen" />
   </div>
 </template>
