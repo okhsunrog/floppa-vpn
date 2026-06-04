@@ -81,44 +81,58 @@ check-kotlin: ensure-ktfmt
     echo "ktfmt..."
     out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style --set-exit-if-changed --dry-run {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
 
-# Run all checks (fmt, clippy, tests, frontend format + type-check + lint, kotlin)
+# Run all checks (client + server). Use `just client-check` / `just server-check` to run one half.
 check:
     @just --unstable --fmt --check
-    @just check-rust
-    @just check-frontend
-    @just check-kotlin
+    @just client-check
+    @just server-check
 
-# Rust: fmt + clippy + tests (workspace + excluded crates)
-check-rust:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "rustfmt..."
-    cargo fmt --check
-    cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
-    cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
-    echo "clippy..."
-    cargo clippy --quiet -- -D warnings
-    echo "tests..."
-    output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
-
-# Frontend: format + lint + cached type-check graph + build
-check-frontend:
+# Client: tauri Rust crates (fmt + clippy) + shared/client frontend + build + Android Kotlin
+client-check:
     #!/usr/bin/env bash
     set -euo pipefail
     run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
-    for pkg in floppa-web-shared floppa-face floppa-client; do
+    echo "rustfmt (client crates)..."
+    cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
+    cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
+    echo "clippy (client crates)..."
+    cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
+    cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+    for pkg in floppa-web-shared floppa-client; do
         echo "$pkg: format + lint..."
         cd "$pkg"
         run vp run format:check
         run vp run lint:check
         cd ..
     done
-    echo "frontend: typecheck..."
-    run vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
-    echo "frontend: tests..."
+    echo "client frontend: typecheck..."
+    run vp run --filter floppa-web-shared --filter floppa-client typecheck
+    echo "shared frontend: tests..."
     run vp run --filter floppa-web-shared test
     echo "floppa-client: build..."
     run vp run --filter floppa-client build
+    just check-kotlin
+
+# Server: workspace Rust (fmt + clippy + tests) + admin panel frontend (floppa-face)
+server-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
+    echo "rustfmt (workspace)..."
+    cargo fmt --check
+    echo "clippy (workspace)..."
+    cargo clippy --quiet -- -D warnings
+    echo "tests (workspace)..."
+    output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
+    echo "floppa-face: format + lint..."
+    cd floppa-face
+    run vp run format:check
+    run vp run lint:check
+    cd ..
+    echo "server frontend: typecheck..."
+    run vp run --filter floppa-face typecheck
+    echo "floppa-face: build..."
+    run vp run --filter floppa-face build
 
 # Format all code (Rust + frontend + Kotlin)
 fmt:
