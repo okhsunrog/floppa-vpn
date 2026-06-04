@@ -72,6 +72,12 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     info!("Running initial sync");
     sync_peers(pool, config).await?;
 
+    // Reconcile every `active` peer onto its interface. WireGuard/AmneziaWG
+    // interfaces don't survive a reboot (and may be recreated empty), but
+    // `sync_peers` only processes `pending_add`/`pending_remove` — so peers
+    // already marked `active` would otherwise silently never be (re)added.
+    reconcile_active_peers(pool, config).await?;
+
     // Reapply rate limits for active peers (tc rules are ephemeral)
     reapply_rate_limits(pool, config).await?;
 
@@ -197,6 +203,53 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
             }
         }
     }
+}
+
+/// (Re)add every `active` peer to its protocol interface.
+///
+/// `sync_peers` only acts on `pending_add`/`pending_remove` rows, so after an
+/// interface is recreated empty (reboot, manual recreation, or the kernel module
+/// reloading) the peers still marked `active` in the DB would never be re-added
+/// and silently stop working. `wg/awg set peer ...` is idempotent — re-adding a
+/// peer that's already present just refreshes its allowed-ips — so this is a
+/// no-op when the interface is already in sync and a full restore when it isn't.
+async fn reconcile_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
+    let targets = proto_targets(config);
+    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
+
+    let peers = sqlx::query!(
+        r#"SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!", protocol
+           FROM peers WHERE sync_status = 'active'"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut reconciled = 0u32;
+    for peer in &peers {
+        let Some(target) = target_for(&peer.protocol) else {
+            error!(
+                peer_id = peer.id,
+                protocol = %peer.protocol,
+                "No configured interface for peer protocol — skipping reconcile"
+            );
+            continue;
+        };
+        match crate::wg::add_peer(
+            target.tool,
+            &target.interface,
+            &peer.public_key,
+            &peer.assigned_ip,
+        ) {
+            Ok(()) => reconciled += 1,
+            Err(e) => error!(peer_id = peer.id, error = %e, "Failed to reconcile active peer"),
+        }
+    }
+
+    info!(
+        total_active = peers.len(),
+        reconciled, "Reconciled active peers onto interfaces"
+    );
+    Ok(())
 }
 
 /// Re-apply tc rate limits for all active peers.
