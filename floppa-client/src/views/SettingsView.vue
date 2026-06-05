@@ -5,7 +5,12 @@ import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
-import { commands } from '../bindings'
+import {
+  commands,
+  type LogProfile,
+  type LogConfig,
+  type LogCaptureStatus,
+} from '../bindings'
 import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
 
 const protocolModalOpen = ref(false)
@@ -23,19 +28,6 @@ const captureBusy = ref(false)
 const showAdvancedLog = ref(false)
 const customFilterInput = ref('')
 const savingLogConfig = ref(false)
-
-// Log config type matching Rust LogConfig
-type LogProfile = 'normal' | 'verbose'
-interface LogConfig {
-  profile: LogProfile
-  custom_filter: string | null
-  custom_filter_enabled: boolean
-}
-
-interface LogCaptureStatus {
-  active: boolean
-  capture_id: string | null
-}
 
 const logConfig = ref<LogConfig>({
   profile: 'normal',
