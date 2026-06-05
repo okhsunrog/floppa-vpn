@@ -162,16 +162,6 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve()
     }
 
-    @Command
-    fun getVpnStatus(invoke: Invoke) {
-        // In the two-process architecture, we can't check FloppaVpnService.instance
-        // from the UI process. The UI queries status via tarpc through Rust commands.
-        // This command returns "unknown" — the TS side should use getConnectionInfo() instead.
-        val ret = JSObject()
-        ret.put("status", "unknown")
-        invoke.resolve(ret)
-    }
-
     /**
      * Get list of installed apps for split tunneling UI.
      *

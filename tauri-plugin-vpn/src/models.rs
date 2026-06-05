@@ -41,24 +41,6 @@ fn default_mtu() -> u32 {
     1280
 }
 
-/// VPN tunnel status.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum VpnStatus {
-    Disconnected,
-    Connecting,
-    Connected,
-    Disconnecting,
-}
-
-/// Event payload when VPN starts.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VpnStartedEvent {
-    /// TUN file descriptor (Android) or tunnel identifier (iOS)
-    pub fd: i32,
-}
-
 /// Information about an installed app (for split tunneling UI).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,13 +73,4 @@ pub struct DeviceNameResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceIdResponse {
     pub id: String,
-}
-
-/// Event payload when VPN stops.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VpnStoppedEvent {
-    /// Reason for stopping (if abnormal)
-    #[serde(default)]
-    pub reason: Option<String>,
 }

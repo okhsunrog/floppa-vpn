@@ -44,14 +44,6 @@ impl<R: Runtime> Vpn<R> {
             .map_err(Into::into)
     }
 
-    /// Get current VPN status.
-    pub fn status(&self) -> Result<VpnStatus> {
-        self.0
-            .run_mobile_plugin::<StatusResponse>("getVpnStatus", ())
-            .map(|r| r.status)
-            .map_err(Into::into)
-    }
-
     /// Get list of installed apps for split tunneling.
     pub fn get_installed_apps(&self) -> Result<Vec<AppInfo>> {
         self.0
@@ -170,11 +162,6 @@ struct ProtectResponse {
 #[derive(serde::Deserialize)]
 struct PrepareResponse {
     granted: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct StatusResponse {
-    status: VpnStatus,
 }
 
 /// Initialize the mobile plugin.
