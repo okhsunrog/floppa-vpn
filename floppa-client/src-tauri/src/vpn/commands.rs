@@ -375,7 +375,15 @@ async fn connect_android(
         error!("VPN start failed: {e}");
         let mut conn = state.connection.write().await;
         conn.status = ConnectionStatus::Disconnected;
-        return Err(ConnectError::tunnel(format!("VPN start failed: {e}")));
+        // Map the plugin's typed error (now carrying a reject code from Kotlin) to the
+        // right ConnectError category so the UI reacts correctly (e.g. permission).
+        use tauri_plugin_vpn::Error as PluginError;
+        return Err(match &e {
+            PluginError::PermissionDenied | PluginError::NotPrepared => {
+                ConnectError::permission(e.to_string())
+            }
+            _ => ConnectError::tunnel(format!("VPN start failed: {e}")),
+        });
     }
 
     // Poll until connected or timeout

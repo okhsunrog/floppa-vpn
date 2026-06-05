@@ -34,7 +34,7 @@ impl<R: Runtime> Vpn<R> {
     pub fn start(&self, config: VpnConfig) -> Result<()> {
         self.0
             .run_mobile_plugin::<()>("startVpn", config)
-            .map_err(Into::into)
+            .map_err(crate::Error::from_invoke)
     }
 
     /// Stop the VPN tunnel.

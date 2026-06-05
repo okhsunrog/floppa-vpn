@@ -103,14 +103,14 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             )
 
             if (args.protocolConfig == null) {
-                invoke.reject("Missing protocolConfig parameter")
+                invoke.reject("Missing protocolConfig parameter", "invalid_config")
                 return
             }
 
             // Check if VPN is prepared
             val prepareIntent = VpnService.prepare(activity)
             if (prepareIntent != null) {
-                invoke.reject("VPN permission not granted. Call prepareVpn first.")
+                invoke.reject("VPN permission not granted. Call prepareVpn first.", "not_prepared")
                 return
             }
 
@@ -139,7 +139,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve()
         } catch (e: Exception) {
             Log.e("VpnPlugin", "startVpn error", e)
-            invoke.reject("Failed to start VPN: ${e.message}")
+            invoke.reject("Failed to start VPN: ${e.message}", "establish_failed")
         }
     }
 
