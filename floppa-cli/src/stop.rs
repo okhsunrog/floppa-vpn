@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use anyhow::Context;
-use anyhow::{Result, anyhow, bail};
+#[cfg(unix)]
+use anyhow::anyhow;
+use anyhow::{Result, bail};
 #[cfg(unix)]
 use std::fs;
 #[cfg(unix)]
@@ -97,6 +99,7 @@ fn stop_unix(interface: &str, pid: Option<u32>, force: bool) -> Result<()> {
     )
 }
 
+#[cfg(unix)]
 fn wait_until_disconnected(interface: &str, pid: u32, timeout: Duration) -> bool {
     let start = Instant::now();
     loop {
