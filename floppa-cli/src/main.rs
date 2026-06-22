@@ -169,8 +169,8 @@ enum ServiceCommand {
         #[arg(long, env = "HOME")]
         home: Option<PathBuf>,
         /// Absolute path to the service log file
-        #[arg(long = "service-log-file")]
-        service_log_file: Option<PathBuf>,
+        #[arg(long)]
+        log_file: Option<PathBuf>,
     },
     /// Remove an installed systemd unit
     Uninstall {
@@ -319,21 +319,7 @@ async fn main() -> Result<()> {
         } => {
             auth::login(&api_url, method, login.as_deref(), &password_env).await?;
         }
-        Command::LoginAccount {
-            login,
-            password_env,
-            api_url,
-        } => {
-            auth::login_account(&api_url, login.as_deref(), &password_env).await?;
-        }
         Command::Connect {
-            config,
-            protocol,
-            interface,
-            no_dns,
-            api_url,
-        } => {
-            let config_str = match config {
                 Some(path) => std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?,
                 None => {
@@ -523,21 +509,13 @@ fn handle_service_command(command: ServiceCommand) -> Result<()> {
             api_url,
             user,
             home,
-            service_log_file,
+            log_file,
         } => {
             let home = home.unwrap_or_else(default_home);
             let user = user
                 .or_else(|| std::env::var("USER").ok())
                 .unwrap_or_default();
-            let user = if user == "root" {
-                std::env::var("SUDO_USER")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or(user)
-            } else {
-                user
-            };
-            let log_file = service_log_file.unwrap_or_else(|| {
+            let log_file = log_file.unwrap_or_else(|| {
                 home.join(".local")
                     .join("state")
                     .join("floppa-cli")
