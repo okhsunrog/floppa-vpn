@@ -234,16 +234,18 @@ pub fn render_unit(opts: &ServiceInstallOptions) -> Result<String> {
 }
 
 pub fn unit_path(scope: ServiceScope, name: &str) -> PathBuf {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"));
+    unit_path_with_config_home(scope, name, config_home)
+}
+
+fn unit_path_with_config_home(scope: ServiceScope, name: &str, config_home: PathBuf) -> PathBuf {
     match scope {
         ServiceScope::System => Path::new("/etc/systemd/system").join(format!("{name}.service")),
-        ServiceScope::User => {
-            let config_home = std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"));
-            config_home
-                .join("systemd/user")
-                .join(format!("{name}.service"))
-        }
+        ServiceScope::User => config_home
+            .join("systemd/user")
+            .join(format!("{name}.service")),
     }
 }
 
@@ -464,5 +466,78 @@ mod tests {
         let mut opts = service_options(ServiceScope::System);
         opts.log_file = PathBuf::from("floppa-cli.log");
         assert!(render_unit(&opts).is_err());
+    }
+
+    #[test]
+    fn omits_no_dns_flag_when_dns_enabled() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.no_dns = false;
+
+        let unit = render_unit(&opts).unwrap();
+        assert!(!unit.contains("--no-dns"));
+    }
+
+    #[test]
+    fn omits_api_url_when_default() {
+        let unit = render_unit(&service_options(ServiceScope::System)).unwrap();
+        assert!(!unit.contains("--api-url"));
+    }
+
+    #[test]
+    fn accepts_valid_service_names() {
+        for name in ["floppa-cli", "my.service_name", "abc123", "a-b_c.d"] {
+            let mut opts = service_options(ServiceScope::System);
+            opts.name = name.to_string();
+            assert!(render_unit(&opts).is_ok(), "name {name:?} should be valid");
+        }
+    }
+
+    #[test]
+    fn unit_path_system_is_etc_systemd() {
+        let path = unit_path(ServiceScope::System, "floppa-cli");
+        assert_eq!(path, PathBuf::from("/etc/systemd/system/floppa-cli.service"));
+    }
+
+    #[test]
+    fn unit_path_user_respects_xdg_config_home() {
+        let path = unit_path_with_config_home(
+            ServiceScope::User,
+            "floppa-cli",
+            PathBuf::from("/tmp/test-config"),
+        );
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/test-config/systemd/user/floppa-cli.service")
+        );
+    }
+
+    #[test]
+    fn quote_systemd_arg_empty_string() {
+        assert_eq!(quote_systemd_arg(""), "''");
+    }
+
+    #[test]
+    fn quote_systemd_arg_no_special_chars() {
+        assert_eq!(quote_systemd_arg("/usr/bin/floppa-cli"), "/usr/bin/floppa-cli");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_space() {
+        assert_eq!(quote_systemd_arg("/path/to my/binary"), "'/path/to my/binary'");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_single_quote() {
+        assert_eq!(quote_systemd_arg("it's"), "'it\\'s'");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_backslash() {
+        assert_eq!(quote_systemd_arg("foo\\bar"), "'foo\\\\bar'");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_dollar() {
+        assert_eq!(quote_systemd_arg("$HOME"), "'$HOME'");
     }
 }
