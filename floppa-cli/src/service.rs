@@ -1,626 +1,586 @@
+use crate::paths;
 use anyhow::{Context, Result, bail};
-use clap::{Args, Subcommand};
-use std::collections::HashMap;
-use std::path::PathBuf;
+use clap::ValueEnum;
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
-/// Systemd service management commands
-#[derive(Subcommand, Debug, Clone)]
-pub enum ServiceCommand {
-    /// Install a systemd unit for `floppa-cli connect`
-    Install {
-        /// Service scope: system (`sudo systemctl`) or user (`systemctl --user`)
-        #[arg(long, value_enum, default_value_t = ServiceScope::System)]
-        scope: ServiceScope,
-        /// Service name without `.service`
-        #[arg(long, default_value = "floppa-cli")]
-        name: String,
-        /// Absolute path to the floppa-cli binary
-        #[arg(long, default_value = "$(which floppa-cli)")]
-        binary_path: Option<PathBuf>,
-        /// Environment variables for the service (KEY=VALUE)
-        #[arg(long)]
-        env: Vec<String>,
-        /// Arguments to pass to the CLI
-        #[arg(long)]
-        args: Vec<String>,
-        /// Service log file path (optional)
-        #[arg(long)]
-        service_log_file: Option<PathBuf>,
-    },
-    /// Start a running systemd service
-    Start {
-        /// Service name without `.service`
-        #[arg(long, default_value = "floppa-cli")]
-        name: String,
-        /// Service scope
-        #[arg(long, value_enum, default_value_t = ServiceScope::System)]
-        scope: ServiceScope,
-    },
-    /// Stop a running systemd service
-    Stop {
-        /// Service name without `.service`
-        #[arg(long, default_value = "floppa-cli")]
-        name: String,
-        /// Service scope
-        #[arg(long, value_enum, default_value_t = ServiceScope::System)]
-        scope: ServiceScope,
-        /// Target a specific floppa-cli connect PID when multiple are running
-        #[arg(long)]
-        pid: Option<u32>,
-        /// Send SIGKILL if graceful SIGTERM stop times out
-        #[arg(long)]
-        force: bool,
-    },
-    /// Restart a systemd service
-    Restart {
-        /// Service name without `.service`
-        #[arg(long, default_value = "floppa-cli")]
-        name: String,
-        /// Service scope
-        #[arg(long, value_enum, default_value_t = ServiceScope::System)]
-        scope: ServiceScope,
-    },
-    /// Remove an installed systemd unit
-    Uninstall {
-        /// Service name without `.service`
-        #[arg(long, default_value = "floppa-cli")]
-        name: String,
-        /// Service scope
-        #[arg(long, value_enum, default_value_t = ServiceScope::System)]
-        scope: ServiceScope,
-    },
-}
-
-/// Service scope: system (`sudo systemctl`) or user (`systemctl --user`)
-#[derive(Debug, Clone, PartialEq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ServiceScope {
+    /// Install/manage a system service with `sudo systemctl`.
     System,
+    /// Install/manage a user service with `systemctl --user`.
     User,
 }
 
-/// Handle systemd service command execution
-pub async fn handle_service_command(command: ServiceCommand) -> Result<()> {
-    match command {
-        ServiceCommand::Install {
-            scope,
-            name,
-            binary_path,
-            env,
-            args,
-            service_log_file,
-        } => {
-            install_service(scope, name, binary_path, env, args, service_log_file).await?
-        }
-        ServiceCommand::Start { scope, name, .. } => {
-            start_service(scope, name).await?
-        }
-        ServiceCommand::Stop {
-            scope,
-            name,
-            pid,
-            force,
-        } => {
-            stop_service(scope, name, pid, force).await?
-        }
-        ServiceCommand::Restart { scope, name, .. } => {
-            restart_service(scope, name).await?
-        }
-        ServiceCommand::Uninstall { scope, name, .. } => {
-            uninstall_service(scope, name).await?
-        }
-    }
-    Ok(())
+#[derive(Clone, Debug)]
+pub struct ServiceInstallOptions {
+    pub scope: ServiceScope,
+    pub name: String,
+    pub binary: PathBuf,
+    pub protocol: String,
+    pub interface: String,
+    pub no_dns: bool,
+    pub api_url: String,
+    pub user: String,
+    pub home: PathBuf,
+    pub log_file: PathBuf,
 }
 
-/// Install systemd service unit
-async fn install_service(
-    scope: ServiceScope,
-    name: String,
-    binary_path: Option<PathBuf>,
-    env: Vec<String>,
-    args: Vec<String>,
-    service_log_file: Option<PathBuf>,
-) -> Result<()> {
-    let home = std::env::var("HOME").context("HOME environment variable not set")?;
-    let user = std::env::var("USER").unwrap_or_else(|_| "root".to_string());
+#[derive(Clone, Debug)]
+pub struct ServiceUninstallOptions {
+    pub scope: ServiceScope,
+    pub name: String,
+}
 
-    let user = if user == "root" {
-        std::env::var("SUDO_USER")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .unwrap_or(user)
-    } else {
-        user
-    };
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ServiceAction {
+    Start,
+    Stop,
+    Restart,
+    Status,
+    Enable,
+    Disable,
+}
 
-    let binary_path = binary_path.unwrap_or_else(|| PathBuf::from("/home/$USER/.local/bin/floppa-cli"));
+#[derive(Clone, Debug)]
+pub struct ServiceControlOptions {
+    pub scope: ServiceScope,
+    pub name: String,
+    pub action: ServiceAction,
+}
 
-    let log_file = service_log_file.unwrap_or_else(|| {
-        PathBuf::from(&home)
-            .join(".local")
-            .join("state")
-            .join("floppa-cli")
-            .join(format!("{}.log", name))
-    });
+pub fn install(opts: &ServiceInstallOptions) -> Result<()> {
+    validate_service_name(&opts.name)?;
 
-    println!("Installing {} service for user '{}'", scope, user);
-    println!("Service name: {}", name);
-    println!("Binary path: {:?}", binary_path);
-    println!("Log file: {:?}", log_file);
+    let unit = render_unit(opts)?;
+    let unit_path = unit_path(opts.scope, &opts.name);
 
-    match scope {
+    match opts.scope {
         ServiceScope::System => {
-            install_system_service(user, &name, &binary_path, &env, &args, &log_file).await?
+            create_user_state_dir(opts)?;
+            let temp_path =
+                std::env::temp_dir().join(format!("{}.{}.tmp", opts.name, std::process::id()));
+            fs::write(&temp_path, unit).with_context(|| {
+                format!(
+                    "Failed to write temporary unit file {}",
+                    temp_path.display()
+                )
+            })?;
+
+            let status = paths::command("sudo")
+                .arg("install")
+                .arg("-D")
+                .arg("-m")
+                .arg("0644")
+                .arg(&temp_path)
+                .arg(&unit_path)
+                .status()
+                .with_context(|| {
+                    format!("Failed to run `sudo install` for {}", unit_path.display())
+                })?;
+            let _ = fs::remove_file(&temp_path);
+            if !status.success() {
+                bail!("Failed to install systemd unit to {}", unit_path.display());
+            }
+            daemon_reload(ServiceScope::System)?;
         }
         ServiceScope::User => {
-            install_user_service(user, &name, &binary_path, &env, &args, &log_file).await?
+            if let Some(parent) = unit_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "Failed to create systemd user directory {}",
+                        parent.display()
+                    )
+                })?;
+            }
+            fs::write(&unit_path, unit)
+                .with_context(|| format!("Failed to write unit file {}", unit_path.display()))?;
+            daemon_reload(ServiceScope::User)?;
         }
     }
 
-    println!("Service installed successfully!");
+    println!("Installed {} at {}", opts.name, unit_path.display());
     Ok(())
 }
 
-/// Install system-wide systemd service
-async fn install_system_service(
-    user: String,
-    name: &str,
-    binary_path: &PathBuf,
-    env: &[String],
-    args: &[String],
-    log_file: &PathBuf,
-) -> Result<()> {
-    let sudo_user = if user == "root" {
-        std::env::var("SUDO_USER").unwrap_or_else(|_| "$SUDO_USER".to_string())
-    } else {
-        user.clone()
+pub fn uninstall(opts: &ServiceUninstallOptions) -> Result<()> {
+    validate_service_name(&opts.name)?;
+    let unit_path = unit_path(opts.scope, &opts.name);
+
+    match opts.scope {
+        ServiceScope::System => {
+            let status = paths::command("sudo")
+                .arg("rm")
+                .arg("-f")
+                .arg(&unit_path)
+                .status()
+                .with_context(|| format!("Failed to run `sudo rm -f {}`", unit_path.display()))?;
+            if !status.success() {
+                bail!("Failed to remove systemd unit {}", unit_path.display());
+            }
+            daemon_reload(ServiceScope::System)?;
+        }
+        ServiceScope::User => {
+            if unit_path.exists() {
+                fs::remove_file(&unit_path).with_context(|| {
+                    format!("Failed to remove unit file {}", unit_path.display())
+                })?;
+            }
+            daemon_reload(ServiceScope::User)?;
+        }
+    }
+
+    println!("Removed {} from {}", opts.name, unit_path.display());
+    Ok(())
+}
+
+pub fn control(opts: &ServiceControlOptions) -> Result<()> {
+    validate_service_name(&opts.name)?;
+    let action_arg = match opts.action {
+        ServiceAction::Start => "start",
+        ServiceAction::Stop => "stop",
+        ServiceAction::Restart => "restart",
+        ServiceAction::Enable => "enable",
+        ServiceAction::Disable => "disable",
+        ServiceAction::Status => "status",
     };
 
-    let home = if user == "root" {
-        format!("/home/{$SUDO_USER}")
-    } else {
-        format!("/home/{}", user)
-    };
+    if opts.action == ServiceAction::Status {
+        let output = systemctl_output(opts.scope, false, ["--no-pager", "status", &opts.name])?;
+        std::io::stdout().write_all(&output.stdout)?;
+        if !output.stderr.is_empty() {
+            std::io::stderr().write_all(&output.stderr)?;
+        }
+        return Ok(());
+    }
 
-    let unit_content = generate_systemd_unit(
-        name,
-        binary_path,
-        env,
-        args,
-        log_file,
-        true, // system scope
+    systemctl_success(opts.scope, [action_arg, &opts.name])
+}
+
+pub fn render_unit(opts: &ServiceInstallOptions) -> Result<String> {
+    validate_service_name(&opts.name)?;
+    validate_absolute_path("binary", &opts.binary)?;
+    validate_absolute_path("home", &opts.home)?;
+    validate_absolute_path("log file", &opts.log_file)?;
+
+    if opts.scope == ServiceScope::System && opts.user.is_empty() {
+        bail!("User must be set for system-scope service units");
+    }
+    if opts.interface.is_empty()
+        || opts
+            .interface
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        bail!(
+            "Interface name '{}' is invalid (ASCII alphanumeric, '-', '_' only)",
+            opts.interface
+        );
+    }
+    if !opts.api_url.starts_with("https://") && !opts.api_url.starts_with("http://") {
+        bail!(
+            "api_url must start with http:// or https://: {}",
+            opts.api_url
+        );
+    }
+
+    let mut exec_args = vec![
+        opts.binary.clone(),
+        PathBuf::from("connect"),
+        PathBuf::from("--protocol"),
+        PathBuf::from(&opts.protocol),
+        PathBuf::from("--interface"),
+        PathBuf::from(&opts.interface),
+    ];
+    // System-scoped services run as non-root with only CAP_NET_ADMIN/CAP_NET_RAW —
+    // writing /etc/resolv.conf requires DAC_OVERRIDE which is absent by design.
+    // Force --no-dns for system scope to prevent a crash loop on every start.
+    let no_dns = opts.no_dns || opts.scope == ServiceScope::System;
+    if no_dns {
+        exec_args.push(PathBuf::from("--no-dns"));
+    }
+    if opts.api_url != DEFAULT_API_URL {
+        exec_args.push(PathBuf::from("--api-url"));
+        exec_args.push(PathBuf::from(&opts.api_url));
+    }
+    exec_args.push(PathBuf::from("--log-file"));
+    exec_args.push(opts.log_file.clone());
+
+    let exec_start = format!(
+        "ExecStart={}",
+        exec_args
+            .iter()
+            .map(|arg| quote_systemd_arg(arg.to_string_lossy().as_ref()))
+            .collect::<Vec<_>>()
+            .join(" ")
     );
 
-    let unit_path = format!("/etc/systemd/system/{}.service", name);
+    let mut lines = vec![
+        "[Unit]".to_string(),
+        "Description=Floppa VPN tunnel managed by floppa-cli".to_string(),
+        "After=network-online.target".to_string(),
+        "Wants=network-online.target".to_string(),
+        String::new(),
+        "[Service]".to_string(),
+        "Type=simple".to_string(),
+    ];
 
-    println!("Writing systemd unit to: {}", unit_path);
-
-    let cmd = if user != "root" {
-        format!("sudo install -o {} -g {} -m 644 /dev/stdin {}",
-                sudo_user, sudo_user, unit_path)
-    } else {
-        format!("install -o {} -g {} -m 644 /dev/stdin {}",
-                user, user, unit_path)
-    };
-
-    let install_result = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(format!("cat > {} << 'EOF'
-{}
-EOF", unit_path, unit_content))
-        .output()
-        .context("Failed to install systemd unit")?;
-
-    if !install_result.status.success() {
-        bail!("Failed to install systemd unit: {}",
-              String::from_utf8_lossy(&install_result.stderr));
+    if opts.scope == ServiceScope::System {
+        lines.push(format!("User={}", opts.user));
+        lines.push(format!("Environment=HOME={}", opts.home.display()));
+        lines.push(format!("WorkingDirectory={}", opts.home.display()));
     }
 
-    let reload_cmd = if user != "root" {
-        format!("sudo systemctl --user daemon-reload")
-    } else {
-        format!("systemctl daemon-reload")
+    lines.extend([
+        exec_start,
+        "Restart=on-failure".to_string(),
+        "RestartSec=5s".to_string(),
+        "SuccessExitStatus=0 130 143".to_string(),
+        "KillSignal=SIGTERM".to_string(),
+        "TimeoutStopSec=30".to_string(),
+        "NoNewPrivileges=true".to_string(),
+        "CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW".to_string(),
+        "AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW".to_string(),
+        "StandardOutput=journal".to_string(),
+        "StandardError=journal".to_string(),
+        String::new(),
+        "[Install]".to_string(),
+    ]);
+
+    let wanted_by = match opts.scope {
+        ServiceScope::System => "multi-user.target",
+        ServiceScope::User => "default.target",
     };
+    lines.push(format!("WantedBy={wanted_by}"));
+    lines.push(String::new());
 
-    let reload_result = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(reload_cmd)
-        .output()
-        .context("Failed to reload systemd daemon")?;
-
-    if !reload_result.status.success() {
-        bail!("Failed to reload systemd daemon: {}",
-              String::from_utf8_lossy(&reload_result.stderr));
-    }
-
-    let enable_cmd = if user != "root" {
-        format!("sudo systemctl --user enable {}.service", name)
-    } else {
-        format!("systemctl enable {}.service", name)
-    };
-
-    let enable_result = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(enable_cmd)
-        .output()
-        .context("Failed to enable systemd service")?;
-
-    if !enable_result.status.success() {
-        bail!("Failed to enable systemd service: {}",
-              String::from_utf8_lossy(&enable_result.stderr));
-    }
-
-    println!("Service {}.service enabled successfully", name);
-    Ok(())
+    Ok(lines.join("\n"))
 }
 
-/// Install user-level systemd service
-async fn install_user_service(
-    user: String,
-    name: &str,
-    binary_path: &PathBuf,
-    env: &[String],
-    args: &[String],
-    log_file: &PathBuf,
-) -> Result<()> {
-    let home = format!("/home/{}", user);
-    let user_unit_dir = format!("{}/.config/systemd/user", home);
-
-    std::fs::create_dir_all(&user_unit_dir).context(format!("Failed to create user unit directory: {}", user_unit_dir))?;
-
-    let unit_content = generate_systemd_unit(
-        name,
-        binary_path,
-        env,
-        args,
-        log_file,
-        false, // user scope
-    );
-
-    let unit_path = format!("{}/{}.service", user_unit_dir, name);
-
-    println!("Writing systemd unit to: {}", unit_path);
-
-    let write_result = std::fs::write(&unit_path, unit_content).context(format!("Failed to write systemd unit to {}", unit_path));
-
-    if !write_result.is_ok() {
-        bail!("Failed to write systemd unit to {}: {}", unit_path, write_result.unwrap_err());
-    }
-
-    let reload_result = std::process::Command::new("systemctl")
-        .arg("--user")
-        .arg("daemon-reload")
-        .output()
-        .context("Failed to reload user systemd daemon")?;
-
-    if !reload_result.status.success() {
-        bail!("Failed to reload user systemd daemon: {}",
-              String::from_utf8_lossy(&reload_result.stderr));
-    }
-
-    let enable_result = std::process::Command::new("systemctl")
-        .arg("--user")
-        .arg("enable")
-        .arg(format!("{}.service", name))
-        .output()
-        .context("Failed to enable user systemd service")?;
-
-    if !enable_result.status.success() {
-        bail!("Failed to enable user systemd service: {}",
-              String::from_utf8_lossy(&enable_result.stderr));
-    }
-
-    println!("User service {}.service enabled successfully", name);
-    Ok(())
+pub fn unit_path(scope: ServiceScope, name: &str) -> PathBuf {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".config"));
+    unit_path_with_config_home(scope, name, config_home)
 }
 
-/// Generate systemd unit file content
-fn generate_systemd_unit(
-    name: &str,
-    binary_path: &PathBuf,
-    env: &[String],
-    args: &[String],
-    log_file: &PathBuf,
-    system_scope: bool,
-) -> String {
-    let user = if system_scope { "root" } else { "user" };
-
-    let mut env_section = String::new();
-    for env_var in env {
-        let parts: Vec<&str> = env_var.splitn(2, '=').collect();
-        if parts.len() == 2 {
-            env_section.push_str(&format!("Environment={}={}\n", user, parts[0], parts[1]));
-        }
-    }
-
-    let mut args_section = String::new();
-    for arg in args {
-        args_section.push_str(&format!("    {}", arg));
-    }
-
-    format!(
-        "[Unit]\n" +
-        "Description=Floppa VPN CLI Service ({})\n" +
-        "After=network-online.target\n" +
-        "Wants=network-online.target\n" +
-        "\n" +
-        "[Service]\n" +
-        "Type=simple\n" +
-        "User={}\n" +
-        "Group={}\n" +
-        "Environment=HOME=/{}\n" +
-        "{}" +
-        "ExecStart={} {}\n" +
-        "Restart=on-failure\n" +
-        "RestartSec=10\n" +
-        "StandardOutput=append:{}\n" +
-        "StandardError=append:{}\n" +
-        "\n" +
-        "[Install]\n" +
-        "WantedBy={}",
-        name,
-        user,
-        user,
-        user,
-        env_section,
-        binary_path.to_string_lossy(),
-        args_section,
-        log_file.to_string_lossy(),
-        log_file.to_string_lossy(),
-        if system_scope { "multi-user.target" } else { "autostart.target" }
-    )
-}
-
-/// Start systemd service
-async fn start_service(scope: ServiceScope, name: String) -> Result<()> {
+fn unit_path_with_config_home(scope: ServiceScope, name: &str, config_home: PathBuf) -> PathBuf {
     match scope {
-        ServiceScope::System => {
-            let cmd = format!("sudo systemctl start {}.service", name);
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .output()
-                .context("Failed to start systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to start systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("Service {}.service started successfully", name);
-        }
-        ServiceScope::User => {
-            let cmd = format!("systemctl --user start {}.service", name);
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .output()
-                .context("Failed to start user systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to start user systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("User service {}.service started successfully", name);
-        }
+        ServiceScope::System => Path::new("/etc/systemd/system").join(format!("{name}.service")),
+        ServiceScope::User => config_home
+            .join("systemd/user")
+            .join(format!("{name}.service")),
     }
+}
 
+fn create_user_state_dir(opts: &ServiceInstallOptions) -> Result<()> {
+    let state_dir = opts.log_file.parent().context("Log file has no parent")?;
+    let status = paths::command("sudo")
+        .arg("install")
+        .arg("-d")
+        .arg("-o")
+        .arg(&opts.user)
+        .arg("-g")
+        .arg(&opts.user)
+        .arg("-m")
+        .arg("0755")
+        .arg(state_dir)
+        .status()
+        .with_context(|| format!("Failed to create {}", state_dir.display()))?;
+    if !status.success() {
+        bail!("Failed to create {}", state_dir.display());
+    }
     Ok(())
 }
 
-/// Stop systemd service
-async fn stop_service(
+fn daemon_reload(scope: ServiceScope) -> Result<()> {
+    systemctl_success(scope, ["daemon-reload"])
+}
+
+fn systemctl_success<I, S>(scope: ServiceScope, args: I) -> Result<()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut command = systemctl_command(scope, true);
+    command.args(args);
+    let output = command.output().context("Failed to run systemctl")?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("systemctl failed: {stderr}");
+    }
+}
+
+fn systemctl_output<I, S>(
     scope: ServiceScope,
-    name: String,
-    pid: Option<u32>,
-    force: bool,
-) -> Result<()> {
-    match scope {
-        ServiceScope::System => {
-            if let Some(target_pid) = pid {
-                let stop_cmd = if force {
-                    format!("sudo kill -9 {}", target_pid)
-                } else {
-                    format!("sudo kill -TERM {}", target_pid)
-                };
-
-                let result = std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(stop_cmd)
-                    .output()
-                    .context("Failed to stop service by PID")?;
-
-                if !result.status.success() {
-                    println!("Warning: Failed to stop service by PID: {}",
-                             String::from_utf8_lossy(&result.stderr));
-                }
-
-                return Ok(());
-            }
-
-            let stop_cmd = if force {
-                format!("sudo systemctl stop {}.service", name)
-            } else {
-                format!("sudo systemctl stop {}.service", name)
-            };
-
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(stop_cmd)
-                .output()
-                .context("Failed to stop systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to stop systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("Service {}.service stopped successfully", name);
-        }
-        ServiceScope::User => {
-            let stop_cmd = if force {
-                format!("systemctl --user stop {}.service", name)
-            } else {
-                format!("systemctl --user stop {}.service", name)
-            };
-
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(stop_cmd)
-                .output()
-                .context("Failed to stop user systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to stop user systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("User service {}.service stopped successfully", name);
-        }
-    }
-
-    Ok(())
+    privileged: bool,
+    args: I,
+) -> Result<std::process::Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut command = systemctl_command(scope, privileged);
+    command.args(args);
+    command.output().context("Failed to run systemctl")
 }
 
-/// Restart systemd service
-async fn restart_service(scope: ServiceScope, name: String) -> Result<()> {
-    match scope {
-        ServiceScope::System => {
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("sudo systemctl restart {}.service", name))
-                .output()
-                .context("Failed to restart systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to restart systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("Service {}.service restarted successfully", name);
+fn systemctl_command(scope: ServiceScope, privileged: bool) -> std::process::Command {
+    match (scope, privileged) {
+        (ServiceScope::System, true) => {
+            let mut command = paths::command("sudo");
+            command.arg("systemctl");
+            command
         }
-        ServiceScope::User => {
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("systemctl --user restart {}.service", name))
-                .output()
-                .context("Failed to restart user systemd service")?;
-
-            if !result.status.success() {
-                bail!("Failed to restart user systemd service: {}",
-                      String::from_utf8_lossy(&result.stderr));
-            }
-
-            println!("User service {}.service restarted successfully", name);
+        (ServiceScope::System, false) => paths::command("systemctl"),
+        (ServiceScope::User, _) => {
+            let mut command = paths::command("systemctl");
+            command.arg("--user");
+            command
         }
     }
-
-    Ok(())
 }
 
-/// Uninstall systemd service
-async fn uninstall_service(scope: ServiceScope, name: String) -> Result<()> {
-    match scope {
-        ServiceScope::System => {
-            let stop_cmd = format!("sudo systemctl stop {}.service", name);
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(stop_cmd)
-                .output()
-                .context("Failed to stop systemd service before uninstall")?;
+fn validate_service_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("Service name cannot be empty");
+    }
+    if name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        Ok(())
+    } else {
+        bail!("Service name may contain only ASCII letters, digits, `-`, `_`, and `.`")
+    }
+}
 
-            if !result.status.success() {
-                println!("Warning: Failed to stop service before uninstall: {}",
-                         String::from_utf8_lossy(&result.stderr));
-            }
+fn validate_absolute_path(label: &str, path: &Path) -> Result<()> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        bail!("{label} must be an absolute path: {}", path.display())
+    }
+}
 
-            let disable_cmd = format!("sudo systemctl disable {}.service", name);
-            let disable_result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(disable_cmd)
-                .output()
-                .context("Failed to disable systemd service")?;
+fn quote_systemd_arg(arg: &str) -> String {
+    if arg.is_empty() {
+        return "''".to_string();
+    }
 
-            if !disable_result.status.success() {
-                bail!("Failed to disable systemd service: {}",
-                      String::from_utf8_lossy(&disable_result.stderr));
-            }
+    let needs_quotes = arg
+        .chars()
+        .any(|ch| ch.is_whitespace() || matches!(ch, '\'' | '"' | '\\' | '$' | '`'));
+    if !needs_quotes {
+        return arg.to_string();
+    }
 
-            let unit_path = format!("/etc/systemd/system/{}.service", name);
-            let remove_result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("sudo rm -f {}", unit_path))
-                .output()
-                .context("Failed to remove systemd unit file")?;
+    format!("'{}'", arg.replace('\\', "\\\\").replace('\'', "\\'"))
+}
 
-            if !remove_result.status.success() {
-                bail!("Failed to remove systemd unit file: {}",
-                      String::from_utf8_lossy(&remove_result.stderr));
-            }
+const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
 
-            let reload_result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg("sudo systemctl daemon-reload")
-                .output()
-                .context("Failed to reload systemd daemon")?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-            if !reload_result.status.success() {
-                bail!("Failed to reload systemd daemon: {}",
-                      String::from_utf8_lossy(&reload_result.stderr));
-            }
-
-            println!("System service {}.service uninstalled successfully", name);
-        }
-        ServiceScope::User => {
-            let stop_cmd = format!("systemctl --user stop {}.service", name);
-            let result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(stop_cmd)
-                .output()
-                .context("Failed to stop user systemd service before uninstall")?;
-
-            if !result.status.success() {
-                println!("Warning: Failed to stop user service before uninstall: {}",
-                         String::from_utf8_lossy(&result.stderr));
-            }
-
-            let disable_cmd = format!("systemctl --user disable {}.service", name);
-            let disable_result = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(disable_cmd)
-                .output()
-                .context("Failed to disable user systemd service")?;
-
-            if !disable_result.status.success() {
-                bail!("Failed to disable user systemd service: {}",
-                      String::from_utf8_lossy(&disable_result.stderr));
-            }
-
-            let home = std::env::var("HOME").context("HOME environment variable not set")?;
-            let user_unit_dir = format!("{}/.config/systemd/user", home);
-            let unit_path = format!("{}/{}.service", user_unit_dir, name);
-
-            let remove_result = std::fs::remove_file(&unit_path).context(format!("Failed to remove user systemd unit file: {}", unit_path));
-
-            if remove_result.is_err() {
-                println!("Warning: Failed to remove user systemd unit file: {}", remove_result.unwrap_err());
-            }
-
-            let reload_result = std::process::Command::new("systemctl")
-                .arg("--user")
-                .arg("daemon-reload")
-                .output()
-                .context("Failed to reload user systemd daemon")?;
-
-            if !reload_result.status.success() {
-                bail!("Failed to reload user systemd daemon: {}",
-                      String::from_utf8_lossy(&reload_result.stderr));
-            }
-
-            println!("User service {}.service uninstalled successfully", name);
+    fn service_options(scope: ServiceScope) -> ServiceInstallOptions {
+        ServiceInstallOptions {
+            scope,
+            name: "floppa-cli".to_string(),
+            binary: PathBuf::from("/srv/floppa-test/bin/floppa-cli"),
+            protocol: "amneziawg".to_string(),
+            interface: "floppa0".to_string(),
+            no_dns: true,
+            api_url: DEFAULT_API_URL.to_string(),
+            user: "test-user".to_string(),
+            home: PathBuf::from("/srv/floppa-test/home/test-user"),
+            log_file: PathBuf::from(
+                "/srv/floppa-test/home/test-user/.local/state/floppa-cli/floppa-cli.log",
+            ),
         }
     }
 
-    Ok(())
+    #[test]
+    fn renders_system_unit_for_connect() {
+        let unit = render_unit(&service_options(ServiceScope::System)).unwrap();
+        let exec_start = unit
+            .lines()
+            .find(|line| line.starts_with("ExecStart="))
+            .expect("ExecStart line");
+
+        assert!(unit.contains("User=test-user"));
+        assert!(unit.contains("Environment=HOME=/srv/floppa-test/home/test-user"));
+        assert!(unit.contains("WantedBy=multi-user.target"));
+        assert_eq!(
+            exec_start,
+            "ExecStart=/srv/floppa-test/bin/floppa-cli connect --protocol amneziawg --interface floppa0 --no-dns --log-file /srv/floppa-test/home/test-user/.local/state/floppa-cli/floppa-cli.log"
+        );
+        assert!(unit.contains("AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW"));
+    }
+
+    #[test]
+    fn renders_user_unit_for_default_target() {
+        let unit = render_unit(&service_options(ServiceScope::User)).unwrap();
+        let exec_start = unit
+            .lines()
+            .find(|line| line.starts_with("ExecStart="))
+            .expect("ExecStart line");
+
+        assert!(!unit.contains("User="));
+        assert!(unit.contains("WantedBy=default.target"));
+        assert_eq!(
+            exec_start,
+            "ExecStart=/srv/floppa-test/bin/floppa-cli connect --protocol amneziawg --interface floppa0 --no-dns --log-file /srv/floppa-test/home/test-user/.local/state/floppa-cli/floppa-cli.log"
+        );
+    }
+
+    #[test]
+    fn includes_api_url_when_non_default() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.api_url = "https://example.invalid/api".to_string();
+
+        let unit = render_unit(&opts).unwrap();
+
+        assert!(unit.contains("--api-url https://example.invalid/api"));
+    }
+
+    #[test]
+    fn quotes_exec_start_arguments_with_spaces() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.binary = PathBuf::from("/srv/floppa-test/bin/floppa cli");
+        opts.log_file =
+            PathBuf::from("/srv/floppa-test/home/test-user/.local/state/floppa cli/floppa-cli.log");
+
+        let unit = render_unit(&opts).unwrap();
+        let exec_start = unit
+            .lines()
+            .find(|line| line.starts_with("ExecStart="))
+            .expect("ExecStart line");
+
+        assert_eq!(
+            exec_start,
+            "ExecStart='/srv/floppa-test/bin/floppa cli' connect --protocol amneziawg --interface floppa0 --no-dns --log-file '/srv/floppa-test/home/test-user/.local/state/floppa cli/floppa-cli.log'"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_service_names() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.name = "../floppa-cli".to_string();
+        assert!(render_unit(&opts).is_err());
+
+        let mut opts = service_options(ServiceScope::System);
+        opts.name = "".to_string();
+        assert!(render_unit(&opts).is_err());
+    }
+
+    #[test]
+    fn rejects_relative_paths_in_unit_rendering() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.binary = PathBuf::from("floppa-cli");
+        assert!(render_unit(&opts).is_err());
+
+        let mut opts = service_options(ServiceScope::System);
+        opts.home = PathBuf::from("home/test-user");
+        assert!(render_unit(&opts).is_err());
+
+        let mut opts = service_options(ServiceScope::System);
+        opts.log_file = PathBuf::from("floppa-cli.log");
+        assert!(render_unit(&opts).is_err());
+    }
+
+    #[test]
+    fn omits_no_dns_flag_when_dns_enabled_user_scope() {
+        let mut opts = service_options(ServiceScope::User);
+        opts.no_dns = false;
+
+        let unit = render_unit(&opts).unwrap();
+        assert!(!unit.contains("--no-dns"));
+    }
+
+    #[test]
+    fn system_scope_always_adds_no_dns() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.no_dns = false;
+
+        let unit = render_unit(&opts).unwrap();
+        assert!(unit.contains("--no-dns"));
+    }
+
+    #[test]
+    fn omits_api_url_when_default() {
+        let unit = render_unit(&service_options(ServiceScope::System)).unwrap();
+        assert!(!unit.contains("--api-url"));
+    }
+
+    #[test]
+    fn accepts_valid_service_names() {
+        for name in ["floppa-cli", "my.service_name", "abc123", "a-b_c.d"] {
+            let mut opts = service_options(ServiceScope::System);
+            opts.name = name.to_string();
+            assert!(render_unit(&opts).is_ok(), "name {name:?} should be valid");
+        }
+    }
+
+    #[test]
+    fn unit_path_system_is_etc_systemd() {
+        let path = unit_path(ServiceScope::System, "floppa-cli");
+        assert_eq!(
+            path,
+            PathBuf::from("/etc/systemd/system/floppa-cli.service")
+        );
+    }
+
+    #[test]
+    fn unit_path_user_respects_xdg_config_home() {
+        let path = unit_path_with_config_home(
+            ServiceScope::User,
+            "floppa-cli",
+            PathBuf::from("/tmp/test-config"),
+        );
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/test-config/systemd/user/floppa-cli.service")
+        );
+    }
+
+    #[test]
+    fn quote_systemd_arg_empty_string() {
+        assert_eq!(quote_systemd_arg(""), "''");
+    }
+
+    #[test]
+    fn quote_systemd_arg_no_special_chars() {
+        assert_eq!(
+            quote_systemd_arg("/usr/bin/floppa-cli"),
+            "/usr/bin/floppa-cli"
+        );
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_space() {
+        assert_eq!(
+            quote_systemd_arg("/path/to my/binary"),
+            "'/path/to my/binary'"
+        );
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_single_quote() {
+        assert_eq!(quote_systemd_arg("it's"), "'it\\'s'");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_backslash() {
+        assert_eq!(quote_systemd_arg("foo\\bar"), "'foo\\\\bar'");
+    }
+
+    #[test]
+    fn quote_systemd_arg_with_dollar() {
+        assert_eq!(quote_systemd_arg("$HOME"), "'$HOME'");
+    }
 }

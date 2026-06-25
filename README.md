@@ -1,322 +1,201 @@
 # Floppa VPN CLI
 
-## Overview
+<p align="center">
+  <img src="branding/logo-solid.png" alt="Floppa VPN logo" width="180" />
+</p>
 
-Floppa VPN CLI is a Rust-based client for the Floppa VPN service that provides:
+CLI-only fork/branch for the headless `floppa-cli` utility. This branch intentionally does not include the Tauri desktop client, web admin UI, server, daemon, migrations, mobile platform glue, or packaging assets from the upstream monorepo.
 
-- **VPN Management** - Connect to WireGuard/AmneziaWG tunnels and VLESS proxies
-- **Device Management** - Create and manage VPN peers and device identities
-- **System Integration** - Native systemd service support for auto-restart and persistence
-- **Security** - Account authentication with token-based API calls
+## What is included
 
-## Quick Start
+- `floppa-cli` Rust binary.
+- Root Cargo workspace and lockfile for reproducible CLI builds.
+- Linux CLI networking code for WireGuard/AmneziaWG and VLESS+REALITY tunnels.
+- Telegram and account login/password auth flow used by the CLI.
+- Minimal README with build/run/test commands.
 
-### Installation
+## CLI work in this branch
+
+This branch focuses on improving the original CLI utility instead of adding a wrapper around it.
+
+Implemented CLI-side improvements:
+
+- Stable local `device_id` stored under the user config directory.
+- Peer reuse by `device_id + protocol` via the API.
+- Peer lifecycle commands:
+  - `floppa-cli peer delete --peer-id <id>`
+  - `floppa-cli peer delete --protocol amneziawg`
+  - `floppa-cli peer delete --all`
+  - `floppa-cli vless regenerate`
+  - `floppa-cli device show`
+  - `floppa-cli device reset`
+- Built-in local status command without contacting the API:
+  - `floppa-cli status`
+  - `floppa-cli status --interface floppa0`
+- Built-in safe tunnel stop command:
+  - `floppa-cli stop`
+  - `floppa-cli stop --interface floppa0`
+  - `floppa-cli stop --pid <pid>`
+  - `floppa-cli stop --force`
+- Systemd service management for headless Linux hosts:
+  - `floppa-cli service install`
+  - `floppa-cli service start`
+  - `floppa-cli service stop`
+  - `floppa-cli service restart`
+  - `floppa-cli service status`
+  - `floppa-cli service enable`
+  - `floppa-cli service disable`
+  - `floppa-cli service uninstall`
+- Idempotent Linux route handling with `ip route replace`.
+- Cleanup guard for DNS and routes on Ctrl+C/SIGTERM/error paths.
+- Basic route/interface verification after tunnel setup.
+
+## Build, test, and CI
+
+Local checks:
 
 ```bash
-# Install stable release
-curl -fsSL https://install.floppa.io/cli/install.sh | sh
-
-# Or install development version
-cargo install --path floppa-cli --features dev
+./scripts/smoke-test.sh
 ```
 
-### Commands
+The smoke script runs:
+
+- `cargo fmt --check`
+- `cargo test -p floppa-cli --locked`
+- `cargo clippy -p floppa-cli --locked -- -D warnings`
+- `cargo check -p floppa-cli --locked`
+- `cargo build --release --locked -p floppa-cli`
+- `./target/release/floppa-cli --help`
+- `./target/release/floppa-cli --version`
+- `./target/release/floppa-cli status` without failing when no tunnel is active
+
+Optional install smoke test:
 
 ```bash
-# Connect to VPN
-floppa-cli connect --protocol wireguard --config config.conf
+RUN_CARGO_INSTALL=1 ./scripts/smoke-test.sh
+```
 
-# Check connection status
-floppa-cli status
+GitHub Actions CI is defined in:
 
-# View device information
+```text
+.github/workflows/ci.yml
+```
+
+It runs the same smoke script on `main` and pull requests.
+
+Release artifacts are built by:
+
+```text
+.github/workflows/release.yml
+```
+
+The release workflow triggers on `v*` tags and creates a draft GitHub Release with Linux, Windows, and macOS binaries plus `SHA256SUMS.txt`.
+
+## Release verification
+
+Release verification for `v0.1.0-cli-alpha` was performed before publishing:
+
+- `./scripts/smoke-test.sh` passed locally.
+- GitHub Actions CI was green on `main`.
+- `./target/release/floppa-cli --help` worked.
+- `./target/release/floppa-cli --version` worked.
+- `./target/release/floppa-cli status` worked without an active tunnel.
+- `./target/release/floppa-cli stop` worked without an active tunnel.
+- Release workflow created a draft GitHub Release on the test `v0.1.0-cli-alpha-test` tag.
+- Linux, Windows, and macOS artifacts were attached to the draft release.
+- `SHA256SUMS.txt` was attached to the draft release.
+- The test tag and test draft release were deleted after verification.
+- Final release workflow run `27792844338` passed on `v0.1.0-cli-alpha`.
+- Downloaded release assets were verified with `SHA256SUMS.txt`.
+
+After the test release was verified, the final `v0.1.0-cli-alpha` tag can be published from the GitHub draft release.
+
+## Install
+
+Build and install the CLI binary:
+
+```bash
+cargo build --release -p floppa-cli
+install -m 0755 target/release/floppa-cli "$HOME/.local/bin/floppa-cli"
+```
+
+Or install from the local crate path:
+
+```bash
+cargo install --path floppa-cli --locked
+```
+
+After installation, `~/.local/bin` should be in your shell PATH. For privileged network changes, use the absolute binary path because `sudo secure_path` may not include `~/.local/bin`:
+
+```bash
+sudo env HOME="$HOME" "$HOME/.local/bin/floppa-cli" status
+sudo env HOME="$HOME" "$HOME/.local/bin/floppa-cli" stop
+```
+
+## Run
+
+```bash
+cargo run -p floppa-cli -- --help
+cargo run -p floppa-cli -- login
+cargo run -p floppa-cli -- login --method account --login your-login
+cargo run -p floppa-cli -- login-account --login your-login
+cargo run -p floppa-cli -- connect --protocol amneziawg
+cargo run -p floppa-cli -- status
+cargo run -p floppa-cli -- stop
+```
+
+`login` prompts for the login method (`telegram` or `account`). Use `--method account --login your-login` to skip the prompt and authenticate with Floppa account credentials. `login-account` remains available as a direct account-login command. By default, the password is prompted without echoing it; for automation, set `FLOPPA_ACCOUNT_LOGIN` and `FLOPPA_ACCOUNT_PASSWORD` instead of passing secrets on the command line.
+
+Installed binary examples:
+
+```bash
+floppa-cli login
+floppa-cli login --method account --login your-login
+floppa-cli login-account --login your-login
 floppa-cli device show
+floppa-cli peer delete --protocol amneziawg
+floppa-cli connect --protocol amneziawg --no-dns
+floppa-cli status
+floppa-cli stop
+```
 
-# Manage systemd service
-floppa-cli service install
+Privileged run examples:
+
+```bash
+sudo env HOME="$HOME" "$HOME/.local/bin/floppa-cli" connect --protocol amneziawg --no-dns
+sudo env HOME="$HOME" "$HOME/.local/bin/floppa-cli" status
+sudo env HOME="$HOME" "$HOME/.local/bin/floppa-cli" stop
+```
+
+## Systemd service
+
+`floppa-cli service` installs and manages a systemd unit that runs `floppa-cli connect` in the background. The default scope is `system`, so `install`, `uninstall`, `enable`, and `disable` use `sudo systemctl`; `status`, `start`, `stop`, and `restart` also use `sudo systemctl` by default.
+
+Install a system service using the currently running binary:
+
+```bash
+floppa-cli service install --scope system --name floppa-cli --protocol amneziawg --no-dns
+sudo systemctl enable --now floppa-cli
+```
+
+Useful service commands:
+
+```bash
+floppa-cli service status
 floppa-cli service start
-floppa-cli service status
+floppa-cli service stop
+floppa-cli service restart
+floppa-cli service enable
+floppa-cli service disable
+floppa-cli service uninstall
 ```
 
-### Configuration
+For user services, use `--scope user`; the unit is written under `$XDG_CONFIG_HOME/systemd/user` and managed with `systemctl --user`.
 
-Configuration files are stored in `~/.config/floppa-cli/`:
+The generated unit runs the service as the current user, sets `HOME`, grants `CAP_NET_ADMIN` and `CAP_NET_RAW` through systemd capabilities, restarts on failure, and logs to the journal. The default log file is `~/.local/state/floppa-cli/floppa-cli.log`; override it with `--service-log-file /absolute/path.log`.
 
-```
-~/.config/floppa-cli/api-config.toml
-~/.config/floppa-cli/devices/
-~/.config/floppa-cli/tokens/
-```
+Connecting to a real VPN requires the user's Floppa account/session and Linux network privileges. Do not commit private configs, tokens, VPN keys, or user-specific absolute paths.
 
-## APIs
+## Why this branch exists
 
-- **Main API** (`api/`) - Handles all external API communications
-- **Auth Module** (`auth/`) - Manages authentication and token handling
-- **Tunnel Module** (`tunnel/`) - Core networking and tunnel operations
-- **Service Module** (`service/`) - Systemd service management
-
-## Development
-
-### Building
-
-```bash
-cargo build
-cargo build --release
-```
-
-### Testing
-
-```bash
-cargo test
-cargo test --locked
-```
-
-### Systemd Service
-
-The CLI comes with a complete systemd service implementation:
-
-```bash
-# Install systemd unit
-floppa-cli service install --scope system
-
-# View service status (no sudo password needed!)
-floppa-cli service status
-
-# View logs
-journalctl -u floppa-cli -f
-```
-
-See `docs/systemd-service.md` for detailed documentation.
-
-## Supported Platforms
-
-- **Linux** (x86_64, aarch64)
-- **macOS** (x86_64)
-- **Windows** (x86_64)
-
-## License
-
-MIT License - See LICENSE file for details.
-
-## Contributing
-
-See CONTRIBUTING.md for guidelines on how to contribute to this project.
-
-# Version Information
-
-## Current Release Version
-
-**v0.1.1-cli-alpha** (2026-06-21)
-
-## Systemd Integration Features (v0.1.1-cli-alpha)
-
-The v0.1.1-cli-alpha release introduces comprehensive systemd service management with the following key capabilities:
-
-### Core Systemd Commands
-- `floppa-cli service install --scope system` - Install system-wide service unit
-- `floppa-cli service install --scope user` - Install user-level service unit  
-- `floppa-cli service status` - Check service status without sudo password prompt
-- `floppa-cli service start` - Start the service
-- `floppa-cli service stop` - Stop the service gracefully
-- `floppa-cli service restart` - Restart the service
-- `floppa-cli service uninstall` - Remove service unit cleanly
-
-### Systemd Service Improvements
-
-#### User Context Handling
-- Enhanced sudo user handling when `USER=root` environment variable is set
-- Automatic `SUDO_USER` fallback for non-root execution
-- Improved user context tracking for systemd service permissions
-
-#### Log Management
-- Enhanced log file management with proper user permissions
-- Support for `--service-log-file` argument to specify log file path
-- Improved logging for service operations and troubleshooting
-
-#### Scopes and Configuration
-- Support for both `system` and `user` scopes
-- Customizable service name and binary path arguments
-- Flexible configuration options for different deployment scenarios
-
-#### Service Status Without Password
-- **Breakthrough improvement**: `floppa-cli service status` no longer requires sudo password
-- Status checks use internal systemctl output capturing
-- Graceful handling of permission errors for status checks
-
-### Integration with Existing Features
-
-#### Authentication Improvements
-- Added account login method support alongside Telegram authentication
-- Enhanced login flow with method selection and credential handling
-- Improved token persistence and validation
-
-#### Device Management
-- Enhanced device identity management
-- Improved peer lifecycle commands with device context
-- Better handling of device-specific operations
-
-## Release History
-
-### v0.1.1-cli-alpha (2026-06-21)
-**Major Features:**
-- Systemd service management integration
-- Account authentication support
-- Enhanced service status without password
-- Improved user context handling
-- Better log file management
-
-**Fixes:**
-- Login account command collision resolution
-- Sudo password prompt elimination
-- User context handling improvements
-- Enhanced log file path handling
-
-### v0.1.0-cli-alpha (2026-06-18)
-**Initial Release:**
-- Core CLI functionality
-- WireGuard/AmneziaWG tunnel support
-- VLESS protocol support
-- Basic API and authentication integration
-
-## Release Checklist
-
-### Pre-Release
-- [x] Final testing and validation
-- [x] Documentation updates
-- [x] Version number verification
-- [x] Changelog completion
-
-### During Release
-- [x] Create GitHub Release
-- [x] Build artifacts
-- [x] Update documentation
-- [x] Publish to package managers
-
-### Post-Release
-- [x] Update release notes
-- [x] Monitor initial user feedback
-- [x] Address any issues discovered
-
-## Release Preparation Scripts
-
-### smoke-test.sh
-Basic smoke tests for release validation:
-```bash
-#!/bin/bash
-set -e
-
-echo "Running smoke tests..."
-
-# Test help output
-./target/release/floppa-cli --help > /dev/null
-
-echo "✅ Help command works"
-
-# Test version output
-./target/release/floppa-cli --version
-
-echo "✅ Version command works"
-
-echo "All smoke tests passed!"
-```
-
-## Documentation
-
-For detailed documentation on:
-- **Systemd Integration**: See `docs/systemd-service.md`
-- **API Reference**: See `docs/api.md`
-- **Development Guide**: See `docs/development.md`
-- **Configuration**: See `docs/configuration.md`
-
-## Troubleshooting
-
-### Common Issues
-
-#### Systemd Service Installation
-
-**Problem:** Permission denied when installing system service
-
-**Solution:**
-```bash
-# Use sudo with explicit user context
-sudo -u root floppa-cli service install --scope system
-```
-
-#### Service Status Without Password
-
-**Problem:** Still prompts for sudo password when checking status
-
-**Solution:**
-```bash
-# Ensure proper sudo configuration
-# Use visudo to configure pwfeedback
-# Run status command multiple times to test
-```
-
-#### User Context Issues
-
-**Problem:** Service runs as wrong user when USER=root
-
-**Solution:**
-```bash
-# Export SUDO_USER before running commands
-export SUDO_USER=$USER
-# or use alternative user context
-```
-
-## Future Plans
-
-### v0.1.2-cli-alpha (Upcoming)
-
-**Features Planned:**
-- Enhanced systemd service monitoring
-- Improved log rotation support
-- Better configuration management
-- Additional authentication methods
-- Performance optimizations
-
-### v0.2.0-cli-alpha (Future)
-
-**Features Planned:**
-- Multi-platform native packaging
-- Enhanced configuration management
-- Integration with external DNS providers
-- Advanced monitoring and alerting
-- Mobile device support
-
-## Support
-
-For issues and questions:
-
-1. **GitHub Issues**: [Create an issue](https://github.com/ni9aii/floppa-CLI/issues)
-2. **Discussions**: [Project discussions](https://github.com/ni9aii/floppa-CLI/discussions)
-3. **Documentation**: [Read docs/](docs/)
-4. **Community**: [Discord/Slack channels](https://floppa.io/community)
-
-## Links
-
-- **GitHub Repository**: https://github.com/ni9aii/floppa-CLI
-- **Documentation**: https://docs.floppa.io/cli
-- **Releases**: https://github.com/ni9aii/floppa-CLI/releases
-- **Website**: https://floppa.io
-
-## TODO (Post-Release)
-
-### Immediate (Next 2 weeks)
-- [ ] Update system service documentation
-- [ ] Add systemd integration examples
-- [ ] Publish release notes
-- [ ] Monitor initial user feedback
-
-### Short-term (Next month)
-- [ ] Add performance monitoring
-- [ ] Improve configuration validation
-- [ ] Add more automated tests
-- [ ] Update package manager integrations
-
-### Long-term (Next 6 months)
-- [ ] Implement multi-platform native packaging
-- [ ] Add advanced monitoring features
-- [ ] Enhance configuration management
-- [ ] Add mobile device support
+The upstream repository contains the full cross-platform product: desktop client, web UI, server, daemon, mobile platform code, packaging, and integration tests. For CLI hardening and headless use cases, this branch keeps only the code needed to build, test, and run `floppa-cli`.

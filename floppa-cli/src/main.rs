@@ -1,13 +1,16 @@
 mod api;
 mod auth;
 mod dns;
+mod net;
 mod paths;
+mod service;
 mod stop;
 mod tunnel;
 mod vless;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 #[cfg(unix)]
 use tokio::signal::unix::SignalKind;
 
@@ -66,8 +69,8 @@ enum Command {
         #[arg(long)]
         config: Option<String>,
         /// Protocol: wireguard (default), amneziawg, or vless
-        #[arg(long, default_value = "wireguard")]
-        protocol: String,
+        #[arg(long, default_value = "wireguard", value_enum)]
+        protocol: Protocol,
         /// TUN interface name
         #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
         interface: String,
@@ -100,8 +103,8 @@ enum Command {
     /// Fetch and print config (WireGuard/AmneziaWG .conf or VLESS URI)
     Config {
         /// Protocol: wireguard (default), amneziawg, or vless
-        #[arg(long, default_value = "wireguard")]
-        protocol: String,
+        #[arg(long, default_value = "wireguard", value_enum)]
+        protocol: Protocol,
         /// Peer ID (WireGuard/AmneziaWG only; uses first active peer of that protocol if omitted)
         #[arg(long)]
         peer_id: Option<i64>,
@@ -126,8 +129,64 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Install and manage a systemd service for the VPN tunnel
+    Service {
+        /// Service scope: system (`sudo systemctl`) or user (`systemctl --user`)
+        #[arg(long, value_enum, default_value_t = service::ServiceScope::System)]
+        scope: service::ServiceScope,
+        /// Service name without `.service`
+        #[arg(long, default_value = "floppa-cli")]
+        name: String,
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
     /// Remove saved login token
     Logout,
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// Install a systemd unit for `floppa-cli connect`
+    Install {
+        /// Absolute path to the floppa-cli binary
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        /// Protocol passed to `connect`
+        #[arg(long, default_value = "amneziawg", value_enum)]
+        protocol: Protocol,
+        /// TUN interface name
+        #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
+        interface: String,
+        /// Skip DNS configuration
+        #[arg(long)]
+        no_dns: bool,
+        /// API URL passed to `connect`
+        #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
+        api_url: String,
+        /// Unix user that should run the service
+        #[arg(long, env = "USER")]
+        user: Option<String>,
+        /// Home directory for the service user
+        #[arg(long, env = "HOME")]
+        home: Option<PathBuf>,
+        /// Absolute path to the service log file
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+    /// Remove an installed systemd unit
+    Uninstall,
+    /// Start the systemd service
+    Start,
+    /// Stop the systemd service
+    Stop,
+    /// Restart the systemd service
+    Restart,
+    /// Show systemd service status
+    Status,
+    /// Enable the systemd service at boot
+    Enable,
+    /// Disable the systemd service at boot
+    Disable,
 }
 
 #[derive(Subcommand)]
@@ -169,10 +228,28 @@ fn is_vless(config_str: &str) -> bool {
     config_str.trim().starts_with("vless://")
 }
 
+#[derive(clap::ValueEnum, Clone, Debug, PartialEq)]
+enum Protocol {
+    #[value(name = "wireguard")]
+    WireGuard,
+    #[value(name = "amneziawg")]
+    AmneziaWg,
+    #[value(name = "vless")]
+    Vless,
+}
+
+impl Protocol {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Protocol::WireGuard => "wireguard",
+            Protocol::AmneziaWg => "amneziawg",
+            Protocol::Vless => "vless",
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    paths::configure_process_path();
-
     let cli = Cli::parse();
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -245,10 +322,10 @@ async fn main() -> Result<()> {
                     } else {
                         bail!("No active subscription");
                     }
-                    if protocol == "vless" {
+                    if protocol == Protocol::Vless {
                         client.get_vless_config().await?
                     } else {
-                        client.find_or_create_peer(&protocol).await?
+                        client.find_or_create_peer(protocol.as_str()).await?
                     }
                 }
             };
@@ -372,12 +449,12 @@ async fn main() -> Result<()> {
             let token =
                 auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
             let client = api::ApiClient::new(&api_url, &token);
-            let config = if protocol == "vless" {
+            let config = if protocol == Protocol::Vless {
                 client.get_vless_config().await?
             } else {
                 match peer_id {
                     Some(id) => client.get_peer_config(id).await?,
-                    None => client.find_or_create_peer(&protocol).await?,
+                    None => client.find_or_create_peer(protocol.as_str()).await?,
                 }
             };
             print!("{config}");
@@ -392,6 +469,13 @@ async fn main() -> Result<()> {
         } => {
             stop::stop(&interface, pid, force)?;
         }
+        Command::Service {
+            scope,
+            name,
+            command,
+        } => {
+            handle_service_command(scope, name, command)?;
+        }
         Command::Logout => {
             auth::logout()?;
             eprintln!("Logged out.");
@@ -401,50 +485,143 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn handle_service_command(
+    scope: service::ServiceScope,
+    name: String,
+    command: ServiceCommand,
+) -> Result<()> {
+    match command {
+        ServiceCommand::Install {
+            binary,
+            protocol,
+            interface,
+            no_dns,
+            api_url,
+            user,
+            home,
+            log_file,
+        } => {
+            let home = home.unwrap_or_else(default_home);
+            let user = user
+                .or_else(|| std::env::var("USER").ok())
+                .unwrap_or_default();
+            let log_file = log_file.unwrap_or_else(|| {
+                home.join(".local")
+                    .join("state")
+                    .join("floppa-cli")
+                    .join("floppa-cli.log")
+            });
+            let binary = binary.unwrap_or_else(|| {
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("floppa-cli"))
+            });
+            service::install(&service::ServiceInstallOptions {
+                scope,
+                name,
+                binary,
+                protocol: protocol.as_str().to_string(),
+                interface,
+                no_dns,
+                api_url,
+                user,
+                home,
+                log_file,
+            })
+        }
+        ServiceCommand::Uninstall => {
+            service::uninstall(&service::ServiceUninstallOptions { scope, name })
+        }
+        ServiceCommand::Start => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Start,
+        }),
+        ServiceCommand::Stop => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Stop,
+        }),
+        ServiceCommand::Restart => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Restart,
+        }),
+        ServiceCommand::Status => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Status,
+        }),
+        ServiceCommand::Enable => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Enable,
+        }),
+        ServiceCommand::Disable => service::control(&service::ServiceControlOptions {
+            scope,
+            name,
+            action: service::ServiceAction::Disable,
+        }),
+    }
+}
+
+fn default_home() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 struct CleanupKind {
     dns: bool,
     tunnel: CleanupTunnel,
+    cleaned: bool,
 }
 
 enum CleanupTunnel {
-    WireGuard(tunnel::NetworkState),
-    Vless(vless::NetworkState),
+    WireGuard(net::NetworkState),
+    Vless(net::NetworkState),
 }
 
 impl CleanupKind {
-    fn wireguard(state: tunnel::NetworkState, dns: bool) -> Self {
+    fn wireguard(state: net::NetworkState, dns: bool) -> Self {
         Self {
             dns,
             tunnel: CleanupTunnel::WireGuard(state),
+            cleaned: false,
         }
     }
 
-    fn vless(state: vless::NetworkState, dns: bool) -> Self {
+    fn vless(state: net::NetworkState, dns: bool) -> Self {
         Self {
             dns,
             tunnel: CleanupTunnel::Vless(state),
+            cleaned: false,
         }
     }
 
     fn cleanup(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        self.cleaned = true;
         if self.dns
             && let Err(e) = dns::restore_dns()
         {
             eprintln!("DNS restore failed: {e}");
         }
 
-        match &self.tunnel {
-            CleanupTunnel::WireGuard(state) => {
-                if let Err(e) = tunnel::cleanup_networking(state) {
-                    eprintln!("Tunnel cleanup failed: {e}");
-                }
-            }
-            CleanupTunnel::Vless(state) => {
-                if let Err(e) = vless::cleanup_networking(state) {
-                    eprintln!("VLESS cleanup failed: {e}");
-                }
-            }
+        let state = match &self.tunnel {
+            CleanupTunnel::WireGuard(s) => s,
+            CleanupTunnel::Vless(s) => s,
+        };
+        if let Err(e) = net::cleanup_networking(state) {
+            eprintln!("Tunnel cleanup failed: {e}");
         }
+    }
+}
+
+impl Drop for CleanupKind {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 
@@ -454,7 +631,7 @@ async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> R
     let device = tunnel::create_tunnel(&wg_config, interface).await?;
     eprintln!("Configuring networking...");
     let network_state = tunnel::configure_networking(&wg_config, interface).await?;
-    tunnel::verify_networking(&network_state)?;
+    net::verify_networking(&network_state)?;
 
     let mut cleanup = CleanupKind::wireguard(network_state, !no_dns);
     if !no_dns {
@@ -483,7 +660,7 @@ async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Resul
 
     eprintln!("Configuring networking...");
     let network_state = vless::configure_networking(&config, interface).await?;
-    vless::verify_networking(&network_state)?;
+    net::verify_networking(&network_state)?;
 
     let mut cleanup = CleanupKind::vless(network_state, !no_dns);
     if !no_dns {

@@ -16,22 +16,43 @@ pub enum LoginMethod {
     Account,
 }
 
-fn config_dir() -> Result<PathBuf> {
-    let dir = dirs::config_dir()
-        .ok_or_else(|| anyhow!("Cannot determine config directory"))?
-        .join("floppa-cli");
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
 fn token_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join("token"))
+    Ok(crate::paths::floppa_config_dir()?.join("token"))
 }
 
 pub fn load_token() -> Result<Option<String>> {
-    let path = token_path()?;
+    load_token_from(&token_path()?)
+}
+
+fn save_token(token: &str) -> Result<()> {
+    save_token_at(token, &token_path()?)
+}
+
+fn save_token_at(token: &str, path: &std::path::Path) -> Result<()> {
+    use std::io::Write as _;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .context("Failed to create token file")?;
+        f.write_all(token.as_bytes())
+            .context("Failed to write token")?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, token).context("Failed to save token")?;
+    }
+    Ok(())
+}
+
+fn load_token_from(path: &std::path::Path) -> Result<Option<String>> {
     if path.exists() {
-        let token = fs::read_to_string(&path)
+        let token = fs::read_to_string(path)
             .context("Failed to read token file")?
             .trim()
             .to_string();
@@ -42,18 +63,6 @@ pub fn load_token() -> Result<Option<String>> {
     } else {
         Ok(None)
     }
-}
-
-fn save_token(token: &str) -> Result<()> {
-    let path = token_path()?;
-    fs::write(&path, token).context("Failed to save token")?;
-    // Restrict permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 pub fn logout() -> Result<()> {
@@ -191,14 +200,34 @@ fn prompt_line(prompt: &str) -> Result<String> {
 
 /// Wait for a single HTTP GET request on the callback listener, extract `code` param.
 async fn wait_for_callback(listener: TcpListener) -> Result<String> {
-    let (mut stream, _) = listener
-        .accept()
-        .await
-        .context("Failed to accept callback connection")?;
+    let (mut stream, _) =
+        tokio::time::timeout(std::time::Duration::from_secs(120), listener.accept())
+            .await
+            .context("Timeout waiting for browser callback")?
+            .context("Failed to accept callback connection")?;
 
-    let mut buf = vec![0u8; 4096];
-    let n = stream.read(&mut buf).await?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+    // Read until we see the end of HTTP headers (\r\n\r\n).
+    let mut buf = Vec::with_capacity(4096);
+    let deadline = std::time::Duration::from_secs(10);
+    tokio::time::timeout(deadline, async {
+        let mut tmp = [0u8; 512];
+        loop {
+            let n = stream.read(&mut tmp).await?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        Ok::<_, std::io::Error>(())
+    })
+    .await
+    .context("Timeout reading browser callback")?
+    .context("Failed to read callback request")?;
+
+    let request = String::from_utf8_lossy(&buf);
 
     // Parse GET /callback?code=XYZ HTTP/1.1
     let code = request
@@ -240,45 +269,26 @@ async fn wait_for_callback(listener: TcpListener) -> Result<String> {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
-    use std::ffi::OsString;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let old = std::env::var_os(key);
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.old {
-                Some(old) => unsafe { std::env::set_var(self.key, old) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     async fn spawn_account_login_server() -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -321,30 +331,32 @@ mod tests {
         (base_url, handle)
     }
 
-    fn temp_config_home(test_name: &str) -> PathBuf {
+    fn temp_token_path(test_name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("floppa-cli-{test_name}-{unique}"))
+        std::env::temp_dir().join(format!("floppa-cli-{test_name}-{unique}.token"))
     }
 
     #[tokio::test]
-    async fn login_account_reads_password_from_env_saves_token_and_posts_credentials() {
-        let config_home = temp_config_home("login-account-env");
-        fs::create_dir_all(&config_home).unwrap();
-        let _xdg_config_home = EnvGuard::set("XDG_CONFIG_HOME", &config_home.to_string_lossy());
-        let _password = EnvGuard::set("FLOPPA_TEST_ACCOUNT_PASSWORD", "s3cret");
+    async fn login_account_posts_credentials_and_token_can_be_saved() {
+        let token_path = temp_token_path("login-account");
 
         let (base_url, server) = spawn_account_login_server().await;
-        login_account(&base_url, Some("alice"), "FLOPPA_TEST_ACCOUNT_PASSWORD")
+        let auth = crate::api::ApiClient::login_account(&base_url, "alice", "s3cret")
             .await
             .unwrap();
         server.await.unwrap();
 
-        assert_eq!(load_token().unwrap().as_deref(), Some("server-token"));
-        logout().unwrap();
-        fs::remove_dir_all(config_home).unwrap();
+        assert_eq!(auth.token, "server-token");
+
+        save_token_at(&auth.token, &token_path).unwrap();
+        assert_eq!(
+            load_token_from(&token_path).unwrap().as_deref(),
+            Some("server-token")
+        );
+        fs::remove_file(token_path).unwrap();
     }
 
     #[derive(clap::Parser)]

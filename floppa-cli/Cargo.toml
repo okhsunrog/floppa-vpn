@@ -1,6 +1,6 @@
 [package]
 name = "floppa-cli"
-version = "0.1.1-cli-alpha"
+version = "0.2.0-cli-alpha"
 edition = "2024"
 description = "CLI client for Floppa VPN"
 
