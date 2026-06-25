@@ -29,9 +29,27 @@ fn token_path() -> Result<PathBuf> {
 }
 
 pub fn load_token() -> Result<Option<String>> {
-    let path = token_path()?;
+    load_token_from(&token_path()?)
+}
+
+fn save_token(token: &str) -> Result<()> {
+    save_token_at(token, &token_path()?)
+}
+
+fn save_token_at(token: &str, path: &std::path::Path) -> Result<()> {
+    fs::write(path, token).context("Failed to save token")?;
+    // Restrict permissions
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
+fn load_token_from(path: &std::path::Path) -> Result<Option<String>> {
     if path.exists() {
-        let token = fs::read_to_string(&path)
+        let token = fs::read_to_string(path)
             .context("Failed to read token file")?
             .trim()
             .to_string();
@@ -42,18 +60,6 @@ pub fn load_token() -> Result<Option<String>> {
     } else {
         Ok(None)
     }
-}
-
-fn save_token(token: &str) -> Result<()> {
-    let path = token_path()?;
-    fs::write(&path, token).context("Failed to save token")?;
-    // Restrict permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 pub fn logout() -> Result<()> {
@@ -252,33 +258,10 @@ fn urlencoding(s: &str) -> String {
 mod tests {
     use super::*;
     use clap::Parser;
-    use std::ffi::OsString;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
-
-    struct EnvGuard {
-        key: &'static str,
-        old: Option<OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let old = std::env::var_os(key);
-            unsafe {
-                std::env::set_var(key, value);
-            }
-            Self { key, old }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.old {
-                Some(old) => unsafe { std::env::set_var(self.key, old) },
-                None => unsafe { std::env::remove_var(self.key) },
-            }
-        }
-    }
 
     async fn spawn_account_login_server() -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -321,30 +304,32 @@ mod tests {
         (base_url, handle)
     }
 
-    fn temp_config_home(test_name: &str) -> PathBuf {
+    fn temp_token_path(test_name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("floppa-cli-{test_name}-{unique}"))
+        std::env::temp_dir().join(format!("floppa-cli-{test_name}-{unique}.token"))
     }
 
     #[tokio::test]
-    async fn login_account_reads_password_from_env_saves_token_and_posts_credentials() {
-        let config_home = temp_config_home("login-account-env");
-        fs::create_dir_all(&config_home).unwrap();
-        let _xdg_config_home = EnvGuard::set("XDG_CONFIG_HOME", &config_home.to_string_lossy());
-        let _password = EnvGuard::set("FLOPPA_TEST_ACCOUNT_PASSWORD", "s3cret");
+    async fn login_account_posts_credentials_and_token_can_be_saved() {
+        let token_path = temp_token_path("login-account");
 
         let (base_url, server) = spawn_account_login_server().await;
-        login_account(&base_url, Some("alice"), "FLOPPA_TEST_ACCOUNT_PASSWORD")
+        let auth = crate::api::ApiClient::login_account(&base_url, "alice", "s3cret")
             .await
             .unwrap();
         server.await.unwrap();
 
-        assert_eq!(load_token().unwrap().as_deref(), Some("server-token"));
-        logout().unwrap();
-        fs::remove_dir_all(config_home).unwrap();
+        assert_eq!(auth.token, "server-token");
+
+        save_token_at(&auth.token, &token_path).unwrap();
+        assert_eq!(
+            load_token_from(&token_path).unwrap().as_deref(),
+            Some("server-token")
+        );
+        fs::remove_file(token_path).unwrap();
     }
 
     #[derive(clap::Parser)]

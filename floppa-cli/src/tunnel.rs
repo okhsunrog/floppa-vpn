@@ -1,5 +1,5 @@
-use crate::paths;
-use anyhow::{Result, anyhow, bail};
+use crate::net::{NetworkState, get_default_gateway, route_exists, run_ip};
+use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
@@ -12,13 +12,6 @@ use std::str::FromStr;
 pub const DEFAULT_INTERFACE_NAME: &str = "floppa0";
 
 pub type FloppaDevice = Device<(UdpSocketFactory, TunDevice, TunDevice)>;
-
-#[derive(Debug, Clone)]
-pub struct NetworkState {
-    pub interface: String,
-    pub endpoint_route: Option<String>,
-    pub endpoint_gateway: Option<String>,
-}
 
 /// AmneziaWG 2.0 obfuscation params parsed from an AmneziaWG `.conf` `[Interface]`.
 #[derive(Default)]
@@ -100,31 +93,45 @@ impl WgConfig {
                         "mtu" => mtu = value.parse().ok(),
                         // AmneziaWG obfuscation params
                         "jc" => {
-                            obf.jc = value.parse().unwrap_or(0);
+                            obf.jc = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param jc: {value}"))?;
                             has_awg = true;
                         }
                         "jmin" => {
-                            obf.jmin = value.parse().unwrap_or(0);
+                            obf.jmin = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param jmin: {value}"))?;
                             has_awg = true;
                         }
                         "jmax" => {
-                            obf.jmax = value.parse().unwrap_or(0);
+                            obf.jmax = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param jmax: {value}"))?;
                             has_awg = true;
                         }
                         "s1" => {
-                            obf.s1 = value.parse().unwrap_or(0);
+                            obf.s1 = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param s1: {value}"))?;
                             has_awg = true;
                         }
                         "s2" => {
-                            obf.s2 = value.parse().unwrap_or(0);
+                            obf.s2 = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param s2: {value}"))?;
                             has_awg = true;
                         }
                         "s3" => {
-                            obf.s3 = value.parse().unwrap_or(0);
+                            obf.s3 = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param s3: {value}"))?;
                             has_awg = true;
                         }
                         "s4" => {
-                            obf.s4 = value.parse().unwrap_or(0);
+                            obf.s4 = value
+                                .parse()
+                                .with_context(|| format!("Invalid AWG param s4: {value}"))?;
                             has_awg = true;
                         }
                         "h1" => {
@@ -304,28 +311,6 @@ fn build_gotatun_awg(obf: &AwgObfuscation) -> Result<gotatun::noise::awg::AwgCon
     Ok(a)
 }
 
-fn run_ip(args: &[&str]) -> Result<()> {
-    let output = paths::command("ip").args(args).output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow!("ip {} failed: {}", args.join(" "), stderr.trim()))
-    }
-}
-
-fn get_default_gateway() -> Result<Option<String>> {
-    let output = paths::command("ip")
-        .args(["route", "show", "default"])
-        .output()?;
-    let route_output = String::from_utf8_lossy(&output.stdout);
-    Ok(route_output
-        .split_whitespace()
-        .skip_while(|&w| w != "via")
-        .nth(1)
-        .map(|s| s.to_string()))
-}
-
 pub async fn configure_networking(config: &WgConfig, interface: &str) -> Result<NetworkState> {
     let addr = config.address_network()?;
 
@@ -338,7 +323,9 @@ pub async fn configure_networking(config: &WgConfig, interface: &str) -> Result<
     let endpoint = config.peer_socket_addr().await?;
     let endpoint_route = get_default_gateway()?
         .map(|gateway| {
-            let route = format!("{}/32", endpoint.ip());
+            let ip = endpoint.ip();
+            let prefix = if ip.is_ipv4() { 32 } else { 128 };
+            let route = format!("{ip}/{prefix}");
             run_ip(&["route", "replace", &route, "via", &gateway])?;
             eprintln!("Endpoint route: {route} via {gateway}");
             Ok::<_, anyhow::Error>((route, gateway))
@@ -375,38 +362,6 @@ pub async fn configure_networking(config: &WgConfig, interface: &str) -> Result<
     })
 }
 
-pub fn cleanup_networking(state: &NetworkState) -> Result<()> {
-    if let (Some(route), Some(gateway)) = (&state.endpoint_route, &state.endpoint_gateway) {
-        run_ip_quiet(&["route", "del", route, "via", gateway]);
-    }
-
-    for route in ["0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"] {
-        run_ip_quiet(&["route", "del", route, "dev", &state.interface]);
-    }
-    run_ip_quiet(&["link", "del", &state.interface]);
-    Ok(())
-}
-
-pub fn verify_networking(state: &NetworkState) -> Result<()> {
-    if !route_exists(&["link", "show", &state.interface]) {
-        bail!("VPN interface {} is not up", state.interface);
-    }
-    if let (Some(route), Some(gateway)) = (&state.endpoint_route, &state.endpoint_gateway)
-        && !route_exists(&["route", "show", route])
-    {
-        bail!("Endpoint route {route} via {gateway} is missing");
-    }
-    if !route_exists(&["route", "show", "0.0.0.0/1"])
-        || !route_exists(&["route", "show", "128.0.0.0/1"])
-    {
-        bail!(
-            "Default VPN split routes are missing on {}",
-            state.interface
-        );
-    }
-    Ok(())
-}
-
 pub fn status(interface: &str) -> Result<()> {
     if !interface_exists(interface) {
         bail!("Floppa {interface}: not connected");
@@ -422,20 +377,6 @@ pub fn status(interface: &str) -> Result<()> {
 
 pub fn interface_exists(interface: &str) -> bool {
     route_exists(&["link", "show", interface])
-}
-
-fn run_ip_quiet(args: &[&str]) -> bool {
-    paths::command("ip")
-        .args(args)
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-fn route_exists(args: &[&str]) -> bool {
-    paths::command("ip")
-        .args(args)
-        .output()
-        .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
 }
 
 pub async fn create_tunnel(config: &WgConfig, interface: &str) -> Result<FloppaDevice> {

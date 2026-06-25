@@ -495,7 +495,10 @@ mod tests {
     #[test]
     fn unit_path_system_is_etc_systemd() {
         let path = unit_path(ServiceScope::System, "floppa-cli");
-        assert_eq!(path, PathBuf::from("/etc/systemd/system/floppa-cli.service"));
+        assert_eq!(
+            path,
+            PathBuf::from("/etc/systemd/system/floppa-cli.service")
+        );
     }
 
     #[test]
@@ -518,12 +521,18 @@ mod tests {
 
     #[test]
     fn quote_systemd_arg_no_special_chars() {
-        assert_eq!(quote_systemd_arg("/usr/bin/floppa-cli"), "/usr/bin/floppa-cli");
+        assert_eq!(
+            quote_systemd_arg("/usr/bin/floppa-cli"),
+            "/usr/bin/floppa-cli"
+        );
     }
 
     #[test]
     fn quote_systemd_arg_with_space() {
-        assert_eq!(quote_systemd_arg("/path/to my/binary"), "'/path/to my/binary'");
+        assert_eq!(
+            quote_systemd_arg("/path/to my/binary"),
+            "'/path/to my/binary'"
+        );
     }
 
     #[test]
