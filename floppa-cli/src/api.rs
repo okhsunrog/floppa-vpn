@@ -2,6 +2,14 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
+fn make_client() -> reqwest::Client {
+    let builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
+    // https_only disabled in test builds so tests can use local HTTP mock servers.
+    #[cfg(not(test))]
+    let builder = builder.https_only(true);
+    builder.build().expect("reqwest client build failed")
+}
+
 pub struct ApiClient {
     client: reqwest::Client,
     base_url: String,
@@ -103,7 +111,7 @@ struct AccountLoginRequest {
 impl ApiClient {
     pub fn new(base_url: &str, token: &str) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: make_client(),
             base_url: base_url.trim_end_matches('/').to_string(),
             token: token.to_string(),
         }
@@ -353,7 +361,7 @@ impl ApiClient {
         login: &str,
         password: &str,
     ) -> Result<AuthResponse> {
-        let client = reqwest::Client::new();
+        let client = make_client();
         let url = format!("{}/auth/account/login", base_url.trim_end_matches('/'));
 
         let resp = client
@@ -378,7 +386,7 @@ impl ApiClient {
 
     /// Exchange a one-time login code for a JWT token (no auth required).
     pub async fn exchange_code(base_url: &str, code: &str) -> Result<AuthResponse> {
-        let client = reqwest::Client::new();
+        let client = make_client();
         let url = format!(
             "{}/auth/telegram/exchange-code",
             base_url.trim_end_matches('/')
@@ -405,12 +413,7 @@ impl ApiClient {
 }
 
 fn config_dir() -> Result<PathBuf> {
-    let dir = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::config_dir().map(|p| p.join("floppa-cli")))
-        .context("Failed to locate config directory")?;
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
+    crate::paths::floppa_config_dir()
 }
 
 pub fn get_or_create_device_identity() -> Result<DeviceIdentity> {
@@ -428,7 +431,7 @@ pub fn get_or_create_device_identity() -> Result<DeviceIdentity> {
         device_name: hostname(),
     };
     let raw = serde_json::to_string_pretty(&identity)?;
-    fs::write(&path, raw).with_context(|| format!("Failed to write {}", path.display()))?;
+    write_device_json(&path, &raw)?;
     eprintln!("Created device identity: {}", identity.device_id);
     Ok(identity)
 }
@@ -440,9 +443,31 @@ pub fn reset_device_identity() -> Result<DeviceIdentity> {
         device_name: hostname(),
     };
     let raw = serde_json::to_string_pretty(&identity)?;
-    fs::write(&path, raw).with_context(|| format!("Failed to write {}", path.display()))?;
+    write_device_json(&path, &raw)?;
     eprintln!("Reset device identity: {}", identity.device_id);
     Ok(identity)
+}
+
+fn write_device_json(path: &std::path::Path, raw: &str) -> Result<()> {
+    use std::io::Write as _;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("Failed to open {}", path.display()))?;
+        f.write_all(raw.as_bytes())
+            .with_context(|| format!("Failed to write {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, raw).with_context(|| format!("Failed to write {}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn random_device_id() -> String {

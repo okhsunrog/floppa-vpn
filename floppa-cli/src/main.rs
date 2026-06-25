@@ -250,8 +250,6 @@ impl Protocol {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    paths::configure_process_path();
-
     let cli = Cli::parse();
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
@@ -575,6 +573,7 @@ fn default_home() -> PathBuf {
 struct CleanupKind {
     dns: bool,
     tunnel: CleanupTunnel,
+    cleaned: bool,
 }
 
 enum CleanupTunnel {
@@ -587,6 +586,7 @@ impl CleanupKind {
         Self {
             dns,
             tunnel: CleanupTunnel::WireGuard(state),
+            cleaned: false,
         }
     }
 
@@ -594,10 +594,15 @@ impl CleanupKind {
         Self {
             dns,
             tunnel: CleanupTunnel::Vless(state),
+            cleaned: false,
         }
     }
 
     fn cleanup(&mut self) {
+        if self.cleaned {
+            return;
+        }
+        self.cleaned = true;
         if self.dns
             && let Err(e) = dns::restore_dns()
         {
@@ -611,6 +616,12 @@ impl CleanupKind {
         if let Err(e) = net::cleanup_networking(state) {
             eprintln!("Tunnel cleanup failed: {e}");
         }
+    }
+}
+
+impl Drop for CleanupKind {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 

@@ -164,6 +164,27 @@ pub fn render_unit(opts: &ServiceInstallOptions) -> Result<String> {
     validate_absolute_path("home", &opts.home)?;
     validate_absolute_path("log file", &opts.log_file)?;
 
+    if opts.scope == ServiceScope::System && opts.user.is_empty() {
+        bail!("User must be set for system-scope service units");
+    }
+    if opts.interface.is_empty()
+        || opts
+            .interface
+            .chars()
+            .any(|c| !c.is_ascii_alphanumeric() && c != '-' && c != '_')
+    {
+        bail!(
+            "Interface name '{}' is invalid (ASCII alphanumeric, '-', '_' only)",
+            opts.interface
+        );
+    }
+    if !opts.api_url.starts_with("https://") && !opts.api_url.starts_with("http://") {
+        bail!(
+            "api_url must start with http:// or https://: {}",
+            opts.api_url
+        );
+    }
+
     let mut exec_args = vec![
         opts.binary.clone(),
         PathBuf::from("connect"),

@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -5,10 +6,15 @@ use std::process::Command;
 
 const LOCAL_BIN: &str = ".local/bin";
 
-pub fn configure_process_path() {
-    unsafe {
-        env::set_var("PATH", configured_path());
-    }
+/// Returns `$XDG_CONFIG_HOME/floppa-cli` or `~/.config/floppa-cli`, creating it if needed.
+pub fn floppa_config_dir() -> Result<PathBuf> {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::config_dir)
+        .context("Cannot determine config directory")?
+        .join("floppa-cli");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 pub fn command(program: &str) -> Command {
@@ -23,7 +29,7 @@ pub fn configured_path() -> OsString {
     let path = env::var_os("PATH");
 
     configured_path_from(
-        current_exe.as_deref().and_then(Path::parent),
+        current_exe.as_deref(),
         home.as_deref().map(Path::new),
         path.as_deref(),
     )

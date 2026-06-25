@@ -16,16 +16,8 @@ pub enum LoginMethod {
     Account,
 }
 
-fn config_dir() -> Result<PathBuf> {
-    let dir = dirs::config_dir()
-        .ok_or_else(|| anyhow!("Cannot determine config directory"))?
-        .join("floppa-cli");
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
 fn token_path() -> Result<PathBuf> {
-    Ok(config_dir()?.join("token"))
+    Ok(crate::paths::floppa_config_dir()?.join("token"))
 }
 
 pub fn load_token() -> Result<Option<String>> {
@@ -37,12 +29,23 @@ fn save_token(token: &str) -> Result<()> {
 }
 
 fn save_token_at(token: &str, path: &std::path::Path) -> Result<()> {
-    fs::write(path, token).context("Failed to save token")?;
-    // Restrict permissions
+    use std::io::Write as _;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .context("Failed to create token file")?;
+        f.write_all(token.as_bytes())
+            .context("Failed to write token")?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, token).context("Failed to save token")?;
     }
     Ok(())
 }
@@ -197,14 +200,34 @@ fn prompt_line(prompt: &str) -> Result<String> {
 
 /// Wait for a single HTTP GET request on the callback listener, extract `code` param.
 async fn wait_for_callback(listener: TcpListener) -> Result<String> {
-    let (mut stream, _) = listener
-        .accept()
-        .await
-        .context("Failed to accept callback connection")?;
+    let (mut stream, _) =
+        tokio::time::timeout(std::time::Duration::from_secs(120), listener.accept())
+            .await
+            .context("Timeout waiting for browser callback")?
+            .context("Failed to accept callback connection")?;
 
-    let mut buf = vec![0u8; 4096];
-    let n = stream.read(&mut buf).await?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+    // Read until we see the end of HTTP headers (\r\n\r\n).
+    let mut buf = Vec::with_capacity(4096);
+    let deadline = std::time::Duration::from_secs(10);
+    tokio::time::timeout(deadline, async {
+        let mut tmp = [0u8; 512];
+        loop {
+            let n = stream.read(&mut tmp).await?;
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+        Ok::<_, std::io::Error>(())
+    })
+    .await
+    .context("Timeout reading browser callback")?
+    .context("Failed to read callback request")?;
+
+    let request = String::from_utf8_lossy(&buf);
 
     // Parse GET /callback?code=XYZ HTTP/1.1
     let code = request
@@ -246,12 +269,16 @@ async fn wait_for_callback(listener: TcpListener) -> Result<String> {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
