@@ -1,9 +1,9 @@
+use crate::paths;
 use anyhow::{Context, Result, bail};
 use clap::ValueEnum;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub enum ServiceScope {
@@ -68,7 +68,7 @@ pub fn install(opts: &ServiceInstallOptions) -> Result<()> {
                 )
             })?;
 
-            let status = Command::new("sudo")
+            let status = paths::command("sudo")
                 .arg("install")
                 .arg("-D")
                 .arg("-m")
@@ -110,7 +110,7 @@ pub fn uninstall(opts: &ServiceUninstallOptions) -> Result<()> {
 
     match opts.scope {
         ServiceScope::System => {
-            let status = Command::new("sudo")
+            let status = paths::command("sudo")
                 .arg("rm")
                 .arg("-f")
                 .arg(&unit_path)
@@ -193,7 +193,11 @@ pub fn render_unit(opts: &ServiceInstallOptions) -> Result<String> {
         PathBuf::from("--interface"),
         PathBuf::from(&opts.interface),
     ];
-    if opts.no_dns {
+    // System-scoped services run as non-root with only CAP_NET_ADMIN/CAP_NET_RAW —
+    // writing /etc/resolv.conf requires DAC_OVERRIDE which is absent by design.
+    // Force --no-dns for system scope to prevent a crash loop on every start.
+    let no_dns = opts.no_dns || opts.scope == ServiceScope::System;
+    if no_dns {
         exec_args.push(PathBuf::from("--no-dns"));
     }
     if opts.api_url != DEFAULT_API_URL {
@@ -272,7 +276,7 @@ fn unit_path_with_config_home(scope: ServiceScope, name: &str, config_home: Path
 
 fn create_user_state_dir(opts: &ServiceInstallOptions) -> Result<()> {
     let state_dir = opts.log_file.parent().context("Log file has no parent")?;
-    let status = Command::new("sudo")
+    let status = paths::command("sudo")
         .arg("install")
         .arg("-d")
         .arg("-o")
@@ -324,16 +328,16 @@ where
     command.output().context("Failed to run systemctl")
 }
 
-fn systemctl_command(scope: ServiceScope, privileged: bool) -> Command {
+fn systemctl_command(scope: ServiceScope, privileged: bool) -> std::process::Command {
     match (scope, privileged) {
         (ServiceScope::System, true) => {
-            let mut command = Command::new("sudo");
+            let mut command = paths::command("sudo");
             command.arg("systemctl");
             command
         }
-        (ServiceScope::System, false) => Command::new("systemctl"),
+        (ServiceScope::System, false) => paths::command("systemctl"),
         (ServiceScope::User, _) => {
-            let mut command = Command::new("systemctl");
+            let mut command = paths::command("systemctl");
             command.arg("--user");
             command
         }
@@ -490,12 +494,21 @@ mod tests {
     }
 
     #[test]
-    fn omits_no_dns_flag_when_dns_enabled() {
-        let mut opts = service_options(ServiceScope::System);
+    fn omits_no_dns_flag_when_dns_enabled_user_scope() {
+        let mut opts = service_options(ServiceScope::User);
         opts.no_dns = false;
 
         let unit = render_unit(&opts).unwrap();
         assert!(!unit.contains("--no-dns"));
+    }
+
+    #[test]
+    fn system_scope_always_adds_no_dns() {
+        let mut opts = service_options(ServiceScope::System);
+        opts.no_dns = false;
+
+        let unit = render_unit(&opts).unwrap();
+        assert!(unit.contains("--no-dns"));
     }
 
     #[test]
