@@ -5,12 +5,14 @@ import { useQuery, useMutation } from '@pinia/colada'
 import {
   getMeQuery,
   getMyPeersQuery,
+  getPublicConfigQuery,
   createMyPeerMutation,
   deleteMyPeerMutation,
   regenerateMyVlessConfigMutation,
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
+import type { DropdownMenuItem } from '@nuxt/ui'
 import { formatBytes, formatDate, formatDateTime } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
@@ -23,12 +25,15 @@ const isMiniApp = Boolean(
 )
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
+const { data: publicConfig } = useQuery(getPublicConfigQuery())
 const {
   data: peersData,
   status: peersStatus,
   error: peersError,
   refresh: refreshPeers,
 } = useQuery(getMyPeersQuery())
+
+const amneziaWgAvailable = computed(() => publicConfig.value?.amneziawg_available ?? false)
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
 const queryError = computed(() => meError.value || peersError.value)
@@ -47,6 +52,26 @@ const deleteMut = useMutation(deleteMyPeerMutation())
 
 const configDialog = ref(false)
 const currentConfig = ref<CreatePeerResponse | null>(null)
+const currentProtocol = ref('wireguard')
+
+const configDialogTitle = computed(() =>
+  t('userPeers.configTitleFor', { protocol: t(`vpn.${currentProtocol.value}`) }),
+)
+
+// Protocols offered by the "Create New Config" dropdown. AmneziaWG only appears when the
+// server advertises it via the public config (state.config.amneziawg + awg_public_key present).
+const createMenuItems = computed<DropdownMenuItem[]>(() => [
+  {
+    label: t('vpn.wireguard'),
+    icon: 'i-lucide-shield',
+    onSelect: () => createPeer('wireguard'),
+  },
+  {
+    label: t('vpn.amneziawg'),
+    icon: 'i-lucide-shield-check',
+    onSelect: () => createPeer('amneziawg'),
+  },
+])
 
 // Confirm delete state
 const confirmOpen = ref(false)
@@ -80,11 +105,12 @@ const peersRemaining = computed(() => {
   return me.value.subscription.max_peers - slotsUsed.value
 })
 
-async function createPeer() {
+async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
   if (!canCreatePeer.value) return
   try {
-    const response = await createMut.mutateAsync({})
+    const response = await createMut.mutateAsync({ body: { protocol } })
     currentConfig.value = response
+    currentProtocol.value = protocol
     configDialog.value = true
     await refreshPeers()
     toast.add({
@@ -136,6 +162,7 @@ async function showConfig(peer: MyPeer) {
       assigned_ip: peer.assigned_ip,
       config: data,
     }
+    currentProtocol.value = peer.protocol
     configDialog.value = true
   } catch (e) {
     toast.add({
@@ -270,13 +297,26 @@ async function doRegenerateVless() {
           {{ t('userPeers.remaining', { count: peersRemaining, max: me.subscription.max_peers }) }}
         </p>
       </div>
+      <UDropdownMenu
+        v-if="me?.subscription && amneziaWgAvailable"
+        :items="createMenuItems"
+        :content="{ align: 'end' }"
+      >
+        <UButton
+          :label="t('userPeers.createNew')"
+          icon="i-lucide-plus"
+          trailing-icon="i-lucide-chevron-down"
+          :disabled="!canCreatePeer"
+          :loading="createMut.asyncStatus.value === 'loading'"
+        />
+      </UDropdownMenu>
       <UButton
-        v-if="me?.subscription"
+        v-else-if="me?.subscription"
         :label="t('userPeers.createNew')"
         icon="i-lucide-plus"
         :disabled="!canCreatePeer"
         :loading="createMut.asyncStatus.value === 'loading'"
-        @click="createPeer"
+        @click="createPeer('wireguard')"
       />
     </div>
 
@@ -430,7 +470,7 @@ async function doRegenerateVless() {
     </template>
 
     <!-- WG Config Dialog -->
-    <UModal v-model:open="configDialog" :title="t('userPeers.configTitle')">
+    <UModal v-model:open="configDialog" :title="configDialogTitle">
       <template #body>
         <div v-if="currentConfig" class="flex flex-col gap-4">
           <p class="flex items-center gap-2 text-[var(--ui-text-muted)]">
