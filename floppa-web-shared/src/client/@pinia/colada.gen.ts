@@ -89,7 +89,8 @@ export const loginAccountMutation = (options?: Partial<Options<LoginAccountData>
 });
 
 /**
- * Register a new account with a login + password (no Telegram). Grants a short taster trial.
+ * Register a new account with a login + password (no Telegram). Grants a short taster trial
+ * (duration comes from the 'taster' plan's `trial_minutes`).
  */
 export const registerAccountMutation = (options?: Partial<Options<RegisterAccountData>>): UseMutationOptions<RegisterAccountResponse, Options<RegisterAccountData>, RegisterAccountError> => ({
     mutation: async (vars) => {

@@ -49,7 +49,8 @@ export const loginAccount = <ThrowOnError extends boolean = false>(options: Opti
 });
 
 /**
- * Register a new account with a login + password (no Telegram). Grants a short taster trial.
+ * Register a new account with a login + password (no Telegram). Grants a short taster trial
+ * (duration comes from the 'taster' plan's `trial_minutes`).
  */
 export const registerAccount = <ThrowOnError extends boolean = false>(options: Options<RegisterAccountData, ThrowOnError>) => (options.client ?? client).post<RegisterAccountResponses, RegisterAccountErrors, ThrowOnError>({
     url: '/auth/account/register',

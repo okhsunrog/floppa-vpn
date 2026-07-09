@@ -95,12 +95,14 @@ watch(plans, (plansData) => {
   }
 })
 
-// Auto-fill days from trial_days when a trial plan is selected
+// Auto-fill days from the plan's trial duration (minutes) when a trial plan is selected.
+// The admin field is day-granular, so sub-day trials (e.g. taster) leave it untouched.
 watch(addUserPlanId, (planId) => {
   if (!planId || !plans.value) return
   const plan = plans.value.find((p) => p.id === planId)
-  if (plan?.trial_days) {
-    addUserDays.value = plan.trial_days
+  if (plan?.trial_minutes) {
+    const days = Math.round(plan.trial_minutes / 1440)
+    if (days >= 1) addUserDays.value = days
   }
 })
 

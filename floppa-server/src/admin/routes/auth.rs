@@ -550,16 +550,8 @@ async fn fetch_user_result(
     })
 }
 
-fn taster_minutes(state: &AppState) -> i64 {
-    state
-        .config
-        .auth
-        .as_ref()
-        .map(|a| a.taster_trial_minutes)
-        .unwrap_or_else(|| floppa_core::AuthConfig::default().taster_trial_minutes)
-}
-
-/// Register a new account with a login + password (no Telegram). Grants a short taster trial.
+/// Register a new account with a login + password (no Telegram). Grants a short taster trial
+/// (duration comes from the 'taster' plan's `trial_minutes`).
 #[utoipa::path(
     post,
     path = "/auth/account/register",
@@ -590,13 +582,7 @@ pub(super) async fn register_account(
     )
     .await?;
 
-    let result = services::create_credential_user(
-        &state.pool,
-        &req.login,
-        &req.password,
-        taster_minutes(&state),
-    )
-    .await?;
+    let result = services::create_credential_user(&state.pool, &req.login, &req.password).await?;
     Ok(Json(build_auth_response(&state, result)?))
 }
 
