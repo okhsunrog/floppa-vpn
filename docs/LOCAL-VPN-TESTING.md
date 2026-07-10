@@ -119,7 +119,7 @@ Without `--log-file`, logs go to stderr. Use `RUST_LOG=shoes_lite=debug` for sho
 
 ### Server-side logging (Moscow VPS)
 
-Create a systemd override on the EU VPS to enable debug logging:
+Create a systemd override on the Moscow VPS to enable debug logging:
 
 ```bash
 mkdir -p /etc/systemd/system/floppa-vless.service.d
