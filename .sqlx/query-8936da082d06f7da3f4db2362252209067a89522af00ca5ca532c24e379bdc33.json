@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, public_key AS \"public_key!\", assigned_ip AS \"assigned_ip!\", protocol\n        FROM peers\n        WHERE sync_status = 'active'\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "public_key!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "assigned_ip!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "protocol",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8936da082d06f7da3f4db2362252209067a89522af00ca5ca532c24e379bdc33"
+}
