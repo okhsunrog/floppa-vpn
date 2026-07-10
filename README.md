@@ -14,7 +14,7 @@ Three tunnel protocols, two VPS regions:
 
 - **AmneziaWG** — the default protocol. WireGuard plus DPI-resistant obfuscation; client connects to Moscow VPS (:51821), traffic routes to Europe VPS via a site-to-site WireGuard tunnel (policy routing + MASQUERADE)
 - **WireGuard** — plain WireGuard; client connects to Moscow VPS (:51820), same site-to-site routing to Europe
-- **VLESS+REALITY** — client connects directly to Europe VPS (:443), camouflaged as regular HTTPS
+- **VLESS+REALITY** — client connects to Moscow HAProxy (:443), which forwards non-web TLS to the local REALITY proxy; proxied traffic exits through Europe
 
 ```mermaid
 graph TD
@@ -22,10 +22,17 @@ graph TD
 
     Client -- "AmneziaWG :51821" --> Daemon
     Client -- "WireGuard :51820" --> Daemon
-    Client -- "VLESS+REALITY :443" --> Vless
-    Client -- "HTTPS" --> Nginx
+    Client -- "VLESS+REALITY :443" --> HAProxy
+    Client -- "HTTPS" --> HAProxy
 
     subgraph Moscow["Moscow VPS"]
+        HAProxy["<b>HAProxy</b><br/>TLS SNI routing"]
+        HAProxy -- "known web SNI :8443" --> Nginx
+        HAProxy -- "default backend :8444" --> Vless
+        Vless["<b>floppa-vless</b><br/>VLESS+REALITY proxy · per-user rate limits"]
+        Vless <-- "pg LISTEN / NOTIFY" --> DB
+        Vless -- "scrape :9103" --> VM
+
         Nginx["<b>Nginx</b><br/>Reverse proxy + TLS"]
         Nginx -- ":3000" --> Server
 
@@ -43,15 +50,14 @@ graph TD
     end
 
     subgraph Europe["Europe VPS (exit node)"]
-        Vless["<b>floppa-vless</b><br/>VLESS+REALITY proxy · per-user rate limits"]
-        Vless <-- "pg LISTEN / NOTIFY" --> DB
-        Vless -- "scrape :9103" --> VM
+        NAT["NAT to public internet"]
     end
 
-    Daemon -- "site-to-site WG tunnel" --> Europe
+    Daemon -- "site-to-site WG tunnel" --> NAT
+    Vless -- "UID policy route over site-to-site WG" --> NAT
 ```
 
-**How it works:** Server writes peer changes to PostgreSQL (e.g. `sync_status = 'pending_add'`) → DB trigger fires `pg_notify('peer_changed')` → daemon picks it up, syncs the peer to its protocol's interface (WireGuard via `wg`, AmneziaWG via `awg` — each peer carries a `protocol`), applies rate limits, and marks peer as `active`. The VLESS proxy on Europe syncs its user registry from the same database via `pg LISTEN/NOTIFY`. All state lives in the database. Traffic metrics from both daemon and VLESS are scraped by VictoriaMetrics; the server queries VM to serve traffic stats in the API.
+**How it works:** Server writes peer changes to PostgreSQL (e.g. `sync_status = 'pending_add'`) → DB trigger fires `pg_notify('peer_changed')` → daemon picks it up, syncs the peer to its protocol's interface (WireGuard via `wg`, AmneziaWG via `awg` — each peer carries a `protocol`), applies rate limits, and marks the peer active. HAProxy on Moscow sends VLESS/REALITY connections to the local `floppa-vless` process, which syncs its user registry from the same local database via `pg LISTEN/NOTIFY`. WireGuard, AmneziaWG, and VLESS egress are policy-routed through the site-to-site tunnel and NATed by Europe. Traffic metrics from both daemon and VLESS are scraped by VictoriaMetrics; the server queries VM to serve traffic stats in the API.
 
 ## Features
 
@@ -232,8 +238,8 @@ just package
 
 See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide. Ansible deploys across two VPS regions:
 
-- **Moscow** — `floppa-daemon` (root, WireGuard + tc), `floppa-server` (bot + API + embedded frontend), VictoriaMetrics, Grafana, nginx with Let's Encrypt
-- **Europe** — `floppa-vless` (VLESS+REALITY exit node)
+- **Moscow** — `floppa-daemon` (root, WireGuard + tc), `floppa-server` (bot + API + embedded frontend), `floppa-vless` behind HAProxy, VictoriaMetrics, Grafana, nginx with Let's Encrypt
+- **Europe** — site-to-site WireGuard endpoint and NAT exit for all VPN protocols
 
 ## License
 

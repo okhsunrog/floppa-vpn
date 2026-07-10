@@ -11,7 +11,7 @@
 - [x] `floppa-daemon/sync.rs`: all queries filtered with `AND protocol = 'wireguard'` so daemon ignores VLESS peers
 
 ### Phase B: floppa-vless Server Binary
-- [x] `crates/floppa-vless/` crate with own config (separate from floppa-core, runs on EU VPS)
+- [x] `floppa-vless/` crate with its own config (runs on Moscow behind HAProxy)
 - [x] Multi-user UUID auth: `VlessAuthenticator` trait in shoes-lite, `MultiUserAuthenticator` with DashMap + constant-time comparison
 - [x] REALITY+Vision server handler chain using shoes-lite
 - [x] UUID registry with PostgreSQL LISTEN/NOTIFY (real-time sync on `peer_changed` / `subscription_changed`)
@@ -38,13 +38,12 @@
 - [ ] Protocol switch flow: delete old peer, create new with selected protocol
 
 ### Phase D: Deployment
-- [ ] Generate REALITY x25519 keypair, add to Ansible vault
-- [ ] Moscow: update `config.toml` with `[vless]` section, `secrets.toml` with VLESS keys
-- [ ] Moscow: allow PostgreSQL from EU tunnel IP (`10.77.77.1`) in `pg_hba.conf` and firewall
-- [ ] EU VPS: create `floppa-vless` Ansible role (binary + config + systemd service)
-- [ ] EU VPS: deploy `config.toml` and `secrets.toml` to `/etc/floppa-vless/`
-- [ ] EU VPS: open port 443 TCP in firewall
-- [ ] Run `cargo sqlx prepare --workspace` to update offline query cache before cross-compiling
+- [x] Generate REALITY x25519 keypair and add it to the Ansible vault
+- [x] Deploy `floppa-vless`, config, secrets, and systemd service on Moscow
+- [x] Route non-web TLS from Moscow HAProxy :443 to `127.0.0.1:8444`
+- [x] Route `floppa-vless` outbound traffic through the Moscow–Europe tunnel by service UID
+- [x] NAT VLESS egress on Europe with the other VPN traffic
+- [x] Run `cargo sqlx prepare --workspace` to maintain the offline query cache
 
 ## Architecture
 
@@ -52,41 +51,42 @@
 Client (Android/Desktop)
   └─ vless:// URI
       └─ VLESS+REALITY+Vision connection
-          └─ EU VPS (floppa-vless :443)
-              ├─ REALITY handshake (camouflage: www.microsoft.com)
-              ├─ VLESS UUID auth (multi-user, from PostgreSQL)
-              ├─ Vision flow control (zero-copy TLS-in-TLS)
-              └─ Proxy to internet
+          └─ Moscow HAProxy :443
+              └─ local floppa-vless (127.0.0.1:8444)
+                  ├─ REALITY handshake (camouflage: max.ru)
+                  ├─ VLESS UUID auth (multi-user, from PostgreSQL)
+                  ├─ Vision flow control (zero-copy TLS-in-TLS)
+                  └─ Proxy via wg1 → Europe NAT → internet
 
-Moscow VPS (floppa-server + floppa-daemon)
+Moscow VPS (floppa-server + floppa-daemon + floppa-vless)
   ├─ API: creates VLESS peers, generates vless:// URIs
   ├─ PostgreSQL: stores peers, subscriptions, plans
   └─ WireGuard: existing WG peers (unaffected)
 
-DB sync: EU ↔ Moscow via wg1 tunnel (10.77.77.0/24)
+DB sync: local PostgreSQL on Moscow
   ├─ LISTEN/NOTIFY: real-time peer/subscription changes
   └─ Periodic full sync: safety net every 5 min
 ```
 
 ## Config Files
 
-### EU VPS: `/etc/floppa-vless/config.toml`
+### Moscow VPS: `/etc/floppa-vless/config.toml`
 ```toml
 [server]
-listen_addr = "0.0.0.0:443"
+listen_addr = "127.0.0.1:8444"
 
 [reality]
-sni = "www.microsoft.com"
-short_ids = ["abcdef1234567890"]
-dest = "www.microsoft.com:443"
+sni = "max.ru"
+short_ids = ["<configured short ID>"]
+dest = "max.ru:443"
 
 [traffic]
 flush_interval_secs = 60
 sync_interval_secs = 300
 ```
 
-### EU VPS: `/etc/floppa-vless/secrets.toml`
+### Moscow VPS: `/etc/floppa-vless/secrets.toml`
 ```toml
-database_url = "postgres://floppa:<password>@10.77.77.2/floppa_vpn"
+database_url = "postgres://floppa:<password>@localhost/floppa_vpn"
 reality_private_key = "<base64url x25519 private key>"
 ```

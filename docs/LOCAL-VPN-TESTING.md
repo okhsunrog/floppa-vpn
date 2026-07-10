@@ -18,13 +18,13 @@ Traffic path: namespace → veth pair → host NAT → internet → wg-floppa (M
 ### VLESS+REALITY path
 
 ```
-[namespace floppa-test]          [host]                   [Europe VPS]
-  floppa-cli (shoes-lite)         veth-host (10.99.0.1)    floppa-vless (REALITY)
-  floppa0 (TUN, 10.0.0.2)        │                         │
-  veth-ns (10.99.0.2) ───────── veth-host ── NAT ──────── internet ── floppa-vless
+[namespace floppa-test]          [host]             [Moscow VPS]                 [Europe VPS]
+  floppa-cli (shoes-lite)         veth-host           HAProxy → floppa-vless      NAT exit
+  floppa0 (TUN, 10.0.0.2)        (10.99.0.1)         (:443 → 127.0.0.1:8444)     │
+  veth-ns (10.99.0.2) ───────── veth-host ── internet ── REALITY ── wg1 tunnel ── internet
 ```
 
-Traffic path: namespace → veth pair → host NAT → internet → HAProxy (EU, port 443) → floppa-vless → internet.
+Traffic path: namespace → veth pair → host NAT → internet → HAProxy (Moscow, port 443) → local floppa-vless → UID policy route over the Moscow–Europe WireGuard tunnel → Europe NAT → internet.
 
 ## Setup
 
@@ -117,7 +117,7 @@ RUST_LOG=debug ip netns exec floppa-test /path/to/floppa-cli \
 
 Without `--log-file`, logs go to stderr. Use `RUST_LOG=shoes_lite=debug` for shoes-lite internals only.
 
-### Server-side logging
+### Server-side logging (Moscow VPS)
 
 Create a systemd override on the EU VPS to enable debug logging:
 
@@ -155,9 +155,9 @@ Rebuild both floppa-cli and floppa-vless after changing this. Revert to `release
 
 ```bash
 # Stop, deploy, start
-ssh root@eu.okhsunrog.dev "systemctl stop floppa-vless"
-scp target/release/floppa-vless root@eu.okhsunrog.dev:/opt/floppa-vless/bin/floppa-vless
-ssh root@eu.okhsunrog.dev "systemctl start floppa-vless"
+ssh ubuntu@msk.okhsunrog.ru "sudo systemctl stop floppa-vless"
+scp target/release/floppa-vless ubuntu@msk.okhsunrog.ru:/tmp/floppa-vless
+ssh ubuntu@msk.okhsunrog.ru "sudo install -m 0755 /tmp/floppa-vless /opt/floppa-vless/bin/floppa-vless && sudo systemctl start floppa-vless"
 ```
 
 ### Common issues
