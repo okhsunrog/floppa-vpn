@@ -20,6 +20,15 @@ pub enum FloppaError {
     #[error("Peer limit reached: {current}/{max}")]
     PeerLimitReached { current: i32, max: i32 },
 
+    #[error("Installation does not belong to this user: id={0}")]
+    InvalidInstallation(i64),
+
+    #[error("An active {protocol} peer already exists for installation {installation_id}")]
+    PeerAlreadyExists {
+        installation_id: i64,
+        protocol: &'static str,
+    },
+
     #[error("No available IPs in subnet")]
     NoAvailableIps,
 

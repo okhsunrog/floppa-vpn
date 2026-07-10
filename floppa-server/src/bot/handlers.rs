@@ -153,14 +153,70 @@ async fn handle_menu_button(bot: Bot, msg: Message, pool: DbPool, config: Config
 
 /// Mark a link code consumed (idempotent). Returns true if this call consumed it.
 async fn consume_link_code(pool: &DbPool, code: &str, kind: &str) -> Result<bool, sqlx::Error> {
-    let res = sqlx::query!(
-        "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 WHERE code = $1 AND consumed_at IS NULL",
-        code,
-        kind,
+    let res = sqlx::query(
+        "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()",
     )
+    .bind(code)
+    .bind(kind)
     .execute(pool)
     .await?;
     Ok(res.rows_affected() == 1)
+}
+
+/// Consume a link code and attach the Telegram identity in the same transaction. Returning `None`
+/// means another request consumed the code first (or the session account is no longer attachable).
+async fn attach_telegram_with_link_code(
+    pool: &DbPool,
+    code: &str,
+    telegram_id: i64,
+    username: Option<&str>,
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+) -> floppa_core::error::Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+
+    let session_user_id = sqlx::query_scalar::<_, i64>(
+        r#"UPDATE telegram_link_codes
+           SET consumed_at = NOW(), kind = 'simple'
+           WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()
+           RETURNING user_id"#,
+    )
+    .bind(code)
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(session_user_id) = session_user_id else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+
+    let attached = sqlx::query(
+        r#"UPDATE users SET
+               telegram_id = $2,
+               username = COALESCE(username, $3),
+               first_name = COALESCE(first_name, $4),
+               last_name = COALESCE(last_name, $5)
+           WHERE id = $1 AND telegram_id IS NULL"#,
+    )
+    .bind(session_user_id)
+    .bind(telegram_id)
+    .bind(username)
+    .bind(first_name)
+    .bind(last_name)
+    .execute(&mut *tx)
+    .await?;
+
+    if attached.rows_affected() != 1 {
+        tx.rollback().await?;
+        return Ok(None);
+    }
+
+    tx.commit().await?;
+
+    // Trial claiming is independently idempotent; identity attachment and code consumption are the
+    // security-sensitive pair that must commit together.
+    let granted = services::grant_real_trial_if_unused(pool, session_user_id).await?;
+    Ok(Some(granted))
 }
 
 /// Handle `/start link_<code>`: attach this Telegram to the session account, or (if the Telegram
@@ -192,8 +248,11 @@ async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> 
     match existing {
         // Already this same account → nothing to do.
         Some(row) if row.id == session_user_id => {
-            consume_link_code(&pool, &code, "simple").await?;
-            bot.send_message(msg.chat.id, msgs.link_already).await?;
+            if consume_link_code(&pool, &code, "simple").await? {
+                bot.send_message(msg.chat.id, msgs.link_already).await?;
+            } else {
+                bot.send_message(msg.chat.id, msgs.link_invalid).await?;
+            }
         }
         // Belongs to a DIFFERENT established account → confirm merge/recovery.
         Some(husk) => {
@@ -232,16 +291,19 @@ async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> 
         }
         // Fresh Telegram → simple attach + real trial.
         None => {
-            consume_link_code(&pool, &code, "simple").await?;
-            let granted = services::attach_telegram_simple(
+            let granted = attach_telegram_with_link_code(
                 &pool,
-                session_user_id,
+                &code,
                 telegram_id,
                 username.as_deref(),
                 first_name.as_deref(),
                 last_name.as_deref(),
             )
             .await?;
+            let Some(granted) = granted else {
+                bot.send_message(msg.chat.id, msgs.link_invalid).await?;
+                return Ok(());
+            };
             let mut text = msgs.link_success.to_string();
             if granted {
                 text.push_str("\n\n");
@@ -767,7 +829,7 @@ async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
 
 #[cfg(test)]
 mod tests {
-    use super::Command;
+    use super::{Command, attach_telegram_with_link_code};
     use teloxide::utils::command::BotCommands;
 
     // Guards the deep-link split: a bare /start must still parse (new-user greeting path),
@@ -782,5 +844,55 @@ mod tests {
             Ok(Command::Start(s)) => assert_eq!(s, "link_abc123"),
             _ => panic!("/start link_ did not parse to Start"),
         }
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn telegram_link_code_has_exactly_one_winner(pool: floppa_core::DbPool) {
+        let user_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO users (username) VALUES ('link-target') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO telegram_link_codes (code, user_id, expires_at) \
+             VALUES ('one-time-code', $1, NOW() + INTERVAL '10 minutes')",
+        )
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let (first, second) = tokio::join!(
+            attach_telegram_with_link_code(
+                &pool,
+                "one-time-code",
+                11111,
+                Some("first"),
+                None,
+                None,
+            ),
+            attach_telegram_with_link_code(
+                &pool,
+                "one-time-code",
+                22222,
+                Some("second"),
+                None,
+                None,
+            ),
+        );
+        let winners = [first.unwrap(), second.unwrap()]
+            .into_iter()
+            .filter(Option::is_some)
+            .count();
+        assert_eq!(winners, 1);
+
+        let telegram_id =
+            sqlx::query_scalar::<_, Option<i64>>("SELECT telegram_id FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(matches!(telegram_id, Some(11111 | 22222)));
     }
 }

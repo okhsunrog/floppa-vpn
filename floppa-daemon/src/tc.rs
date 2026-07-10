@@ -322,8 +322,8 @@ pub fn cleanup_tc(interface: &str) -> Result<()> {
 }
 
 /// Convert peer IP to a tc class ID.
-/// Uses the last two octets to create a unique ID (supports /16 subnets).
-/// Example: 10.100.5.42 -> 542
+/// Uses the last two octets to create a unique ID (supports /16 subnets), shifting IDs at and
+/// above 99 by one because `1:99` is the unlimited default class.
 fn ip_to_class_id(ip: &str) -> Result<u32> {
     let parts: Vec<&str> = ip.split('.').collect();
     if parts.len() != 4 {
@@ -333,13 +333,14 @@ fn ip_to_class_id(ip: &str) -> Result<u32> {
     let third: u32 = parts[2].parse().context("Invalid IP octet")?;
     let fourth: u32 = parts[3].parse().context("Invalid IP octet")?;
 
-    // Class ID: third_octet * 256 + fourth_octet
-    // This gives us unique IDs for a /16 subnet
-    // Avoid 0 and 99 (default class)
-    let class_id = third * 256 + fourth;
-    if class_id == 0 || class_id == 1 || class_id == 99 {
+    let raw_id = third * 256 + fourth;
+    if raw_id == 0 || raw_id == 1 {
         return Err(anyhow!("Reserved class ID for IP: {}", ip));
     }
+
+    // Valid client addresses in a /16 produce raw IDs 2..=65534. Shifting the range beginning at
+    // 99 maps it to 100..=65535, preserving a one-to-one mapping without colliding with 1:99.
+    let class_id = if raw_id >= 99 { raw_id + 1 } else { raw_id };
 
     Ok(class_id)
 }
@@ -366,8 +367,11 @@ mod tests {
     #[test]
     fn test_ip_to_class_id() {
         assert_eq!(ip_to_class_id("10.100.0.5").unwrap(), 5);
-        assert_eq!(ip_to_class_id("10.100.1.5").unwrap(), 261); // 1*256 + 5
-        assert_eq!(ip_to_class_id("10.100.0.100").unwrap(), 100);
+        assert_eq!(ip_to_class_id("10.100.0.98").unwrap(), 98);
+        assert_eq!(ip_to_class_id("10.100.0.99").unwrap(), 100);
+        assert_eq!(ip_to_class_id("10.100.0.100").unwrap(), 101);
+        assert_eq!(ip_to_class_id("10.100.1.5").unwrap(), 262); // (1*256 + 5) + shift
+        assert_eq!(ip_to_class_id("10.100.255.254").unwrap(), 65535);
         assert!(ip_to_class_id("10.100.0.1").is_err()); // class_id 1 collides with root HFSC class
         assert!(ip_to_class_id("invalid").is_err());
     }

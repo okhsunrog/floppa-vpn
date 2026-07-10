@@ -225,19 +225,24 @@ async fn resolve_subscription_expires(
     permanent: bool,
     now: chrono::DateTime<Utc>,
 ) -> Result<Option<chrono::DateTime<Utc>>, ApiError> {
+    // Validate the plan even when the caller supplied an explicit duration or requested a permanent
+    // subscription; otherwise the later FK failure is reported as an internal database error.
+    let plan_trial =
+        sqlx::query_scalar::<_, Option<i32>>("SELECT trial_days FROM plans WHERE id = $1")
+            .bind(plan_id)
+            .fetch_optional(pool)
+            .await?
+            .ok_or_else(|| ApiError::not_found("Plan not found"))?;
+
     if permanent {
         return Ok(None);
     }
     let days = if let Some(d) = days {
         d
     } else {
-        let plan_trial = sqlx::query_scalar!("SELECT trial_days FROM plans WHERE id = $1", plan_id)
-            .fetch_optional(pool)
-            .await?;
         match plan_trial {
-            None => return Err(ApiError::not_found("Plan not found")),
-            Some(Some(trial_days)) => trial_days as i64,
-            Some(None) => {
+            Some(trial_days) => trial_days as i64,
+            None => {
                 return Err(ApiError::bad_request(
                     "Days not specified and plan has no trial_days",
                 ));

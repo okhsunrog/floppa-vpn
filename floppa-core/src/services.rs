@@ -569,6 +569,42 @@ pub async fn create_peer(
     let sub = sub_info.ok_or(FloppaError::NoActiveSubscription)?;
     let max_peers = sub.max_peers;
 
+    // A caller may only attach a peer to one of their own installations. Locking the row also
+    // serializes concurrent peer creation for the same device, so the duplicate check below is
+    // race-free even before the database unique index is considered.
+    if let Some(id) = installation_id {
+        let owned_id = sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM app_installations WHERE id = $1 AND user_id = $2 FOR UPDATE",
+        )
+        .bind(id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        if owned_id.is_none() {
+            return Err(FloppaError::InvalidInstallation(id));
+        }
+
+        let duplicate = sqlx::query_scalar::<_, bool>(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM peers
+                WHERE installation_id = $1 AND protocol = $2
+                  AND sync_status NOT IN ('removed', 'pending_remove')
+            )"#,
+        )
+        .bind(id)
+        .bind(protocol.as_db_str())
+        .fetch_one(&mut *tx)
+        .await?;
+
+        if duplicate {
+            return Err(FloppaError::PeerAlreadyExists {
+                installation_id: id,
+                protocol: protocol.as_db_str(),
+            });
+        }
+    }
+
     // Slots are counted per-device: a client device (installation) is ONE slot no matter how many
     // protocol peers it holds (WireGuard + AmneziaWG share a slot), while each standalone exported
     // config (no installation) is its own slot.
@@ -675,6 +711,12 @@ async fn allocate_ip_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     subnet: &str,
 ) -> Result<String> {
+    // IP selection is read-then-insert. Serialize allocators for the same subnet across all users
+    // so two transactions cannot select the same address and make one fail on the unique index.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(subnet)
+        .execute(&mut **tx)
+        .await?;
     allocate_ip_inner(&mut **tx, subnet).await
 }
 
@@ -1643,6 +1685,84 @@ mod tests {
             .unwrap();
 
         assert_eq!(row.installation_id, Some(installation.id));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_peer_rejects_foreign_installation(pool: DbPool) {
+        let config = test_config();
+        let ctx = test_ctx(&pool, &config);
+        let plan_id = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 11111).await;
+        let other_user_id = seed_user(&pool, 22222).await;
+        seed_subscription(&pool, user_id, plan_id).await;
+
+        let foreign = upsert_installation(&pool, other_user_id, "foreign-device", None, None, None)
+            .await
+            .unwrap();
+
+        let result = create_peer(
+            &ctx,
+            user_id,
+            Some(CreatePeerOptions {
+                installation_id: Some(foreign.id),
+                protocol: Protocol::WireGuard,
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(FloppaError::InvalidInstallation(id)) if id == foreign.id
+        ));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_peer_rejects_duplicate_installation_protocol(pool: DbPool) {
+        let config = test_config();
+        let ctx = test_ctx(&pool, &config);
+        let plan_id = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 11111).await;
+        seed_subscription(&pool, user_id, plan_id).await;
+        let installation = upsert_installation(&pool, user_id, "dev-1", None, None, None)
+            .await
+            .unwrap();
+
+        let options = || {
+            Some(CreatePeerOptions {
+                installation_id: Some(installation.id),
+                protocol: Protocol::WireGuard,
+            })
+        };
+        create_peer(&ctx, user_id, options()).await.unwrap();
+        let result = create_peer(&ctx, user_id, options()).await;
+
+        assert!(matches!(
+            result,
+            Err(FloppaError::PeerAlreadyExists {
+                installation_id,
+                protocol: "wireguard",
+            }) if installation_id == installation.id
+        ));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_concurrent_peer_creation_allocates_distinct_ips(pool: DbPool) {
+        let config = test_config();
+        let ctx = test_ctx(&pool, &config);
+        let plan_id = get_basic_plan_id(&pool).await;
+        let user_a = seed_user(&pool, 11111).await;
+        let user_b = seed_user(&pool, 22222).await;
+        seed_subscription(&pool, user_a, plan_id).await;
+        seed_subscription(&pool, user_b, plan_id).await;
+
+        let (peer_a, peer_b) = tokio::join!(
+            create_peer(&ctx, user_a, None),
+            create_peer(&ctx, user_b, None),
+        );
+        let peer_a = peer_a.unwrap();
+        let peer_b = peer_b.unwrap();
+
+        assert_ne!(peer_a.assigned_ip, peer_b.assigned_ip);
     }
 
     // ── find_peer_by_device_id ──

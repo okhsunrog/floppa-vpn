@@ -52,6 +52,21 @@ impl From<FloppaError> for ApiError {
                 message: format!("Peer limit reached: {current}/{max}"),
                 status: StatusCode::FORBIDDEN,
             },
+            FloppaError::InvalidInstallation(id) => Self {
+                error: "invalid_installation".into(),
+                message: format!("Installation not found: id={id}"),
+                status: StatusCode::NOT_FOUND,
+            },
+            FloppaError::PeerAlreadyExists {
+                installation_id,
+                protocol,
+            } => Self {
+                error: "peer_already_exists".into(),
+                message: format!(
+                    "An active {protocol} peer already exists for installation {installation_id}"
+                ),
+                status: StatusCode::CONFLICT,
+            },
             FloppaError::PeerNotFound(id) => Self {
                 error: "peer_not_found".into(),
                 message: format!("Peer not found: id={id}"),
