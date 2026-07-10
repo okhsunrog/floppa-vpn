@@ -920,6 +920,14 @@ export type CreateMyPeerErrors = {
      */
     403: ApiError;
     /**
+     * Installation not found
+     */
+    404: ApiError;
+    /**
+     * Peer already exists for installation and protocol
+     */
+    409: ApiError;
+    /**
      * Internal server error
      */
     500: ApiError;

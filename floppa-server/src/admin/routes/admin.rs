@@ -173,6 +173,12 @@ pub(super) async fn create_user(
 ) -> Result<impl IntoResponse, ApiError> {
     let now = Utc::now();
 
+    let expires_at =
+        super::resolve_subscription_expires(&state.pool, req.plan_id, req.days, req.permanent, now)
+            .await?;
+
+    let mut tx = state.pool.begin().await?;
+
     // Insert user row (fail if telegram_id already exists)
     let user_id = sqlx::query_scalar!(
         r#"
@@ -184,7 +190,7 @@ pub(super) async fn create_user(
         req.username.as_deref(),
         req.first_name.as_deref()
     )
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|e| {
         if let sqlx::Error::Database(ref db_err) = e
@@ -195,10 +201,6 @@ pub(super) async fn create_user(
         ApiError::from(e)
     })?;
 
-    let expires_at =
-        super::resolve_subscription_expires(&state.pool, req.plan_id, req.days, req.permanent, now)
-            .await?;
-
     // Create subscription
     sqlx::query!(
         "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'admin_grant')",
@@ -207,8 +209,10 @@ pub(super) async fn create_user(
         now,
         expires_at
     )
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     Ok((
         StatusCode::CREATED,

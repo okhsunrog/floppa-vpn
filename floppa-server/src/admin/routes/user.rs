@@ -486,6 +486,8 @@ pub(super) async fn get_my_peers(
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 402, body = ApiError, description = "No active subscription"),
         (status = 403, body = ApiError, description = "Peer limit reached"),
+        (status = 404, body = ApiError, description = "Installation not found"),
+        (status = 409, body = ApiError, description = "Peer already exists for installation and protocol"),
         (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
