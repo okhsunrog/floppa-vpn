@@ -39,7 +39,7 @@ hex = "0.4"
 teloxide = { version = "0.17", features = ["macros"] }
 
 # Database (PostgreSQL)
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "chrono"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "chrono"] }
 
 # Config
 toml = "0.9"

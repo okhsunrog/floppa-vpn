@@ -6,32 +6,68 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "public_key!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "public_key"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "assigned_ip!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "assigned_ip"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "user_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "user_id"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "protocol",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "protocol"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "speed_limit_mbps",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "default_speed_limit_mbps"
+          }
+        }
       }
     ],
     "parameters": {

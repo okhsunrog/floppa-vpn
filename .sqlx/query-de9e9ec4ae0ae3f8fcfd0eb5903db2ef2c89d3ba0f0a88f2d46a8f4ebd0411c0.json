@@ -6,17 +6,35 @@
       {
         "ordinal": 0,
         "name": "user_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "user_avatars",
+            "name": "user_id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "blob",
-        "type_info": "Bytea"
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "user_avatars",
+            "name": "blob"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "content_type",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "user_avatars",
+            "name": "content_type"
+          }
+        }
       }
     ],
     "parameters": {

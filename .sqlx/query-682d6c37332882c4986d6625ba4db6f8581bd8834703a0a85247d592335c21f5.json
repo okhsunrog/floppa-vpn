@@ -6,42 +6,90 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "assigned_ip",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "assigned_ip"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "sync_status",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "sync_status"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "protocol",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "protocol"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "last_handshake",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "last_handshake"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "device_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "device_name"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "device_id?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "device_id"
+          }
+        }
       }
     ],
     "parameters": {

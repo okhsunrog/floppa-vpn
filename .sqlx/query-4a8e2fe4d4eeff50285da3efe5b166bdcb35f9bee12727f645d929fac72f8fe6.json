@@ -6,27 +6,57 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "plan_id",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "plan_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "price_stars",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "price_stars"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "period_days",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "period_days"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "expires_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "expires_at"
+          }
+        }
       }
     ],
     "parameters": {

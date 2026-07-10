@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "price_stars!",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "price_stars"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "period_days!",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "period_days"
+          }
+        }
       }
     ],
     "parameters": {
