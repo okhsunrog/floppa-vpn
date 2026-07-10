@@ -70,6 +70,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
 
     // Initial sync on startup
     info!("Running initial sync");
+    restore_active_peers(pool, config).await?;
     sync_peers(pool, config).await?;
 
     // Reapply rate limits for active peers (tc rules are ephemeral)
@@ -129,6 +130,60 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Restore all database-active peers to their protocol interfaces.
+///
+/// Kernel WireGuard state is ephemeral: interfaces or their peer lists can be
+/// recreated independently of the database during package upgrades, network
+/// reconfiguration, or a host reboot. Re-adding a peer with `wg/awg set` is
+/// idempotent, so reconcile every active row before processing pending changes.
+async fn restore_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
+    let targets = proto_targets(config);
+    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
+
+    let peers = sqlx::query!(
+        r#"
+        SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!", protocol
+        FROM peers
+        WHERE sync_status = 'active'
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut restored = 0usize;
+    for peer in &peers {
+        let Some(target) = target_for(&peer.protocol) else {
+            error!(
+                peer_id = peer.id,
+                protocol = %peer.protocol,
+                "No configured interface for active peer — skipping restore"
+            );
+            continue;
+        };
+
+        match crate::wg::add_peer(
+            target.tool,
+            &target.interface,
+            &peer.public_key,
+            &peer.assigned_ip,
+        ) {
+            Ok(()) => restored += 1,
+            Err(e) => error!(
+                peer_id = peer.id,
+                interface = %target.interface,
+                error = %e,
+                "Failed to restore active peer"
+            ),
+        }
+    }
+
+    info!(
+        total_active = peers.len(),
+        restored, "Restored active peers"
+    );
     Ok(())
 }
 
