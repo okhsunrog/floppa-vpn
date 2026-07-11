@@ -6,6 +6,7 @@ use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use tokio::sync::RwLock;
 
 /// Connection status enum
@@ -18,6 +19,68 @@ pub enum ConnectionStatus {
     VerifyingConnection,
     Connected,
     Disconnecting,
+}
+
+/// Category of a connect failure. Lets the frontend decide what to do without
+/// string-matching error messages: `verify_failed` is worth trying another
+/// protocol (and may mean the peer was deleted), `permission_denied` needs user
+/// action, `tunnel_error` is usually environmental, `busy` is a re-entrancy guard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectErrorCode {
+    Busy,
+    PermissionDenied,
+    VerifyFailed,
+    TunnelError,
+}
+
+/// Structured error returned from the `connect` command.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct ConnectError {
+    pub code: ConnectErrorCode,
+    pub message: String,
+}
+
+impl ConnectError {
+    pub fn busy(message: impl Into<String>) -> Self {
+        Self {
+            code: ConnectErrorCode::Busy,
+            message: message.into(),
+        }
+    }
+    pub fn permission(message: impl Into<String>) -> Self {
+        Self {
+            code: ConnectErrorCode::PermissionDenied,
+            message: message.into(),
+        }
+    }
+    pub fn verify(message: impl Into<String>) -> Self {
+        Self {
+            code: ConnectErrorCode::VerifyFailed,
+            message: message.into(),
+        }
+    }
+    pub fn tunnel(message: impl Into<String>) -> Self {
+        Self {
+            code: ConnectErrorCode::TunnelError,
+            message: message.into(),
+        }
+    }
+}
+
+/// Setup/IO errors propagated via `?` (DNS, TUN, routing) are environmental —
+/// classify them as `tunnel_error`. Verify/permission/busy sites construct their
+/// variant explicitly instead of relying on this.
+impl From<String> for ConnectError {
+    fn from(message: String) -> Self {
+        Self::tunnel(message)
+    }
+}
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
 }
 
 /// WireGuard configuration
@@ -718,6 +781,10 @@ pub struct VpnState {
     pub configs: RwLock<SavedVpnConfigs>,
     pub connection: RwLock<ConnectionInfo>,
     pub speed_tracker: RwLock<SpeedTracker>,
+    /// Consecutive polls where the backend was unreachable (`get_all_info` → None).
+    /// Used by `get_connection_info` to avoid mistaking a transient IPC gap (UI
+    /// process reconnecting to the Android :vpn process) for a stopped tunnel.
+    pub unreachable_polls: AtomicU32,
 }
 
 impl VpnState {
@@ -726,6 +793,7 @@ impl VpnState {
             configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
+            unreachable_polls: AtomicU32::new(0),
         })
     }
 }
@@ -736,6 +804,7 @@ impl Default for VpnState {
             configs: RwLock::new(SavedVpnConfigs::default()),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
+            unreachable_polls: AtomicU32::new(0),
         }
     }
 }

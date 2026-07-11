@@ -34,7 +34,7 @@ export const commands = {
 	/**  Get list of protocols that have cached configs */
 	getAvailableProtocols: () => typedError<string[], string>(__TAURI_INVOKE("get_available_protocols")),
 	/**  Connect to VPN */
-	connect: (splitMode: "all" | "include" | "exclude" | null, selectedApps: string[] | null) => typedError<null, string>(__TAURI_INVOKE("connect", { splitMode, selectedApps })),
+	connect: (splitMode: "all" | "include" | "exclude" | null, selectedApps: string[] | null) => typedError<null, ConnectError>(__TAURI_INVOKE("connect", { splitMode, selectedApps })),
 	/**  Disconnect from VPN */
 	disconnect: () => typedError<null, string>(__TAURI_INVOKE("disconnect")),
 	/**  Get current connection info with live traffic stats */
@@ -99,6 +99,20 @@ export type ConfigSafe = {
 	allowed_ips: string,
 	mtu: number | null,
 };
+
+/**  Structured error returned from the `connect` command. */
+export type ConnectError = {
+	code: ConnectErrorCode,
+	message: string,
+};
+
+/**
+ *  Category of a connect failure. Lets the frontend decide what to do without
+ *  string-matching error messages: `verify_failed` is worth trying another
+ *  protocol (and may mean the peer was deleted), `permission_denied` needs user
+ *  action, `tunnel_error` is usually environmental, `busy` is a re-entrancy guard.
+ */
+export type ConnectErrorCode = "busy" | "permission_denied" | "verify_failed" | "tunnel_error";
 
 /**  Connection information */
 export type ConnectionInfo = {

@@ -129,10 +129,10 @@ async function doServerSync(): Promise<SyncResult> {
     }
 
     // Remember active protocol before sync (setActiveConfig switches to last-set protocol).
-    // On first start (no localStorage, no loaded config), leave null so we default to
-    // the first available protocol after sync — AmneziaWG, which is listed first.
-    const prevProtocol =
-      localStorage.getItem('preferredProtocol') ?? (vpn.hasConfig ? vpn.activeProtocol : null)
+    // Source of truth is the persisted active_protocol (loaded into config on mount).
+    // On first start (no loaded config) leave null so we default to the first available
+    // protocol after sync — AmneziaWG, which is listed first.
+    const prevProtocol = vpn.hasConfig ? vpn.activeProtocol : null
 
     // AmneziaWG is the default wg-family protocol when the server offers it; WireGuard otherwise.
     let amneziaAvailable = false
@@ -248,6 +248,15 @@ onMounted(async () => {
   await vpn.loadConfig()
   await vpn.refreshStatus()
 
+  // One-time on upgrade to auto-select: enable it and forget the previously-used
+  // protocol so the cycle re-probes from the configured priority instead of
+  // inheriting an old manual pick. Runs before sync so the reset is what gets restored.
+  if (!settingsStore.protocolDefaultsApplied) {
+    settingsStore.autoSelect = true
+    await vpn.resetProtocolPreference()
+    settingsStore.protocolDefaultsApplied = true
+  }
+
   if (vpn.deviceId) {
     await setupAutoPeer()
   }
@@ -278,7 +287,7 @@ async function handleConnect() {
   await vpn.connect()
 
   // If connection verification failed, check with server whether our peer still exists
-  if (vpn.error?.includes('verification failed') && vpn.deviceId) {
+  if (vpn.connectError?.code === 'verify_failed' && vpn.deviceId) {
     // Keep UI in loading state while we check server and potentially recreate
     vpn.error = null
     vpn.isLoading = true
@@ -336,8 +345,8 @@ function formatLastPacket(secs: number | null | undefined): string {
 }
 
 function selectProtocol(proto: string) {
+  // setProtocol persists active_protocol (keyring/file) — the single source of truth.
   vpn.setProtocol(proto)
-  localStorage.setItem('preferredProtocol', proto)
 }
 
 const healthDotClass = computed(() => {
@@ -397,6 +406,38 @@ const healthDotClass = computed(() => {
         class="text-xl font-semibold"
       />
 
+      <!-- Auto-select probe progress: which protocol we're trying + a stepper -->
+      <div v-if="vpn.attempt && vpn.attempt.total > 1" class="flex flex-col items-center gap-2">
+        <span class="text-sm text-[var(--ui-text-muted)]">
+          {{
+            t('vpn.tryingProtocol', {
+              protocol: t(`vpn.${vpn.attempt.protocol}`),
+              current: vpn.attempt.index,
+              total: vpn.attempt.total,
+            })
+          }}
+        </span>
+        <div class="flex gap-1.5">
+          <span
+            v-for="n in vpn.attempt.total"
+            :key="n"
+            class="size-2 rounded-full transition-colors"
+            :class="
+              n <= vpn.attempt.index ? 'bg-[var(--ui-primary)]' : 'bg-[var(--ui-bg-elevated)]'
+            "
+          />
+        </div>
+      </div>
+
+      <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
+      <UBadge
+        v-else-if="vpn.isConnected && settingsStore.autoSelect && vpn.connectionInfo?.protocol"
+        color="neutral"
+        variant="subtle"
+      >
+        {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.connectionInfo.protocol}`) }) }}
+      </UBadge>
+
       <div
         v-if="vpn.isConnected && vpn.connectionInfo"
         class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]"
@@ -423,7 +464,19 @@ const healthDotClass = computed(() => {
         class="mt-2 w-full max-w-sm"
       />
 
+      <!-- During an auto-select probe the button cancels the cycle -->
       <UButton
+        v-if="vpn.attempt"
+        :label="t('vpn.cancel')"
+        icon="i-lucide-x"
+        color="neutral"
+        variant="soft"
+        size="lg"
+        class="w-full max-w-[200px] mt-2"
+        @click="vpn.disconnect()"
+      />
+      <UButton
+        v-else
         :label="buttonLabel"
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
@@ -434,8 +487,8 @@ const healthDotClass = computed(() => {
         @click="handleConnect"
       />
 
-      <!-- Protocol toggle (only show when multiple protocols available) -->
-      <div v-if="vpn.availableProtocols.length > 1" class="mt-3">
+      <!-- Protocol toggle — manual mode only (auto-select hides it; the badge above shows the active protocol) -->
+      <div v-if="!settingsStore.autoSelect && vpn.availableProtocols.length > 1" class="mt-3">
         <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.protocol') }}</div>
         <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
           <button

@@ -339,6 +339,21 @@ export default {
   },
   settings: {
     title: 'Настройки',
+    protocolSelection: 'Протокол',
+    autoSelectProtocol: 'Автовыбор протокола',
+    autoSelectProtocolHint:
+      'Автоматически подбирать самый быстрый рабочий протокол при подключении. Выключите для ручного выбора.',
+    resetProtocolPreference: 'Сбросить',
+    protocolPreferenceReset: 'Предпочтение протокола сброшено',
+    configure: 'Настроить',
+    protocolSettings: 'Настройки протокола',
+    protocolPriority: 'Приоритет',
+    protocolPriorityHint:
+      'Пробуются сверху вниз; приложение остаётся на первом подключившемся протоколе.',
+    currentProtocol: 'Текущий протокол',
+    protocolUnavailable: 'недоступен',
+    autoSelectHelp:
+      'При включённом автовыборе приложение пробует протоколы в указанном порядке и остаётся на первом рабочем. Последний рабочий протокол пробуется первым; «Сбросить» забывает его, и перебор снова начинается сверху. Выключите автовыбор, чтобы выбрать протокол вручную.',
     splitTunneling: 'Раздельное туннелирование',
     splitTunnelingDescription: 'Управление приложениями, использующими VPN',
     modeAll: 'Все приложения',
@@ -461,6 +476,10 @@ export default {
     offlineModeNoConfig: 'Сервер недоступен. Для первой настройки VPN нужна связь с сервером.',
     retry: 'Повторить',
     connectionFailed: 'Не удалось подключиться. Попробуйте позже.',
+    allProtocolsFailed: 'Не удалось подключиться ни одним протоколом. Попробуйте позже.',
+    tryingProtocol: 'Пробую {protocol}… ({current}/{total})',
+    connectedVia: 'через {protocol}',
+    cancel: 'Отмена',
     lastActivity: 'Последний трафик',
     duration: 'Длительность',
     protocol: 'Протокол',
