@@ -4,7 +4,7 @@
 
 - Ansible with vault configured (`~/.vault_pass`)
 - `just` command runner
-- `bun` for frontend build
+- Vite+ (`vp`) for frontend runtime, package management, and builds
 - Rust toolchain
 - Access to your VPS via SSH
 - An Ansible repo with roles for PostgreSQL, nginx, and floppa-vpn (expected at `../cloud-forge/`)

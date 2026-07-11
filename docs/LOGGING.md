@@ -91,7 +91,7 @@ Mapping: `console.log` → `trace()`, `console.debug` → `debug()`, `console.in
 ## Reading Logs
 
 ### Desktop
-Logs appear in the terminal running `bun tauri dev`.
+Logs appear in the terminal running `vp exec tauri dev`.
 
 ### Android (adb)
 ```bash
