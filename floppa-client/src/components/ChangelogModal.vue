@@ -114,7 +114,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
         <UButton
           :label="t('common.close')"
           color="primary"
-          @click="updateStore.changelogModalOpen = false"
+          @click="() => void (updateStore.changelogModalOpen = false)"
         />
         <UButton
           v-if="isUpdateMode && updateStore.updateInfo"

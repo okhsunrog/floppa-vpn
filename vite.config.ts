@@ -4,6 +4,9 @@ import { defineConfig } from 'vite-plus'
 // bun workspace. Per-package vite.config.ts files hold Vite/framework config.
 // Globs are resolved from this root, so use workspace paths.
 export default defineConfig({
+  staged: {
+    '*.{css,js,ts,tsx,vue}': 'vp check --fix',
+  },
   lint: {
     plugins: ['eslint', 'typescript', 'unicorn', 'oxc', 'vue'],
     categories: {
@@ -62,6 +65,7 @@ export default defineConfig({
     ],
     options: {
       typeAware: true,
+      typeCheck: true,
     },
   },
   fmt: {
@@ -69,6 +73,18 @@ export default defineConfig({
     singleQuote: true,
     printWidth: 100,
     sortPackageJson: false,
-    ignorePatterns: ['**/src/client/**', '**/bindings.ts'],
+    // Keep the workspace-level formatter focused on frontend source. Rust manifests,
+    // generated SQLx metadata, docs, and workflow YAML have their own formatters.
+    ignorePatterns: [
+      '.claude/**',
+      '.github/**',
+      '**/*.html',
+      '**/*.json',
+      '**/*.json5',
+      '**/*.md',
+      '**/*.toml',
+      '**/src/client/**',
+      '**/bindings.ts',
+    ],
   },
 })

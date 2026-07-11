@@ -402,7 +402,7 @@ function selectMode(mode: SplitMode) {
             :color="showSystemApps ? 'primary' : 'neutral'"
             variant="soft"
             size="sm"
-            @click="showSystemApps = !showSystemApps"
+            @click="() => void (showSystemApps = !showSystemApps)"
           />
           <UButton
             icon="i-lucide-refresh-cw"
@@ -410,7 +410,7 @@ function selectMode(mode: SplitMode) {
             variant="ghost"
             size="sm"
             :loading="settings.appsLoading"
-            @click="settings.reloadApps()"
+            @click="() => void settings.reloadApps()"
           />
         </div>
 

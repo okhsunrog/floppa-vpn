@@ -179,14 +179,14 @@ const daysRemaining = computed(() => {
           <UButton
             :label="t('userDashboard.manageConfigs')"
             icon="i-lucide-settings"
-            @click="router.push('/peers')"
+            @click="() => void router.push('/peers')"
           />
           <UButton
             :label="t('userDashboard.appAndPlans')"
             icon="i-lucide-download"
             color="primary"
             variant="soft"
-            @click="router.push('/info')"
+            @click="() => void router.push('/info')"
           />
           <UButton
             v-if="auth.isAdmin"
@@ -194,7 +194,7 @@ const daysRemaining = computed(() => {
             icon="i-lucide-shield"
             color="neutral"
             variant="outline"
-            @click="router.push('/admin')"
+            @click="() => void router.push('/admin')"
           />
         </div>
       </div>

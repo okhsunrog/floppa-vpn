@@ -196,7 +196,7 @@ async function handleManualCode() {
               :color="tab === 'account' ? 'primary' : 'neutral'"
               block
               class="flex-1"
-              @click="tab = 'account'"
+              @click="() => void (tab = 'account')"
             >
               {{ t('login.tabAccount') }}
             </UButton>
@@ -205,7 +205,7 @@ async function handleManualCode() {
               :color="tab === 'telegram' ? 'primary' : 'neutral'"
               block
               class="flex-1"
-              @click="tab = 'telegram'"
+              @click="() => void (tab = 'telegram')"
             >
               Telegram
             </UButton>
@@ -222,7 +222,7 @@ async function handleManualCode() {
                     ? 'bg-[var(--ui-bg-elevated)] font-medium'
                     : 'text-[var(--ui-text-muted)]'
                 "
-                @click="accountMode = 'register'"
+                @click="() => void (accountMode = 'register')"
               >
                 {{ t('login.createAccount') }}
               </button>
@@ -234,7 +234,7 @@ async function handleManualCode() {
                     ? 'bg-[var(--ui-bg-elevated)] font-medium'
                     : 'text-[var(--ui-text-muted)]'
                 "
-                @click="accountMode = 'login'"
+                @click="() => void (accountMode = 'login')"
               >
                 {{ t('login.signIn') }}
               </button>

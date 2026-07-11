@@ -6,11 +6,11 @@
 
   build: {
     // Dev config
-    beforeDevCommand: "bun run sync-version && bun run dev",
+    beforeDevCommand: "vp run sync-version && vp dev",
     devUrl: "http://127.0.0.1:1420",
 
     // Build config
-    beforeBuildCommand: "bun run sync-version && bun run build",
+    beforeBuildCommand: "vp run sync-version && vp run build",
     frontendDist: "../dist",
   },
 

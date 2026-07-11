@@ -185,7 +185,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           v-for="peer in paginatedPeers"
           :key="peer.id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
-          @click="router.push(`/admin/users/${peer.user_id}`)"
+          @click="() => void router.push(`/admin/users/${peer.user_id}`)"
         >
           <div class="flex justify-between items-start">
             <div>
@@ -249,7 +249,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="confirmOpen = false"
+          @click="() => void (confirmOpen = false)"
         />
         <UButton
           :label="t('common.delete')"

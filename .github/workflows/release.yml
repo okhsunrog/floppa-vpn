@@ -30,10 +30,12 @@ jobs:
         with:
           workspaces: "floppa-client/src-tauri -> target"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
 
       - name: Install frontend dependencies
-        run: bun install
+        run: vp install --frozen-lockfile
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -65,7 +67,7 @@ jobs:
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: cd floppa-client && bun tauri android build --apk --target aarch64
+        run: cd floppa-client && vp exec tauri android build --apk --target aarch64
 
       - name: Rename APK with version
         run: |
@@ -96,15 +98,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
 
       - name: Install frontend dependencies
-        run: bun install
+        run: vp install --frozen-lockfile
 
       - name: Build Linux client
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: cd floppa-client && bun tauri build
+        run: cd floppa-client && vp exec tauri build
 
       - name: Rename artifacts with version
         run: |
@@ -139,15 +143,17 @@ jobs:
         with:
           workspaces: "floppa-client/src-tauri -> target"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
 
       - name: Install frontend dependencies
-        run: bun install
+        run: vp install --frozen-lockfile
 
       - name: Build Windows client
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: cd floppa-client && bun tauri build
+        run: cd floppa-client && vp exec tauri build
 
       - name: Rename artifacts with version
         shell: bash

@@ -400,7 +400,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="planDialog = false"
+          @click="() => void (planDialog = false)"
         />
         <UButton
           :label="isEditing ? t('common.save') : t('common.create')"
@@ -420,7 +420,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="confirmOpen = false"
+          @click="() => void (confirmOpen = false)"
         />
         <UButton
           :label="t('common.delete')"

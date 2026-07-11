@@ -139,7 +139,11 @@ function onChangelogClick(event: MouseEvent) {
           size="sm"
           @click="toggleLocale"
         />
-        <UButton :label="t('info.login')" icon="i-lucide-log-in" @click="router.push('/login')" />
+        <UButton
+          :label="t('info.login')"
+          icon="i-lucide-log-in"
+          @click="() => void router.push('/login')"
+        />
       </div>
     </div>
 
@@ -268,7 +272,7 @@ function onChangelogClick(event: MouseEvent) {
           color="neutral"
           variant="ghost"
           size="sm"
-          @click="showHistory = !showHistory"
+          @click="() => void (showHistory = !showHistory)"
         />
       </div>
     </section>

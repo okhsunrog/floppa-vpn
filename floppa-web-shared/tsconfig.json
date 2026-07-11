@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true,
     "useDefineForClassFields": true
   },
-  "include": ["src/**/*.ts", "src/**/*.vue"]
+  "include": ["env.d.ts", "src/**/*.ts", "src/**/*.vue"]
 }

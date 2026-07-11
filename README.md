@@ -212,17 +212,17 @@ graph TD
 ## Development
 
 ```bash
-# Prerequisites: Rust toolchain, bun, just
+# Prerequisites: Rust toolchain, Vite+ (`vp`), just
 
 # Install frontend dependencies
-bun install
+vp install
 
 # Run all checks (fmt, clippy, tests, type-check, lint)
 just check
 
 # Dev servers
-cd floppa-face && bun dev        # Admin panel (proxies /api → :3000)
-cd floppa-client && bun tauri dev      # Client app
+cd floppa-face && vp dev               # Admin panel (proxies /api → :3000)
+cd floppa-client && vp exec tauri dev  # Client app
 
 # Regenerate OpenAPI TypeScript client
 just openapi

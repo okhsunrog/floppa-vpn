@@ -58,7 +58,7 @@ const userId = Number(route.params.id)
 const avatarSrc = ref<string | undefined>(undefined)
 getUserAvatar({ path: { id: userId }, parseAs: 'blob' })
   .then(({ data, response }) => {
-    if (response.ok && data instanceof Blob) avatarSrc.value = URL.createObjectURL(data)
+    if (response?.ok && data instanceof Blob) avatarSrc.value = URL.createObjectURL(data)
   })
   .catch(() => {})
 
@@ -257,7 +257,7 @@ async function doRemovePeer() {
       color="neutral"
       variant="ghost"
       class="mb-4"
-      @click="router.push('/admin/users')"
+      @click="() => void router.push('/admin/users')"
     />
 
     <div v-if="loading" class="flex justify-center py-12">
@@ -465,7 +465,7 @@ async function doRemovePeer() {
                 color="error"
                 variant="outline"
                 size="sm"
-                @click="deleteSubConfirm = true"
+                @click="() => void (deleteSubConfirm = true)"
               />
             </div>
           </div>
@@ -525,7 +525,7 @@ async function doRemovePeer() {
           <div class="mt-4">
             <button
               class="text-sm text-[var(--ui-text-muted)] hover:text-[var(--ui-text)] flex items-center gap-1"
-              @click="showHistory = !showHistory"
+              @click="() => void (showHistory = !showHistory)"
             >
               <UIcon
                 :name="showHistory ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
@@ -575,7 +575,7 @@ async function doRemovePeer() {
               :label="t('adminUserDetail.setCredential')"
               icon="i-lucide-key"
               size="sm"
-              @click="credDialog = true"
+              @click="() => void (credDialog = true)"
             />
           </div>
         </template>
@@ -610,7 +610,7 @@ async function doRemovePeer() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="credDialog = false"
+          @click="() => void (credDialog = false)"
         />
         <UButton
           :label="t('common.save')"
@@ -655,7 +655,7 @@ async function doRemovePeer() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="subDialog = false"
+          @click="() => void (subDialog = false)"
         />
         <UButton
           :label="t('common.save')"
@@ -676,7 +676,7 @@ async function doRemovePeer() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="deleteSubConfirm = false"
+          @click="() => void (deleteSubConfirm = false)"
         />
         <UButton
           :label="t('common.delete')"
@@ -697,7 +697,7 @@ async function doRemovePeer() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="confirmOpen = false"
+          @click="() => void (confirmOpen = false)"
         />
         <UButton
           :label="t('common.remove')"
