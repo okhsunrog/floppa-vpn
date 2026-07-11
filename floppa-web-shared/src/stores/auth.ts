@@ -66,6 +66,7 @@ export const useAuthStore = defineStore('auth', () => {
   function cacheAvatar(retries = 8) {
     getMyAvatar({ parseAs: 'blob' })
       .then(({ data, response }) => {
+        if (!response) return
         if (response.status === 404) {
           if (retries > 0) setTimeout(() => cacheAvatar(retries - 1), 3000)
           return

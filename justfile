@@ -101,21 +101,24 @@ check-rust:
     echo "tests..."
     output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
 
-# Frontend: format + type-check + lint + build
+# Frontend: format + lint + cached type-check graph + build
 check-frontend:
     #!/usr/bin/env bash
     set -euo pipefail
     run() { local out; out=$("$@" 2>&1) || { echo "$out"; return 1; }; }
     for pkg in floppa-web-shared floppa-face floppa-client; do
-        echo "$pkg: format + typecheck + lint..."
+        echo "$pkg: format + lint..."
         cd "$pkg"
-        run bun run --silent format:check
-        run bun run --silent type-check
-        run bun run --silent lint:check
+        run vp run format:check
+        run vp run lint:check
         cd ..
     done
+    echo "frontend: typecheck..."
+    run vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
+    echo "frontend: tests..."
+    run vp run --filter floppa-web-shared test
     echo "floppa-client: build..."
-    run bash -c 'cd floppa-client && bun run --silent build'
+    run vp run --filter floppa-client build
 
 # Format all code (Rust + frontend + Kotlin)
 fmt:
@@ -129,8 +132,8 @@ fmt:
     for pkg in floppa-web-shared floppa-face floppa-client; do
         echo "$pkg: format + lint..."
         cd "$pkg"
-        run bun run --silent format
-        run bun run --silent lint
+        run vp run format
+        run vp run lint
         cd ..
     done
     just fmt-kotlin
@@ -138,9 +141,9 @@ fmt:
 # Lint (without auto-fix)
 lint:
     @cargo clippy --quiet -- -D warnings
-    @cd floppa-web-shared && bun run --silent lint:check
-    @cd floppa-face && bun run --silent lint:check
-    @cd floppa-client && bun run --silent lint:check
+    @cd floppa-web-shared && vp run lint:check
+    @cd floppa-face && vp run lint:check
+    @cd floppa-client && vp run lint:check
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
 sqlx-prepare:
@@ -157,12 +160,13 @@ clean:
 
 # Build frontend
 build-frontend:
-    cd floppa-face && bun install && bun run build
+    vp install --frozen-lockfile
+    vp run --filter floppa-face build
 
 # Regenerate OpenAPI TypeScript client (no running backend needed)
 openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
-    cd floppa-web-shared && bun run openapi-ts
+    cd floppa-web-shared && vp exec openapi-ts
 
 android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
 android_pkg := "dev.okhsunrog.floppa_vpn"
@@ -173,7 +177,7 @@ adb_cmd := if env("ADB_DEVICE", "") != "" { "adb -s " + env("ADB_DEVICE", "") } 
 
 # Build Android APK (release, aarch64)
 build-android:
-    cd floppa-client && bun tauri android build --target aarch64 --split-per-abi --apk
+    cd floppa-client && vp exec tauri android build --target aarch64 --split-per-abi --apk
 
 # Build and install Android APK on connected device
 deploy-android device="": build-android

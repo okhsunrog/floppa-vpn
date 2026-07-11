@@ -56,7 +56,7 @@ const { data: stats, status, error } = useQuery(getStatsQuery())
       <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4">
         <UCard
           class="cursor-pointer hover:-translate-y-0.5 transition-transform"
-          @click="router.push('/admin/users')"
+          @click="() => void router.push('/admin/users')"
         >
           <div class="flex items-center gap-4">
             <UIcon name="i-lucide-users" class="text-3xl text-[var(--ui-primary)]" />
@@ -70,7 +70,7 @@ const { data: stats, status, error } = useQuery(getStatsQuery())
         </UCard>
         <UCard
           class="cursor-pointer hover:-translate-y-0.5 transition-transform"
-          @click="router.push('/admin/plans')"
+          @click="() => void router.push('/admin/plans')"
         >
           <div class="flex items-center gap-4">
             <UIcon name="i-lucide-list" class="text-3xl text-[var(--ui-primary)]" />

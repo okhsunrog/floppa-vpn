@@ -37,6 +37,7 @@ jobs:
 
   clippy:
     name: Clippy
+    needs: frontend
     runs-on: ubuntu-latest
     env:
       SQLX_OFFLINE: "true"
@@ -49,16 +50,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: oven-sh/setup-bun@v2
-
-      - name: Build frontend (needed for memory-serve embedding)
-        run: cd floppa-face && bun install && bun run build
+      - name: Download frontend (needed for memory-serve embedding)
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: floppa-face/dist
 
       - name: Clippy (workspace)
         run: cargo clippy -- -D warnings
 
   test:
     name: Test & sqlx
+    needs: frontend
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -83,10 +86,18 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
 
-      - name: Build frontend (needed for memory-serve embedding)
-        run: cd floppa-face && bun install && bun run build
+      - name: Install frontend dependencies
+        run: vp install --frozen-lockfile
+
+      - name: Download frontend (needed for memory-serve embedding)
+        uses: actions/download-artifact@v8
+        with:
+          name: frontend-dist
+          path: floppa-face/dist
 
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --version 0.9.0 --no-default-features --features postgres,rustls
@@ -103,7 +114,7 @@ jobs:
       - name: Check OpenAPI client is up to date
         run: |
           cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
-          (cd floppa-web-shared && bun run openapi-ts)
+          (cd floppa-web-shared && vp exec openapi-ts)
           git diff --exit-code -- floppa-web-shared/openapi.json floppa-web-shared/src/client/ \
             || (echo "::error::OpenAPI client is stale. Run 'just openapi' and commit the changes." && exit 1)
 
@@ -113,25 +124,51 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
 
       - name: Install dependencies
-        run: bun install
+        run: vp install --frozen-lockfile
 
-      - name: Format check
+      - name: Restore Vite Task cache
+        id: vite-task-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: node_modules/.vite/task-cache
+          key: vite-task-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            vite-task-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Audit dependencies
+        run: vp pm audit
+
+      - name: Vite+ check
+        run: vp check
+
+      - name: Vue type-check
+        run: vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
+
+      - name: Frontend tests
+        run: vp run --filter floppa-web-shared test
+
+      - name: Build frontends
         run: |
-          cd floppa-web-shared && bun run format:check
-          cd ../floppa-face && bun run format:check
-          cd ../floppa-client && bun run format:check
+          vp run --filter floppa-face build
+          vp run --filter floppa-client build
 
-      - name: Type-check & lint
-        run: |
-          cd floppa-web-shared && bun run type-check && bun run lint:check
-          cd ../floppa-face && bun run type-check && bun run lint:check
-          cd ../floppa-client && bun run type-check && bun run lint:check
+      - name: Upload server frontend
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist
+          path: floppa-face/dist
 
-      - name: Build client frontend
-        run: cd floppa-client && bun run build
+      - name: Save Vite Task cache
+        if: success()
+        uses: actions/cache/save@v6
+        with:
+          path: node_modules/.vite/task-cache
+          key: ${{ steps.vite-task-cache.outputs.cache-primary-key }}
 
   client:
     name: Client checks

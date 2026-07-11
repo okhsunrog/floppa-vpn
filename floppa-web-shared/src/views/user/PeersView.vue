@@ -381,7 +381,7 @@ async function doRegenerateVless() {
                 color="warning"
                 variant="soft"
                 size="sm"
-                @click="vlessRegenerateConfirmOpen = true"
+                @click="() => void (vlessRegenerateConfirmOpen = true)"
               />
             </div>
           </div>
@@ -495,7 +495,7 @@ async function doRegenerateVless() {
           :label="t('common.close')"
           color="neutral"
           variant="outline"
-          @click="configDialog = false"
+          @click="() => void (configDialog = false)"
         />
       </template>
     </UModal>
@@ -516,7 +516,7 @@ async function doRegenerateVless() {
           :label="t('common.close')"
           color="neutral"
           variant="outline"
-          @click="vlessDialog = false"
+          @click="() => void (vlessDialog = false)"
         />
       </template>
     </UModal>
@@ -531,7 +531,7 @@ async function doRegenerateVless() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="confirmOpen = false"
+          @click="() => void (confirmOpen = false)"
         />
         <UButton
           :label="t('common.delete')"
@@ -552,7 +552,7 @@ async function doRegenerateVless() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="vlessRegenerateConfirmOpen = false"
+          @click="() => void (vlessRegenerateConfirmOpen = false)"
         />
         <UButton
           :label="t('userPeers.vlessRegenerate')"

@@ -245,7 +245,7 @@ async function addUser() {
           v-for="user in paginatedUsers"
           :key="user.id"
           class="cursor-pointer active:scale-[0.98] transition-transform"
-          @click="router.push(`/admin/users/${user.id}`)"
+          @click="() => void router.push(`/admin/users/${user.id}`)"
         >
           <div class="flex justify-between items-start">
             <div class="flex items-center gap-2">
@@ -339,7 +339,7 @@ async function addUser() {
           :label="t('common.cancel')"
           color="neutral"
           variant="outline"
-          @click="addUserDialog = false"
+          @click="() => void (addUserDialog = false)"
         />
         <UButton
           :label="t('common.create')"

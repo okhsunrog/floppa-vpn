@@ -182,7 +182,7 @@ const navItems = computed(() => {
             color="neutral"
             variant="ghost"
             size="sm"
-            @click="mobileMenuOpen = true"
+            @click="() => void (mobileMenuOpen = true)"
           />
           <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
           <!-- Desktop nav -->
@@ -276,7 +276,7 @@ const navItems = computed(() => {
                 :color="colorModeStore === mode.value ? 'primary' : 'neutral'"
                 :variant="colorModeStore === mode.value ? 'subtle' : 'ghost'"
                 size="sm"
-                @click="colorModeStore = mode.value"
+                @click="() => void (colorModeStore = mode.value)"
               />
             </UFieldGroup>
             <UFieldGroup>

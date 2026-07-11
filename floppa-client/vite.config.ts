@@ -1,9 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite-plus'
-import vue from '@vitejs/plugin-vue'
-import vueDevTools from 'vite-plugin-vue-devtools'
-import ui from '@nuxt/ui/vite'
+import { defineConfig, lazyPlugins } from 'vite-plus'
 import JSON5 from 'json5'
 
 const host = process.env.TAURI_DEV_HOST
@@ -14,33 +11,68 @@ const tauriConf = JSON5.parse(readFileSync('./src-tauri/tauri.conf.json5', 'utf-
 const appVersion: string = tauriConf.version ?? '0.0.0'
 
 export default defineConfig({
+  run: {
+    tasks: {
+      typecheck: {
+        command: 'vue-tsc --build --force',
+        cache: true,
+        input: [{ auto: true }, '!node_modules/.tmp/**'],
+        output: [{ auto: true }, '!node_modules/.tmp/**'],
+      },
+      build: {
+        command: 'vp build',
+        cache: true,
+        dependsOn: ['typecheck', { task: 'typecheck', from: ['dependencies', 'devDependencies'] }],
+        input: [
+          { auto: true },
+          '!node_modules/.nuxt-ui/**',
+          '!auto-imports.d.ts',
+          '!components.d.ts',
+        ],
+        output: [
+          { auto: true },
+          '!node_modules/.nuxt-ui/**',
+          '!auto-imports.d.ts',
+          '!components.d.ts',
+        ],
+      },
+    },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
 
-  plugins: [
-    vue(),
-    // WARNING: The autoImport config is critical! Nuxt UI's unplugin-auto-import registers
-    // "options" from useResizable.js as an auto-importable name. Since "options" is used as a
-    // parameter name everywhere in the generated SDK (and in node_modules like @vue/shared,
-    // reka-ui), the plugin injects bogus `import { options } from 'useResizable.js'` causing
-    // white screens and "can't access lexical declaration before initialization" errors.
-    // `ignore` prevents "options" from being auto-imported. `exclude` skips transforming SDK files.
-     
-    ui({
-      autoImport: { ignore: ['options'], exclude: [/floppa-web-shared\/src\/client/, /node_modules/] },
-      ui: {
-        // Ensure all modals/slideovers render above the sticky navbar (z-40),
-        // and dropdowns render above modals (z-[51])
-        modal: { slots: { overlay: 'z-50', content: 'z-50' } },
-        slideover: { slots: { overlay: 'z-50', content: 'z-50' } },
-        select: { slots: { content: 'z-[51]' } },
-        selectMenu: { slots: { content: 'z-[51]' } },
-      },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ui() type mismatch with Vite's PluginOption
-    }) as any,
-    ...(!isProduction ? [vueDevTools()] : []),
-  ],
+  plugins: lazyPlugins(async () => {
+    const [{ default: vue }, { default: ui }, { default: vueDevTools }] = await Promise.all([
+      import('@vitejs/plugin-vue'),
+      import('@nuxt/ui/vite'),
+      import('vite-plugin-vue-devtools'),
+    ])
+    return [
+      vue(),
+      // WARNING: The autoImport config is critical! Nuxt UI's unplugin-auto-import registers
+      // "options" from useResizable.js as an auto-importable name. Since "options" is used as a
+      // parameter name everywhere in the generated SDK (and in node_modules like @vue/shared,
+      // reka-ui), the plugin injects bogus `import { options } from 'useResizable.js'` causing
+      // white screens and "can't access lexical declaration before initialization" errors.
+      // `ignore` prevents "options" from being auto-imported. `exclude` skips transforming SDK files.
+      ui({
+        autoImport: {
+          ignore: ['options'],
+          exclude: [/floppa-web-shared\/src\/client/, /node_modules/],
+        },
+        ui: {
+          // Ensure all modals/slideovers render above the sticky navbar (z-40),
+          // and dropdowns render above modals (z-[51])
+          modal: { slots: { overlay: 'z-50', content: 'z-50' } },
+          slideover: { slots: { overlay: 'z-50', content: 'z-50' } },
+          select: { slots: { content: 'z-[51]' } },
+          selectMenu: { slots: { content: 'z-[51]' } },
+        },
+      }),
+      ...(!isProduction ? [vueDevTools()] : []),
+    ]
+  }),
 
   // 1. prevent vite from obscuring rust errors
   clearScreen: false,
@@ -92,10 +124,12 @@ export default defineConfig({
 
   build: {
     chunkSizeWarningLimit: 2000, // Tauri app — single bundle, no CDN concerns
-    rollupOptions: {
-      onwarn(warning, warn) {
-        if (warning.code === 'INEFFECTIVE_DYNAMIC_IMPORT') return
-        warn(warning)
+    rolldownOptions: {
+      onLog(level, log, handler) {
+        if (log.code === 'INVALID_ANNOTATION' && log.id?.includes('@vueuse/core/dist/index.js'))
+          return
+        if (log.code === 'INEFFECTIVE_DYNAMIC_IMPORT') return
+        handler(level, log)
       },
     },
   },

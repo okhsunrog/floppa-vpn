@@ -41,6 +41,9 @@ if [ "$tauri_ver" != "$cargo_ver" ] || [ "$tauri_ver" != "$changelog_ver" ] || [
     echo "  changelog.json:   $changelog_ver"
     echo "  PKGBUILD:         $pkgbuild_ver"
     echo ""
-    echo "Run 'cd floppa-client && bun run sync-version' and update changelog.json and PKGBUILD"
+    echo "Run 'cd floppa-client && vp run sync-version' and update changelog.json and PKGBUILD"
     exit 1
 fi
+
+# Run Vite+'s configured format, lint, and type-aware checks for staged frontend files.
+vp staged

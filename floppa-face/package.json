@@ -8,36 +8,32 @@
   },
   "scripts": {
     "dev": "vp dev",
-    "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vp preview",
-    "build-only": "vp build",
-    "type-check": "vue-tsc --build",
     "lint": "vp lint --fix",
     "lint:check": "vp lint",
     "format": "vp fmt src/",
     "format:check": "vp fmt --check src/"
   },
   "dependencies": {
-    "@nuxt/ui": "^4.5.1",
-    "@pinia/colada": "^1.0.0",
+    "@nuxt/ui": "^4.9.0",
+    "@pinia/colada": "^1.3.1",
     "floppa-web-shared": "workspace:*",
     "pinia": "^3.0.4",
-    "tailwindcss": "^4.2.1",
-    "vue": "^3.5.29",
-    "vue-i18n": "^11.3.0",
-    "vue-router": "^5.0.3"
+    "tailwindcss": "^4.3.2",
+    "vue": "^3.5.39",
+    "vue-i18n": "^11.4.6",
+    "vue-router": "^5.1.0"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
-    "@types/node": "^25.3.3",
-    "@vitejs/plugin-vue": "^6.0.4",
-    "@vue/tsconfig": "^0.9.0",
-    "jiti": "^2.6.1",
-    "npm-run-all2": "^8.0.4",
-    "typescript": "~5.9.3",
+    "@types/node": "^26.1.1",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vue/tsconfig": "^0.9.1",
+    "jiti": "^2.7.0",
+    "typescript": "catalog:",
     "vite": "catalog:",
-    "vite-plugin-vue-devtools": "^8.0.7",
-    "vue-tsc": "^3.2.5",
+    "vite-plugin-vue-devtools": "^8.1.5",
+    "vue-tsc": "^3.3.7",
     "vite-plus": "catalog:"
   }
 }
