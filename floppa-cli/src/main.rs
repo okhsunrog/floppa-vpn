@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod dns;
+mod reconnect;
 mod tunnel;
 mod vless;
 
@@ -192,60 +193,204 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
-    let wg_config = tunnel::WgConfig::from_config_str(config_str)?;
-    eprintln!("Creating WireGuard tunnel on {interface}...");
-    let device = tunnel::create_tunnel(&wg_config, interface).await?;
-    eprintln!("Configuring networking...");
-    tunnel::configure_networking(&wg_config, interface).await?;
+    let interface = interface.to_string();
+    let config_str = config_str.to_string();
 
-    if !no_dns {
-        dns::set_dns(&wg_config)?;
-    }
+    // Shared, rebuildable tunnel state. `Device` is not `Clone` and is torn
+    // down via `stop(self)`, so it lives inside a RefCell we swap on rebuild.
+    let device: std::rc::Rc<std::cell::RefCell<Option<tunnel::FloppaDevice>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    println!("READY");
-    eprintln!("Connected! Press Ctrl+C to disconnect.");
-    tokio::signal::ctrl_c().await?;
+    let rebuild = {
+        let device = device.clone();
+        let config_str = config_str.clone();
+        let interface = interface.clone();
+        move || -> reconnect::BoxFutureLocal<Result<()>> {
+            let device = device.clone();
+            let config_str = config_str.clone();
+            let interface = interface.clone();
+            Box::pin(async move {
+                // Tear down any previous instance before rebuilding.
+                let prev = device.borrow_mut().take();
+                if let Some(d) = prev {
+                    d.stop().await;
+                }
+                if !no_dns {
+                    let _ = dns::restore_dns();
+                }
+
+                let wg_config = tunnel::WgConfig::from_config_str(&config_str)?;
+                eprintln!("Creating WireGuard tunnel on {interface}...");
+                let dev = tunnel::create_tunnel(&wg_config, &interface).await?;
+                eprintln!("Configuring networking...");
+                tunnel::configure_networking(&wg_config, &interface).await?;
+                if !no_dns {
+                    dns::set_dns(&wg_config)?;
+                }
+                *device.borrow_mut() = Some(dev);
+                Ok(())
+            })
+        }
+    };
+
+    let health = {
+        let device = device.clone();
+        let stale_after = reconnect::ReconnectConfig::default().handshake_stale_after;
+        move || -> reconnect::BoxFutureLocal<Result<bool>> {
+            let device = device.clone();
+            Box::pin(async move {
+                // Take the device out of the shared cell for the duration of the
+                // read so we don't hold a RefCell borrow across an await point.
+                let held = device.borrow_mut().take();
+                let Some(d) = held else {
+                    *device.borrow_mut() = None;
+                    return Ok(false);
+                };
+                // Find the newest handshake across peers; if it is older than the
+                // stale threshold (or missing), the tunnel is considered down.
+                let result = d
+                    .read(async |dr| {
+                        dr.peers()
+                            .await
+                            .iter()
+                            .filter_map(|p| p.stats.last_handshake)
+                            .max()
+                            .map(|hs| {
+                                let now = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default();
+                                now.saturating_sub(hs) <= stale_after
+                            })
+                            .unwrap_or(false)
+                    })
+                    .await;
+                *device.borrow_mut() = Some(d);
+                Ok(result)
+            })
+        }
+    };
+
+    let signal = reconnect::ReconnectSignal::default();
+    let _watcher = reconnect::spawn_resume_watcher(signal.clone());
+
+    // The reconnect loop owns the lifecycle from here; it drives rebuild/health
+    // until a shutdown signal arrives. We reuse Ctrl+C / SIGTERM as the abort.
+    let shutdown = Box::pin(async move {
+        let _ = tokio::signal::ctrl_c().await;
+    });
+    let result = reconnect::run(
+        reconnect::ReconnectConfig::default(),
+        Box::new(health),
+        Box::new(rebuild),
+        &signal,
+        shutdown,
+    )
+    .await;
 
     eprintln!("\nDisconnecting...");
     if !no_dns {
-        dns::restore_dns()?;
+        let _ = dns::restore_dns();
     }
-    device.stop().await;
+    // Extract the device from the shared cell before awaiting stop().
+    let dev = device.borrow_mut().take();
+    if let Some(d) = dev {
+        d.stop().await;
+    }
+    result?;
     eprintln!("Disconnected.");
     Ok(())
 }
 
 async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
-    let config = vless::parse_uri(config_str.trim())?;
+    let interface = interface.to_string();
+    let config_str = config_str.trim().to_string();
 
-    eprintln!("Creating VLESS+REALITY tunnel on {interface}...");
-    eprintln!("Server: {}", config.server_addr);
-    eprintln!("SNI: {}", config.server_name);
+    let tunnel: std::rc::Rc<std::cell::RefCell<Option<shoes_lite::api::VlessTunnel>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
 
-    let tunnel = vless::create_tunnel(&config, interface).await?;
+    let rebuild = {
+        let tunnel = tunnel.clone();
+        let config_str = config_str.clone();
+        let interface = interface.clone();
+        move || -> reconnect::BoxFutureLocal<Result<()>> {
+            let tunnel = tunnel.clone();
+            let config_str = config_str.clone();
+            let interface = interface.clone();
+            Box::pin(async move {
+                // Tear down any previous instance before rebuilding.
+                let prev = tunnel.borrow_mut().take();
+                if let Some(t) = prev {
+                    let _ = t.stop().await;
+                }
+                if !no_dns {
+                    let _ = dns::restore_dns();
+                }
 
-    eprintln!("Configuring networking...");
-    vless::configure_networking(&config, interface).await?;
-
-    if !no_dns {
-        // Write DNS servers from config
-        if let Some(ref dns) = config.dns {
-            let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
-            if !servers.is_empty() {
-                dns::write_dns(&servers)?;
-            }
+                let config = vless::parse_uri(config_str.as_str())?;
+                eprintln!("Creating VLESS+REALITY tunnel on {interface}...");
+                eprintln!("Server: {}", config.server_addr);
+                eprintln!("SNI: {}", config.server_name);
+                let t = vless::create_tunnel(&config, &interface).await?;
+                eprintln!("Configuring networking...");
+                vless::configure_networking(&config, &interface).await?;
+                if !no_dns && let Some(ref dns) = config.dns {
+                    let servers: Vec<String> =
+                        dns.split(',').map(|s| s.trim().to_string()).collect();
+                    if !servers.is_empty() {
+                        dns::write_dns(&servers)?;
+                    }
+                }
+                *tunnel.borrow_mut() = Some(t);
+                Ok(())
+            })
         }
-    }
+    };
 
-    println!("READY");
-    eprintln!("Connected! Press Ctrl+C to disconnect.");
-    tokio::signal::ctrl_c().await?;
+    let health = {
+        let config_str = config_str.clone();
+        move || -> reconnect::BoxFutureLocal<Result<bool>> {
+            let config_str = config_str.clone();
+            Box::pin(async move {
+                let cfg = match vless::parse_uri(config_str.as_str()) {
+                    Ok(c) => c,
+                    Err(_) => return Ok(false),
+                };
+                let reachable = std::net::TcpStream::connect_timeout(
+                    &cfg.server_addr
+                        .parse()
+                        .unwrap_or_else(|_| "127.0.0.1:443".parse().unwrap()),
+                    std::time::Duration::from_secs(3),
+                )
+                .is_ok();
+                Ok(reachable)
+            })
+        }
+    };
+
+    let signal = reconnect::ReconnectSignal::default();
+    let _watcher = reconnect::spawn_resume_watcher(signal.clone());
+
+    let shutdown = Box::pin(async move {
+        let _ = tokio::signal::ctrl_c().await;
+    });
+    let result = reconnect::run(
+        reconnect::ReconnectConfig::default(),
+        Box::new(health),
+        Box::new(rebuild),
+        &signal,
+        shutdown,
+    )
+    .await;
 
     eprintln!("\nDisconnecting...");
     if !no_dns {
-        dns::restore_dns()?;
+        let _ = dns::restore_dns();
     }
-    tunnel.stop().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let tunnel_dev = tunnel.borrow_mut().take();
+    if let Some(t) = tunnel_dev {
+        let _ = t.stop().await;
+    }
+    result?;
     eprintln!("Disconnected.");
     Ok(())
 }

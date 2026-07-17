@@ -26,5 +26,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log = "0.2.0"
 tracing-appender = "0.2.4"
+# D-Bus (systemd-logind) for instant reconnect on system resume from sleep.
+zbus = "5"
+# Stream trait for the logind signal stream (zbus re-exports but doesn't expose
+# the path publicly; pull the crate directly for OrderedStreamExt).
+ordered-stream = "0.2"
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }

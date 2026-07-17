@@ -210,3 +210,28 @@ jobs:
 
       - name: Check Kotlin formatting
         run: just check-kotlin
+
+  cli:
+    name: floppa-cli (CLI connector)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-cli -> floppa-cli/target"
+
+      - name: Format check
+        run: cargo fmt --check --manifest-path floppa-cli/Cargo.toml
+
+      - name: Clippy
+        # The CLI shells out to system tools at runtime but needs no network
+        # plumbing to build/test, so this runs without root or extra services.
+        run: cargo clippy --manifest-path floppa-cli/Cargo.toml -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path floppa-cli/Cargo.toml
