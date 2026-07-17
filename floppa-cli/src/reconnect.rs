@@ -107,8 +107,12 @@ pub async fn run(
     mut health: HealthCheck,
     mut rebuild: Rebuild,
     signal: &ReconnectSignal,
-    mut shutdown: impl Future<Output = ()> + Unpin,
+    shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    // Pin the caller's shutdown future locally so `tokio::select!` can poll it
+    // by mutable reference without requiring the caller to hand us an `Unpin`
+    // future (e.g. `tokio::time::sleep` is not `Unpin`).
+    let mut shutdown = std::pin::pin!(shutdown);
     let mut wake_rx = signal.subscribe();
 
     let mut attempts: u32 = 0;
@@ -279,6 +283,8 @@ async fn watch_logind(signal: ReconnectSignal) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     #[test]
     fn backoff_grows_then_caps() {
@@ -307,5 +313,73 @@ mod tests {
         let cfg = ReconnectConfig::default();
         assert!(cfg.watchdog_interval.as_secs() >= 5);
         assert!(cfg.backoff_base <= cfg.backoff_max);
+    }
+
+    // The loop must perform the initial connect exactly once and then exit
+    // promptly when shutdown resolves, without spinning on health.
+    #[tokio::test]
+    async fn run_connects_once_then_shuts_down() {
+        let rebuild_calls = Rc::new(Cell::new(0u32));
+        let rb = rebuild_calls.clone();
+        let rebuild: Rebuild = Box::new(move || {
+            let rb = rb.clone();
+            Box::pin(async move {
+                rb.set(rb.get() + 1);
+                Ok(())
+            })
+        });
+        let health: HealthCheck = Box::new(move || Box::pin(async move { Ok(true) }));
+
+        let signal = ReconnectSignal::default();
+        // Shutdown resolves immediately, so the loop should exit after the
+        // initial connect without ever reaching a health check.
+        let shutdown = std::future::ready(());
+        let _ = run(
+            ReconnectConfig::default(),
+            health,
+            rebuild,
+            &signal,
+            shutdown,
+        )
+        .await;
+
+        assert_eq!(rebuild_calls.get(), 1, "expected exactly 1 initial connect");
+    }
+
+    // If health reports the tunnel down, the loop must rebuild it again rather
+    // than declare success.
+    #[tokio::test]
+    async fn run_rebuilds_when_unhealthy() {
+        use std::time::Duration;
+
+        let rebuild_calls = Rc::new(Cell::new(0u32));
+        let rebuild: Rebuild = {
+            let rb = rebuild_calls.clone();
+            Box::new(move || {
+                let rb = rb.clone();
+                Box::pin(async move {
+                    rb.set(rb.get() + 1);
+                    Ok(())
+                })
+            })
+        };
+        let health: HealthCheck = Box::new(move || Box::pin(async move { Ok(false) }));
+
+        let signal = ReconnectSignal::default();
+        // Shut down after a few fast ticks so the loop reaches the health check.
+        let shutdown = tokio::time::sleep(Duration::from_millis(20));
+
+        let cfg = ReconnectConfig {
+            watchdog_interval: Duration::from_millis(2),
+            ..Default::default()
+        };
+        let _ = run(cfg, health, rebuild, &signal, shutdown).await;
+
+        // Initial connect (1) + at least one rebuild triggered by unhealthy health.
+        assert!(
+            rebuild_calls.get() >= 2,
+            "expected >=2 rebuilds, got {}",
+            rebuild_calls.get()
+        );
     }
 }

@@ -19,6 +19,11 @@ for the CLI crate.
     classification; fatal errors surface so systemd `Restart=on-failure` kicks
     in.
   - `docs/RECONNECT.md` describing the mechanism and tuning knobs.
+- `systemd/floppa-cli.service` — example unit with `Restart=on-failure` so a
+  fatal CLI exit is recovered by systemd (the in-process reconnect loop covers
+  transient drops on its own).
+- Unit tests for the reconnect loop (`run`): initial connect, rebuild-on-
+  unhealthy, plus the existing backoff / signal / config coverage.
 - `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md` for repo hygiene.
 
 ### Changed

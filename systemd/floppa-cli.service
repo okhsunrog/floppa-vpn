@@ -1,0 +1,23 @@
+[Unit]
+Description=Floppa VPN CLI client (WireGuard / AmneziaWG / VLESS)
+Documentation=https://github.com/okhsunrog/floppa-vpn/blob/main/docs/RECONNECT.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# The CLI manipulates interfaces/routes/resolv.conf, so it needs root.
+User=root
+# Path to a .conf (WireGuard/AmneziaWG) or a file containing a VLESS URI.
+# Override per-host with: systemctl edit floppa-cli.service
+Environment=FLOPPA_CLI_CONFIG=/etc/floppa-cli/client.conf
+ExecStart=/usr/local/bin/floppa-cli connect --config ${FLOPPA_CLI_CONFIG}
+# Auto-reconnect is handled in-process (see docs/RECONNECT.md); this only
+# covers the case where the process itself exits with a fatal error.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
