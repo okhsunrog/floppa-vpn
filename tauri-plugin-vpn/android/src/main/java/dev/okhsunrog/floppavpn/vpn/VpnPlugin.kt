@@ -18,6 +18,7 @@ import android.util.Log
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.view.WindowCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -277,28 +278,8 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     fun setStatusBarStyle(invoke: Invoke) {
         val args = invoke.parseArgs(StatusBarStyleArgs::class.java)
         activity.runOnUiThread {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val controller = activity.window.insetsController
-                if (args.isDark) {
-                    controller?.setSystemBarsAppearance(
-                        0,
-                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
-                    )
-                } else {
-                    controller?.setSystemBarsAppearance(
-                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
-                        android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
-                    )
-                }
-            } else {
-                @Suppress("DEPRECATION") val flags = activity.window.decorView.systemUiVisibility
-                activity.window.decorView.systemUiVisibility =
-                    if (args.isDark) {
-                        flags and android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-                    } else {
-                        flags or android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-                    }
-            }
+            WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+                .isAppearanceLightStatusBars = !args.isDark
         }
         invoke.resolve()
     }
@@ -428,7 +409,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
      */
     @Command
     fun protectSocket(invoke: Invoke) {
-        val args = invoke.parseArgs(ProtectSocketArgs::class.java)
+        invoke.parseArgs(ProtectSocketArgs::class.java)
         val ret = JSObject()
         // This won't work cross-process since FloppaVpnService.instance is per-process.
         // Socket protection is handled locally in the :vpn process via JNI.

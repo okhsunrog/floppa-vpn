@@ -7643,8 +7643,7 @@ dependencies = [
 [[package]]
 name = "wintun-bindings"
 version = "0.7.39"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc4494d02357537af05cf526be7b817a51752b688a78926af57379abd840d911"
+source = "git+https://github.com/okhsunrog/wintun-bindings?rev=a2fd8d080c2d1230c277237740c15b23c27e5dd4#a2fd8d080c2d1230c277237740c15b23c27e5dd4"
 dependencies = [
  "blocking",
  "futures",
@@ -8122,8 +8121,3 @@ dependencies = [
  "syn 2.0.118",
  "winnow 1.0.3",
 ]
-
-[[patch.unused]]
-name = "wintun-bindings"
-version = "0.7.38"
-source = "git+https://github.com/okhsunrog/wintun-bindings?rev=e32c31df190ee71126f0caa15b1a5aa2a8f3d23c#e32c31df190ee71126f0caa15b1a5aa2a8f3d23c"
