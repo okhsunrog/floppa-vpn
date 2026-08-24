@@ -132,6 +132,7 @@ impl VpnBackend for IosBackend {
         Observation {
             observed_at: std::time::Instant::now(),
             view: WorldView::Reachable(TunnelObservation {
+                epoch: 0,
                 running: None,
                 starting: false,
                 start_error: None,

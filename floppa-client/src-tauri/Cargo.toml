@@ -98,4 +98,5 @@ codegen-units = 1
 wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "a2fd8d080c2d1230c277237740c15b23c27e5dd4" }
 
 [dev-dependencies]
+bincode = "1.3"
 specta-serde = "0.0.12"

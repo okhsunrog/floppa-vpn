@@ -10,11 +10,11 @@
 //! reconnect budget is up to nine consent dialogs in a row.
 
 use super::{AttemptCtx, verify};
-use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus};
+use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
 use crate::vpn::rollback::{RollbackStack, Step};
 use crate::vpn::state::ProtocolConfig;
 use tauri_plugin_vpn::VpnExt;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 macro_rules! bail_if_cancelled {
     ($ctx:expr) => {
@@ -46,7 +46,28 @@ pub(super) async fn ladder(
         return Err(AttemptError::PermissionDenied);
     }
 
-    // 2. Service --------------------------------------------------------------------------
+    // 2. Resolve the endpoint, before anything touches the system's DNS -------------------
+    //
+    // Once `Builder.establish()` has run, name resolution on this device is pointed at a tunnel
+    // that does not exist yet, so resolving inside the service fails — reliably, not
+    // intermittently. The desktop ladder has always resolved before starting for the same reason.
+    // The resolved address is handed over with the config, so the service never needs DNS at all.
+    bail_if_cancelled!(ctx);
+    let host = ctx.config.endpoint_str().to_string();
+    let endpoint = tokio::net::lookup_host(&host)
+        .await
+        .map_err(|e| AttemptError::ResolveFailed {
+            host: host.clone(),
+            detail: e.to_string(),
+        })?
+        .next()
+        .ok_or_else(|| AttemptError::ResolveFailed {
+            host: host.clone(),
+            detail: "resolved to no addresses".into(),
+        })?;
+    info!(%host, %endpoint, "resolved the endpoint before establishing the tunnel");
+
+    // 3. Service --------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Starting).await;
 
@@ -64,13 +85,19 @@ pub(super) async fn ladder(
         })?;
     stack.confirm_top(Step::AndroidService { epoch: ctx.epoch.0 });
 
-    // 3. Wait for the tunnel to come up ----------------------------------------------------
-    // The service starts asynchronously and the tunnel appears only once the fd has been handed
-    // to the Rust side, so the only signal available here is observation.
+    // 4. Ask the service for a tunnel ------------------------------------------------------
+    // The service binds its socket before starting anything, so waiting here means waiting for it
+    // to be *reachable* — a bounded, observable thing — and then issuing a request whose failure
+    // comes back as a reason. Previously this was a blind poll for a tunnel to appear, and a start
+    // that failed was indistinguishable from one still in progress.
     ctx.phase(AttemptPhase::Configuring).await;
-    wait_for_running(ctx).await?;
+    wait_for_service(ctx).await?;
+    ctx.backend
+        .start_tunnel(ctx.epoch.0, &ctx.config, endpoint)
+        .await
+        .map_err(|detail| AttemptError::PeerStartFailed { detail })?;
 
-    // 4. Verify -----------------------------------------------------------------------------
+    // 5. Verify -----------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Verifying).await;
     verify(ctx).await?;
@@ -88,31 +115,43 @@ pub(super) async fn ladder(
     })
 }
 
-async fn wait_for_running(ctx: &AttemptCtx) -> Result<(), AttemptError> {
-    const POLL: std::time::Duration = std::time::Duration::from_millis(500);
-    // Bounded by the attempt budget rather than a second, independent timeout: two timers for one
-    // operation is how a connect ends up abandoned by one and still running under the other.
+/// Wait until *our* service instance is answering.
+///
+/// The epoch check is the whole point. Starting a tunnel stops the previous service first, and
+/// that teardown is asynchronous: for a moment the dying instance still answers perfectly well.
+/// Accepting any reply meant handing the tunnel request to a connection that was about to close,
+/// which came back as "the connection to the server was already shutdown" — every time.
+///
+/// Only reachability is waited for, not a tunnel: the tunnel is requested afterwards and its
+/// failure is returned rather than inferred. Bounded by a share of the attempt budget rather than
+/// a timeout of its own — two independent timers for one operation is how a connect ends up
+/// abandoned by one while still running under the other.
+async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
+    const POLL: std::time::Duration = std::time::Duration::from_millis(200);
     let deadline = std::time::Instant::now() + ctx.policy.attempt_budget / 2;
 
     loop {
         if ctx.cancelled() {
             return Err(AttemptError::Cancelled);
         }
-        if ctx
-            .backend
-            .observe()
-            .await
-            .view
-            .running_protocol()
-            .is_some()
-        {
-            info!("tunnel is up");
-            return Ok(());
+        if let WorldView::Reachable(t) = ctx.backend.observe().await.view {
+            if t.epoch == ctx.epoch.0 {
+                if let Some(detail) = t.start_error {
+                    error!("the VPN service reported a failed start: {detail}");
+                    return Err(AttemptError::PeerStartFailed { detail });
+                }
+                return Ok(());
+            }
+            debug!(
+                answered = t.epoch,
+                wanted = ctx.epoch.0,
+                "a previous service instance is still answering; waiting for ours"
+            );
         }
         if std::time::Instant::now() >= deadline {
-            error!("the VPN service did not bring a tunnel up in time");
+            error!("the VPN service never became reachable");
             return Err(AttemptError::PeerStartFailed {
-                detail: "the VPN service did not report a running tunnel".into(),
+                detail: "the VPN service did not come up".into(),
             });
         }
         tokio::select! {
@@ -125,11 +164,6 @@ async fn wait_for_running(ctx: &AttemptCtx) -> Result<(), AttemptError> {
 fn build_config(ctx: &AttemptCtx) -> tauri_plugin_vpn::VpnConfig {
     use crate::vpn::actor::types::SplitMode;
 
-    let protocol_config_str = match &ctx.config {
-        ProtocolConfig::WireGuard(wg) => wg.to_config_str(),
-        ProtocolConfig::AmneziaWg(awg) => awg.to_config_str(),
-        ProtocolConfig::Vless(vless) => vless.uri.clone(),
-    };
     let dns = match &ctx.config {
         ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
         ProtocolConfig::AmneziaWg(awg) => awg.wg.dns.clone(),
@@ -144,7 +178,7 @@ fn build_config(ctx: &AttemptCtx) -> tauri_plugin_vpn::VpnConfig {
         mtu: ctx.config.get_mtu() as u32,
         disallowed_apps: vec![],
         allowed_apps: vec![],
-        protocol_config: Some(protocol_config_str),
+        epoch: ctx.epoch.0,
     };
 
     let apps = ctx.params.apps.clone();

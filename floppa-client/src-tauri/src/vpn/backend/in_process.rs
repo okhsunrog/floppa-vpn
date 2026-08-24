@@ -132,6 +132,8 @@ impl VpnBackend for InProcessBackend {
         Observation {
             observed_at: std::time::Instant::now(),
             view: WorldView::Reachable(TunnelObservation {
+                // In-process: there is no separate service to have generations of.
+                epoch: 0,
                 running,
                 starting: false,
                 start_error: None,

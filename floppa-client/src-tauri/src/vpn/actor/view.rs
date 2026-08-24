@@ -151,6 +151,7 @@ mod tests {
         Observation {
             observed_at: now,
             view: WorldView::Reachable(TunnelObservation {
+                epoch: 0,
                 running: None,
                 starting: false,
                 start_error: None,

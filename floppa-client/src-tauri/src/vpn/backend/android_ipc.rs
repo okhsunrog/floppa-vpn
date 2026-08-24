@@ -73,6 +73,7 @@ impl AndroidIpcBackend {
             tarpc::serde_transport::new(framed, tokio_serde::formats::Bincode::default());
 
         let client = VpnRpcClient::new(tarpc::client::Config::default(), transport).spawn();
+        debug!("opened a new connection to the VPN service");
 
         *guard = Some(client.clone());
         Ok(client)
@@ -116,6 +117,34 @@ impl VpnBackend for AndroidIpcBackend {
             "On Android, tunnel starts via VpnService JNI, not through backend.start_with_fd()"
                 .into(),
         )
+    }
+
+    async fn start_tunnel(
+        &self,
+        epoch: u64,
+        config: &ProtocolConfig,
+        endpoint: std::net::SocketAddr,
+    ) -> Result<(), String> {
+        let client = self
+            .get_client_typed()
+            .await
+            .map_err(|(_, reason)| reason)?;
+
+        // A generous deadline: this is the call that actually brings the tunnel up, unlike the
+        // polls that only ask about it.
+        debug!(%epoch, "sending start_tunnel");
+        let ctx = Self::deadline(std::time::Duration::from_secs(15));
+        let wire = crate::vpn::rpc::WireConfig::from(config);
+        match client
+            .start_tunnel(ctx, epoch, wire, endpoint.to_string())
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                self.invalidate_client().await;
+                Err(format!("RPC error: {e}"))
+            }
+        }
     }
 
     async fn stop(&self) -> Result<(), String> {
@@ -252,15 +281,16 @@ impl VpnBackend for AndroidIpcBackend {
             Ok(info) => Observation {
                 observed_at,
                 view: WorldView::Reachable(TunnelObservation {
+                    epoch: info.epoch,
                     running: info.running.map(|r| RunningTunnel {
                         protocol: r.protocol,
-                        epoch: None,
+                        epoch: Some(crate::vpn::actor::types::IntentEpoch(info.epoch)),
                         endpoint: r.endpoint,
                         address: r.address,
                         connected_secs: r.connected_secs,
                     }),
-                    starting: false,
-                    start_error: None,
+                    starting: info.starting,
+                    start_error: info.start_error,
                     raw_stats: match (info.tx_bytes, info.rx_bytes) {
                         (Some(tx_bytes), Some(rx_bytes)) => Some(RawStats { tx_bytes, rx_bytes }),
                         _ => None,

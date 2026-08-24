@@ -5,10 +5,9 @@
 //! or VLESS tunnel, and run the tarpc RPC server.
 
 use super::rpc_server::{self, RpcServerHandle};
-use super::state::{AwgConfig, VlessVpnConfig, WgConfig, config_str_is_amneziawg};
 use super::tunnel::{self, TunnelManager};
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::jint;
+use jni::sys::{jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM};
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -21,6 +20,14 @@ static VPN_SERVICE_REF: Mutex<Option<jni::objects::Global<JObject<'static>>>> = 
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static TUNNEL_MANAGER: OnceLock<Arc<TunnelManager>> = OnceLock::new();
 static RPC_HANDLE: Mutex<Option<RpcServerHandle>> = Mutex::new(None);
+
+/// Generation of the service instance that owns [`RPC_HANDLE`].
+///
+/// The `:vpn` process outlives the individual service instances inside it, so this global is
+/// shared between them. Stopping is asynchronous: a previous instance's `onDestroy` can arrive
+/// *after* the next one has already bound its socket, and without this it would tear down a server
+/// it does not own.
+static SERVER_EPOCH: Mutex<u64> = Mutex::new(0);
 
 fn get_runtime() -> &'static tokio::runtime::Runtime {
     TOKIO_RUNTIME.get_or_init(|| {
@@ -176,15 +183,21 @@ impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
 
 /// Called in `FloppaVpnService.onStartCommand()` after TUN interface creation.
 ///
-/// Detects protocol (WireGuard config text or vless:// URI) and starts the
-/// appropriate tunnel, then starts the tarpc RPC server.
+/// Binds the RPC server and stops there. The tunnel itself is started by a later
+/// [`start_tunnel`](crate::vpn::rpc::VpnRpc) call carrying a typed config.
+///
+/// That ordering is the point. Previously the tunnel was started first and the socket bound
+/// afterwards, so a failed start left nothing listening — indistinguishable from a service that
+/// had not come up yet. The only recourse was a blind timeout, and the reason for the failure was
+/// logged here and never reached the caller. Binding first makes "up and idle", "failed, and here
+/// is why" and "not up at all" three different observations.
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartTunnel<'local>(
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartServer<'local>(
     mut env: EnvUnowned<'local>,
     this: JObject<'local>,
     tun_fd: jint,
-    protocol_config: JString<'local>,
     socket_path: JString<'local>,
+    epoch: jlong,
 ) {
     let _ = env.with_env(|env: &mut Env<'local>| -> Result<(), jni::errors::Error> {
         // Store/update VpnService reference for protect() calls
@@ -195,82 +208,20 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
             }
         }
 
-        // Extract Java strings
-        let config_str: String = protocol_config.mutf8_chars(env)?.to_string();
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
+        let epoch = epoch as u64;
+        info!("nativeStartServer: fd={tun_fd}, socket={socket_path_str}, epoch={epoch}");
 
-        info!("nativeStartTunnel: fd={tun_fd}, socket={socket_path_str}");
-
-        // Set up socket protection for gotatun (WireGuard)
+        // Socket protection for gotatun (WireGuard) and shoes-lite (VLESS).
         tunnel::set_socket_protect_callback(protect_socket_jni);
-
-        // Set up socket protection for shoes-lite (VLESS)
         shoes_lite::api::set_socket_protector(Arc::new(ShoesSocketProtector));
 
         let runtime = get_runtime();
         let tunnel_manager = get_tunnel_manager();
+        let service = Arc::new(rpc_server::ServiceState::new(epoch, tun_fd as RawFd));
 
-        // Detect protocol and start tunnel
         runtime.block_on(async {
-            if config_str.starts_with("vless://") {
-                // VLESS protocol
-                let vless_vpn = match VlessVpnConfig::from_uri(&config_str) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("Failed to parse VLESS URI: {e}");
-                        return;
-                    }
-                };
-                let shoes_config = vless_vpn.to_shoes_config();
-
-                if let Err(e) = tunnel_manager
-                    .start_vless_with_fd(&shoes_config, tun_fd)
-                    .await
-                {
-                    error!("Failed to start VLESS tunnel: {e}");
-                    return;
-                }
-                info!("VLESS tunnel started successfully");
-            } else if config_str_is_amneziawg(&config_str) {
-                // AmneziaWG protocol (WireGuard + obfuscation)
-                let awg = match AwgConfig::from_config_str(&config_str) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("Failed to parse AmneziaWG config: {e}");
-                        return;
-                    }
-                };
-
-                if let Err(e) = tunnel_manager
-                    .start_wireguard_with_fd(&awg.wg, tun_fd as RawFd, Some(&awg.obfuscation))
-                    .await
-                {
-                    error!("Failed to start AmneziaWG tunnel: {e}");
-                    return;
-                }
-                info!("AmneziaWG tunnel started successfully");
-            } else {
-                // WireGuard protocol
-                let config = match WgConfig::from_config_str(&config_str) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        error!("Failed to parse WireGuard config: {e}");
-                        return;
-                    }
-                };
-
-                if let Err(e) = tunnel_manager
-                    .start_wireguard_with_fd(&config, tun_fd as RawFd, None)
-                    .await
-                {
-                    error!("Failed to start WireGuard tunnel: {e}");
-                    return;
-                }
-                info!("WireGuard tunnel started successfully");
-            }
-
-            // Start tarpc RPC server
-            match rpc_server::start_server(&socket_path_str, tunnel_manager.clone()) {
+            match rpc_server::start_server(&socket_path_str, tunnel_manager.clone(), service) {
                 Ok(handle) => {
                     if let Ok(mut guard) = RPC_HANDLE.lock() {
                         if let Some(old) = guard.take() {
@@ -278,11 +229,12 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
                         }
                         *guard = Some(handle);
                     }
-                    info!("tarpc RPC server started");
+                    if let Ok(mut guard) = SERVER_EPOCH.lock() {
+                        *guard = epoch;
+                    }
+                    info!("tarpc RPC server started, waiting for a tunnel request");
                 }
-                Err(e) => {
-                    error!("Failed to start tarpc server: {e}");
-                }
+                Err(e) => error!("Failed to start tarpc server: {e}"),
             }
         });
 
@@ -297,8 +249,27 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'local>(
     _env: EnvUnowned<'local>,
     _class: JClass<'local>,
+    epoch: jlong,
 ) {
-    info!("nativeStop: stopping tunnel and RPC server");
+    let epoch = epoch as u64;
+
+    // Only tear down our own generation.
+    //
+    // Service instances share this process, and stopping one is asynchronous: the previous
+    // instance's onDestroy routinely arrives after the next instance has already bound its socket.
+    // Without this check it killed the new server roughly 150ms after it came up, and the connect
+    // that was about to use it failed with "the connection was already shutdown" — every time.
+    if let Ok(current) = SERVER_EPOCH.lock()
+        && *current != epoch
+    {
+        info!(
+            "nativeStop: ignoring a stop for epoch {epoch}; this process now serves {}",
+            *current
+        );
+        return;
+    }
+
+    info!("nativeStop: stopping tunnel and RPC server (epoch {epoch})");
 
     // Shutdown RPC server
     if let Ok(mut guard) = RPC_HANDLE.lock()

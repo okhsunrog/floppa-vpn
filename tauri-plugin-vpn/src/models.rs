@@ -32,9 +32,13 @@ pub struct VpnConfig {
     #[serde(default)]
     pub allowed_apps: Vec<String>,
 
-    /// Raw protocol config string (WG config text or vless:// URI), passed to :vpn process
+    /// Generation of the request that is starting the service.
+    ///
+    /// The tunnel config itself no longer travels here: the service binds its socket first and is
+    /// then given a typed config over it, so the protocol is stated rather than re-derived by
+    /// inspecting a string at the far end.
     #[serde(default)]
-    pub protocol_config: Option<String>,
+    pub epoch: u64,
 }
 
 fn default_mtu() -> u32 {
