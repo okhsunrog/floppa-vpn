@@ -55,7 +55,7 @@ tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "29"
 # VLESS+REALITY protocol support
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "d2fdeb2" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
 logroller = "0.1.10"
 flate2 = "1.1.9"
 tar = "0.4.44"
