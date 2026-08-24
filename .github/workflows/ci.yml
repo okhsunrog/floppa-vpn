@@ -195,6 +195,14 @@ jobs:
       - name: Clippy (vpn plugin)
         run: cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
 
+      # The root workspace excludes floppa-client/src-tauri and tauri-plugin-vpn,
+      # so the `test` job's `cargo test` never reaches them.
+      - name: Test (client)
+        run: cargo test --manifest-path floppa-client/src-tauri/Cargo.toml
+
+      - name: Test (vpn plugin)
+        run: cargo test --manifest-path tauri-plugin-vpn/Cargo.toml
+
   kotlin:
     name: Kotlin format check
     runs-on: ubuntu-latest
