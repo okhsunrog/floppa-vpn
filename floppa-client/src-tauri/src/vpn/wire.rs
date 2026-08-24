@@ -5,7 +5,7 @@
 //! `specta-typescript` on its own knows nothing about `#[serde(tag = "...")]`: the derive macro
 //! records the attribute as opaque metadata (`serde:container:tag`) and the TypeScript exporter
 //! never reads that key. What makes internal tagging come out right is
-//! [`specta_serde`], a [`specta::Format`] implementation that rewrites the collected datatypes
+//! `specta_serde`, a [`specta::Format`] implementation that rewrites the collected datatypes
 //! into their serde representation (`EnumRepr::Internal { tag }` →
 //! `transform_internal_variant`) *before* the exporter runs. `tauri-specta` applies it on every
 //! export (`lang/js_ts.rs`: `specta_serde::PhasesFormat.map_type(...)`).
@@ -19,9 +19,11 @@
 //!
 //! Both shapes below are therefore permitted for types crossing the boundary:
 //!
-//! - `#[serde(tag = "kind")]` on an enum with struct variants — a true sum type;
-//! - a struct with an explicit enum discriminant field, the shape `ConnectError { code, message }`
-//!   already uses — preferable when every variant carries the same payload.
+//! - `#[serde(tag = "kind")]` on an enum with struct variants — a true sum type, the shape
+//!   [`AttemptError`](crate::vpn::actor::types::AttemptError) and
+//!   [`CycleOutcome`](crate::vpn::actor::types::CycleOutcome) use;
+//! - a struct with a plain enum discriminant field — preferable when every variant would carry the
+//!   same payload, so a sum type would only add ceremony.
 
 #[cfg(test)]
 mod tests {

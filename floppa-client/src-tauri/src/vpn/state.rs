@@ -63,7 +63,7 @@ impl WgConfig {
         IpNetwork::from_str(&self.address).map_err(|e| format!("Invalid address: {}", e))
     }
 
-    /// Get DNS servers as Vec<IpAddr>
+    /// Get DNS servers as `Vec<IpAddr>`
     pub fn dns_servers(&self) -> Vec<IpAddr> {
         self.dns
             .as_ref()
@@ -75,7 +75,7 @@ impl WgConfig {
             .unwrap_or_default()
     }
 
-    /// Get allowed IPs as Vec<IpNetwork>
+    /// Get allowed IPs as `Vec<IpNetwork>`
     pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
         self.allowed_ips
             .split(',')
@@ -305,7 +305,7 @@ impl VlessVpnConfig {
         IpNetwork::from_str(&self.address).map_err(|e| format!("Invalid VLESS address: {}", e))
     }
 
-    /// Get DNS servers as Vec<IpAddr>
+    /// Get DNS servers as `Vec<IpAddr>`
     pub fn dns_servers(&self) -> Vec<IpAddr> {
         self.dns
             .as_ref()
@@ -317,7 +317,7 @@ impl VlessVpnConfig {
             .unwrap_or_default()
     }
 
-    /// Get allowed IPs as Vec<IpNetwork>
+    /// Get allowed IPs as `Vec<IpNetwork>`
     pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
         self.allowed_ips
             .split(',')

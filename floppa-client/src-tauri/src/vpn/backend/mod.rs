@@ -25,9 +25,8 @@ use std::time::Duration;
 /// Backend for VPN tunnel management.
 ///
 /// Each platform implements this trait differently:
-/// - [`InProcessBackend`](in_process::InProcessBackend): tunnel runs in the current process (desktop)
-/// - [`AndroidIpcBackend`](android_ipc::AndroidIpcBackend): tunnel in separate `:vpn` process via tarpc
-/// - [`IosBackend`](ios::IosBackend): tunnel in Network Extension via Apple IPC (future)
+/// - `InProcessBackend`: the tunnel runs in the current process (desktop)
+/// - `AndroidIpcBackend`: the tunnel lives in the separate `:vpn` process, reached over tarpc
 #[async_trait]
 pub trait VpnBackend: Send + Sync {
     /// Start tunnel by creating a TUN device (desktop platforms).
