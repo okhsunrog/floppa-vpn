@@ -11,6 +11,7 @@ export default {
     disconnected: 'Disconnected',
     disconnecting: 'Disconnecting',
     retrying: 'Reconnecting',
+    unknown: 'Checking…',
   },
   traffic: {
     download: 'Download',

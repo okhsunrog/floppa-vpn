@@ -563,10 +563,16 @@ pub enum AttemptResult {
 // ----------------------------------------------------------------------------- published snapshot
 
 /// The five original status literals are preserved verbatim so the existing indicator component
-/// and its translation keys keep working. `Retrying` is the one addition.
+/// and its translation keys keep working. `Retrying` and `Unknown` are the additions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
+    /// We have not yet had an authoritative look at the world.
+    ///
+    /// Distinct from [`Self::Disconnected`], which is a claim: there is no tunnel. Collapsing the
+    /// two is why opening the app with a tunnel already running flashed "disconnected" before the
+    /// first observation landed — the UI reported an answer it did not have yet.
+    Unknown,
     Disconnected,
     Connecting,
     VerifyingConnection,
@@ -580,10 +586,16 @@ impl Phase {
     ///
     /// Spinner, label, icon, colour and disabled state all derive from this, which is what makes
     /// "spinner showing while the label says Connect" unrepresentable: there is no second source.
+    /// `Unknown` counts as busy: the honest thing to show while we do not know is a pending
+    /// indicator, not an actionable button offering to do something we cannot yet judge.
     pub const fn is_busy(self) -> bool {
         matches!(
             self,
-            Self::Connecting | Self::VerifyingConnection | Self::Disconnecting | Self::Retrying
+            Self::Unknown
+                | Self::Connecting
+                | Self::VerifyingConnection
+                | Self::Disconnecting
+                | Self::Retrying
         )
     }
 
@@ -679,7 +691,9 @@ impl TunnelState {
     pub fn initial() -> Self {
         Self {
             seq: 0,
-            phase: Phase::Disconnected,
+            // Not Disconnected: at seq 0 nothing has been observed, and claiming there is no
+            // tunnel before looking is what made an already-running tunnel flash as down.
+            phase: Phase::Unknown,
             intent: IntentView::Down,
             epoch: IntentEpoch(0),
             intent_order: Vec::new(),

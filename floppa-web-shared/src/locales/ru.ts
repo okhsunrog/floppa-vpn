@@ -11,6 +11,7 @@ export default {
     disconnected: 'Отключено',
     disconnecting: 'Отключение',
     retrying: 'Переподключение',
+    unknown: 'Проверка…',
   },
   traffic: {
     download: 'Скачано',
