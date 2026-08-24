@@ -125,7 +125,11 @@ async fn main() -> Result<()> {
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
+                axum::http::HeaderName::from_static("x-client-version"),
             ])
+            .expose_headers([axum::http::HeaderName::from_static(
+                admin::routes::REFRESHED_TOKEN_HEADER,
+            )])
             .allow_credentials(true)
     };
 

@@ -100,8 +100,15 @@ client.interceptors.request.use((request) => {
 
 const updateStore = useUpdateStore()
 
-client.interceptors.response.use(async (response) => {
-  if (response.status === 401) {
+client.interceptors.response.use(async (response, request) => {
+  // Sliding session: the server attaches a fresh JWT once the current one is a day old.
+  const refreshed = response.headers.get('x-refreshed-token')
+  if (refreshed) {
+    authStore.replaceToken(refreshed)
+  }
+  // Only a rejected *authenticated* request means our session is dead; public endpoints
+  // (e.g. a failed login-code exchange) also return 401 and must not wipe the session.
+  if (response.status === 401 && request.headers.has('Authorization')) {
     authStore.logout()
   }
   if (response.status === 426) {

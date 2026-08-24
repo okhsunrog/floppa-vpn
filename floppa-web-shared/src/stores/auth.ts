@@ -95,6 +95,12 @@ export const useAuthStore = defineStore('auth', () => {
     cacheAvatar()
   }
 
+  /** Swap in a refreshed JWT without touching the user payload (sliding session). */
+  function replaceToken(newToken: string) {
+    token.value = newToken
+    localStorage.setItem(TOKEN_KEY, newToken)
+  }
+
   function logout() {
     token.value = null
     user.value = null
@@ -129,6 +135,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     avatarUrl,
     setAuth,
+    replaceToken,
     logout,
     getToken,
   }

@@ -148,6 +148,59 @@ async fn version_check_middleware(
     next.run(request).await
 }
 
+/// Sliding session: once a valid token is older than this, any successful authed request
+/// gets a fresh full-lifetime token in the `x-refreshed-token` response header. An active
+/// user therefore never hits JWT expiry; re-login is only needed after being away longer
+/// than `jwt_expiration_hours`.
+const TOKEN_REFRESH_AFTER_SECS: i64 = 24 * 3600;
+
+pub(crate) const REFRESHED_TOKEN_HEADER: &str = "x-refreshed-token";
+
+async fn token_refresh_middleware(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> axum::response::Response {
+    let bearer = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::to_owned);
+
+    let mut response = next.run(request).await;
+
+    if !response.status().is_success() {
+        return response;
+    }
+    let Some(token) = bearer else {
+        return response;
+    };
+    let Some(auth_secrets) = state.secrets.auth.as_ref() else {
+        return response;
+    };
+    let Ok(claims) = crate::admin::auth::verify_jwt(&token, &auth_secrets.jwt_secret) else {
+        return response;
+    };
+    if Utc::now().timestamp() - claims.iat < TOKEN_REFRESH_AFTER_SECS {
+        return response;
+    }
+
+    let default_auth = floppa_core::AuthConfig::default();
+    let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
+    if let Ok(fresh) = crate::admin::auth::create_jwt(
+        claims.sub,
+        claims.admin,
+        claims.username,
+        &auth_secrets.jwt_secret,
+        auth_config.jwt_expiration_hours,
+    ) && let Ok(value) = axum::http::HeaderValue::from_str(&fresh)
+    {
+        response.headers_mut().insert(REFRESHED_TOKEN_HEADER, value);
+    }
+    response
+}
+
 /// Extract the client IP from the leftmost X-Forwarded-For entry (server runs behind a proxy).
 pub(super) fn client_ip(headers: &axum::http::HeaderMap) -> String {
     headers
@@ -213,10 +266,15 @@ pub fn create_router(
     };
 
     let (router, _openapi) = openapi_router().with_state(state.clone()).split_for_parts();
-    router.layer(middleware::from_fn_with_state(
-        state,
-        version_check_middleware,
-    ))
+    router
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            version_check_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state,
+            token_refresh_middleware,
+        ))
 }
 
 /// Resolve subscription expiration from request parameters.
