@@ -34,14 +34,24 @@ const dotClass = computed(() => {
   return classes[props.status]
 })
 
-const isPulsing = computed(
-  () =>
-    props.status === 'unknown' ||
-    props.status === 'connecting' ||
-    props.status === 'verifying_connection' ||
-    props.status === 'disconnecting' ||
-    props.status === 'retrying',
-)
+/**
+ * Which states are work in progress, and so pulse.
+ *
+ * A `Record` like the two maps above it, and for the same reason: this was a chain of `||`
+ * comparisons, which is the one form that does not fail to compile when a status is added. It
+ * held a third copy of the list `Phase::is_busy` owns in Rust, and the two agreed only by hand.
+ */
+const pulsing: Record<ConnectionStatus, boolean> = {
+  unknown: true,
+  connected: false,
+  connecting: true,
+  verifying_connection: true,
+  disconnected: false,
+  disconnecting: true,
+  retrying: true,
+}
+
+const isPulsing = computed(() => pulsing[props.status])
 </script>
 
 <template>

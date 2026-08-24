@@ -4,13 +4,25 @@ import {
   commands,
   events,
   type CycleOutcome,
+  type Phase,
   type Protocol,
   type TunnelParams,
   type TunnelState,
 } from '../bindings'
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
+
+/**
+ * `ConnectionStatus` is a hand-written copy of the generated `Phase`, and has to be: it lives in
+ * the shared package, which the client depends on rather than the other way round, so it cannot
+ * import from `bindings.ts`. What it *can* have is this — a check that the two are still the same
+ * set, which fails to compile the moment a phase is added or removed on either side.
+ */
+type Identical<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never
+const _phaseMatchesConnectionStatus: Identical<Phase, ConnectionStatus> = true
+void _phaseMatchesConnectionStatus
 
 /**
  * A read-only mirror of the tunnel state the Rust actor publishes.
