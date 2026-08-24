@@ -29,12 +29,6 @@ use std::time::{Duration, Instant};
 )]
 pub struct IntentEpoch(pub u64);
 
-impl IntentEpoch {
-    pub const fn next(self) -> Self {
-        Self(self.0 + 1)
-    }
-}
-
 impl std::fmt::Display for IntentEpoch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -197,14 +191,6 @@ impl Cycle {
             self.index += 1;
         }
     }
-
-    pub fn progress(&self) -> AttemptProgress {
-        AttemptProgress {
-            protocol: self.protocol(),
-            index: self.index as u32 + 1,
-            total: self.order.len() as u32,
-        }
-    }
 }
 
 /// Cosmetic sub-phase of an in-flight attempt, reported by the attempt task.
@@ -323,9 +309,9 @@ impl Status {
 
 /// One look at the world.
 ///
-/// Replaces `Option<VpnFullInfo>`, whose `None` conflated "no tunnel", "peer not started",
-/// "peer refused", "transport died" and "call timed out" into a single value that the caller then
-/// had to guess about.
+/// Replaces the old `Option`-returning info call, whose `None` conflated "no tunnel", "peer not
+/// started", "peer refused", "transport died" and "call timed out" into a single value that the
+/// caller then had to guess about.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observation {
     pub observed_at: Instant,

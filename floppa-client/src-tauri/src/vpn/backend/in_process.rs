@@ -3,7 +3,7 @@
 //! The tunnel runs directly in the current process using gotatun.
 //! Used on desktop platforms (Linux, Windows, macOS).
 
-use super::{VpnBackend, VpnFullInfo};
+use super::VpnBackend;
 use crate::vpn::actor::types::{
     Observation, RawStats, RunningTunnel, TunnelObservation, WorldView,
 };
@@ -58,56 +58,12 @@ impl VpnBackend for InProcessBackend {
         }
     }
 
-    async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String> {
-        #[cfg(target_os = "android")]
-        {
-            use std::os::fd::RawFd;
-            match config {
-                ProtocolConfig::WireGuard(wg) => {
-                    self.tunnel_manager
-                        .start_wireguard_with_fd(wg, tun_fd as RawFd, None)
-                        .await
-                }
-                ProtocolConfig::AmneziaWg(awg) => {
-                    self.tunnel_manager
-                        .start_wireguard_with_fd(&awg.wg, tun_fd as RawFd, Some(&awg.obfuscation))
-                        .await
-                }
-                ProtocolConfig::Vless(vless) => {
-                    self.tunnel_manager
-                        .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
-                        .await
-                }
-            }
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (config, tun_fd);
-            Err("start_with_fd is only supported on Android".into())
-        }
-    }
-
     async fn stop(&self) -> Result<(), String> {
         self.tunnel_manager.stop().await
     }
 
     async fn ping(&self) -> Result<(), String> {
         self.tunnel_manager.ping().await
-    }
-
-    async fn get_all_info(&self) -> Option<VpnFullInfo> {
-        Some(VpnFullInfo {
-            is_running: self.tunnel_manager.is_running().await,
-            stats: self.tunnel_manager.get_stats().await,
-            last_packet_received: self.tunnel_manager.get_last_packet_received().await,
-            // The tunnel knows how long it has been up; reporting None here is what made an
-            // adopted tunnel restart its duration display from zero.
-            connected_secs: self
-                .tunnel_manager
-                .get_connection_duration()
-                .await
-                .map(|d| d.as_secs()),
-        })
     }
 
     /// Always reachable by construction: the tunnel is in this process, so an answer is always

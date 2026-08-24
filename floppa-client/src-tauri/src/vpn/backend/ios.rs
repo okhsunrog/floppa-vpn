@@ -37,7 +37,7 @@
 
 #![allow(dead_code)]
 
-use super::{VpnBackend, VpnFullInfo};
+use super::VpnBackend;
 use crate::vpn::state::ProtocolConfig;
 use async_trait::async_trait;
 
@@ -100,12 +100,6 @@ impl VpnBackend for IosBackend {
         Err("IosBackend not yet implemented".into())
     }
 
-    async fn start_with_fd(&self, _config: &ProtocolConfig, _tun_fd: i32) -> Result<(), String> {
-        // Not used on iOS — the Network Extension creates and owns the TUN device.
-        // NEPacketTunnelProvider.packetFlow provides the virtual interface internally.
-        Err("start_with_fd is not used on iOS; the Network Extension manages the TUN device".into())
-    }
-
     async fn stop(&self) -> Result<(), String> {
         // TODO: manager.connection.stopVPNTunnel()
         // The extension's stopTunnel(with:completionHandler:) fires,
@@ -115,14 +109,6 @@ impl VpnBackend for IosBackend {
 
     async fn ping(&self) -> Result<(), String> {
         Err("IosBackend not yet implemented".into())
-    }
-
-    async fn get_all_info(&self) -> Option<VpnFullInfo> {
-        // TODO: Check NEVPNConnection.status and query stats via sendProviderMessage()
-        Some(VpnFullInfo {
-            is_running: false,
-            ..Default::default()
-        })
     }
 
     /// Reports "reachable, nothing running" rather than "unreachable", because an unimplemented

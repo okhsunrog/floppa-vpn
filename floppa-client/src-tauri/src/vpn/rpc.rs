@@ -86,12 +86,6 @@ pub struct TunnelInfo {
     pub rx_bytes: Option<u64>,
 }
 
-impl TunnelInfo {
-    pub fn is_running(&self) -> bool {
-        self.running.is_some()
-    }
-}
-
 /// The IPC socket name. Keep in sync with `FloppaVpnService.kt`.
 ///
 /// This never needs versioning, and the wire format never needs to stay backward compatible.

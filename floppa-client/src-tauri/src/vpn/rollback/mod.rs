@@ -131,9 +131,6 @@ pub enum Evidence {
     Attempted,
     /// Apply returned `Ok`, and the step's payload has been upgraded with what it learned.
     Done,
-    /// Apply neither returned nor was observed — its budget elapsed while it was still blocking.
-    /// Best-effort undo, which is legal because every undo primitive swallows its errors.
-    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -187,18 +184,6 @@ impl RollbackStack {
         Self { steps, journal }
     }
 
-    /// The synthetic single-step stack for an adopted tunnel: nothing local was applied, so the
-    /// only thing to undo is the tunnel itself.
-    pub fn adopted(iface: InterfaceName) -> Self {
-        Self {
-            steps: vec![Applied {
-                step: Step::StartBackend { iface },
-                evidence: Evidence::Done,
-            }],
-            journal: None,
-        }
-    }
-
     /// Record a step, persist it if durable, and only then let the caller apply it.
     pub fn push(&mut self, step: Step) {
         debug_assert!(
@@ -227,13 +212,6 @@ impl RollbackStack {
             );
             top.step = step;
             top.evidence = Evidence::Done;
-        }
-        self.persist();
-    }
-
-    pub fn mark_top_unknown(&mut self) {
-        if let Some(top) = self.steps.last_mut() {
-            top.evidence = Evidence::Unknown;
         }
         self.persist();
     }
@@ -460,13 +438,6 @@ mod tests {
             }
             .durable()
         );
-    }
-
-    #[test]
-    fn adopted_stack_has_only_the_tunnel_to_undo() {
-        let stack = RollbackStack::adopted(iface());
-        assert_eq!(stack.kinds(), vec![StepKind::StartBackend]);
-        assert_eq!(stack.top().unwrap().evidence, Evidence::Done);
     }
 
     #[test]

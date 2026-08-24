@@ -12,12 +12,12 @@
 //! └──────────────────┘           └─────────────────────────────┘
 //! ```
 
-use super::{VpnBackend, VpnFullInfo};
+use super::VpnBackend;
 use crate::vpn::actor::types::{
     Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, WorldView,
 };
 use crate::vpn::rpc::VpnRpcClient;
-use crate::vpn::state::{ProtocolConfig, TrafficStats};
+use crate::vpn::state::ProtocolConfig;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
@@ -109,14 +109,6 @@ impl VpnBackend for AndroidIpcBackend {
         // The Kotlin VpnPlugin.startVpn() launches FloppaVpnService which
         // calls nativeStartTunnel() with the TUN fd and WG config.
         Err("On Android, tunnel starts via VpnService JNI, not through backend.start()".into())
-    }
-
-    async fn start_with_fd(&self, _config: &ProtocolConfig, _tun_fd: i32) -> Result<(), String> {
-        // Same as start() — not used in two-process architecture.
-        Err(
-            "On Android, tunnel starts via VpnService JNI, not through backend.start_with_fd()"
-                .into(),
-        )
     }
 
     async fn start_tunnel(
@@ -211,46 +203,6 @@ impl VpnBackend for AndroidIpcBackend {
         {
             warn!("Failed to stop log capture on VPN process: {e}");
             self.invalidate_client().await;
-        }
-    }
-
-    async fn get_all_info(&self) -> Option<VpnFullInfo> {
-        let client = match self.get_client().await {
-            Ok(c) => {
-                // Log recovery if previously failing
-                if self.last_connect_failed.swap(false, Ordering::Relaxed) {
-                    debug!("Reconnected to :vpn process");
-                }
-                c
-            }
-            Err(_) => {
-                // Log only the first failure in a streak
-                if !self.last_connect_failed.swap(true, Ordering::Relaxed) {
-                    debug!("VPN service not running");
-                }
-                return None;
-            }
-        };
-
-        match client.get_full_info(tarpc::context::current()).await {
-            Ok(info) => Some(VpnFullInfo {
-                is_running: info.is_running(),
-                stats: match (info.tx_bytes, info.rx_bytes) {
-                    (Some(tx), Some(rx)) => Some(TrafficStats {
-                        tx_bytes: tx,
-                        rx_bytes: rx,
-                        ..Default::default()
-                    }),
-                    _ => None,
-                },
-                last_packet_received: info.last_packet_received,
-                connected_secs: info.running.as_ref().and_then(|r| r.connected_secs),
-            }),
-            Err(e) => {
-                warn!("RPC get_full_info failed: {e}");
-                self.invalidate_client().await;
-                None
-            }
         }
     }
 

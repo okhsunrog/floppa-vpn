@@ -184,8 +184,8 @@ impl GotatunTunnel {
 
     /// Create a new tunnel from WireGuard config (desktop platforms).
     ///
-    /// `endpoint` is the pre-resolved server address so the hostname is only
-    /// resolved once (in `connect_desktop`). `tun_params` carries platform-specific
+    /// `endpoint` is the pre-resolved server address so the hostname is only resolved once, by the
+    /// attempt that is bringing the tunnel up. `tun_params` carries platform-specific
     /// configuration from the platform layer.
     #[cfg(not(target_os = "android"))]
     #[allow(unused_variables, unused_mut)]
@@ -429,13 +429,6 @@ impl ActiveTunnel {
         }
     }
 
-    fn interface_name(&self) -> &str {
-        match self {
-            Self::WireGuard(t) => t.interface_name(),
-            Self::Vless(_) => "vless0",
-        }
-    }
-
     async fn ping(&self) -> Result<(), String> {
         match self {
             Self::Vless(t) => t.ping(Duration::from_secs(10)).await,
@@ -629,10 +622,6 @@ impl TunnelManager {
         Ok(())
     }
 
-    pub async fn is_running(&self) -> bool {
-        self.tunnel.read().await.is_some()
-    }
-
     pub async fn get_stats(&self) -> Option<TrafficStats> {
         let tunnel_guard = self.tunnel.read().await;
         if let Some((tunnel, _)) = tunnel_guard.as_ref() {
@@ -664,13 +653,6 @@ impl TunnelManager {
             Some((tunnel, _)) => tunnel.ping().await,
             None => Err("No tunnel running".to_string()),
         }
-    }
-
-    pub async fn get_interface_name(&self) -> Option<String> {
-        let tunnel_guard = self.tunnel.read().await;
-        tunnel_guard
-            .as_ref()
-            .map(|(t, _)| t.interface_name().to_string())
     }
 }
 

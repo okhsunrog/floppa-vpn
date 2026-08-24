@@ -19,7 +19,9 @@ mod desktop;
 mod android;
 
 use super::handle::{AttemptReport, Command};
-use super::types::{AttemptError, AttemptPhase, AttemptResult, IntentEpoch, Policy, TunnelParams};
+use super::types::{
+    AttemptError, AttemptPhase, AttemptResult, IntentEpoch, Policy, TunnelParams, WorldView,
+};
 use crate::vpn::backend::VpnBackend;
 use crate::vpn::platform::PlatformImpl;
 use crate::vpn::protocol::{InterfaceName, Protocol};
@@ -194,8 +196,10 @@ async fn wait_for_handshake(ctx: &AttemptCtx) -> Result<(), AttemptError> {
         if ctx.cancelled() {
             return Err(AttemptError::Cancelled);
         }
-        if let Some(info) = ctx.backend.get_all_info().await
-            && let Some(secs) = info.last_packet_received
+        // Unreachable reads as "no packet yet" and simply loops: an attempt that cannot ask is not
+        // evidence of a handshake either way, and the budget below is what ends the wait.
+        if let WorldView::Reachable(tunnel) = ctx.backend.observe().await.view
+            && let Some(secs) = tunnel.last_packet_secs
             && secs < RECENT_SECS
         {
             return Ok(());
