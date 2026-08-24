@@ -27,7 +27,7 @@ watch(
 )
 
 async function onReset() {
-  await vpn.resetProtocolPreference()
+  await vpn.forgetPreferred()
   toast.add({ title: t('settings.protocolPreferenceReset'), color: 'success' })
 }
 
@@ -84,7 +84,7 @@ function closeModal() {
             color="neutral"
             variant="ghost"
             size="sm"
-            :disabled="vpn.isLoading"
+            :disabled="vpn.isBusy"
             @click="onReset"
           />
         </div>

@@ -229,7 +229,9 @@ async function reconnectVpn() {
   reconnecting.value = true
   splitDirty.value = false
   try {
-    await vpn.reconnect()
+    // Re-asking with the new split rules is enough: the actor sees a tunnel that no longer
+    // satisfies the request and rebuilds it.
+    await vpn.connect()
   } finally {
     reconnecting.value = false
   }

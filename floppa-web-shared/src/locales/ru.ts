@@ -10,6 +10,7 @@ export default {
     verifyingConnection: 'Проверка соединения',
     disconnected: 'Отключено',
     disconnecting: 'Отключение',
+    retrying: 'Переподключение',
   },
   traffic: {
     download: 'Скачано',

@@ -43,6 +43,15 @@ watch(
 
 let statusInterval: ReturnType<typeof setInterval> | null = null
 
+/**
+ * True while we are talking to the server about re-provisioning a peer.
+ *
+ * Owned here rather than in the store because it is not a tunnel state: the tunnel is genuinely
+ * idle during it. It still has to make the button look busy, which is exactly why it feeds the
+ * same computed as the phase rather than a second, independent flag.
+ */
+const reprovisioning = ref(false)
+
 const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
 const createPeerMut = useMutation(createMyPeerMutation())
 
@@ -74,7 +83,7 @@ async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promi
       path: { id: peer.id },
       throwOnError: true,
     })
-    await vpn.setActiveConfig(configStr)
+    await vpn.importConfig(configStr)
     return { outcome: 'ok' }
   }
 
@@ -92,7 +101,7 @@ async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promi
         protocol,
       },
     })
-    await vpn.setActiveConfig(response.config)
+    await vpn.importConfig(response.config)
     return { outcome: 'ok' }
   } catch (e: unknown) {
     const errorCode = (e as Record<string, unknown>)?.error
@@ -161,19 +170,15 @@ async function doServerSync(): Promise<SyncResult> {
     try {
       const { data: vlessConfig } = await getMyVlessConfig()
       if (vlessConfig?.uri) {
-        await vpn.setActiveConfig(vlessConfig.uri)
+        await vpn.importConfig(vlessConfig.uri)
       }
     } catch {
       // VLESS not available on server — skip silently
     }
 
-    // 4. Restore previously active protocol (or default to first available — AmneziaWG)
-    if (prevProtocol && vpn.availableProtocols.includes(prevProtocol)) {
-      await vpn.setProtocol(prevProtocol)
-    } else if (vpn.availableProtocols.length > 0) {
-      await vpn.setProtocol(vpn.availableProtocols[0]!)
-    }
-
+    // Importing configs no longer changes which protocol a connect would use, so there is
+    // nothing to restore here — that used to be necessary only because storing and choosing
+    // were the same operation.
     return { outcome: 'ok' }
   } catch {
     return { outcome: 'offline' }
@@ -244,17 +249,13 @@ onMounted(async () => {
   // Preload app list for settings page (non-blocking)
   if (vpn.isAndroid) settingsStore.loadApps()
 
-  vpn.setOnReconnectFailed(handleReconnectFailed)
+  await vpn.refresh()
 
-  await vpn.loadConfig()
-  await vpn.refreshStatus()
-
-  // One-time on upgrade to auto-select: enable it and forget the previously-used
-  // protocol so the cycle re-probes from the configured priority instead of
-  // inheriting an old manual pick. Runs before sync so the reset is what gets restored.
+  // One-time on upgrade to auto-select: enable it and forget the previously-used protocol, so the
+  // first cycle probes from the configured priority instead of inheriting an old manual pick.
   if (!settingsStore.protocolDefaultsApplied) {
     settingsStore.autoSelect = true
-    await vpn.resetProtocolPreference()
+    await vpn.forgetPreferred()
     settingsStore.protocolDefaultsApplied = true
   }
 
@@ -262,41 +263,41 @@ onMounted(async () => {
     await setupAutoPeer()
   }
 
-  statusInterval = setInterval(async () => {
-    // Always poll on Android to detect surviving :vpn process after app kill.
-    // On desktop the UI process owns the tunnel, so only poll when connected.
-    if (vpn.isConnected || vpn.isAndroid) {
-      await vpn.refreshStatus()
-    }
-  }, 1000)
+  // Mirrors the actor's published snapshot. This is a local read with no IPC and no lock, so
+  // polling it is cheap — and it is only a stopgap until the state is pushed as an event.
+  statusInterval = setInterval(() => void vpn.refresh(), 1000)
 })
 
 onUnmounted(() => {
   if (statusInterval) {
     clearInterval(statusInterval)
   }
-  vpn.setOnReconnectFailed(null)
-  vpn.cleanup()
 })
 
 async function handleConnect() {
-  if (vpn.isConnected) {
+  // Cancelling an attempt and disconnecting a tunnel are the same request: a change of intent.
+  if (vpn.isConnected || vpn.isCancellable) {
     await vpn.disconnect()
     return
   }
 
-  await vpn.connect()
+  const outcome = await vpn.connect()
 
-  // If connection verification failed, check with server whether our peer still exists
-  if (vpn.connectError?.code === 'verify_failed' && vpn.deviceId) {
-    // Keep UI in loading state while we check server and potentially recreate
-    vpn.error = null
-    vpn.isLoading = true
+  // Every protocol failed. If any of them failed *verification*, the peer may have been deleted
+  // server-side — check that one specifically, rather than whichever protocol happened to be
+  // tried last.
+  const verifyFailed =
+    outcome?.outcome === 'exhausted'
+      ? outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
+      : undefined
+
+  if (verifyFailed && vpn.deviceId) {
+    reprovisioning.value = true
     try {
       console.info('[VpnCard] Connection verification failed, checking peer with server...')
       const { data: peer } = await getMyPeerByDevice({
         path: { device_id: vpn.deviceId },
-        query: { protocol: vpn.activeProtocol },
+        query: { protocol: verifyFailed },
       })
       if (!peer) {
         console.info('[VpnCard] Peer not found on server, recreating...')
@@ -310,18 +311,25 @@ async function handleConnect() {
         vpn.error = t('vpn.connectionFailed')
       }
     } finally {
-      vpn.isLoading = false
+      reprovisioning.value = false
     }
   }
 }
 
+/**
+ * The button's label and its spinner both come from `vpn.isBusy`/`vpn.phase`, which arrive in the
+ * same snapshot. They cannot disagree — which is what used to produce a spinner sitting next to
+ * the word "Connect", because the spinner read one source and the label another.
+ */
 const buttonLabel = computed(() => {
-  const s = vpn.connectionInfo?.status
-  switch (s) {
+  if (reprovisioning.value) return t('vpn.connecting')
+  switch (vpn.phase) {
     case 'connecting':
       return t('vpn.connecting')
     case 'verifying_connection':
       return t('vpn.verifyingConnection')
+    case 'retrying':
+      return t('vpn.connecting')
     case 'disconnecting':
       return t('vpn.disconnecting')
     case 'connected':
@@ -332,8 +340,8 @@ const buttonLabel = computed(() => {
 })
 
 function getConnectionDuration(): string {
-  if (!vpn.connectionInfo?.connected_at) return '--'
-  const seconds = Math.floor(Date.now() / 1000 - vpn.connectionInfo.connected_at)
+  if (!vpn.state.connected_at) return '--'
+  const seconds = Math.floor(Date.now() / 1000 - vpn.state.connected_at)
   return formatDuration(seconds)
 }
 
@@ -346,12 +354,13 @@ function formatLastPacket(secs: number | null | undefined): string {
 }
 
 function selectProtocol(proto: Protocol) {
-  // setProtocol persists active_protocol (keyring/file) — the single source of truth.
-  vpn.setProtocol(proto)
+  // In manual mode the request carries exactly one protocol, so choosing one is a local
+  // preference — nothing is persisted until it actually connects.
+  settingsStore.protocolOrder = [proto, ...settingsStore.protocolOrder.filter((p) => p !== proto)]
 }
 
 const healthDotClass = computed(() => {
-  const secs = vpn.connectionInfo?.last_packet_received
+  const secs = vpn.state.last_packet_received
   if (secs == null || secs < 0 || secs > 150) return 'bg-red-500'
   if (secs > 120) return 'bg-yellow-500'
   return 'bg-green-500'
@@ -389,8 +398,7 @@ const healthDotClass = computed(() => {
           'status-circle',
           {
             connected: vpn.isConnected,
-            connecting:
-              vpn.connectionStatus === 'connecting' || vpn.connectionStatus === 'disconnecting',
+            connecting: vpn.phase === 'connecting' || vpn.phase === 'disconnecting',
           },
         ]"
       >
@@ -401,11 +409,7 @@ const healthDotClass = computed(() => {
         />
       </div>
 
-      <ConnectionIndicator
-        :status="vpn.connectionStatus"
-        show-label
-        class="text-xl font-semibold"
-      />
+      <ConnectionIndicator :status="vpn.phase" show-label class="text-xl font-semibold" />
 
       <!-- Auto-select probe progress: which protocol we're trying + a stepper -->
       <div v-if="vpn.attempt && vpn.attempt.total > 1" class="flex flex-col items-center gap-2">
@@ -432,28 +436,26 @@ const healthDotClass = computed(() => {
 
       <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
       <UBadge
-        v-else-if="vpn.isConnected && settingsStore.autoSelect && vpn.connectionInfo?.protocol"
+        v-else-if="vpn.isConnected && settingsStore.autoSelect && vpn.state.protocol"
         color="neutral"
         variant="subtle"
       >
-        {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.connectionInfo.protocol}`) }) }}
+        {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.state.protocol}`) }) }}
       </UBadge>
 
       <div
-        v-if="vpn.isConnected && vpn.connectionInfo"
+        v-if="vpn.isConnected && vpn.state"
         class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]"
       >
-        <span v-if="vpn.connectionInfo.assigned_ip">
-          IP: {{ vpn.connectionInfo.assigned_ip }}
-        </span>
-        <span v-if="vpn.connectionInfo.server_endpoint">
-          {{ t('vpn.server') }}: {{ vpn.connectionInfo.server_endpoint }}
+        <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
+        <span v-if="vpn.state.server_endpoint">
+          {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
         </span>
         <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
         <span class="inline-flex items-center justify-center gap-1.5">
           {{ t('vpn.lastActivity') }}:
           <span class="size-2 rounded-full" :class="healthDotClass" />
-          {{ formatLastPacket(vpn.connectionInfo.last_packet_received) }}
+          {{ formatLastPacket(vpn.state.last_packet_received) }}
         </span>
       </div>
 
@@ -481,7 +483,7 @@ const healthDotClass = computed(() => {
         :label="buttonLabel"
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
-        :loading="vpn.isLoading"
+        :loading="vpn.isBusy"
         :disabled="!vpn.hasConfig"
         size="lg"
         class="w-full max-w-[200px] mt-2"
@@ -495,7 +497,7 @@ const healthDotClass = computed(() => {
           <button
             v-for="proto in vpn.availableProtocols"
             :key="proto"
-            :disabled="vpn.isConnected || vpn.isLoading"
+            :disabled="vpn.isConnected || vpn.isBusy"
             class="px-4 py-1.5 text-sm rounded-md transition-all"
             :class="
               vpn.activeProtocol === proto
@@ -562,7 +564,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Traffic Stats -->
-  <UCard v-if="vpn.isConnected && vpn.connectionInfo" class="mb-4">
+  <UCard v-if="vpn.isConnected && vpn.state" class="mb-4">
     <template #header>
       <span class="font-semibold">{{ t('vpn.traffic') }}</span>
     </template>
@@ -571,10 +573,10 @@ const healthDotClass = computed(() => {
         <UIcon name="i-lucide-arrow-up" class="text-2xl text-green-500" />
         <div class="flex flex-col">
           <span class="font-semibold text-lg">
-            {{ formatBytes(vpn.connectionInfo.stats.tx_bytes) }}
+            {{ formatBytes(vpn.state.stats.tx_bytes) }}
           </span>
           <span class="text-xs text-[var(--ui-text-muted)]">
-            {{ formatSpeed(vpn.connectionInfo.stats.tx_bytes_per_sec ?? 0) }}
+            {{ formatSpeed(vpn.state.stats.tx_bytes_per_sec ?? 0) }}
           </span>
         </div>
       </div>
@@ -582,10 +584,10 @@ const healthDotClass = computed(() => {
         <UIcon name="i-lucide-arrow-down" class="text-2xl text-[var(--ui-primary)]" />
         <div class="flex flex-col">
           <span class="font-semibold text-lg">
-            {{ formatBytes(vpn.connectionInfo.stats.rx_bytes) }}
+            {{ formatBytes(vpn.state.stats.rx_bytes) }}
           </span>
           <span class="text-xs text-[var(--ui-text-muted)]">
-            {{ formatSpeed(vpn.connectionInfo.stats.rx_bytes_per_sec ?? 0) }}
+            {{ formatSpeed(vpn.state.stats.rx_bytes_per_sec ?? 0) }}
           </span>
         </div>
       </div>

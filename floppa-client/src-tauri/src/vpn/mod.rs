@@ -18,4 +18,4 @@ pub mod wire;
 pub use backend::{VpnBackend, create_backend};
 pub use platform::{Platform, PlatformImpl, get_platform};
 pub use protocol::{InterfaceName, Preference, Protocol};
-pub use state::{ProtocolConfig, VpnState};
+pub use state::ProtocolConfig;

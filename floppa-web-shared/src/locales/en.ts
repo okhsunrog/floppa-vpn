@@ -10,6 +10,7 @@ export default {
     verifyingConnection: 'Verifying connection',
     disconnected: 'Disconnected',
     disconnecting: 'Disconnecting',
+    retrying: 'Reconnecting',
   },
   traffic: {
     download: 'Download',
