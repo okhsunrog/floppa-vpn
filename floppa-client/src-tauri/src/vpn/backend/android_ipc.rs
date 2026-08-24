@@ -196,7 +196,7 @@ impl VpnBackend for AndroidIpcBackend {
 
         match client.get_full_info(tarpc::context::current()).await {
             Ok(info) => Some(VpnFullInfo {
-                is_running: info.is_running,
+                is_running: info.is_running(),
                 stats: match (info.tx_bytes, info.rx_bytes) {
                     (Some(tx), Some(rx)) => Some(TrafficStats {
                         tx_bytes: tx,
@@ -206,7 +206,7 @@ impl VpnBackend for AndroidIpcBackend {
                     _ => None,
                 },
                 last_packet_received: info.last_packet_received,
-                connected_secs: info.connected_secs,
+                connected_secs: info.running.as_ref().and_then(|r| r.connected_secs),
             }),
             Err(e) => {
                 warn!("RPC get_full_info failed: {e}");
@@ -243,24 +243,13 @@ impl VpnBackend for AndroidIpcBackend {
             Ok(info) => Observation {
                 observed_at,
                 view: WorldView::Reachable(TunnelObservation {
-                    // A tunnel is believed only when it names both its protocol and its
-                    // endpoint. Anything less is a peer we do not share a wire format with, and
-                    // adopting it would mean claiming to be connected through a tunnel we can
-                    // neither describe nor roll back.
-                    running: match (info.is_running, info.running_identity()) {
-                        (_, Some((protocol, endpoint, address))) => Some(RunningTunnel {
-                            protocol,
-                            epoch: None,
-                            endpoint,
-                            address,
-                            connected_secs: info.connected_secs,
-                        }),
-                        (true, None) => {
-                            warn!("a running tunnel did not identify itself; ignoring it");
-                            None
-                        }
-                        (false, None) => None,
-                    },
+                    running: info.running.map(|r| RunningTunnel {
+                        protocol: r.protocol,
+                        epoch: None,
+                        endpoint: r.endpoint,
+                        address: r.address,
+                        connected_secs: r.connected_secs,
+                    }),
                     starting: false,
                     start_error: None,
                     raw_stats: match (info.tx_bytes, info.rx_bytes) {

@@ -32,23 +32,22 @@ struct VpnRpcServer {
 
 impl VpnRpc for VpnRpcServer {
     async fn get_full_info(self, _ctx: Context) -> TunnelInfo {
-        let is_running = self.tunnel_manager.is_running().await;
-        let last_packet_received = self.tunnel_manager.get_last_packet_received().await;
         let connected_secs = self
             .tunnel_manager
             .get_connection_duration()
             .await
             .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
-        // Identity comes from the tunnel we actually own, so the UI process never has to guess.
-        let meta = self.tunnel_manager.meta().await;
-        TunnelInfo {
-            is_running,
-            protocol: meta.as_ref().map(|m| m.protocol),
-            endpoint: meta.as_ref().map(|m| m.endpoint.clone()),
-            address: meta.as_ref().map(|m| m.address.clone()),
-            last_packet_received,
+        // Running-ness and identity come out of the same Option, which is why they are one field.
+        let running = self.tunnel_manager.meta().await.map(|m| RunningInfo {
+            protocol: m.protocol,
+            endpoint: m.endpoint,
+            address: m.address,
             connected_secs,
+        });
+        TunnelInfo {
+            running,
+            last_packet_received: self.tunnel_manager.get_last_packet_received().await,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
             rx_bytes: stats.as_ref().map(|s| s.rx_bytes),
         }
