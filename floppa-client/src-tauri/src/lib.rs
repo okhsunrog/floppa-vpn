@@ -163,9 +163,20 @@ pub fn run() {
 
             #[cfg(not(mobile))]
             {
-                match app.deep_link().register_all() {
-                    Ok(()) => info!("Deep-link schemes registered."),
-                    Err(err) => warn!("Failed to register deep-link schemes: {err}"),
+                // Registering repoints the system-wide floppa:// handler at the current binary.
+                // A debug build doing that hijacks deep links from the installed release app
+                // (and a dev binary needs the vite dev server to even render), so debug builds
+                // only register when explicitly asked to via FLOPPA_REGISTER_DEEP_LINK=1.
+                if !cfg!(debug_assertions) || std::env::var_os("FLOPPA_REGISTER_DEEP_LINK").is_some()
+                {
+                    match app.deep_link().register_all() {
+                        Ok(()) => info!("Deep-link schemes registered."),
+                        Err(err) => warn!("Failed to register deep-link schemes: {err}"),
+                    }
+                } else {
+                    info!(
+                        "Debug build: skipping deep-link scheme registration (set FLOPPA_REGISTER_DEEP_LINK=1 to register)."
+                    );
                 }
             }
 

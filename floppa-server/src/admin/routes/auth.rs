@@ -322,6 +322,7 @@ pub(super) async fn telegram_deep_link_callback(
             super::PendingTelegramLoginCode {
                 auth_response,
                 expires_at: now + Duration::minutes(2),
+                consumed_at: None,
             },
         );
     }
@@ -451,14 +452,25 @@ pub(super) async fn exchange_telegram_login_code(
     Json(request): Json<ExchangeTelegramLoginCodeRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     let now = Utc::now();
-    let pending = {
+    let auth_response = {
         let mut login_codes = state.telegram_login_codes.write().await;
-        login_codes.retain(|_, value| value.expires_at > now);
-        login_codes.remove(&request.code)
-    }
-    .ok_or_else(ApiError::unauthorized)?;
+        // Drop expired codes and codes whose post-consumption grace window has passed. The grace
+        // window lets the client retry the exchange when the first response was lost mid-flight
+        // (e.g. the webview got suspended during the browser → app switch on mobile).
+        login_codes.retain(|_, value| {
+            value.expires_at > now
+                && value
+                    .consumed_at
+                    .is_none_or(|consumed| now - consumed < Duration::seconds(30))
+        });
+        let pending = login_codes
+            .get_mut(&request.code)
+            .ok_or_else(ApiError::unauthorized)?;
+        pending.consumed_at.get_or_insert(now);
+        pending.auth_response.clone()
+    };
 
-    Ok(Json(pending.auth_response))
+    Ok(Json(auth_response))
 }
 
 /// Authenticate via Telegram Login Widget

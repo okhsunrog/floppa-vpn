@@ -9,6 +9,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { useAuthStore } from 'floppa-web-shared'
 import { useUpdateStore } from './stores/updateStore'
+import { useDeepLinkAuthStore } from './stores/deepLinkAuthStore'
 import { commands } from './bindings'
 import { client } from 'floppa-web-shared/client/client.gen'
 import { exchangeTelegramLoginCode } from 'floppa-web-shared/client/sdk.gen'
@@ -170,6 +171,35 @@ function extractDeepLinkLoginCode(rawUrl: string): string | null {
   }
 }
 
+const EXCHANGE_ATTEMPTS = 3
+const EXCHANGE_RETRY_DELAY_MS = 1000
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Exchange with retries on transient (network/5xx) failures. 4xx means the code is
+ * invalid or burned — retrying can't help, so those fail immediately. */
+async function exchangeWithRetry(code: string) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { data: response } = await exchangeTelegramLoginCode({
+        body: { code },
+        throwOnError: true,
+      })
+      return response
+    } catch (e) {
+      const status = (e as { status?: number })?.status
+      const transient = status === undefined || status >= 500
+      if (!transient || attempt >= EXCHANGE_ATTEMPTS) {
+        throw e
+      }
+      void warn(`[web] Deep-link code exchange attempt ${attempt} failed, retrying: ${String(e)}`)
+      await sleep(EXCHANGE_RETRY_DELAY_MS)
+    }
+  }
+}
+
 async function handleDeepLinkUrls(urls: string[]) {
   for (const rawUrl of urls) {
     const code = extractDeepLinkLoginCode(rawUrl)
@@ -181,16 +211,17 @@ async function handleDeepLinkUrls(urls: string[]) {
     }
 
     processingDeepLinkCodes.add(code)
+    const deepLinkAuth = useDeepLinkAuthStore()
+    deepLinkAuth.start()
     try {
-      const { data: response } = await exchangeTelegramLoginCode({
-        body: { code },
-        throwOnError: true,
-      })
+      const response = await exchangeWithRetry(code)
       authStore.setAuth(response.token, response.user)
       processedDeepLinkCodes.add(code)
+      deepLinkAuth.finish(true)
       await router.push('/')
       void info('[web] Deep-link login completed.')
     } catch (e) {
+      deepLinkAuth.finish(false)
       void error(`[web] Failed to exchange deep-link login code: ${String(e)}`)
     } finally {
       processingDeepLinkCodes.delete(code)
@@ -204,11 +235,9 @@ async function setupDeepLinkAuth() {
   }
 
   try {
-    const startupUrls = await getCurrent()
-    if (startupUrls && startupUrls.length > 0) {
-      await handleDeepLinkUrls(startupUrls)
-    }
-
+    // Register the live listeners BEFORE processing the startup URL: the startup exchange
+    // can take a while (network), and a re-tap of the link in the browser during that window
+    // must not be dropped.
     await onOpenUrl((urls) => {
       void handleDeepLinkUrls(urls)
     })
@@ -226,6 +255,11 @@ async function setupDeepLinkAuth() {
     })
 
     void info('[web] Deep-link listener initialized.')
+
+    const startupUrls = await getCurrent()
+    if (startupUrls && startupUrls.length > 0) {
+      await handleDeepLinkUrls(startupUrls)
+    }
   } catch (e) {
     void error(`[web] Failed to initialize deep-link listener: ${String(e)}`)
   }
