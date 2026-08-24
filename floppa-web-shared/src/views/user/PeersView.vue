@@ -204,14 +204,14 @@ async function downloadConfig() {
     try {
       if (navigator.userAgent.includes('Android')) {
         // Android: save to Download/FloppaVPN/ via MediaStore
-        const { AndroidFs, AndroidPublicGeneralPurposeDir } =
+        const { createNewPublicFile, writeTextFile, PublicGeneralPurposeDir } =
           await import('tauri-plugin-android-fs-api')
-        const uri = await AndroidFs.createNewPublicFile(
-          AndroidPublicGeneralPurposeDir.Download,
+        const uri = await createNewPublicFile(
+          PublicGeneralPurposeDir.Download,
           `FloppaVPN/${filename}`,
           'text/plain',
         )
-        await AndroidFs.writeTextFile(uri, config)
+        await writeTextFile(uri, config)
         toast.add({
           title: t('userPeers.configSaved', { path: `Download/FloppaVPN/${filename}` }),
           color: 'success',

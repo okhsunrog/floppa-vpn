@@ -5,7 +5,7 @@
     "": {
       "name": "floppa-vpn",
       "dependencies": {
-        "tauri-plugin-android-fs-api": "^28.4.0",
+        "tauri-plugin-android-fs-api": "^29.0.0",
       },
       "devDependencies": {
         "vite": "catalog:",
@@ -105,7 +105,7 @@
       "optionalDependencies": {
         "@tauri-apps/plugin-dialog": "^2.7.2",
         "@tauri-apps/plugin-fs": "^2.5.1",
-        "tauri-plugin-android-fs-api": "^28.4.0",
+        "tauri-plugin-android-fs-api": "^29.0.0",
       },
       "peerDependencies": {
         "pinia": "^4.0.0",
@@ -1158,7 +1158,7 @@
 
     "tapable": ["tapable@2.3.3", "", {}, "sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A=="],
 
-    "tauri-plugin-android-fs-api": ["tauri-plugin-android-fs-api@28.4.0", "", { "dependencies": { "@tauri-apps/api": "^2.0.0", "create-web-stream": "^1.1.1" } }, "sha512-YOo1P+cRjuaoPbTNZprMhr56ruKO4hIDq7kJOum91NqkN+VWY9F+UPAdjZokhzJSsbkeY0nsb1VDLXb2/h3f3w=="],
+    "tauri-plugin-android-fs-api": ["tauri-plugin-android-fs-api@29.0.0", "", { "dependencies": { "@tauri-apps/api": "^2.0.0", "create-web-stream": "^1.1.1" } }, "sha512-fDCyz/EFyWGEKXu3AxjhgSM07kSXKKzK1Jg4W3CR0kQABrqS9JekvjXz68tgq44JFXpLH9IgL7CwQ+ed8WGiUw=="],
 
     "tiny-inflate": ["tiny-inflate@1.0.3", "", {}, "sha512-pkY1fj1cKHb2seWDy0B16HeWyczlJA9/WW3u3c4z/NiWDsO3DOU5D7nhTLE9CF0yXv/QZFY7sEJmj24dK+Rrqw=="],
 
