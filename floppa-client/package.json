@@ -6,11 +6,7 @@
   "scripts": {
     "sync-version": "node scripts/sync-version.ts",
     "dev": "vp dev",
-    "preview": "vp preview",
-    "lint": "vp lint --fix",
-    "lint:check": "vp lint",
-    "format": "vp fmt src/",
-    "format:check": "vp fmt --check src/"
+    "preview": "vp preview"
   },
   "dependencies": {
     "@formkit/drag-and-drop": "^0.5.3",

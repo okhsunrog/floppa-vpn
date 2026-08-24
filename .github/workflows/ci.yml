@@ -150,7 +150,7 @@ jobs:
         run: vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
 
       - name: Frontend tests
-        run: vp run --filter floppa-web-shared test
+        run: vp test --run
 
       - name: Build frontends
         run: |

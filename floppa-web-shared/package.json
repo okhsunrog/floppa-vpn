@@ -17,11 +17,7 @@
     "vue-router": "^5.0.3"
   },
   "scripts": {
-    "openapi-ts": "openapi-ts",
-    "lint": "vp lint --fix",
-    "lint:check": "vp lint",
-    "format": "vp fmt src/",
-    "format:check": "vp fmt --check src/"
+    "openapi-ts": "openapi-ts"
   },
   "exports": {
     ".": "./src/index.ts",

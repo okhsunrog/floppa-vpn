@@ -102,17 +102,14 @@ client-check:
     echo "tests (client crates)..."
     run cargo test --quiet --manifest-path floppa-client/src-tauri/Cargo.toml
     run cargo test --quiet --manifest-path tauri-plugin-vpn/Cargo.toml
-    for pkg in floppa-web-shared floppa-client; do
-        echo "$pkg: format + lint..."
-        cd "$pkg"
-        run vp run format:check
-        run vp run lint:check
-        cd ..
-    done
-    echo "client frontend: typecheck..."
+    # `vp check` has no package filter, so it covers floppa-face too. That is cheaper than
+    # arranging not to: the whole workspace takes under a second.
+    echo "frontend: format + lint + types..."
+    run vp check
+    echo "frontend: vue type-check..."
     run vp run --filter floppa-web-shared --filter floppa-client typecheck
-    echo "shared frontend: tests..."
-    run vp run --filter floppa-web-shared test
+    echo "frontend: tests..."
+    run vp test --run
     echo "floppa-client: build..."
     run vp run --filter floppa-client build
     just check-kotlin
@@ -128,12 +125,9 @@ server-check:
     cargo clippy --quiet -- -D warnings
     echo "tests (workspace)..."
     output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
-    echo "floppa-face: format + lint..."
-    cd floppa-face
-    run vp run format:check
-    run vp run lint:check
-    cd ..
-    echo "server frontend: typecheck..."
+    echo "frontend: format + lint + types..."
+    run vp check
+    echo "server frontend: vue type-check..."
     run vp run --filter floppa-face typecheck
     echo "floppa-face: build..."
     run vp run --filter floppa-face build
@@ -147,21 +141,14 @@ fmt:
     cargo fmt
     cargo fmt --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --manifest-path tauri-plugin-vpn/Cargo.toml
-    for pkg in floppa-web-shared floppa-face floppa-client; do
-        echo "$pkg: format + lint..."
-        cd "$pkg"
-        run vp run format
-        run vp run lint
-        cd ..
-    done
+    echo "frontend: format + lint..."
+    run vp check --fix
     just fmt-kotlin
 
 # Lint (without auto-fix)
 lint:
     @cargo clippy --quiet -- -D warnings
-    @cd floppa-web-shared && vp run lint:check
-    @cd floppa-face && vp run lint:check
-    @cd floppa-client && vp run lint:check
+    @vp check --no-fmt
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
 sqlx-prepare:

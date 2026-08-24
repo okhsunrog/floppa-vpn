@@ -8,11 +8,7 @@
   },
   "scripts": {
     "dev": "vp dev",
-    "preview": "vp preview",
-    "lint": "vp lint --fix",
-    "lint:check": "vp lint",
-    "format": "vp fmt src/",
-    "format:check": "vp fmt --check src/"
+    "preview": "vp preview"
   },
   "dependencies": {
     "@nuxt/ui": "^4.9.0",
