@@ -138,11 +138,6 @@ export const useVpnStore = defineStore(
       await refresh()
     }
 
-    function dispose() {
-      unlisten?.()
-      unlisten = null
-    }
-
     function params(): TunnelParams {
       const settings = useSettingsStore()
       const apps = settings.splitMode === 'all' ? [] : [...settings.selectedApps]
@@ -255,7 +250,6 @@ export const useVpnStore = defineStore(
       lastOutcome,
       initPlatform,
       init,
-      dispose,
       refresh,
       connect,
       disconnect,
