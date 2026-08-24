@@ -2,6 +2,7 @@ pub mod actor;
 pub mod backend;
 pub mod commands;
 pub mod config;
+pub mod events;
 #[cfg(target_os = "android")]
 pub mod jni_entry;
 pub mod platform;

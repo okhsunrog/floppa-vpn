@@ -22,6 +22,7 @@ import App from './App.vue'
 import ClientLoginView from './views/ClientLoginView.vue'
 import ClientDashboardView from './views/ClientDashboardView.vue'
 import ClientInfoView from './views/ClientInfoView.vue'
+import { useVpnStore } from './stores/vpnStore'
 
 // Forward console.* to Tauri's plugin-log so all frontend logs
 // appear in tracing (logcat on Android, stdout on desktop).
@@ -274,6 +275,11 @@ async function setupDeepLinkAuth() {
 
 app.use(router)
 void setupDeepLinkAuth()
+
+// Subscribe to tunnel state at app scope, not from the card that displays it: the tunnel outlives
+// any one screen, and a subscription tied to a component would drop updates whenever the user
+// navigated away.
+void useVpnStore().init()
 
 // Set safe area CSS variables on Android (env(safe-area-inset-*) doesn't work in Android WebView)
 if (isTauri()) {

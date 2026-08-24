@@ -55,7 +55,9 @@ pub fn run() {
             vpn::commands::get_log_config,
             vpn::commands::set_log_config,
         ])
-        .events(tauri_specta::collect_events![])
+        .events(tauri_specta::collect_events![
+            vpn::events::TunnelStateChanged
+        ])
         // specta rc.25 forbids exporting BigInt-style types (i64/u64/usize/…) by default.
         // We export them as TS `number` (as before the upgrade) — IDs/byte counters stay numbers.
         .dangerously_cast_bigints_to_number();
@@ -143,6 +145,11 @@ pub fn run() {
 
     let app = builder
         .setup(move |#[allow(unused_variables)] app| {
+            // Register the event registry. Not optional: emitting without it panics with
+            // "EventRegistry not found in Tauri state". The builder can simply be moved in here,
+            // because invoke_handler() borrows and was already evaluated above.
+            specta_builder.mount_events(app);
+
             // Set up log directory and init tracing with file logging
             let log_dir = app
                 .path()
@@ -212,7 +219,6 @@ pub fn run() {
                     backend,
                     platform,
                     journal,
-                    #[cfg(target_os = "android")]
                     app.handle().clone(),
                 );
                 app.manage(handle);

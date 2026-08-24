@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import vpnConnectedImg from '../assets/vpn-connected.png?inline'
 import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
@@ -40,8 +40,6 @@ watch(
     await permissions.checkPromptsAfterConnection()
   },
 )
-
-let statusInterval: ReturnType<typeof setInterval> | null = null
 
 /**
  * True while we are talking to the server about re-provisioning a peer.
@@ -246,16 +244,6 @@ onMounted(async () => {
 
   if (vpn.deviceId) {
     await setupAutoPeer()
-  }
-
-  // Mirrors the actor's published snapshot. This is a local read with no IPC and no lock, so
-  // polling it is cheap — and it is only a stopgap until the state is pushed as an event.
-  statusInterval = setInterval(() => void vpn.refresh(), 1000)
-})
-
-onUnmounted(() => {
-  if (statusInterval) {
-    clearInterval(statusInterval)
   }
 })
 

@@ -75,6 +75,7 @@ pub struct TunnelActor {
     policy: Policy,
     iface: InterfaceName,
     journal: Option<Journal>,
+    /// Only the Android ladder needs it; the publisher takes its own clone when it is spawned.
     #[cfg(target_os = "android")]
     app: tauri::AppHandle,
 
@@ -102,7 +103,7 @@ impl TunnelActor {
         backend: Arc<dyn VpnBackend>,
         platform: Arc<PlatformImpl>,
         journal: Option<Journal>,
-        #[cfg(target_os = "android")] app: tauri::AppHandle,
+        app: tauri::AppHandle,
     ) -> TunnelHandle {
         let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
@@ -122,7 +123,7 @@ impl TunnelActor {
             iface: InterfaceName::default(),
             journal,
             #[cfg(target_os = "android")]
-            app,
+            app: app.clone(),
             attempt: None,
             unwind: None,
             cancel_issued: false,
@@ -137,10 +138,11 @@ impl TunnelActor {
             state_tx,
         };
 
-        // Tauri's `setup` runs outside a Tokio runtime context, so these two must go through
-        // Tauri's runtime handle. Everything the actor spawns afterwards runs inside its own task
-        // and can use `tokio::spawn` directly.
+        // Tauri's `setup` runs outside a Tokio runtime context, so these must go through Tauri's
+        // runtime handle. Everything the actor spawns afterwards runs inside its own task and can
+        // use `tokio::spawn` directly.
         tauri::async_runtime::spawn(observer(backend, cmd_tx.clone(), policy));
+        tauri::async_runtime::spawn(publisher(state_rx.clone(), app));
         tauri::async_runtime::spawn(actor.run(cmd_rx));
 
         TunnelHandle::new(cmd_tx, state_rx)
@@ -754,6 +756,21 @@ async fn sleep_until(deadline: Option<Instant>) {
 /// This lives in Rust rather than in the UI precisely so its cadence cannot be distorted by how
 /// many timers a frontend happens to be running — and, on mobile, so it does not stop when the
 /// webview is backgrounded and its timers are throttled.
+/// Forwards every published state to the UI as an event.
+///
+/// Reading from a `watch` means a listener that falls behind is given the newest value rather than
+/// a backlog: the UI wants the current state, never a replay of states that are no longer true.
+async fn publisher(mut states: watch::Receiver<TunnelState>, app: tauri::AppHandle) {
+    use tauri_specta::Event as _;
+
+    while states.changed().await.is_ok() {
+        let state = states.borrow_and_update().clone();
+        if let Err(e) = crate::vpn::events::TunnelStateChanged(state).emit(&app) {
+            warn!(error = %e, "failed to emit the tunnel state");
+        }
+    }
+}
+
 async fn observer(backend: Arc<dyn VpnBackend>, tx: mpsc::Sender<Command>, policy: Policy) {
     loop {
         let obs = backend.observe().await;
