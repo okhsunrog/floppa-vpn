@@ -376,6 +376,12 @@ pub enum UnreachableCause {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TunnelObservation {
+    /// Which generation of the service answered.
+    ///
+    /// Starting a tunnel tears down the previous service first, and that teardown is asynchronous
+    /// — so "something answered" is not the same as "the service we just asked for answered". The
+    /// dying previous instance replies quite happily right up until it does not.
+    pub epoch: u64,
     pub running: Option<RunningTunnel>,
     /// True between "the peer bound its socket" and "the tunnel start returned". Requires the RPC
     /// server to bind ahead of the tunnel start, which is what turns a failed Android start into
@@ -922,6 +928,7 @@ mod tests {
         let obs = Observation {
             observed_at: now,
             view: WorldView::Reachable(TunnelObservation {
+                epoch: 0,
                 running: None,
                 starting: false,
                 start_error: None,
@@ -942,6 +949,7 @@ mod tests {
         let obs = Observation {
             observed_at: now,
             view: WorldView::Reachable(TunnelObservation {
+                epoch: 0,
                 running: None,
                 starting: true,
                 start_error: None,

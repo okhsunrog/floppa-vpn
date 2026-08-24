@@ -57,6 +57,20 @@ pub trait VpnBackend: Send + Sync {
     /// Used on Android (fd from VpnService) and potentially iOS.
     async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String>;
 
+    /// Ask a already-running out-of-process service to bring up a tunnel on the descriptor it
+    /// holds, and get back a reason if it cannot.
+    ///
+    /// `epoch` identifies the request, so a service instance that has been superseded can refuse
+    /// it instead of obeying. Meaningless for an in-process backend, which has no service to ask.
+    async fn start_tunnel(
+        &self,
+        _epoch: u64,
+        _config: &ProtocolConfig,
+        _endpoint: SocketAddr,
+    ) -> Result<(), String> {
+        Err("this backend has no out-of-process service to ask".to_string())
+    }
+
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), String>;
 

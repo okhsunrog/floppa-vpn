@@ -41,7 +41,7 @@ class VpnConfigArgs {
     var disallowedApps: Array<String> = emptyArray()
     var allowedApps: Array<String> = emptyArray()
     /** Raw protocol config string (WG config text or vless:// URI), passed to :vpn process */
-    var protocolConfig: String? = null
+    var epoch: Long = 0
 }
 
 @InvokeArg
@@ -103,11 +103,6 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                 "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}",
             )
 
-            if (args.protocolConfig == null) {
-                invoke.reject("Missing protocolConfig parameter")
-                return
-            }
-
             // Check if VPN is prepared
             val prepareIntent = VpnService.prepare(activity)
             if (prepareIntent != null) {
@@ -128,7 +123,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                     putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
                     putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
                     putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
-                    putExtra(FloppaVpnService.EXTRA_PROTOCOL_CONFIG, args.protocolConfig)
+                    putExtra(FloppaVpnService.EXTRA_EPOCH, args.epoch)
                 }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

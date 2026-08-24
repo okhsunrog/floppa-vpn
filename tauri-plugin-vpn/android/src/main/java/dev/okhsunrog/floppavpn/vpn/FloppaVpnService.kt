@@ -37,7 +37,13 @@ class FloppaVpnService : VpnService() {
         const val EXTRA_MTU = "mtu"
         const val EXTRA_DISALLOWED_APPS = "disallowed_apps"
         const val EXTRA_ALLOWED_APPS = "allowed_apps"
-        const val EXTRA_PROTOCOL_CONFIG = "protocol_config"
+        /**
+         * Generation of the request that started this service.
+         *
+         * Echoed back over the RPC so a reply from an instance that has since been superseded is
+         * rejectable by value, rather than by guessing from timing.
+         */
+        const val EXTRA_EPOCH = "epoch"
 
         // Singleton instance for local protectSocket() calls from JNI
         @JvmField var instance: FloppaVpnService? = null
@@ -50,9 +56,18 @@ class FloppaVpnService : VpnService() {
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit(logDir: String)
 
-    private external fun nativeStartTunnel(tunFd: Int, protocolConfig: String, socketPath: String)
+    private external fun nativeStartServer(tunFd: Int, socketPath: String, epoch: Long)
 
-    private external fun nativeStop()
+    /**
+     * Generation this instance was started with.
+     *
+     * Passed back on teardown so a late onDestroy from a previous instance cannot stop the server
+     * belonging to the one that replaced it — these instances share a process, and stopService is
+     * asynchronous.
+     */
+    private var epoch: Long = 0
+
+    private external fun nativeStop(epoch: Long)
 
     private var tunInterface: ParcelFileDescriptor? = null
 
@@ -78,16 +93,9 @@ class FloppaVpnService : VpnService() {
         // Handle stop request from UI process
         if (intent.action == ACTION_STOP) {
             Log.i(TAG, "Received STOP action, shutting down")
-            nativeStop()
+            nativeStop(epoch)
             cleanupAndroid()
             instance = null
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        val protocolConfig = intent.getStringExtra(EXTRA_PROTOCOL_CONFIG)
-        if (protocolConfig == null) {
-            Log.e(TAG, "Missing protocol config in intent")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -102,10 +110,13 @@ class FloppaVpnService : VpnService() {
 
             Log.i(TAG, "TUN interface created with fd: $fd")
 
-            // Start the tunnel and tarpc RPC server via JNI
+            // Bind the RPC server and stop there. The tunnel is started by a separate typed
+            // request over that socket, so a failed start is reportable instead of looking like a
+            // service that never came up.
             // Keep in sync with SOCKET_NAME in rpc.rs.
             val socketPath = applicationInfo.dataDir + "/vpn.sock"
-            nativeStartTunnel(fd, protocolConfig, socketPath)
+            epoch = intent.getLongExtra(EXTRA_EPOCH, 0L)
+            nativeStartServer(fd, socketPath, epoch)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN tunnel", e)
             stopSelf()
@@ -119,7 +130,7 @@ class FloppaVpnService : VpnService() {
         Log.i(TAG, "VPN service destroying")
         // onDestroy is called by Android when the service is being torn down
         // (e.g., system kill). Stop Rust side and clean up.
-        nativeStop()
+        nativeStop(epoch)
         cleanupAndroid()
         instance = null
         super.onDestroy()
@@ -127,7 +138,7 @@ class FloppaVpnService : VpnService() {
 
     override fun onRevoke() {
         Log.i(TAG, "VPN permission revoked")
-        nativeStop()
+        nativeStop(epoch)
         cleanupAndroid()
         instance = null
         super.onRevoke()
