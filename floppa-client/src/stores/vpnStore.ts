@@ -2,11 +2,13 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   commands,
+  events,
   type CycleOutcome,
   type Protocol,
   type TunnelParams,
   type TunnelState,
 } from '../bindings'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
 
@@ -95,12 +97,46 @@ export const useVpnStore = defineStore(
     /** Pull the published snapshot. On the Rust side this is a local read — no IPC, no lock. */
     async function refresh() {
       try {
-        const next = await commands.tunnelGetState()
-        // seq only ever increases, so a slow reply can never overwrite a fresher one.
-        if (next.seq >= state.value.seq) state.value = next
+        apply(await commands.tunnelGetState())
       } catch (e) {
         console.error('[vpnStore] failed to read the tunnel state:', e)
       }
+    }
+
+    /**
+     * Accept a snapshot if it is newer than the one we hold.
+     *
+     * `seq` only ever increases, which is what makes the seed and the subscription safe to race:
+     * whichever arrives second is simply dropped if it is older. Without it, a slow reply to the
+     * initial read could overwrite a pushed update that already superseded it.
+     */
+    function apply(next: TunnelState) {
+      if (next.seq >= state.value.seq) state.value = next
+    }
+
+    let unlisten: UnlistenFn | null = null
+
+    /**
+     * Subscribe to state changes, then seed from a direct read.
+     *
+     * In that order deliberately: subscribing first means no update can slip through the gap
+     * between reading and listening. Polling is gone — a webview that has been backgrounded has
+     * its timers throttled, so an interval here was never a dependable clock. The clock lives in
+     * Rust, where it keeps running.
+     */
+    async function init() {
+      if (unlisten) return
+      try {
+        unlisten = await events.tunnelStateChanged.listen((e) => apply(e.payload))
+      } catch (e) {
+        console.error('[vpnStore] failed to subscribe to tunnel state:', e)
+      }
+      await refresh()
+    }
+
+    function dispose() {
+      unlisten?.()
+      unlisten = null
     }
 
     function params(): TunnelParams {
@@ -214,6 +250,8 @@ export const useVpnStore = defineStore(
       retry,
       lastOutcome,
       initPlatform,
+      init,
+      dispose,
       refresh,
       connect,
       disconnect,
