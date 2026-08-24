@@ -1,0 +1,276 @@
+//! Projection of the actor's internal state onto the one value the UI consumes.
+//!
+//! Pure apart from the speed tracker, which needs the previous sample to compute a rate. Keeping
+//! this in one function is what guarantees the UI can never see a torn combination — the phase, the
+//! probe progress and the retry countdown are computed together from the same status, so a spinner
+//! cannot disagree with its own label.
+
+use super::types::{
+    AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Observation, Phase,
+    RetryProgress, Status, TrafficStats, TunnelState, World, WorldView,
+};
+use crate::vpn::state::SpeedTracker;
+use std::time::Instant;
+
+/// Build the published snapshot.
+///
+/// `seq` is supplied by the caller and only ever increases, so a consumer can discard anything that
+/// is not strictly newer than what it already holds — which closes the race between seeding from a
+/// direct read and receiving the first pushed update.
+#[allow(clippy::too_many_arguments)]
+pub fn render(
+    seq: u64,
+    status: &Status,
+    intent: &Intent,
+    obs: &Observation,
+    world: &World,
+    configs: ConfigsView,
+    last_outcome: Option<CycleOutcome>,
+    speed: &mut SpeedTracker,
+    now: Instant,
+) -> TunnelState {
+    let phase = phase_of(status);
+
+    let (protocol, adopted, server_endpoint, assigned_ip, connected_at) = match status {
+        Status::Up(u) => (
+            Some(u.protocol),
+            u.adopted,
+            Some(u.server_endpoint.clone()),
+            Some(u.assigned_ip.clone()),
+            Some(u.connected_at),
+        ),
+        _ => (None, false, None, None, None),
+    };
+
+    let attempt = match status {
+        Status::Connecting { cycle, .. } => Some(AttemptProgress {
+            protocol: cycle.protocol(),
+            index: cycle.index as u32 + 1,
+            total: cycle.order.len() as u32,
+        }),
+        _ => None,
+    };
+
+    let retry = match status {
+        Status::Retrying { cycle, resume_at } => Some(RetryProgress {
+            pass: cycle.pass,
+            max: cycle.passes_allowed,
+            resume_in_ms: resume_at
+                .saturating_duration_since(now)
+                .as_millis()
+                .min(u32::MAX as u128) as u32,
+        }),
+        _ => None,
+    };
+
+    // Stats are only meaningful while a tunnel is actually up and answering.
+    let (stats, last_packet_received) = match (status, &obs.view) {
+        (Status::Up(_), WorldView::Reachable(t)) => {
+            let raw = t.raw_stats.unwrap_or_default();
+            let (tx_rate, rx_rate) = speed.update(raw.tx_bytes, raw.rx_bytes);
+            (
+                TrafficStats {
+                    tx_bytes: raw.tx_bytes,
+                    rx_bytes: raw.rx_bytes,
+                    tx_bytes_per_sec: tx_rate,
+                    rx_bytes_per_sec: rx_rate,
+                },
+                t.last_packet_secs,
+            )
+        }
+        _ => (TrafficStats::default(), None),
+    };
+
+    TunnelState {
+        seq,
+        phase,
+        intent: if intent.is_up() {
+            IntentView::Up
+        } else {
+            IntentView::Down
+        },
+        epoch: intent.epoch(),
+        intent_order: match intent {
+            Intent::Up(up) => up.order.clone(),
+            Intent::Down { .. } => Vec::new(),
+        },
+        protocol,
+        adopted,
+        attempt,
+        retry,
+        server_endpoint,
+        assigned_ip,
+        connected_at,
+        last_packet_received,
+        stats,
+        last_outcome,
+        configs,
+        backend_reachable: !world.is_dark(),
+    }
+}
+
+/// The single mapping from internal status to the phase the UI renders.
+///
+/// `Unwinding` reports as `Disconnecting` regardless of *why* we are unwinding, because from the
+/// user's point of view a teardown is a teardown; the reason only affects what happens next.
+fn phase_of(status: &Status) -> Phase {
+    match status {
+        Status::Idle => Phase::Disconnected,
+        Status::Connecting { phase, .. } => match phase {
+            super::types::AttemptPhase::Verifying => Phase::VerifyingConnection,
+            _ => Phase::Connecting,
+        },
+        Status::Up(_) => Phase::Connected,
+        Status::Unwinding { .. } => Phase::Disconnecting,
+        Status::Retrying { .. } => Phase::Retrying,
+    }
+}
+
+/// Whether the actor has nothing in flight and nothing applied.
+///
+/// Only `Idle` qualifies: `Up` means a tunnel exists, and the three transient states mean work is
+/// still running. This is what "clear the configs" and "exit cleanly" wait for, rather than
+/// branching on whatever status a caller last happened to observe.
+pub fn is_quiescent(status: &Status) -> bool {
+    matches!(status, Status::Idle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vpn::actor::types::*;
+    use crate::vpn::protocol::Protocol;
+    use std::time::Duration;
+
+    fn obs_clear(now: Instant) -> Observation {
+        Observation {
+            observed_at: now,
+            view: WorldView::Reachable(TunnelObservation {
+                running: None,
+                starting: false,
+                start_error: None,
+                raw_stats: None,
+                last_packet_secs: None,
+            }),
+        }
+    }
+
+    fn render_with(status: &Status, intent: &Intent, now: Instant) -> TunnelState {
+        let mut speed = SpeedTracker::new();
+        render(
+            1,
+            status,
+            intent,
+            &obs_clear(now),
+            &World::Clear,
+            ConfigsView::default(),
+            None,
+            &mut speed,
+            now,
+        )
+    }
+
+    fn cycle(order: &[Protocol]) -> Cycle {
+        Cycle {
+            epoch: IntentEpoch(1),
+            order: order.to_vec(),
+            params: None,
+            index: 0,
+            pass: 0,
+            passes_allowed: 3,
+            failures: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_busy_phase_and_its_progress_always_arrive_together() {
+        // The historical failure: the spinner came from one source and the label from another, so
+        // the button could show a spinner while saying "Connect". Here both are read off one value.
+        let now = Instant::now();
+        let status = Status::Connecting {
+            cycle: cycle(&[Protocol::AmneziaWg, Protocol::WireGuard]),
+            phase: AttemptPhase::Preparing,
+            deadline: now + Duration::from_secs(25),
+        };
+        let state = render_with(&status, &Intent::default(), now);
+
+        assert!(state.phase.is_busy());
+        assert!(state.phase.is_cancellable());
+        let progress = state.attempt.expect("a busy connect must report progress");
+        assert_eq!(progress.protocol, Protocol::AmneziaWg);
+        assert_eq!(progress.index, 1);
+        assert_eq!(progress.total, 2);
+    }
+
+    #[test]
+    fn verifying_is_distinguishable_from_connecting() {
+        let now = Instant::now();
+        let status = Status::Connecting {
+            cycle: cycle(&[Protocol::AmneziaWg]),
+            phase: AttemptPhase::Verifying,
+            deadline: now + Duration::from_secs(25),
+        };
+        assert_eq!(
+            render_with(&status, &Intent::default(), now).phase,
+            Phase::VerifyingConnection
+        );
+    }
+
+    #[test]
+    fn an_idle_actor_is_not_busy_and_reports_no_progress() {
+        let now = Instant::now();
+        let state = render_with(&Status::Idle, &Intent::default(), now);
+        assert_eq!(state.phase, Phase::Disconnected);
+        assert!(!state.phase.is_busy());
+        assert!(state.attempt.is_none());
+        assert!(state.retry.is_none());
+        assert!(state.protocol.is_none());
+    }
+
+    #[test]
+    fn a_retry_reports_how_long_is_left() {
+        let now = Instant::now();
+        let status = Status::Retrying {
+            cycle: cycle(&[Protocol::AmneziaWg]),
+            resume_at: now + Duration::from_secs(4),
+        };
+        let state = render_with(&status, &Intent::default(), now);
+        assert_eq!(state.phase, Phase::Retrying);
+        assert!(state.phase.is_busy(), "a retry is still work in progress");
+        let retry = state.retry.expect("a retry must report its countdown");
+        assert!((3_900..=4_000).contains(&retry.resume_in_ms));
+    }
+
+    #[test]
+    fn darkness_is_reported_without_claiming_the_tunnel_is_down() {
+        let now = Instant::now();
+        let mut speed = SpeedTracker::new();
+        let state = render(
+            1,
+            &Status::Up(UpStatus {
+                epoch: IntentEpoch(1),
+                protocol: Protocol::AmneziaWg,
+                params: None,
+                adopted: false,
+                server_endpoint: "e".into(),
+                assigned_ip: "10.0.0.2/32".into(),
+                connected_at: 0,
+                dark_since: Some(now),
+                resolved: true,
+            }),
+            &Intent::default(),
+            &obs_clear(now),
+            &World::Dark,
+            ConfigsView::default(),
+            None,
+            &mut speed,
+            now,
+        );
+        assert!(!state.backend_reachable);
+        assert_eq!(
+            state.phase,
+            Phase::Connected,
+            "an unreachable backend is not a disconnected tunnel"
+        );
+    }
+}

@@ -4,6 +4,9 @@
 //! Used on desktop platforms (Linux, Windows, macOS).
 
 use super::{VpnBackend, VpnFullInfo};
+use crate::vpn::actor::types::{
+    Observation, RawStats, RunningTunnel, TunnelObservation, WorldView,
+};
 use crate::vpn::platform::TunParams;
 use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
@@ -97,7 +100,47 @@ impl VpnBackend for InProcessBackend {
             is_running: self.tunnel_manager.is_running().await,
             stats: self.tunnel_manager.get_stats().await,
             last_packet_received: self.tunnel_manager.get_last_packet_received().await,
-            connected_secs: None,
+            // The tunnel knows how long it has been up; reporting None here is what made an
+            // adopted tunnel restart its duration display from zero.
+            connected_secs: self
+                .tunnel_manager
+                .get_connection_duration()
+                .await
+                .map(|d| d.as_secs()),
         })
+    }
+
+    /// Always reachable by construction: the tunnel is in this process, so an answer is always
+    /// authoritative and there is no such thing as a dark observation here.
+    async fn observe(&self) -> Observation {
+        let stats = self.tunnel_manager.get_stats().await;
+        let running = match self.tunnel_manager.meta().await {
+            Some(meta) => Some(RunningTunnel {
+                protocol: meta.protocol,
+                epoch: None,
+                endpoint: meta.endpoint,
+                address: meta.address,
+                connected_secs: self
+                    .tunnel_manager
+                    .get_connection_duration()
+                    .await
+                    .map(|d| d.as_secs()),
+            }),
+            None => None,
+        };
+
+        Observation {
+            observed_at: std::time::Instant::now(),
+            view: WorldView::Reachable(TunnelObservation {
+                running,
+                starting: false,
+                start_error: None,
+                raw_stats: stats.map(|s| RawStats {
+                    tx_bytes: s.tx_bytes,
+                    rx_bytes: s.rx_bytes,
+                }),
+                last_packet_secs: self.tunnel_manager.get_last_packet_received().await,
+            }),
+        }
     }
 }

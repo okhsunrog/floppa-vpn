@@ -40,8 +40,13 @@ impl VpnRpc for VpnRpcServer {
             .await
             .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
+        // Identity comes from the tunnel we actually own, so the UI process never has to guess.
+        let meta = self.tunnel_manager.meta().await;
         TunnelInfo {
             is_running,
+            protocol: meta.as_ref().map(|m| m.protocol),
+            endpoint: meta.as_ref().map(|m| m.endpoint.clone()),
+            address: meta.as_ref().map(|m| m.address.clone()),
             last_packet_received,
             connected_secs,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),

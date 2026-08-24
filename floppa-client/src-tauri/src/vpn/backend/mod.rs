@@ -16,9 +16,11 @@ mod ios;
 
 use super::platform::TunParams;
 use super::state::{ProtocolConfig, TrafficStats};
+use crate::vpn::actor::types::Observation;
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// All tunnel info returned by [`VpnBackend::get_all_info`].
 #[derive(Debug, Clone, Default)]
@@ -64,6 +66,22 @@ pub trait VpnBackend: Send + Sync {
     /// This is a **normal state**, not an error — callers should treat `None` as
     /// "tunnel not available" without logging errors or retrying.
     async fn get_all_info(&self) -> Option<VpnFullInfo>;
+
+    /// Look at the world.
+    ///
+    /// Distinct from [`Self::get_all_info`] in the one way that matters: it never collapses "there
+    /// is no tunnel" and "I could not reach the thing that would know" into the same value. The
+    /// first is authoritative, the second is not, and treating them alike is what let a transient
+    /// IPC gap read as a dropped tunnel.
+    async fn observe(&self) -> Observation;
+
+    /// How long this backend may be unreachable before its tunnel is presumed lost.
+    ///
+    /// Zero for an in-process backend, which cannot fail to answer. Non-zero only where the tunnel
+    /// lives in another process that can be restarted underneath us.
+    fn liveness_grace(&self) -> Duration {
+        Duration::ZERO
+    }
 
     /// Ping the VLESS server through the proxy chain (bypasses TUN).
     /// Updates `last_packet_received` on success so the health dot reflects connectivity.
