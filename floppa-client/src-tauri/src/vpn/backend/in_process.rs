@@ -4,9 +4,7 @@
 //! Used on desktop platforms (Linux, Windows, macOS).
 
 use super::VpnBackend;
-use crate::vpn::actor::types::{
-    Observation, RawStats, RunningTunnel, TunnelObservation, WorldView,
-};
+use crate::vpn::actor::types::{Observation, RunningTunnel, TunnelObservation, WorldView};
 use crate::vpn::platform::TunParams;
 use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
@@ -93,10 +91,7 @@ impl VpnBackend for InProcessBackend {
                 running,
                 starting: false,
                 start_error: None,
-                raw_stats: stats.map(|s| RawStats {
-                    tx_bytes: s.tx_bytes,
-                    rx_bytes: s.rx_bytes,
-                }),
+                raw_stats: stats,
                 last_packet_secs: self.tunnel_manager.get_last_packet_received().await,
             }),
         }

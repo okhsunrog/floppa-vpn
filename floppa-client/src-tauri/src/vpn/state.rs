@@ -163,15 +163,6 @@ impl WgConfig {
     }
 }
 
-/// Traffic statistics
-#[derive(Debug, Clone, Default, Serialize, Deserialize, Type)]
-pub struct TrafficStats {
-    pub tx_bytes: u64,
-    pub rx_bytes: u64,
-    pub tx_bytes_per_sec: f64,
-    pub rx_bytes_per_sec: f64,
-}
-
 /// Tracks previous stats for computing transfer rates
 pub struct SpeedTracker {
     prev_tx_bytes: u64,

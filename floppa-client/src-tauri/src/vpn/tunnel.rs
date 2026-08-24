@@ -2,7 +2,8 @@
 
 use super::platform::TunParams;
 use super::protocol::Protocol;
-use super::state::{AwgObfuscation, TrafficStats, WgConfig};
+use super::state::{AwgObfuscation, WgConfig};
+use crate::vpn::actor::types::RawStats;
 use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
 use gotatun::udp::socket::UdpSocketFactory;
@@ -338,11 +339,11 @@ impl GotatunTunnel {
     }
 
     /// Get traffic statistics
-    pub async fn get_stats(&self) -> Result<TrafficStats, String> {
+    pub async fn get_stats(&self) -> Result<RawStats, String> {
         let device = self.device.as_ref().ok_or("Device not initialized")?;
         let peers = device.peers().await;
 
-        let mut stats = TrafficStats::default();
+        let mut stats = RawStats::default();
         for peer_stats in peers {
             stats.rx_bytes += peer_stats.stats.rx_bytes as u64;
             stats.tx_bytes += peer_stats.stats.tx_bytes as u64;
@@ -399,15 +400,14 @@ enum ActiveTunnel {
 }
 
 impl ActiveTunnel {
-    async fn get_stats(&self) -> Option<TrafficStats> {
+    async fn get_stats(&self) -> Option<RawStats> {
         match self {
             Self::WireGuard(t) => t.get_stats().await.ok(),
             Self::Vless(t) => {
                 let stats = t.get_stats();
-                Some(TrafficStats {
+                Some(RawStats {
                     tx_bytes: stats.tx_bytes,
                     rx_bytes: stats.rx_bytes,
-                    ..Default::default()
                 })
             }
         }
@@ -607,7 +607,7 @@ impl TunnelManager {
         Ok(())
     }
 
-    pub async fn get_stats(&self) -> Option<TrafficStats> {
+    pub async fn get_stats(&self) -> Option<RawStats> {
         let tunnel_guard = self.tunnel.read().await;
         if let Some((tunnel, _)) = tunnel_guard.as_ref() {
             tunnel.get_stats().await
