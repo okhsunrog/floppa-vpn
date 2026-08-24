@@ -8,6 +8,8 @@ Floppa VPN — multi-protocol VPN service (AmneziaWG default, WireGuard, VLESS+R
 
 ```bash
 just check          # fmt + clippy + tests + frontend type-check + lint — run before committing
+just client-check   # Client half only (tauri crates + floppa-web-shared/floppa-client + kotlin)
+just server-check   # Server half only (workspace crates + floppa-face) — needs a live DB for sqlx
 just fmt            # Format all (Rust + frontend)
 just openapi        # Regenerate OpenAPI TS client (no running backend needed)
 just build-android  # Release APK (aarch64)
@@ -89,7 +91,7 @@ vp fmt src/               # oxfmt format (vp fmt --check to verify)
 vp check                  # format + lint + type checks together
 ```
 
-The `just check-frontend` / `just fmt` recipes and CI delegate to these via the package.json `lint`/`format`/`build` scripts; `vue-tsc --build` is still used for full type-checking. The `*.vue` import shim is intentionally absent — vue-tsc resolves SFCs natively, and a generic shim would mask prop-type errors.
+The `just client-check` / `just server-check` / `just fmt` recipes and CI delegate to these via the package.json `lint`/`format`/`build` scripts; `vue-tsc --build` is still used for full type-checking. The `*.vue` import shim is intentionally absent — vue-tsc resolves SFCs natively, and a generic shim would mask prop-type errors.
 
 **UI:** Nuxt UI v4 via `@nuxt/ui/vite` + `@nuxt/ui/vue-plugin` (no Nuxt framework). Components auto-imported. `useToast()` auto-imported.
 

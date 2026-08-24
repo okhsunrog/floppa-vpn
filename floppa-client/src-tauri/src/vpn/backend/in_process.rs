@@ -3,7 +3,10 @@
 //! The tunnel runs directly in the current process using gotatun.
 //! Used on desktop platforms (Linux, Windows, macOS).
 
-use super::{VpnBackend, VpnFullInfo};
+use super::VpnBackend;
+use crate::vpn::actor::types::{
+    Observation, RawStats, RunningTunnel, TunnelObservation, WorldView,
+};
 use crate::vpn::platform::TunParams;
 use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
@@ -55,35 +58,6 @@ impl VpnBackend for InProcessBackend {
         }
     }
 
-    async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String> {
-        #[cfg(target_os = "android")]
-        {
-            use std::os::fd::RawFd;
-            match config {
-                ProtocolConfig::WireGuard(wg) => {
-                    self.tunnel_manager
-                        .start_wireguard_with_fd(wg, tun_fd as RawFd, None)
-                        .await
-                }
-                ProtocolConfig::AmneziaWg(awg) => {
-                    self.tunnel_manager
-                        .start_wireguard_with_fd(&awg.wg, tun_fd as RawFd, Some(&awg.obfuscation))
-                        .await
-                }
-                ProtocolConfig::Vless(vless) => {
-                    self.tunnel_manager
-                        .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
-                        .await
-                }
-            }
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (config, tun_fd);
-            Err("start_with_fd is only supported on Android".into())
-        }
-    }
-
     async fn stop(&self) -> Result<(), String> {
         self.tunnel_manager.stop().await
     }
@@ -92,12 +66,39 @@ impl VpnBackend for InProcessBackend {
         self.tunnel_manager.ping().await
     }
 
-    async fn get_all_info(&self) -> Option<VpnFullInfo> {
-        Some(VpnFullInfo {
-            is_running: self.tunnel_manager.is_running().await,
-            stats: self.tunnel_manager.get_stats().await,
-            last_packet_received: self.tunnel_manager.get_last_packet_received().await,
-            connected_secs: None,
-        })
+    /// Always reachable by construction: the tunnel is in this process, so an answer is always
+    /// authoritative and there is no such thing as a dark observation here.
+    async fn observe(&self) -> Observation {
+        let stats = self.tunnel_manager.get_stats().await;
+        let running = match self.tunnel_manager.meta().await {
+            Some(meta) => Some(RunningTunnel {
+                protocol: meta.protocol,
+                epoch: None,
+                endpoint: meta.endpoint,
+                address: meta.address,
+                connected_secs: self
+                    .tunnel_manager
+                    .get_connection_duration()
+                    .await
+                    .map(|d| d.as_secs()),
+            }),
+            None => None,
+        };
+
+        Observation {
+            observed_at: std::time::Instant::now(),
+            view: WorldView::Reachable(TunnelObservation {
+                // In-process: there is no separate service to have generations of.
+                epoch: 0,
+                running,
+                starting: false,
+                start_error: None,
+                raw_stats: stats.map(|s| RawStats {
+                    tx_bytes: s.tx_bytes,
+                    rx_bytes: s.rx_bytes,
+                }),
+                last_packet_secs: self.tunnel_manager.get_last_packet_received().await,
+            }),
+        }
     }
 }

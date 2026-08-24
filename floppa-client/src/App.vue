@@ -27,7 +27,7 @@ watch(
   () => authStore.isAuthenticated,
   (authenticated, wasAuthenticated) => {
     if (wasAuthenticated && !authenticated) {
-      commands.disconnect().catch(() => {})
+      commands.tunnelSetIntentDown().catch(() => {})
     }
   },
 )

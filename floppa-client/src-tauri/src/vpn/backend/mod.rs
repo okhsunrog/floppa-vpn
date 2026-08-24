@@ -15,19 +15,12 @@ mod android_ipc;
 mod ios;
 
 use super::platform::TunParams;
-use super::state::{ProtocolConfig, TrafficStats};
+use super::state::ProtocolConfig;
+use crate::vpn::actor::types::Observation;
 use async_trait::async_trait;
 use std::net::SocketAddr;
 use std::sync::Arc;
-
-/// All tunnel info returned by [`VpnBackend::get_all_info`].
-#[derive(Debug, Clone, Default)]
-pub struct VpnFullInfo {
-    pub is_running: bool,
-    pub stats: Option<TrafficStats>,
-    pub last_packet_received: Option<i64>,
-    pub connected_secs: Option<u64>,
-}
+use std::time::Duration;
 
 /// Backend for VPN tunnel management.
 ///
@@ -50,20 +43,39 @@ pub trait VpnBackend: Send + Sync {
         endpoint: SocketAddr,
     ) -> Result<(), String>;
 
-    /// Start tunnel from a file descriptor provided by the platform VPN service.
+    /// Ask a already-running out-of-process service to bring up a tunnel on the descriptor it
+    /// holds, and get back a reason if it cannot.
     ///
-    /// Used on Android (fd from VpnService) and potentially iOS.
-    async fn start_with_fd(&self, config: &ProtocolConfig, tun_fd: i32) -> Result<(), String>;
+    /// `epoch` identifies the request, so a service instance that has been superseded can refuse
+    /// it instead of obeying. Meaningless for an in-process backend, which has no service to ask.
+    async fn start_tunnel(
+        &self,
+        _epoch: u64,
+        _config: &ProtocolConfig,
+        _endpoint: SocketAddr,
+    ) -> Result<(), String> {
+        Err("this backend has no out-of-process service to ask".to_string())
+    }
 
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), String>;
 
-    /// Get all tunnel info in a single call.
+    /// Look at the world.
     ///
-    /// Returns `None` if the backend is unreachable (e.g. `:vpn` service not running).
-    /// This is a **normal state**, not an error — callers should treat `None` as
-    /// "tunnel not available" without logging errors or retrying.
-    async fn get_all_info(&self) -> Option<VpnFullInfo>;
+    /// The single way to learn anything about the tunnel, and the reason there is no longer an
+    /// `Option`-returning variant beside it: this one never collapses "there is no tunnel" and "I
+    /// could not reach the thing that would know" into the same value. The first is authoritative,
+    /// the second is not, and treating them alike is what let a transient IPC gap read as a
+    /// dropped tunnel.
+    async fn observe(&self) -> Observation;
+
+    /// How long this backend may be unreachable before its tunnel is presumed lost.
+    ///
+    /// Zero for an in-process backend, which cannot fail to answer. Non-zero only where the tunnel
+    /// lives in another process that can be restarted underneath us.
+    fn liveness_grace(&self) -> Duration {
+        Duration::ZERO
+    }
 
     /// Ping the VLESS server through the proxy chain (bypasses TUN).
     /// Updates `last_packet_received` on success so the health dot reflects connectivity.

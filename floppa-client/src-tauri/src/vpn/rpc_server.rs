@@ -3,7 +3,8 @@
 //! Runs in the VPN service process, accepts connections from the UI process,
 //! and delegates RPC calls to the local TunnelManager.
 
-use super::rpc::{TunnelInfo, VpnRpc};
+use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
+use super::state::ProtocolConfig;
 use super::tunnel::TunnelManager;
 use futures::StreamExt;
 use std::sync::Arc;
@@ -25,27 +26,140 @@ impl RpcServerHandle {
     }
 }
 
+/// What the service is holding before any tunnel exists.
+///
+/// This only has anywhere to live because the RPC server now binds ahead of the tunnel. Before
+/// that, "the service is coming up", "the service is up and idle" and "the service failed" were
+/// all a socket that would not connect, and the caller could only wait and guess.
+pub struct ServiceState {
+    /// Generation of the service, taken from the request that started it.
+    pub epoch: u64,
+    /// The descriptor handed over by `VpnService.Builder.establish()`.
+    tun_fd: std::sync::Mutex<Option<std::os::fd::RawFd>>,
+    start_error: std::sync::Mutex<Option<String>>,
+}
+
+impl ServiceState {
+    pub fn new(epoch: u64, tun_fd: std::os::fd::RawFd) -> Self {
+        Self {
+            epoch,
+            tun_fd: std::sync::Mutex::new(Some(tun_fd)),
+            start_error: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn take_fd(&self) -> Option<std::os::fd::RawFd> {
+        self.tun_fd.lock().ok()?.take()
+    }
+
+    fn set_error(&self, error: String) {
+        if let Ok(mut guard) = self.start_error.lock() {
+            *guard = Some(error);
+        }
+    }
+
+    fn error(&self) -> Option<String> {
+        self.start_error.lock().ok()?.clone()
+    }
+}
+
 #[derive(Clone)]
 struct VpnRpcServer {
     tunnel_manager: Arc<TunnelManager>,
+    service: Arc<ServiceState>,
 }
 
 impl VpnRpc for VpnRpcServer {
     async fn get_full_info(self, _ctx: Context) -> TunnelInfo {
-        let is_running = self.tunnel_manager.is_running().await;
-        let last_packet_received = self.tunnel_manager.get_last_packet_received().await;
         let connected_secs = self
             .tunnel_manager
             .get_connection_duration()
             .await
             .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
-        TunnelInfo {
-            is_running,
-            last_packet_received,
+        // Running-ness and identity come out of the same Option, which is why they are one field.
+        let running = self.tunnel_manager.meta().await.map(|m| RunningInfo {
+            protocol: m.protocol,
+            endpoint: m.endpoint,
+            address: m.address,
             connected_secs,
+        });
+        let start_error = self.service.error();
+        TunnelInfo {
+            // Up and idle, with no tunnel asked for yet and nothing having gone wrong. Only
+            // reachable because the socket is bound before the tunnel is started.
+            starting: running.is_none() && start_error.is_none(),
+            running,
+            epoch: self.service.epoch,
+            start_error,
+            last_packet_received: self.tunnel_manager.get_last_packet_received().await,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
             rx_bytes: stats.as_ref().map(|s| s.rx_bytes),
+        }
+    }
+
+    async fn start_tunnel(
+        self,
+        _ctx: Context,
+        epoch: u64,
+        config: crate::vpn::rpc::WireConfig,
+        endpoint: String,
+    ) -> Result<(), String> {
+        // A request for a generation we have moved past is not ours to obey.
+        if epoch != self.service.epoch {
+            return Err(format!(
+                "stale request: epoch {epoch}, this service is {}",
+                self.service.epoch
+            ));
+        }
+
+        let Some(tun_fd) = self.service.take_fd() else {
+            let e = "the tunnel descriptor has already been used".to_string();
+            self.service.set_error(e.clone());
+            return Err(e);
+        };
+
+        // The protocol arrives with the config instead of being recovered by inspecting it, and
+        // the endpoint arrives already resolved: by now this device's DNS points into a tunnel
+        // that does not exist yet, so resolving here would fail.
+        let mut config: ProtocolConfig = config.into();
+        match &mut config {
+            ProtocolConfig::WireGuard(wg) => wg.peer_endpoint = endpoint,
+            ProtocolConfig::AmneziaWg(awg) => awg.wg.peer_endpoint = endpoint,
+            // VLESS dials by address while taking its SNI from `server_name`, so substituting a
+            // literal here does not disturb the REALITY handshake.
+            ProtocolConfig::Vless(vless) => vless.server_addr = endpoint,
+        }
+        let result = match &config {
+            ProtocolConfig::Vless(vless) => {
+                self.tunnel_manager
+                    .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
+                    .await
+            }
+            ProtocolConfig::AmneziaWg(awg) => {
+                self.tunnel_manager
+                    .start_wireguard_with_fd(&awg.wg, tun_fd, Some(&awg.obfuscation))
+                    .await
+            }
+            ProtocolConfig::WireGuard(wg) => {
+                self.tunnel_manager
+                    .start_wireguard_with_fd(wg, tun_fd, None)
+                    .await
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                info!(protocol = %config.protocol(), "tunnel started");
+                Ok(())
+            }
+            Err(e) => {
+                // Recorded as well as returned: the caller may already have given up, and the next
+                // observation should still say why rather than looking like an idle service.
+                error!("failed to start the tunnel: {e}");
+                self.service.set_error(e.clone());
+                Err(e)
+            }
         }
     }
 
@@ -89,6 +203,7 @@ impl VpnRpc for VpnRpcServer {
 pub fn start_server(
     socket_path: &str,
     tunnel_manager: Arc<TunnelManager>,
+    service: Arc<ServiceState>,
 ) -> Result<RpcServerHandle, String> {
     // Remove stale socket file if it exists
     match std::fs::remove_file(socket_path) {
@@ -104,7 +219,10 @@ pub fn start_server(
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let server = VpnRpcServer { tunnel_manager };
+    let server = VpnRpcServer {
+        tunnel_manager,
+        service,
+    };
     let socket_path_owned = socket_path.to_owned();
 
     tokio::spawn(async move {

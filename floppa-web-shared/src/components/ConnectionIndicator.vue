@@ -11,29 +11,36 @@ const props = defineProps<{
 const { t } = useI18n()
 
 const statusKeys: Record<ConnectionStatus, string> = {
+  unknown: 'status.unknown',
   connected: 'status.connected',
   connecting: 'status.connecting',
   verifying_connection: 'status.verifyingConnection',
   disconnected: 'status.disconnected',
   disconnecting: 'status.disconnecting',
+  retrying: 'status.retrying',
 }
 
 const dotClass = computed(() => {
   const classes: Record<ConnectionStatus, string> = {
+    // Neutral, not red: we are not reporting a problem, we are reporting that we do not know yet.
+    unknown: 'bg-neutral-400',
     connected: 'bg-green-500',
     connecting: 'bg-yellow-500',
     verifying_connection: 'bg-yellow-500',
     disconnected: 'bg-neutral-400',
     disconnecting: 'bg-yellow-500',
+    retrying: 'bg-yellow-500',
   }
   return classes[props.status]
 })
 
 const isPulsing = computed(
   () =>
+    props.status === 'unknown' ||
     props.status === 'connecting' ||
     props.status === 'verifying_connection' ||
-    props.status === 'disconnecting',
+    props.status === 'disconnecting' ||
+    props.status === 'retrying',
 )
 </script>
 

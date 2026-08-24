@@ -34,6 +34,15 @@ validate_uid() {
     fi
 }
 
+# Symlink targets we are willing to recreate for /etc/resolv.conf: absolute, no traversal,
+# and confined to the directories resolver stubs actually live in.
+validate_link_target() {
+    if [[ "$1" == *".."* ]] || [[ ! "$1" =~ ^/(run|var/run|etc)/[A-Za-z0-9._/-]+$ ]]; then
+        echo "Invalid resolv.conf link target: $1" >&2
+        exit 1
+    fi
+}
+
 case "${1:-}" in
     ensure-tun)
         # Usage: ensure-tun <iface> <uid>
@@ -47,11 +56,22 @@ case "${1:-}" in
 
     configure)
         # Usage: configure <iface> <ip/prefix>
+        # `addr replace` rather than `addr add`: applying the same address twice must succeed,
+        # otherwise a retry or a second protocol probe fails before the link is brought up.
         [[ $# -eq 3 ]] || { echo "Usage: configure <iface> <ip/prefix>" >&2; exit 1; }
         validate_iface "$2"
         validate_ip "$3"
-        ip addr add "$3" dev "$2"
+        ip addr replace "$3" dev "$2"
         ip link set "$2" up
+        ;;
+
+    flush-addr)
+        # Usage: flush-addr <iface> <ip/prefix>
+        # Undo for `configure`, removing exactly the address that was applied.
+        [[ $# -eq 3 ]] || { echo "Usage: flush-addr <iface> <ip/prefix>" >&2; exit 1; }
+        validate_iface "$2"
+        validate_ip "$3"
+        ip addr del "$3" dev "$2" 2>/dev/null || true
         ;;
 
     deconfigure)
@@ -71,10 +91,25 @@ case "${1:-}" in
         ;;
 
     del-route)
-        # Usage: del-route <destination>
-        [[ $# -eq 2 ]] || { echo "Usage: del-route <dest>" >&2; exit 1; }
-        validate_ip "$2"
-        ip route del "$2" 2>/dev/null || true
+        # Usage: del-route <destination> [via <gateway>]
+        # The gateway is optional but should always be passed when the route was added with one:
+        # without it this deletes ANY route to that destination, which after a roaming event —
+        # exactly when a reconnect happens — is the wrong route or none at all.
+        case $# in
+            2)
+                validate_ip "$2"
+                ip route del "$2" 2>/dev/null || true
+                ;;
+            4)
+                [[ "$3" == "via" ]] || { echo "Usage: del-route <dest> [via <gw>]" >&2; exit 1; }
+                validate_ip "$2"
+                validate_ip "$4"
+                ip route del "$2" via "$4" 2>/dev/null || true
+                ;;
+            *)
+                echo "Usage: del-route <dest> [via <gw>]" >&2; exit 1
+                ;;
+        esac
         ;;
 
     add-routes)
@@ -122,15 +157,29 @@ case "${1:-}" in
     set-resolv-conf)
         # Usage: set-resolv-conf <temp-file>
         # Only accepts files from /tmp/floppa-resolv*
+        #
+        # `cp` onto /etc/resolv.conf FOLLOWS a symlink and writes through it. On a
+        # systemd-resolved host that link points at /run/systemd/resolve/stub-resolv.conf, so a
+        # plain cp silently overwrites systemd's own file and the damage outlives the VPN.
+        # Replace the link itself instead; `restore-resolv-conf-link` puts it back.
         [[ $# -eq 2 ]] || { echo "Usage: set-resolv-conf <file>" >&2; exit 1; }
         [[ "$2" == /tmp/floppa-resolv* ]] || { echo "Invalid source path: $2" >&2; exit 1; }
         [[ -f "$2" ]] || { echo "File not found: $2" >&2; exit 1; }
-        cp "$2" /etc/resolv.conf
+        rm -f /etc/resolv.conf
+        install -m 644 "$2" /etc/resolv.conf
+        ;;
+
+    restore-resolv-conf-link)
+        # Usage: restore-resolv-conf-link <target>
+        # Undo for the case where /etc/resolv.conf WAS a symlink before we touched it.
+        [[ $# -eq 2 ]] || { echo "Usage: restore-resolv-conf-link <target>" >&2; exit 1; }
+        validate_link_target "$2"
+        ln -sfn "$2" /etc/resolv.conf
         ;;
 
     *)
         echo "Unknown command: ${1:-}" >&2
-        echo "Commands: ensure-tun, configure, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf" >&2
+        echo "Commands: ensure-tun, configure, flush-addr, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf, restore-resolv-conf-link" >&2
         exit 1
         ;;
 esac

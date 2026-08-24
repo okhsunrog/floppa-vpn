@@ -1,3 +1,4 @@
+use super::protocol::{Preference, Protocol};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
@@ -5,20 +6,6 @@ use shoes_lite::api::VlessConfig;
 use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-
-/// Connection status enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionStatus {
-    #[default]
-    Disconnected,
-    Connecting,
-    VerifyingConnection,
-    Connected,
-    Disconnecting,
-}
 
 /// WireGuard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -208,32 +195,6 @@ pub struct TrafficStats {
     pub rx_bytes: u64,
     pub tx_bytes_per_sec: f64,
     pub rx_bytes_per_sec: f64,
-}
-
-/// Connection information
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ConnectionInfo {
-    pub status: ConnectionStatus,
-    pub protocol: Option<String>,
-    pub server_endpoint: Option<String>,
-    pub assigned_ip: Option<String>,
-    pub connected_at: Option<i64>, // Unix timestamp
-    pub last_packet_received: Option<i64>,
-    pub stats: TrafficStats,
-}
-
-impl Default for ConnectionInfo {
-    fn default() -> Self {
-        Self {
-            status: ConnectionStatus::Disconnected,
-            protocol: None,
-            server_endpoint: None,
-            assigned_ip: None,
-            connected_at: None,
-            last_packet_received: None,
-            stats: TrafficStats::default(),
-        }
-    }
 }
 
 /// Tracks previous stats for computing transfer rates
@@ -658,11 +619,11 @@ impl ProtocolConfig {
     }
 
     /// Protocol name for display / persistence.
-    pub fn protocol_name(&self) -> &'static str {
+    pub fn protocol(&self) -> Protocol {
         match self {
-            Self::WireGuard(_) => "wireguard",
-            Self::AmneziaWg(_) => "amneziawg",
-            Self::Vless(_) => "vless",
+            Self::WireGuard(_) => Protocol::WireGuard,
+            Self::AmneziaWg(_) => Protocol::AmneziaWg,
+            Self::Vless(_) => Protocol::Vless,
         }
     }
 }
@@ -670,8 +631,13 @@ impl ProtocolConfig {
 /// Multi-config storage: holds WG, AmneziaWG, and VLESS configs with an active selector.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SavedVpnConfigs {
-    /// Currently active protocol: "amneziawg", "wireguard", or "vless"
-    pub active_protocol: String,
+    /// The protocol that last actually worked. `None` until something has connected.
+    ///
+    /// `serde(alias)` keeps reading the pre-enum `active_protocol` string already on disk and in
+    /// OS keyrings; an unparseable legacy value migrates to `None` rather than silently becoming
+    /// WireGuard (see [`Preference`]).
+    #[serde(alias = "active_protocol", default)]
+    pub preferred_protocol: Preference,
     /// Cached WireGuard config (if any)
     pub wireguard: Option<WgConfig>,
     /// Cached AmneziaWG config (if any)
@@ -683,59 +649,40 @@ pub struct SavedVpnConfigs {
 }
 
 impl SavedVpnConfigs {
-    /// Get the active ProtocolConfig for the connect flow.
-    pub fn active_config(&self) -> Option<ProtocolConfig> {
-        match self.active_protocol.as_str() {
-            "amneziawg" => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
-            "vless" => self.vless.clone().map(ProtocolConfig::Vless),
-            _ => self.wireguard.clone().map(ProtocolConfig::WireGuard),
+    /// The cached config for one specific protocol, if it is stored.
+    pub fn get(&self, protocol: Protocol) -> Option<ProtocolConfig> {
+        match protocol {
+            Protocol::WireGuard => self.wireguard.clone().map(ProtocolConfig::WireGuard),
+            Protocol::AmneziaWg => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
+            Protocol::Vless => self.vless.clone().map(ProtocolConfig::Vless),
         }
     }
 
-    /// Which protocols have cached configs. AmneziaWG is listed first — it is the default.
-    pub fn available_protocols(&self) -> Vec<String> {
-        let mut protocols = Vec::new();
-        if self.amneziawg.is_some() {
-            protocols.push("amneziawg".to_string());
-        }
-        if self.vless.is_some() {
-            protocols.push("vless".to_string());
-        }
-        if self.wireguard.is_some() {
-            protocols.push("wireguard".to_string());
-        }
-        protocols
+    /// The config the connect flow should use: the remembered preference when it is still
+    /// available, otherwise the first available protocol in [`Protocol::ALL`] order.
+    ///
+    /// The fallback replaces the old `_ => wireguard` catch-all, which turned both "no preference
+    /// recorded yet" and "preference is a string we do not recognise" into WireGuard — the one
+    /// protocol that is DPI-blocked on the networks this client targets.
+    pub fn preferred_config(&self) -> Option<ProtocolConfig> {
+        self.preferred_protocol
+            .0
+            .and_then(|p| self.get(p))
+            .or_else(|| Protocol::ALL.iter().find_map(|&p| self.get(p)))
+    }
+
+    /// Which protocols have a cached config. This is a SET: the order is [`Protocol::ALL`] for
+    /// determinism, not a statement of preference.
+    pub fn available_protocols(&self) -> Vec<Protocol> {
+        Protocol::ALL
+            .iter()
+            .copied()
+            .filter(|&p| self.get(p).is_some())
+            .collect()
     }
 
     /// Whether any config is stored.
     pub fn has_any(&self) -> bool {
         self.wireguard.is_some() || self.amneziawg.is_some() || self.vless.is_some()
-    }
-}
-
-/// Global VPN state
-pub struct VpnState {
-    pub configs: RwLock<SavedVpnConfigs>,
-    pub connection: RwLock<ConnectionInfo>,
-    pub speed_tracker: RwLock<SpeedTracker>,
-}
-
-impl VpnState {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            configs: RwLock::new(SavedVpnConfigs::default()),
-            connection: RwLock::new(ConnectionInfo::default()),
-            speed_tracker: RwLock::new(SpeedTracker::new()),
-        })
-    }
-}
-
-impl Default for VpnState {
-    fn default() -> Self {
-        Self {
-            configs: RwLock::new(SavedVpnConfigs::default()),
-            connection: RwLock::new(ConnectionInfo::default()),
-            speed_tracker: RwLock::new(SpeedTracker::new()),
-        }
     }
 }
