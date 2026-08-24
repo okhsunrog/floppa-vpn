@@ -243,22 +243,23 @@ impl VpnBackend for AndroidIpcBackend {
             Ok(info) => Observation {
                 observed_at,
                 view: WorldView::Reachable(TunnelObservation {
-                    // A running tunnel that cannot say what it is gets treated as no tunnel at
-                    // all rather than being adopted on a guess. With the versioned socket this
-                    // only happens to a peer we should not be talking to anyway.
-                    running: match (info.is_running, info.protocol) {
-                        (true, Some(protocol)) => Some(RunningTunnel {
+                    // A tunnel is believed only when it names both its protocol and its
+                    // endpoint. Anything less is a peer we do not share a wire format with, and
+                    // adopting it would mean claiming to be connected through a tunnel we can
+                    // neither describe nor roll back.
+                    running: match (info.is_running, info.running_identity()) {
+                        (_, Some((protocol, endpoint, address))) => Some(RunningTunnel {
                             protocol,
                             epoch: None,
-                            endpoint: info.endpoint.unwrap_or_default(),
-                            address: info.address.unwrap_or_default(),
+                            endpoint,
+                            address,
                             connected_secs: info.connected_secs,
                         }),
                         (true, None) => {
-                            warn!("running tunnel did not report its protocol; ignoring it");
+                            warn!("a running tunnel did not identify itself; ignoring it");
                             None
                         }
-                        (false, _) => None,
+                        (false, None) => None,
                     },
                     starting: false,
                     start_error: None,

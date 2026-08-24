@@ -7,7 +7,6 @@ pub mod jni_entry;
 pub mod platform;
 pub mod protocol;
 pub mod rollback;
-#[cfg(target_os = "android")]
 pub mod rpc;
 #[cfg(target_os = "android")]
 pub mod rpc_server;
