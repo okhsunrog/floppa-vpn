@@ -23,6 +23,8 @@ export interface PeerInfo {
  * would make an actively-reconnecting tunnel look dead.
  */
 export type ConnectionStatus =
+  /** Nothing has been observed yet. Not a claim that there is no tunnel — see `Phase::Unknown`. */
+  | 'unknown'
   | 'disconnected'
   | 'connecting'
   | 'verifying_connection'

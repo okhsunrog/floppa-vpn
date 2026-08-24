@@ -324,6 +324,10 @@ async function handleConnect() {
 const buttonLabel = computed(() => {
   if (reprovisioning.value) return t('vpn.connecting')
   switch (vpn.phase) {
+    // Before anything has been observed we have no answer to give, so the button says so rather
+    // than inviting an action whose effect we cannot predict.
+    case 'unknown':
+      return t('status.unknown')
     case 'connecting':
       return t('vpn.connecting')
     case 'verifying_connection':
@@ -484,7 +488,7 @@ const healthDotClass = computed(() => {
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
         :loading="vpn.isBusy"
-        :disabled="!vpn.hasConfig"
+        :disabled="!vpn.hasConfig || vpn.phase === 'unknown'"
         size="lg"
         class="w-full max-w-[200px] mt-2"
         @click="handleConnect"

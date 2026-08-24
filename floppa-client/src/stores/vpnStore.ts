@@ -48,6 +48,9 @@ export const useVpnStore = defineStore(
     const isBusy = computed(
       () =>
         requesting.value ||
+        // Pending, not actionable: offering to connect before we know whether we already are
+        // would be offering a decision we cannot yet judge.
+        phase.value === 'unknown' ||
         phase.value === 'connecting' ||
         phase.value === 'verifying_connection' ||
         phase.value === 'disconnecting' ||
@@ -225,7 +228,9 @@ export const useVpnStore = defineStore(
 function emptyState(): TunnelState {
   return {
     seq: 0,
-    phase: 'disconnected',
+    // Not 'disconnected': before the first snapshot arrives we have no idea whether a tunnel is
+    // running, and saying otherwise is what made an active tunnel flash as down on app start.
+    phase: 'unknown',
     intent: 'down',
     epoch: 0,
     intent_order: [],

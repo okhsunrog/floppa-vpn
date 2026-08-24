@@ -28,8 +28,9 @@ pub fn render(
     last_outcome: Option<CycleOutcome>,
     speed: &mut SpeedTracker,
     now: Instant,
+    observed_once: bool,
 ) -> TunnelState {
-    let phase = phase_of(status);
+    let phase = phase_of(status, observed_once);
 
     let (protocol, adopted, server_endpoint, assigned_ip, connected_at) = match status {
         Status::Up(u) => (
@@ -113,8 +114,12 @@ pub fn render(
 ///
 /// `Unwinding` reports as `Disconnecting` regardless of *why* we are unwinding, because from the
 /// user's point of view a teardown is a teardown; the reason only affects what happens next.
-fn phase_of(status: &Status) -> Phase {
+fn phase_of(status: &Status, observed_once: bool) -> Phase {
     match status {
+        // Idle means "we are doing nothing", which is true from the moment the actor starts. But
+        // "there is no tunnel" is a claim about the world, and until something authoritative has
+        // been observed we are not entitled to make it — a tunnel may well be running.
+        Status::Idle if !observed_once => Phase::Unknown,
         Status::Idle => Phase::Disconnected,
         Status::Connecting { phase, .. } => match phase {
             super::types::AttemptPhase::Verifying => Phase::VerifyingConnection,
@@ -156,6 +161,15 @@ mod tests {
     }
 
     fn render_with(status: &Status, intent: &Intent, now: Instant) -> TunnelState {
+        render_observed(status, intent, now, true)
+    }
+
+    fn render_observed(
+        status: &Status,
+        intent: &Intent,
+        now: Instant,
+        observed_once: bool,
+    ) -> TunnelState {
         let mut speed = SpeedTracker::new();
         render(
             1,
@@ -167,6 +181,7 @@ mod tests {
             None,
             &mut speed,
             now,
+            observed_once,
         )
     }
 
@@ -214,6 +229,53 @@ mod tests {
             render_with(&status, &Intent::default(), now).phase,
             Phase::VerifyingConnection
         );
+    }
+
+    #[test]
+    fn before_the_world_has_answered_we_do_not_claim_there_is_no_tunnel() {
+        // Reported from a device: opening the app while a tunnel was already running flashed
+        // "disconnected" for an instant. Idle is true from the moment the actor starts, but
+        // "there is no tunnel" is a claim about the world, and we had not looked yet.
+        let now = Instant::now();
+        let state = render_observed(&Status::Idle, &Intent::default(), now, false);
+
+        assert_eq!(state.phase, Phase::Unknown);
+        assert!(state.phase.is_busy(), "pending, not actionable");
+        assert!(!state.phase.is_cancellable(), "there is nothing to cancel");
+    }
+
+    #[test]
+    fn once_the_world_has_answered_idle_means_disconnected() {
+        let now = Instant::now();
+        let state = render_observed(&Status::Idle, &Intent::default(), now, true);
+        assert_eq!(state.phase, Phase::Disconnected);
+        assert!(!state.phase.is_busy());
+    }
+
+    #[test]
+    fn an_unreachable_look_still_counts_as_having_looked() {
+        // The first attempt at this required a *reachable* answer before leaving Unknown. On
+        // Android the peer only exists while a tunnel does, so with no tunnel there is nothing to
+        // reach — and the UI sat at "checking" forever. Unknown has to be a state we can leave.
+        let now = Instant::now();
+        let mut speed = SpeedTracker::new();
+        let state = render(
+            1,
+            &Status::Idle,
+            &Intent::default(),
+            &Observation {
+                observed_at: now,
+                view: WorldView::Unreachable(UnreachableCause::NotStarted),
+            },
+            &World::Dark,
+            ConfigsView::default(),
+            None,
+            &mut speed,
+            now,
+            true,
+        );
+        assert_eq!(state.phase, Phase::Disconnected);
+        assert!(!state.phase.is_busy(), "must not spin forever");
     }
 
     #[test]
@@ -265,6 +327,7 @@ mod tests {
             None,
             &mut speed,
             now,
+            true,
         );
         assert!(!state.backend_reachable);
         assert_eq!(

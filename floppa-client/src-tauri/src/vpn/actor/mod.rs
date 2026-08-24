@@ -65,6 +65,9 @@ pub struct TunnelActor {
     configs: ConfigStore,
     speed: SpeedTracker,
     last_obs: Observation,
+    /// Whether the world has ever answered us. Until it has, "there is no tunnel" is a claim we
+    /// are not entitled to make, and the published phase says so.
+    observed_once: bool,
 
     // ---- collaborators ----
     backend: Arc<dyn VpnBackend>,
@@ -112,6 +115,7 @@ impl TunnelActor {
             configs: ConfigStore::load(),
             speed: SpeedTracker::new(),
             last_obs: Observation::unknown(Instant::now()),
+            observed_once: false,
             backend: backend.clone(),
             platform,
             policy: policy.clone(),
@@ -298,6 +302,14 @@ impl TunnelActor {
             }
 
             Command::Observed(obs) => {
+                // Any delivered observation counts, including an unreachable one.
+                //
+                // Requiring a *reachable* answer looks more rigorous and is wrong: on Android the
+                // peer only exists while a tunnel does, so with no tunnel there is nothing to
+                // reach, and the UI would sit at "checking" forever. What matters is that a look
+                // completed — and the boot placeholder never arrives through this channel, so it
+                // cannot be mistaken for one.
+                self.observed_once = true;
                 self.last_obs = *obs;
                 Reconcile::Yes
             }
@@ -659,6 +671,7 @@ impl TunnelActor {
             self.last_outcome.clone(),
             &mut self.speed,
             Instant::now(),
+            self.observed_once,
         );
         let _ = self.state_tx.send(state);
     }
@@ -676,6 +689,7 @@ impl TunnelActor {
             self.last_outcome.clone(),
             &mut self.speed,
             Instant::now(),
+            self.observed_once,
         );
         let differs = {
             let current = self.state_tx.borrow();

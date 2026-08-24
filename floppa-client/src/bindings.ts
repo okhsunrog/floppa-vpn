@@ -213,9 +213,17 @@ export type LogProfile = "normal" | "verbose";
 
 /**
  *  The five original status literals are preserved verbatim so the existing indicator component
- *  and its translation keys keep working. `Retrying` is the one addition.
+ *  and its translation keys keep working. `Retrying` and `Unknown` are the additions.
  */
-export type Phase = "disconnected" | "connecting" | "verifying_connection" | "connected" | "disconnecting" | "retrying";
+export type Phase = 
+/**
+ *  We have not yet had an authoritative look at the world.
+ * 
+ *  Distinct from [`Self::Disconnected`], which is a claim: there is no tunnel. Collapsing the
+ *  two is why opening the app with a tunnel already running flashed "disconnected" before the
+ *  first observation landed — the UI reported an answer it did not have yet.
+ */
+"unknown" | "disconnected" | "connecting" | "verifying_connection" | "connected" | "disconnecting" | "retrying";
 
 /**
  *  The ONLY protocol representation in the crate.
