@@ -38,10 +38,13 @@ impl TunnelInfo {
     }
 }
 
-/// The IPC socket name.
+/// The IPC socket name. Keep in sync with `FloppaVpnService.kt`.
 ///
-/// Version this (and the Kotlin side with it) when the *method set* changes: tarpc dispatches by
-/// variant index, so adding or reordering methods breaks every call including `stop()`.
+/// This never needs versioning, and the wire format never needs to stay backward compatible.
+/// Both ends ship in the same APK and are always the same build: installing one replaces the
+/// other, and installing force-stops every process of the package, so two builds cannot be live
+/// at once. Change the format freely — including the method set, which shifts tarpc's dispatch
+/// indices.
 pub const SOCKET_NAME: &str = "vpn.sock";
 
 #[cfg(target_os = "android")]
