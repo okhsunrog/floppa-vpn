@@ -36,11 +36,6 @@ impl Protocol {
             Self::Vless => "vless",
         }
     }
-
-    /// True for the two protocols that share the WireGuard config format and tunnel ladder.
-    pub const fn is_wg_family(self) -> bool {
-        matches!(self, Self::WireGuard | Self::AmneziaWg)
-    }
 }
 
 impl std::fmt::Display for Protocol {

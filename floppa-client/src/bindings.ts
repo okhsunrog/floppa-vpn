@@ -281,6 +281,13 @@ export type TunnelState = {
 	 */
 	seq: number,
 	phase: Phase,
+	/**
+	 *  [`Phase::is_busy`] for [`Self::phase`], carried so the consumer never restates which phases
+	 *  count as work in progress.
+	 */
+	busy: boolean,
+	/**  [`Phase::is_cancellable`] for [`Self::phase`]. */
+	cancellable: boolean,
 	intent: IntentView,
 	epoch: IntentEpoch,
 	intent_order: Protocol[],

@@ -31,13 +31,6 @@ pub enum PlatformError {
     Failed(String),
 }
 
-impl PlatformError {
-    /// Should the connect cycle stop entirely rather than try the next protocol?
-    pub const fn is_fatal_for_cycle(&self) -> bool {
-        matches!(self, Self::PermissionDenied(_) | Self::Unavailable(_))
-    }
-}
-
 /// The default gateway a host route was pinned to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Gateway(pub String);

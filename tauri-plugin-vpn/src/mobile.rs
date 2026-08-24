@@ -30,7 +30,7 @@ impl<R: Runtime> Vpn<R> {
 
     /// Start the VPN tunnel with the given configuration.
     ///
-    /// The TUN file descriptor will be delivered via the `vpn_started` event.
+    /// The descriptor is handed to the `:vpn` process directly; nothing comes back here.
     pub fn start(&self, config: VpnConfig) -> Result<()> {
         self.0
             .run_mobile_plugin::<()>("startVpn", config)
@@ -41,14 +41,6 @@ impl<R: Runtime> Vpn<R> {
     pub fn stop(&self) -> Result<()> {
         self.0
             .run_mobile_plugin::<()>("stopVpn", ())
-            .map_err(Into::into)
-    }
-
-    /// Get current VPN status.
-    pub fn status(&self) -> Result<VpnStatus> {
-        self.0
-            .run_mobile_plugin::<StatusResponse>("getVpnStatus", ())
-            .map(|r| r.status)
             .map_err(Into::into)
     }
 
@@ -127,24 +119,6 @@ impl<R: Runtime> Vpn<R> {
             .run_mobile_plugin::<()>("setStatusBarStyle", Args { is_dark })
             .map_err(Into::into)
     }
-
-    /// Protect a socket from VPN routing (bypass the VPN tunnel).
-    ///
-    /// This must be called for UDP sockets used by WireGuard to communicate
-    /// with the server, otherwise packets would loop through the VPN.
-    ///
-    /// Returns `Ok(true)` if protection succeeded, `Ok(false)` if it failed.
-    pub fn protect_socket(&self, fd: i32) -> Result<bool> {
-        #[derive(serde::Serialize)]
-        struct ProtectArgs {
-            fd: i32,
-        }
-
-        self.0
-            .run_mobile_plugin::<ProtectResponse>("protectSocket", ProtectArgs { fd })
-            .map(|r| r.protected)
-            .map_err(Into::into)
-    }
 }
 
 #[derive(serde::Deserialize)]
@@ -163,18 +137,8 @@ struct BatteryOptResponse {
 }
 
 #[derive(serde::Deserialize)]
-struct ProtectResponse {
-    protected: bool,
-}
-
-#[derive(serde::Deserialize)]
 struct PrepareResponse {
     granted: bool,
-}
-
-#[derive(serde::Deserialize)]
-struct StatusResponse {
-    status: VpnStatus,
 }
 
 /// Initialize the mobile plugin.

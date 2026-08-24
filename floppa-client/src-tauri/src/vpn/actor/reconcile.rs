@@ -18,7 +18,7 @@
 
 use super::types::{
     AttemptError, AttemptFailure, AttemptPhase, AttemptResult, Cycle, CycleOutcome, Intent,
-    IntentEpoch, Policy, Status, UnwindOwner, UnwindReason, UpIntent, UpStatus, World,
+    IntentEpoch, Policy, Status, UnwindReason, UpIntent, UpStatus, World,
 };
 use crate::vpn::protocol::Protocol;
 use crate::vpn::rollback::{ExtraUndo, RollbackStack, UnwindReport};
@@ -33,7 +33,6 @@ pub enum Effect {
         protocol: Protocol,
         epoch: IntentEpoch,
         index: usize,
-        total: usize,
     },
     /// Fire the in-flight attempt's cancellation token. Never drops the task: it must be given the
     /// chance to unwind its own partial ladder and report back.
@@ -114,7 +113,6 @@ fn connecting(cycle: Cycle, now: Instant, policy: &Policy) -> Decision {
         protocol: cycle.protocol(),
         epoch: cycle.epoch,
         index: cycle.index,
-        total: cycle.order.len(),
     };
     Decision::to(Status::Connecting {
         cycle,
@@ -124,9 +122,8 @@ fn connecting(cycle: Cycle, now: Instant, policy: &Policy) -> Decision {
     .with(effect)
 }
 
-fn unwinding(owner: UnwindOwner, cycle: Option<Cycle>, reason: UnwindReason) -> Status {
+fn unwinding(cycle: Option<Cycle>, reason: UnwindReason) -> Status {
     Status::Unwinding {
-        owner,
         cycle,
         reason,
         tries: 0,
@@ -191,14 +188,11 @@ pub fn reconcile(
             // 1, 3: nothing of ours, nothing wanted.
             (Rel::Down, World::Clear | World::Dark) => Decision::stay(status),
             // 2: a tunnel exists but nobody wants one.
-            (Rel::Down, World::Running(_)) => Decision::to(unwinding(
-                UnwindOwner::Actor,
-                None,
-                UnwindReason::ForeignTunnel,
-            ))
-            .with(Effect::Unwind {
-                extra: Some(ExtraUndo::StopBackend),
-            }),
+            (Rel::Down, World::Running(_)) => {
+                Decision::to(unwinding(None, UnwindReason::ForeignTunnel)).with(Effect::Unwind {
+                    extra: Some(ExtraUndo::StopBackend),
+                })
+            }
             // 4: the normal start — but only for an intent that knows what to build.
             (Rel::Same(up) | Rel::Newer(up), World::Clear) => start_or_idle(up, now, policy),
             (Rel::Same(up) | Rel::Newer(up), World::Running(rt)) => {
@@ -211,7 +205,6 @@ pub fn reconcile(
                     // with, so a caller who asked for specific rules gets a rebuild. Silently
                     // keeping a tunnel with the wrong split rules is a data-leak-shaped bug.
                     Decision::to(unwinding(
-                        UnwindOwner::Actor,
                         Some(Cycle::start(up, policy)),
                         UnwindReason::WrongProtocol,
                     ))
@@ -231,18 +224,12 @@ pub fn reconcile(
         } => match relate(status, intent) {
             // 8, 9: an intent change cancels the attempt. The token is fired; the task is never
             // dropped, so it still unwinds its own ladder and reports.
-            Rel::Down => Decision::to(unwinding(
-                UnwindOwner::Attempt,
-                Some(cycle.clone()),
-                UnwindReason::IntentDown,
-            ))
-            .with(Effect::CancelAttempt),
-            Rel::Newer(_) => Decision::to(unwinding(
-                UnwindOwner::Attempt,
-                Some(cycle.clone()),
-                UnwindReason::IntentChanged,
-            ))
-            .with(Effect::CancelAttempt),
+            Rel::Down => Decision::to(unwinding(Some(cycle.clone()), UnwindReason::IntentDown))
+                .with(Effect::CancelAttempt),
+            Rel::Newer(_) => {
+                Decision::to(unwinding(Some(cycle.clone()), UnwindReason::IntentChanged))
+                    .with(Effect::CancelAttempt)
+            }
             Rel::Same(_) => {
                 if now < *deadline {
                     // 10, and it is load-bearing: NO observation may tear down an in-flight
@@ -258,12 +245,8 @@ pub fn reconcile(
                         error: AttemptError::TimedOut,
                         pass: cycle.pass,
                     });
-                    Decision::to(unwinding(
-                        UnwindOwner::Attempt,
-                        Some(cycle),
-                        UnwindReason::AttemptTimedOut,
-                    ))
-                    .with(Effect::CancelAttempt)
+                    Decision::to(unwinding(Some(cycle), UnwindReason::AttemptTimedOut))
+                        .with(Effect::CancelAttempt)
                 }
             }
         },
@@ -271,12 +254,8 @@ pub fn reconcile(
         // ------------------------------------------------------------------------------ Up
         Status::Up(u) => match (relate(status, intent), world) {
             // 12
-            (Rel::Down, _) => Decision::to(unwinding(
-                UnwindOwner::Actor,
-                None,
-                UnwindReason::IntentDown,
-            ))
-            .with(Effect::Unwind { extra: None }),
+            (Rel::Down, _) => Decision::to(unwinding(None, UnwindReason::IntentDown))
+                .with(Effect::Unwind { extra: None }),
             // 13, 14, 15: a newer intent that the running tunnel already satisfies is a hand-over,
             // not a reconnect. Pressing Connect while connected does nothing.
             (Rel::Newer(up), world) if up.satisfied_by(u) => match world {
@@ -297,7 +276,6 @@ pub fn reconcile(
                     ..u.clone()
                 })),
                 World::Clear => Decision::to(unwinding(
-                    UnwindOwner::Actor,
                     Some(Cycle::reconnect(up, policy)),
                     UnwindReason::TunnelDied,
                 ))
@@ -305,7 +283,6 @@ pub fn reconcile(
             },
             // 16
             (Rel::Newer(up), _) => Decision::to(unwinding(
-                UnwindOwner::Actor,
                 Some(Cycle::start(up, policy)),
                 UnwindReason::IntentChanged,
             ))
@@ -330,7 +307,6 @@ pub fn reconcile(
             }
             // 18: something else is running a different protocol than the one we started.
             (Rel::Same(up), World::Running(_)) => Decision::to(unwinding(
-                UnwindOwner::Actor,
                 Some(Cycle::reconnect(up, policy)),
                 UnwindReason::Usurped,
             ))
@@ -339,7 +315,6 @@ pub fn reconcile(
             }),
             // 19: a live answer saying "not running" is a confirmed stop, on every platform.
             (Rel::Same(up), World::Clear) => Decision::to(unwinding(
-                UnwindOwner::Actor,
                 Some(Cycle::reconnect(up, policy)),
                 UnwindReason::TunnelDied,
             ))
@@ -356,7 +331,6 @@ pub fn reconcile(
                     Decision::stay(status)
                 }
                 Some(_) => Decision::to(unwinding(
-                    UnwindOwner::Actor,
                     Some(Cycle::reconnect(up, policy)),
                     UnwindReason::PeerLost,
                 ))
@@ -389,14 +363,13 @@ pub fn reconcile(
                 adopt(up, rt, now_unix)
             }
             // 27
-            (Rel::Same(_), World::Running(_)) => Decision::to(unwinding(
-                UnwindOwner::Actor,
-                Some(cycle.clone()),
-                UnwindReason::WrongProtocol,
-            ))
-            .with(Effect::Unwind {
-                extra: Some(ExtraUndo::StopBackend),
-            }),
+            (Rel::Same(_), World::Running(_)) => {
+                Decision::to(unwinding(Some(cycle.clone()), UnwindReason::WrongProtocol)).with(
+                    Effect::Unwind {
+                        extra: Some(ExtraUndo::StopBackend),
+                    },
+                )
+            }
             // 28, 29
             (Rel::Same(_), World::Clear | World::Dark) => {
                 if now < *resume_at {
@@ -419,7 +392,6 @@ pub fn on_attempt_done(
     intent: &Intent,
     result: AttemptResult,
     now: Instant,
-    now_unix: i64,
     policy: &Policy,
 ) -> Decision {
     let Status::Connecting { cycle, .. } = status else {
@@ -449,16 +421,11 @@ pub fn on_attempt_done(
             }
             // A2: it succeeded, but nobody wants it any more. Take the stack so the teardown can
             // undo exactly what the attempt applied.
-            Rel::Down => Decision::to(unwinding(
-                UnwindOwner::Actor,
-                None,
-                UnwindReason::IntentDown,
-            ))
-            .with(Effect::TakeStack(stack))
-            .with(Effect::Unwind { extra: None }),
+            Rel::Down => Decision::to(unwinding(None, UnwindReason::IntentDown))
+                .with(Effect::TakeStack(stack))
+                .with(Effect::Unwind { extra: None }),
             // A3
             Rel::Newer(up) => Decision::to(unwinding(
-                UnwindOwner::Actor,
                 Some(Cycle::start(up, policy)),
                 UnwindReason::IntentChanged,
             ))
@@ -539,7 +506,6 @@ pub fn on_attempt_done(
                 false,
                 "a cancelled attempt reports into on_unwind_done, not here"
             );
-            let _ = now_unix;
             Decision::stay(status)
         }
     }
@@ -572,7 +538,6 @@ pub fn on_unwind_done(
         return if tries + 1 < policy.unwind_tries {
             // U0a
             Decision::to(Status::Unwinding {
-                owner: UnwindOwner::Actor,
                 cycle: cycle.clone(),
                 reason: *reason,
                 tries: tries + 1,
@@ -660,10 +625,8 @@ pub fn on_unwind_done(
                     let mut cycle = cycle;
                     if cycle.has_budget() {
                         let backoff = policy.backoff(cycle.pass);
-                        let protocol = cycle.protocol();
                         cycle.index = 0;
                         cycle.pass += 1;
-                        let _ = protocol;
                         Decision::to(Status::Retrying {
                             cycle,
                             resume_at: now + backoff,

@@ -19,7 +19,7 @@ use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
     AttemptPhase, AttemptResult, CycleOutcome, Intent, IntentAccepted, IntentEpoch, IntentError,
-    Observation, Policy, Status, TunnelState, UnwindOwner, UpIntent, World,
+    Observation, Policy, Status, TunnelState, UpIntent, World,
 };
 use crate::vpn::backend::VpnBackend;
 use crate::vpn::platform::PlatformImpl;
@@ -47,8 +47,6 @@ struct AttemptHandle {
     epoch: IntentEpoch,
     index: usize,
     cancel: CancellationToken,
-    #[allow(dead_code)]
-    join: JoinHandle<()>,
 }
 
 /// Whether a command changed anything the decision table cares about.
@@ -199,7 +197,6 @@ impl TunnelActor {
                 );
                 self.held_stack = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
                 self.status = Status::Unwinding {
-                    owner: UnwindOwner::Actor,
                     cycle: None,
                     reason: types::UnwindReason::CrashRecovery,
                     tries: 0,
@@ -400,7 +397,6 @@ impl TunnelActor {
         self.cancel_issued = false;
 
         let now = Instant::now();
-        let now_unix = chrono::Utc::now().timestamp();
 
         // While unwinding, the attempt was cancelled *by* that unwind, so its report completes the
         // teardown rather than being a connect outcome. This is the only path a late-succeeding
@@ -438,7 +434,6 @@ impl TunnelActor {
             &self.intent,
             report.result,
             now,
-            now_unix,
             &self.policy,
         );
         self.apply(decision, now);
@@ -515,10 +510,8 @@ impl TunnelActor {
                 protocol,
                 epoch,
                 index,
-                total,
             } => {
                 debug_assert!(self.attempt.is_none(), "beginning while an attempt is live");
-                let _ = total;
 
                 let Some(config) = self.configs.get(protocol) else {
                     // A missing config is an attempt failure, not a panic and not a silent stall.
@@ -527,7 +520,7 @@ impl TunnelActor {
                     // the status would wait forever.
                     let cancel = CancellationToken::new();
                     let tx = self.cmd_tx.clone();
-                    let join = tokio::spawn(attempt::run_immediate_failure(
+                    tokio::spawn(attempt::run_immediate_failure(
                         tx,
                         epoch,
                         index,
@@ -537,7 +530,6 @@ impl TunnelActor {
                         epoch,
                         index,
                         cancel,
-                        join,
                     });
                     return;
                 };
@@ -559,12 +551,11 @@ impl TunnelActor {
                     #[cfg(target_os = "android")]
                     app: self.app.clone(),
                 };
-                let join = tokio::spawn(attempt::run(ctx));
+                tokio::spawn(attempt::run(ctx));
                 self.attempt = Some(AttemptHandle {
                     epoch,
                     index,
                     cancel,
-                    join,
                 });
                 self.cancel_issued = false;
             }
@@ -768,11 +759,6 @@ async fn sleep_until(deadline: Option<Instant>) {
     }
 }
 
-/// Owns the observation clock.
-///
-/// This lives in Rust rather than in the UI precisely so its cadence cannot be distorted by how
-/// many timers a frontend happens to be running — and, on mobile, so it does not stop when the
-/// webview is backgrounded and its timers are throttled.
 /// Forwards every published state to the UI as an event.
 ///
 /// Reading from a `watch` means a listener that falls behind is given the newest value rather than
@@ -788,6 +774,11 @@ async fn publisher(mut states: watch::Receiver<TunnelState>, app: tauri::AppHand
     }
 }
 
+/// Owns the observation clock.
+///
+/// This lives in Rust rather than in the UI precisely so its cadence cannot be distorted by how
+/// many timers a frontend happens to be running — and, on mobile, so it does not stop when the
+/// webview is backgrounded and its timers are throttled.
 async fn observer(backend: Arc<dyn VpnBackend>, tx: mpsc::Sender<Command>, policy: Policy) {
     loop {
         let obs = backend.observe().await;
