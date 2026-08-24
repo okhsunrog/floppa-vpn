@@ -85,7 +85,7 @@ impl AndroidIpcBackend {
     /// meaningless because the polls stopped arriving.
     fn deadline(timeout: std::time::Duration) -> tarpc::context::Context {
         let mut ctx = tarpc::context::current();
-        ctx.deadline = std::time::SystemTime::now() + timeout;
+        ctx.deadline = std::time::Instant::now() + timeout;
         ctx
     }
 
@@ -144,35 +144,33 @@ impl VpnBackend for AndroidIpcBackend {
     }
 
     async fn set_log_config(&self, config: &crate::logging::LogConfig) {
-        if let Ok(client) = self.get_client().await {
-            if let Err(e) = client
+        if let Ok(client) = self.get_client().await
+            && let Err(e) = client
                 .set_log_config(tarpc::context::current(), config.clone())
                 .await
-            {
-                warn!("Failed to set log config on VPN process: {e}");
-                self.invalidate_client().await;
-            }
+        {
+            warn!("Failed to set log config on VPN process: {e}");
+            self.invalidate_client().await;
         }
     }
 
     async fn start_log_capture(&self, capture_id: &str) {
-        if let Ok(client) = self.get_client().await {
-            if let Err(e) = client
+        if let Ok(client) = self.get_client().await
+            && let Err(e) = client
                 .start_log_capture(tarpc::context::current(), capture_id.to_string())
                 .await
-            {
-                warn!("Failed to start log capture on VPN process: {e}");
-                self.invalidate_client().await;
-            }
+        {
+            warn!("Failed to start log capture on VPN process: {e}");
+            self.invalidate_client().await;
         }
     }
 
     async fn stop_log_capture(&self) {
-        if let Ok(client) = self.get_client().await {
-            if let Err(e) = client.stop_log_capture(tarpc::context::current()).await {
-                warn!("Failed to stop log capture on VPN process: {e}");
-                self.invalidate_client().await;
-            }
+        if let Ok(client) = self.get_client().await
+            && let Err(e) = client.stop_log_capture(tarpc::context::current()).await
+        {
+            warn!("Failed to stop log capture on VPN process: {e}");
+            self.invalidate_client().await;
         }
     }
 

@@ -32,7 +32,7 @@ fn get_runtime() -> &'static tokio::runtime::Runtime {
 }
 
 fn get_tunnel_manager() -> Arc<TunnelManager> {
-    TUNNEL_MANAGER.get_or_init(|| TunnelManager::new()).clone()
+    TUNNEL_MANAGER.get_or_init(TunnelManager::new).clone()
 }
 
 /// Protect a socket fd using VpnService.protect() via JNI.
@@ -66,9 +66,9 @@ fn protect_socket_jni(fd: RawFd) -> bool {
             service_ref.as_ref(),
             jni::jni_str!("protectSocket"),
             jni::jni_sig!("(I)Z"),
-            &[(fd as i32).into()],
+            &[fd.into()],
         )?;
-        Ok(result.z()?)
+        result.z()
     });
 
     match result {
@@ -169,10 +169,7 @@ impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
         if protect_socket_jni(fd) {
             Ok(())
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "VpnService.protect() failed",
-            ))
+            Err(std::io::Error::other("VpnService.protect() failed"))
         }
     }
 }
@@ -227,7 +224,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
                 let shoes_config = vless_vpn.to_shoes_config();
 
                 if let Err(e) = tunnel_manager
-                    .start_vless_with_fd(&shoes_config, tun_fd as i32)
+                    .start_vless_with_fd(&shoes_config, tun_fd)
                     .await
                 {
                     error!("Failed to start VLESS tunnel: {e}");
@@ -304,10 +301,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'
     info!("nativeStop: stopping tunnel and RPC server");
 
     // Shutdown RPC server
-    if let Ok(mut guard) = RPC_HANDLE.lock() {
-        if let Some(handle) = guard.take() {
-            handle.shutdown();
-        }
+    if let Ok(mut guard) = RPC_HANDLE.lock()
+        && let Some(handle) = guard.take()
+    {
+        handle.shutdown();
     }
 
     // Stop tunnel

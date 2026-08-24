@@ -3,7 +3,7 @@
 //! Runs in the VPN service process, accepts connections from the UI process,
 //! and delegates RPC calls to the local TunnelManager.
 
-use super::rpc::{TunnelInfo, VpnRpc};
+use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
 use super::tunnel::TunnelManager;
 use futures::StreamExt;
 use std::sync::Arc;
