@@ -844,6 +844,31 @@ fn an_unwind_that_never_succeeds_gives_up_loudly_rather_than_looping() {
 }
 
 #[test]
+fn a_teardown_judged_against_a_pre_teardown_look_must_not_burn_its_retries() {
+    // Caught on a device. The actor was checking the world using the observation it already had,
+    // which had been taken *before* the unwind ran and still said Running. Retries happen in
+    // microseconds and polling is once a second, so all three re-runs consulted the same stale
+    // answer and the budget was spent in under a millisecond — every single time.
+    //
+    // The actor now passes Dark in that situation, and this is what Dark must do here: fall
+    // through and let a fresh observation decide, rather than re-unwinding.
+    let now = t0();
+    for tries in 0..policy().unwind_tries {
+        let d = unwind_done(
+            &unwinding_status(UnwindReason::IntentDown, None, tries),
+            &down(2),
+            &World::Dark,
+            now,
+        );
+        assert!(
+            !matches!(d.next, Status::Unwinding { .. }),
+            "a stale look must not drive a re-unwind (tries={tries})"
+        );
+        assert!(!matches!(outcome(&d), Some(CycleOutcome::UnwindFailed)));
+    }
+}
+
+#[test]
 fn darkness_never_triggers_a_re_unwind() {
     // Re-unwinding forever against an unreachable peer is exactly the livelock to avoid.
     let now = t0();
