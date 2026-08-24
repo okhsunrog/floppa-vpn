@@ -9,14 +9,14 @@ name = "floppa-cli"
 path = "src/main.rs"
 
 [dependencies]
-gotatun = { git = "https://github.com/okhsunrog/gotatun", rev = "7005e0c", features = ["device", "tun"] }
+gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-2026-08-25", features = ["device", "tun"] }
 tun = { version = "0.8", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 ipnetwork = "0.21"
 anyhow = "1"
 dirs = "6"
