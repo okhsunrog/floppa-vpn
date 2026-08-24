@@ -1,3 +1,4 @@
+use super::protocol::{Preference, Protocol};
 use super::state::{SavedVpnConfigs, WgConfig};
 #[cfg(not(target_os = "android"))]
 use serde::{Deserialize, Serialize};
@@ -135,7 +136,7 @@ pub fn load_configs() -> Option<SavedVpnConfigs> {
                     // Also check legacy keyring entry
                     if let Some(wg) = load_legacy_keyring() {
                         let configs = SavedVpnConfigs {
-                            active_protocol: "wireguard".to_string(),
+                            preferred_protocol: Preference(Some(Protocol::WireGuard)),
                             wireguard: Some(wg),
                             ..Default::default()
                         };
@@ -194,17 +195,17 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
     if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
         return Some(match config {
             ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
-                active_protocol: "wireguard".to_string(),
+                preferred_protocol: Preference(Some(Protocol::WireGuard)),
                 wireguard: Some(wg),
                 ..Default::default()
             },
             ProtocolConfig::AmneziaWg(awg) => SavedVpnConfigs {
-                active_protocol: "amneziawg".to_string(),
+                preferred_protocol: Preference(Some(Protocol::AmneziaWg)),
                 amneziawg: Some(awg),
                 ..Default::default()
             },
             ProtocolConfig::Vless(vless) => SavedVpnConfigs {
-                active_protocol: "vless".to_string(),
+                preferred_protocol: Preference(Some(Protocol::Vless)),
                 vless: Some(vless),
                 ..Default::default()
             },
@@ -215,7 +216,7 @@ fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
         Ok(wg) => {
             info!("Loaded legacy WireGuard config, migrating to new format");
             Some(SavedVpnConfigs {
-                active_protocol: "wireguard".to_string(),
+                preferred_protocol: Preference(Some(Protocol::WireGuard)),
                 wireguard: Some(wg),
                 ..Default::default()
             })
