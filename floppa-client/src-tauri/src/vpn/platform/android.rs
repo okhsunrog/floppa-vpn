@@ -1,25 +1,21 @@
 //! Android platform implementation for VPN operations
 //!
-//! On Android, the VpnService handles all platform-specific operations:
-//! - TUN interface creation
-//! - IP address configuration
-//! - Routing
-//! - DNS configuration
+//! On Android the VpnService owns everything this trait describes: the TUN interface, its address,
+//! its routes and its DNS servers are all set atomically by `VpnService.Builder` in Kotlin, before
+//! the Rust side ever receives the file descriptor.
 //!
-//! These operations are performed in Kotlin code (FloppaVpnService) when
-//! starting the VPN via the tauri-plugin-vpn. The Rust side just receives
-//! the TUN file descriptor and uses it with gotatun.
+//! So every method here is a no-op — and, importantly, so is every *undo*: the whole configuration
+//! is torn down as one unit when the service stops. That is why no Android rollback step is
+//! `durable()`: there is nothing that can outlive the process and need recovering at next start.
 
-use super::{Platform, TunParams};
+use super::{DnsSnapshot, Gateway, Platform, PlatformError, TunParams};
+use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use tracing::debug;
 
-/// Android platform implementation
-///
-/// On Android, most operations are no-ops because VpnService handles
-/// address, routing, and DNS configuration automatically.
+/// Android platform implementation.
 pub struct AndroidPlatform;
 
 impl AndroidPlatform {
@@ -40,73 +36,125 @@ impl Platform for AndroidPlatform {
         TunParams::default()
     }
 
-    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
-        // On Android, TUN is created by VpnService before Rust gets the fd.
-        debug!("Android: TUN prepared by VpnService for {}", iface);
+    async fn preflight(&self) -> Result<(), PlatformError> {
+        // VPN consent is checked by the plugin as part of starting the service, not here.
         Ok(())
     }
 
-    async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
-        // On Android, address is configured by VpnService.Builder.addAddress()
-        // in the Kotlin code before we receive the TUN fd
+    async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        debug!("Android: TUN prepared by VpnService for {iface}");
+        Ok(())
+    }
+
+    async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        debug!("Android: TUN released with VpnService for {iface}");
+        Ok(())
+    }
+
+    async fn configure_address(
+        &self,
+        iface: &InterfaceName,
+        addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        debug!("Android: address {addr} configured by VpnService for {iface}");
+        Ok(())
+    }
+
+    async fn deconfigure_address(
+        &self,
+        iface: &InterfaceName,
+        addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        debug!("Android: address {addr} released with VpnService for {iface}");
+        Ok(())
+    }
+
+    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
+        // The endpoint is protected with VpnService.protect(), not with a host route.
+        Ok(None)
+    }
+
+    async fn interface_index(&self, _iface: &InterfaceName) -> Option<u32> {
+        None
+    }
+
+    async fn add_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        _gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        debug!("Android: endpoint routing handled by VpnService for {endpoint}");
+        Ok(())
+    }
+
+    async fn remove_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        _gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        debug!("Android: endpoint routing released with VpnService for {endpoint}");
+        Ok(())
+    }
+
+    async fn add_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         debug!(
-            "Android: address {} configured by VpnService for {}",
-            addr, iface
+            "Android: {} routes configured by VpnService for {iface}",
+            routes.len()
         );
         Ok(())
     }
 
-    async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
-        // On Android, routing is handled by VpnService
+    async fn remove_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         debug!(
-            "Android: endpoint routing handled by VpnService for {}",
-            endpoint_ip
+            "Android: {} routes removed with VpnService for {iface}",
+            routes.len()
         );
         Ok(())
     }
 
-    async fn remove_endpoint_route(&self) -> Result<(), String> {
-        debug!("Android: endpoint routing handled by VpnService");
-        Ok(())
+    async fn capture_dns(
+        &self,
+        _iface: &InterfaceName,
+        _if_index: Option<u32>,
+    ) -> Result<DnsSnapshot, PlatformError> {
+        Ok(DnsSnapshot::OwnedByLink)
     }
 
-    async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        // On Android, routes are configured by VpnService.Builder.addRoute()
-        // in the Kotlin code before we receive the TUN fd
+    async fn configure_dns(
+        &self,
+        iface: &InterfaceName,
+        servers: &[IpAddr],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         debug!(
-            "Android: {} routes configured by VpnService for {}",
-            allowed_ips.len(),
-            iface
+            "Android: {} DNS servers configured by VpnService for {iface}",
+            servers.len()
         );
         Ok(())
     }
 
-    async fn remove_routes(&self, iface: &str) -> Result<(), String> {
-        // Routes are automatically removed when VpnService stops
-        debug!("Android: routes removed with VpnService for {}", iface);
+    async fn restore_dns(
+        &self,
+        iface: &InterfaceName,
+        _snapshot: &DnsSnapshot,
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
+        debug!("Android: DNS restored with VpnService for {iface}");
         Ok(())
     }
 
-    async fn configure_dns(&self, iface: &str, servers: &[IpAddr]) -> Result<(), String> {
-        // On Android, DNS is configured by VpnService.Builder.addDnsServer()
-        // in the Kotlin code before we receive the TUN fd
-        debug!(
-            "Android: {} DNS servers configured by VpnService for {}",
-            servers.len(),
-            iface
-        );
-        Ok(())
-    }
-
-    async fn restore_dns(&self, iface: &str) -> Result<(), String> {
-        // DNS is automatically restored when VpnService stops
-        debug!("Android: DNS restored with VpnService for {}", iface);
-        Ok(())
-    }
-
-    async fn cleanup(&self, iface: &str) -> Result<(), String> {
-        // Cleanup is handled by stopping the VpnService
-        debug!("Android: cleanup handled by VpnService for {}", iface);
-        Ok(())
+    async fn ipv6_enabled(&self) -> bool {
+        // The VpnService decides which families it accepts; routes are advisory here.
+        true
     }
 }

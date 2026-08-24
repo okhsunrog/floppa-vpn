@@ -21,6 +21,11 @@ pub fn init_config_dir(path: PathBuf) {
     let _ = APP_CONFIG_DIR.set(path);
 }
 
+/// Get the config directory for the app, creating it if needed.
+pub fn config_dir() -> Result<PathBuf, String> {
+    get_config_dir()
+}
+
 /// Get the config directory for the app
 fn get_config_dir() -> Result<PathBuf, String> {
     let config_dir = APP_CONFIG_DIR

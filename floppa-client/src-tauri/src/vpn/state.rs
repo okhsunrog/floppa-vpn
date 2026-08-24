@@ -67,6 +67,17 @@ impl ConnectError {
             message: message.into(),
         }
     }
+
+    /// Map a platform failure onto the connect vocabulary, preserving the distinction the
+    /// platform already drew: a denied or unavailable privilege is not worth another attempt.
+    pub fn from_platform(e: &crate::vpn::platform::PlatformError) -> Self {
+        use crate::vpn::platform::PlatformError;
+        match e {
+            PlatformError::PermissionDenied(m) => Self::permission(m.clone()),
+            PlatformError::Unavailable(m) => Self::permission(m.clone()),
+            PlatformError::Failed(m) => Self::tunnel(m.clone()),
+        }
+    }
 }
 
 /// Setup/IO errors propagated via `?` (DNS, TUN, routing) are environmental —
@@ -793,6 +804,11 @@ impl SavedVpnConfigs {
 /// Global VPN state
 pub struct VpnState {
     pub configs: RwLock<SavedVpnConfigs>,
+    /// The rollback stack for the tunnel that is currently up, if any.
+    ///
+    /// Temporary home: in the actor commit this becomes a local variable of the actor task, at
+    /// which point no lock guards it at all.
+    pub held_stack: tokio::sync::Mutex<Option<crate::vpn::rollback::RollbackStack>>,
     pub connection: RwLock<ConnectionInfo>,
     pub speed_tracker: RwLock<SpeedTracker>,
     /// Consecutive polls where the backend was unreachable (`get_all_info` → None).
@@ -805,6 +821,7 @@ impl VpnState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             configs: RwLock::new(SavedVpnConfigs::default()),
+            held_stack: tokio::sync::Mutex::new(None),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
             unreachable_polls: AtomicU32::new(0),
@@ -816,6 +833,7 @@ impl Default for VpnState {
     fn default() -> Self {
         Self {
             configs: RwLock::new(SavedVpnConfigs::default()),
+            held_stack: tokio::sync::Mutex::new(None),
             connection: RwLock::new(ConnectionInfo::default()),
             speed_tracker: RwLock::new(SpeedTracker::new()),
             unreachable_polls: AtomicU32::new(0),
