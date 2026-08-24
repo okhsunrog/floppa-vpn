@@ -76,7 +76,13 @@ function closeModal() {
         <div class="flex items-center justify-between gap-4">
           <div>
             <p class="text-sm font-medium">{{ t('settings.currentProtocol') }}</p>
-            <p class="text-sm text-[var(--ui-text-muted)]">{{ t(`vpn.${vpn.activeProtocol}`) }}</p>
+            <!-- `activeProtocol` is undefined until something is stored; `vpn.undefined` is
+                 not a translation key, and rendered as one it showed up verbatim. -->
+            <p class="text-sm text-[var(--ui-text-muted)]">
+              {{
+                vpn.activeProtocol ? t(`vpn.${vpn.activeProtocol}`) : t('settings.noProtocolYet')
+              }}
+            </p>
           </div>
           <UButton
             :label="t('settings.resetProtocolPreference')"

@@ -360,6 +360,7 @@ export default {
     protocolPriority: 'Priority',
     protocolPriorityHint: 'Tried top to bottom; the app stays on the first protocol that connects.',
     currentProtocol: 'Current protocol',
+    noProtocolYet: 'None yet',
     protocolUnavailable: 'unavailable',
     autoSelectHelp:
       'With auto-select on, the app tries protocols in the order above and stays on the first that connects. Your last working protocol is tried first; Reset forgets it so probing starts from the top again. Turn auto-select off to pick a protocol manually.',
