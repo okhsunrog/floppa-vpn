@@ -1,3 +1,4 @@
+pub mod actor;
 pub mod backend;
 pub mod commands;
 pub mod config;
