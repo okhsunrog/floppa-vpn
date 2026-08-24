@@ -4,7 +4,8 @@
 //! A polkit policy (`dev.okhsunrog.floppa-vpn.policy`) allows the helper to
 //! run without a password prompt for active desktop sessions.
 
-use super::{Platform, TunParams};
+use super::{DnsSnapshot, Gateway, Platform, PlatformError, TunParams};
+use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
@@ -23,18 +24,16 @@ const HELPER_CONTENT: &str = include_str!("../../../resources/linux/floppa-netwo
 const POLICY_CONTENT: &str =
     include_str!("../../../resources/linux/dev.okhsunrog.floppa-vpn.policy");
 
-/// Linux platform implementation
+/// Linux platform implementation.
+///
+/// Deliberately holds no undo state: what was applied lives in the caller's rollback stack. The
+/// previous version kept `original_resolv_conf`, `saved_gateway`, `saved_endpoint_ip` and
+/// `saved_routes` here, which was a second rollback stack competing with the real one.
 pub struct LinuxPlatform {
-    /// Original resolv.conf content (for restoration)
-    original_resolv_conf: std::sync::Mutex<Option<String>>,
-    /// Whether systemd-resolved is available
+    /// Whether systemd-resolved is available.
     has_resolvectl: bool,
-    /// Saved default gateway for endpoint route cleanup
-    saved_gateway: std::sync::Mutex<Option<String>>,
-    /// Saved endpoint IP for route cleanup
-    saved_endpoint_ip: std::sync::Mutex<Option<IpAddr>>,
-    /// Saved routes for cleanup (the actual routes added, after /0 splitting)
-    saved_routes: std::sync::Mutex<Vec<String>>,
+    /// Whether the privileged helper installed cleanly at startup; surfaced by `preflight`.
+    helper_ready: Result<(), String>,
 }
 
 impl LinuxPlatform {
@@ -51,17 +50,17 @@ impl LinuxPlatform {
             debug!("resolvectl not available, will modify /etc/resolv.conf directly");
         }
 
-        // Install polkit policy + helper if missing or outdated
-        if let Err(e) = Self::ensure_polkit_installed() {
-            warn!("Failed to install polkit policy: {}", e);
+        // Install polkit policy + helper if missing or outdated. A failure here is remembered
+        // rather than only logged: `preflight` turns it into a typed error before anything is
+        // mutated, instead of letting the first privileged call fail opaquely mid-connect.
+        let helper_ready = Self::ensure_polkit_installed();
+        if let Err(e) = &helper_ready {
+            warn!("Failed to install polkit policy: {e}");
         }
 
         Self {
-            original_resolv_conf: std::sync::Mutex::new(None),
             has_resolvectl,
-            saved_gateway: std::sync::Mutex::new(None),
-            saved_endpoint_ip: std::sync::Mutex::new(None),
-            saved_routes: std::sync::Mutex::new(Vec::new()),
+            helper_ready,
         }
     }
 
@@ -124,43 +123,41 @@ impl LinuxPlatform {
     ///
     /// With the polkit policy installed, this runs without a password prompt
     /// for active desktop sessions.
-    fn run_helper(&self, args: &[&str]) -> Result<(), String> {
+    fn run_helper(&self, args: &[&str]) -> Result<(), PlatformError> {
         debug!("Running helper: {:?}", args);
 
         let output = Command::new("pkexec")
             .arg(HELPER_PATH)
             .args(args)
             .output()
-            .map_err(|e| format!("Failed to run network helper: {}", e))?;
+            .map_err(|e| {
+                PlatformError::Unavailable(format!("failed to run network helper: {e}"))
+            })?;
 
         if output.status.success() {
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("Network helper failed: {}", stderr))
+            return Ok(());
         }
-    }
 
-    /// Run the network helper, ignoring failures (for cleanup operations).
-    fn run_helper_ignore_errors(&self, args: &[&str]) {
-        debug!("Running helper (ignore errors): {:?}", args);
-
-        match Command::new("pkexec").arg(HELPER_PATH).args(args).output() {
-            Ok(output) if !output.status.success() => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                warn!("Helper command failed (ignored): {}", stderr);
-            }
-            Err(e) => warn!("Failed to run helper (ignored): {}", e),
-            _ => {}
-        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // pkexec exits 126 when authorisation is declined or dismissed, and 127 when the helper
+        // could not be launched at all. Both are pointless to retry with another protocol.
+        Err(match output.status.code() {
+            Some(126) => PlatformError::PermissionDenied(if stderr.is_empty() {
+                "authorisation declined".to_string()
+            } else {
+                stderr
+            }),
+            Some(127) => PlatformError::Unavailable(format!("helper not executable: {stderr}")),
+            _ => PlatformError::Failed(format!("network helper failed: {stderr}")),
+        })
     }
 
     /// Get the default gateway IP from the routing table (no privileges needed).
-    fn get_default_gateway() -> Result<Option<String>, String> {
+    fn get_default_gateway() -> Result<Option<String>, PlatformError> {
         let output = Command::new("ip")
             .args(["route", "show", "default"])
             .output()
-            .map_err(|e| format!("Failed to get default route: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to read default route: {e}")))?;
         let route_output = String::from_utf8_lossy(&output.stdout);
         // Parse "default via 192.168.1.1 dev eth0"
         Ok(route_output
@@ -203,6 +200,22 @@ impl LinuxPlatform {
         }
     }
 
+    /// Write `/etc/resolv.conf` through the privileged helper.
+    ///
+    /// The helper replaces the path rather than `cp`-ing onto it, so a symlink to the resolver's
+    /// stub file is never written through.
+    fn write_resolv_conf(&self, content: &str) -> Result<(), PlatformError> {
+        let tmp = tempfile::Builder::new()
+            .prefix("floppa-resolv-")
+            .tempfile()
+            .map_err(|e| {
+                PlatformError::Failed(format!("failed to create temp resolv.conf: {e}"))
+            })?;
+        std::fs::write(tmp.path(), content)
+            .map_err(|e| PlatformError::Failed(format!("failed to write temp resolv.conf: {e}")))?;
+        self.run_helper(&["set-resolv-conf", &tmp.path().to_string_lossy()])
+    }
+
     /// Check if IPv6 is enabled in the kernel.
     ///
     /// If the procfs knob is unavailable, assume enabled to avoid silently
@@ -238,181 +251,206 @@ impl Platform for LinuxPlatform {
         }
     }
 
-    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
-        // Create persistent TUN owned by the current user via pkexec helper.
-        // This allows unprivileged opening of the device from gotatun.
+    async fn preflight(&self) -> Result<(), PlatformError> {
+        match &self.helper_ready {
+            Ok(()) => Ok(()),
+            Err(e) => Err(PlatformError::Unavailable(e.clone())),
+        }
+    }
+
+    async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        // Create a persistent TUN owned by the current user, so gotatun can open it unprivileged.
         let uid = std::fs::metadata("/proc/self")
-            .map_err(|e| format!("Failed to read process metadata: {e}"))?
+            .map_err(|e| PlatformError::Failed(format!("failed to read process metadata: {e}")))?
             .uid();
-        self.run_helper(&["ensure-tun", iface, &uid.to_string()])
+        self.run_helper(&["ensure-tun", iface.as_str(), &uid.to_string()])
     }
 
-    async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
-        info!("Configuring address {} on interface {}", addr, iface);
-
-        self.run_helper(&["configure", iface, &addr.to_string()])
+    async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        // `deconfigure` is down + addr flush, both `|| true`-guarded in the helper, so this is
+        // safe when nothing was ever prepared.
+        self.run_helper(&["deconfigure", iface.as_str()])
     }
 
-    async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
-        let gateway =
-            Self::get_default_gateway()?.ok_or_else(|| "No default gateway found".to_string())?;
-
-        let prefix_len = if endpoint_ip.is_ipv4() { 32 } else { 128 };
-        let endpoint_route = format!("{}/{}", endpoint_ip, prefix_len);
-        info!("Adding endpoint route: {} via {}", endpoint_route, gateway);
-
-        self.run_helper(&["add-route", &endpoint_route, "via", &gateway])?;
-
-        *self.saved_gateway.lock().unwrap() = Some(gateway);
-        *self.saved_endpoint_ip.lock().unwrap() = Some(endpoint_ip);
-        Ok(())
+    async fn configure_address(
+        &self,
+        iface: &InterfaceName,
+        addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        info!("Configuring address {addr} on interface {iface}");
+        self.run_helper(&["configure", iface.as_str(), &addr.to_string()])
     }
 
-    async fn remove_endpoint_route(&self) -> Result<(), String> {
-        if let Some(endpoint_ip) = self.saved_endpoint_ip.lock().unwrap().take() {
-            let prefix_len = if endpoint_ip.is_ipv4() { 32 } else { 128 };
-            let endpoint_route = format!("{}/{}", endpoint_ip, prefix_len);
-            info!("Removing endpoint route: {}", endpoint_route);
-            self.run_helper_ignore_errors(&["del-route", &endpoint_route]);
+    async fn deconfigure_address(
+        &self,
+        iface: &InterfaceName,
+        addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        self.run_helper(&["flush-addr", iface.as_str(), &addr.to_string()])
+    }
+
+    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
+        Ok(Self::get_default_gateway()?.map(Gateway))
+    }
+
+    async fn interface_index(&self, _iface: &InterfaceName) -> Option<u32> {
+        // Linux scopes routes by device name, so the index is never needed.
+        None
+    }
+
+    async fn add_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        let gateway = gateway.ok_or_else(|| {
+            PlatformError::Failed("no default gateway; cannot pin the endpoint route".to_string())
+        })?;
+        let route = endpoint_route(endpoint);
+        info!("Adding endpoint route: {route} via {}", gateway.0);
+        self.run_helper(&["add-route", &route, "via", &gateway.0])
+    }
+
+    async fn remove_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        let route = endpoint_route(endpoint);
+        info!("Removing endpoint route: {route}");
+        // Matching on the gateway too: without it this deletes any route to the endpoint, which
+        // after a roaming event is the wrong one.
+        match gateway {
+            Some(gw) => self.run_helper(&["del-route", &route, "via", &gw.0]),
+            None => self.run_helper(&["del-route", &route]),
         }
-        self.saved_gateway.lock().unwrap().take();
-        Ok(())
     }
 
-    async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        let ipv6_enabled = Self::is_ipv6_enabled();
-        if !ipv6_enabled {
-            info!("IPv6 is disabled on host, skipping IPv6 VPN routes");
-        }
-
-        let mut routes = Vec::new();
-        for network in allowed_ips {
-            if network.is_ipv6() && !ipv6_enabled {
-                debug!("Skipping IPv6 route because IPv6 is disabled: {}", network);
-                continue;
-            }
-
-            if network.prefix() == 0 {
-                if network.is_ipv4() {
-                    routes.push("0.0.0.0/1".to_string());
-                    routes.push("128.0.0.0/1".to_string());
-                } else {
-                    routes.push("::/1".to_string());
-                    routes.push("8000::/1".to_string());
-                }
-            } else {
-                routes.push(network.to_string());
-            }
-        }
-
-        info!("Adding {} routes via interface {}", routes.len(), iface);
-
-        if !routes.is_empty() {
-            let mut args: Vec<&str> = vec!["add-routes", iface];
-            let route_refs: Vec<&str> = routes.iter().map(|s| s.as_str()).collect();
-            args.extend(route_refs);
-            self.run_helper(&args)?;
-            *self.saved_routes.lock().unwrap() = routes;
-        }
-
-        Ok(())
-    }
-
-    async fn remove_routes(&self, iface: &str) -> Result<(), String> {
-        let routes = self
-            .saved_routes
-            .lock()
-            .unwrap()
-            .drain(..)
-            .collect::<Vec<_>>();
+    async fn add_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         if routes.is_empty() {
-            info!("No saved routes to remove");
             return Ok(());
         }
-
-        info!("Removing {} routes via interface {}", routes.len(), iface);
-        let mut args: Vec<&str> = vec!["del-routes", iface];
-        let route_refs: Vec<&str> = routes.iter().map(|s| s.as_str()).collect();
-        args.extend(route_refs);
-        self.run_helper_ignore_errors(&args);
-
-        Ok(())
+        info!("Adding {} routes via interface {iface}", routes.len());
+        let strs: Vec<String> = routes.iter().map(|r| r.to_string()).collect();
+        let mut args: Vec<&str> = vec!["add-routes", iface.as_str()];
+        args.extend(strs.iter().map(|s| s.as_str()));
+        self.run_helper(&args)
     }
 
-    async fn configure_dns(&self, iface: &str, servers: &[IpAddr]) -> Result<(), String> {
+    async fn remove_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
+        if routes.is_empty() {
+            return Ok(());
+        }
+        info!("Removing {} routes via interface {iface}", routes.len());
+        let strs: Vec<String> = routes.iter().map(|r| r.to_string()).collect();
+        let mut args: Vec<&str> = vec!["del-routes", iface.as_str()];
+        args.extend(strs.iter().map(|s| s.as_str()));
+        self.run_helper(&args)
+    }
+
+    async fn capture_dns(
+        &self,
+        _iface: &InterfaceName,
+        _if_index: Option<u32>,
+    ) -> Result<DnsSnapshot, PlatformError> {
+        if self.has_resolvectl {
+            return Ok(DnsSnapshot::Resolvectl);
+        }
+        // Record whether the path is a symlink BEFORE writing, so the restore can put the link
+        // back rather than writing through it into the resolver's own stub file.
+        let path = std::path::Path::new(RESOLV_CONF);
+        let symlink_target = std::fs::symlink_metadata(path)
+            .ok()
+            .filter(|m| m.file_type().is_symlink())
+            .and_then(|_| std::fs::read_link(path).ok());
+        Ok(DnsSnapshot::ResolvConf {
+            content: std::fs::read_to_string(path).ok(),
+            symlink_target,
+        })
+    }
+
+    async fn configure_dns(
+        &self,
+        iface: &InterfaceName,
+        servers: &[IpAddr],
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         if servers.is_empty() {
             info!("No DNS servers to configure");
             return Ok(());
         }
-
-        info!("Configuring DNS servers: {:?}", servers);
+        info!("Configuring DNS servers: {servers:?}");
 
         if self.has_resolvectl {
-            let server_strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
-            let mut args: Vec<&str> = vec!["set-dns", iface];
-            let refs: Vec<&str> = server_strs.iter().map(|s| s.as_str()).collect();
-            args.extend(refs);
-            self.run_helper(&args)?;
-        } else {
-            // Fallback: modify /etc/resolv.conf directly
-            let original = std::fs::read_to_string("/etc/resolv.conf").ok();
-            *self.original_resolv_conf.lock().unwrap() = original;
-
-            let mut content = String::from("# Generated by floppa-vpn\n");
-            for server in servers {
-                content.push_str(&format!("nameserver {}\n", server));
-            }
-
-            let tmp = tempfile::Builder::new()
-                .prefix("floppa-resolv-")
-                .tempfile()
-                .map_err(|e| format!("Failed to create temp resolv.conf: {}", e))?;
-            std::fs::write(tmp.path(), &content)
-                .map_err(|e| format!("Failed to write temp resolv.conf: {}", e))?;
-
-            self.run_helper(&["set-resolv-conf", &tmp.path().to_string_lossy()])?;
-            // tmp is automatically cleaned up on drop
+            let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
+            let mut args: Vec<&str> = vec!["set-dns", iface.as_str()];
+            args.extend(strs.iter().map(|s| s.as_str()));
+            return self.run_helper(&args);
         }
 
-        Ok(())
+        let mut content = String::from("# Generated by floppa-vpn\n");
+        for server in servers {
+            content.push_str(&format!("nameserver {server}\n"));
+        }
+        self.write_resolv_conf(&content)
     }
 
-    async fn restore_dns(&self, iface: &str) -> Result<(), String> {
+    async fn restore_dns(
+        &self,
+        iface: &InterfaceName,
+        snapshot: &DnsSnapshot,
+        _if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         info!("Restoring DNS configuration");
-
-        if self.has_resolvectl {
-            self.run_helper_ignore_errors(&["revert-dns", iface]);
-        } else if let Some(original) = self.original_resolv_conf.lock().unwrap().take() {
-            let tmp = tempfile::Builder::new()
-                .prefix("floppa-resolv-restore-")
-                .tempfile()
-                .map_err(|e| format!("Failed to create temp resolv.conf: {}", e))?;
-            std::fs::write(tmp.path(), &original)
-                .map_err(|e| format!("Failed to write temp resolv.conf: {}", e))?;
-
-            self.run_helper(&["set-resolv-conf", &tmp.path().to_string_lossy()])?;
-        } else {
-            warn!("No original resolv.conf to restore");
+        match snapshot {
+            DnsSnapshot::Resolvectl => self.run_helper(&["revert-dns", iface.as_str()]),
+            DnsSnapshot::ResolvConf {
+                symlink_target: Some(target),
+                ..
+            } => self.run_helper(&["restore-resolv-conf-link", &target.to_string_lossy()]),
+            DnsSnapshot::ResolvConf {
+                content: Some(content),
+                symlink_target: None,
+            } => self.write_resolv_conf(content),
+            DnsSnapshot::ResolvConf {
+                content: None,
+                symlink_target: None,
+            } => {
+                // There was no resolv.conf before us. Leaving ours in place is strictly better
+                // than deleting the file and taking name resolution down with it.
+                warn!("no original resolv.conf was captured; leaving the generated one in place");
+                Ok(())
+            }
+            other => {
+                warn!("ignoring non-Linux DNS snapshot: {other:?}");
+                Ok(())
+            }
         }
-
-        Ok(())
     }
 
-    async fn cleanup(&self, iface: &str) -> Result<(), String> {
-        info!("Cleaning up interface {}", iface);
-
-        // Restore DNS first
-        let _ = self.restore_dns(iface).await;
-
-        // Remove routes
-        let _ = self.remove_routes(iface).await;
-
-        // Remove endpoint route
-        let _ = self.remove_endpoint_route().await;
-
-        // Bring interface down and flush addresses
-        self.run_helper_ignore_errors(&["deconfigure", iface]);
-
-        Ok(())
+    async fn ipv6_enabled(&self) -> bool {
+        let enabled = Self::is_ipv6_enabled();
+        if !enabled {
+            info!("IPv6 is disabled on host, skipping IPv6 VPN routes");
+        }
+        enabled
     }
+}
+
+const RESOLV_CONF: &str = "/etc/resolv.conf";
+
+/// The single-host route covering `endpoint`.
+fn endpoint_route(endpoint: IpAddr) -> String {
+    let prefix = if endpoint.is_ipv4() { 32 } else { 128 };
+    format!("{endpoint}/{prefix}")
 }

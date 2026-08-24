@@ -161,6 +161,40 @@ pub fn run() {
                 vpn::config::init_config_dir(config_dir);
             }
 
+            // Replay any rollback steps a previous run left behind. Routes and DNS outlive the
+            // process, so a crash or force-kill mid-connect would otherwise strand the machine
+            // pointing at a tunnel that no longer exists. Runs before anything can connect.
+            #[cfg(not(target_os = "android"))]
+            {
+                use vpn::rollback::{Journal, RollbackStack, unwind};
+
+                let journal = vpn::config::config_dir()
+                    .ok()
+                    .map(|dir| Journal::new(Journal::default_path(&dir)));
+                if let Some(journal) = journal {
+                    let orphaned = journal.read_orphaned();
+                    if !orphaned.is_empty() {
+                        warn!(
+                            count = orphaned.len(),
+                            "previous run left network changes applied — unwinding"
+                        );
+                        let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
+                        let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
+                        tauri::async_runtime::spawn(async move {
+                            let mut stack = RollbackStack::from_orphaned(orphaned, Some(journal));
+                            let report =
+                                unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1)
+                                    .await;
+                            if report.is_clean() {
+                                info!("recovered cleanly from a previous run");
+                            } else {
+                                warn!(residual = ?report.residual, "recovery left residue");
+                            }
+                        });
+                    }
+                }
+            }
+
             #[cfg(not(mobile))]
             {
                 // Registering repoints the system-wide floppa:// handler at the current binary.
@@ -209,17 +243,47 @@ pub fn run() {
             #[cfg(not(target_os = "android"))]
             if let tauri::RunEvent::Exit = event {
                 use vpn::backend::VpnBackend;
-                use vpn::platform::Platform;
 
                 let backend = app_handle.state::<Arc<dyn VpnBackend>>();
                 let platform = app_handle.state::<Arc<PlatformImpl>>();
+                let state = app_handle.state::<Arc<vpn::VpnState>>();
 
                 tauri::async_runtime::block_on(async {
-                    if backend.get_all_info().await.is_some_and(|i| i.is_running) {
-                        info!("App exiting with active VPN tunnel — cleaning up");
-                        let _ = platform.cleanup(vpn::InterfaceName::DEFAULT).await;
-                        let _ = backend.stop().await;
-                        info!("VPN cleanup complete");
+                    use vpn::rollback::{ExtraUndo, RollbackStack, unwind};
+
+                    // Unwind whatever was applied, whether or not the tunnel still reports as
+                    // running: the previous version was gated on `is_running`, so an exit after
+                    // the tunnel had already died left routes and DNS behind.
+                    let held = state.held_stack.lock().await.take();
+                    match held {
+                        Some(mut stack) => {
+                            info!("App exiting with an applied tunnel — unwinding");
+                            let report = unwind(
+                                &mut stack,
+                                Some(ExtraUndo::StopBackend),
+                                platform.inner().as_ref(),
+                                backend.inner().as_ref(),
+                                1,
+                            )
+                            .await;
+                            if !report.is_clean() {
+                                warn!(residual = ?report.residual, "exit rollback left residue");
+                            }
+                            info!("VPN cleanup complete");
+                        }
+                        None if backend.get_all_info().await.is_some_and(|i| i.is_running) => {
+                            info!("App exiting with an adopted tunnel — stopping it");
+                            let mut empty = RollbackStack::default();
+                            let _ = unwind(
+                                &mut empty,
+                                Some(ExtraUndo::StopBackend),
+                                platform.inner().as_ref(),
+                                backend.inner().as_ref(),
+                                1,
+                            )
+                            .await;
+                        }
+                        None => {}
                     }
                 });
             }

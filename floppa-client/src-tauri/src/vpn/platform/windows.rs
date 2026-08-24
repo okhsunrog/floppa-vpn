@@ -6,7 +6,8 @@
 //! - `netsh interface ip set dns` for DNS
 //! - `route` command for endpoint host route
 
-use super::{Platform, TunParams};
+use super::{DnsSnapshot, Gateway, Platform, PlatformError, TunParams};
+use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
@@ -16,51 +17,54 @@ use tracing::{debug, info, warn};
 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// Windows platform implementation
-pub struct WindowsPlatform {
-    /// Interface index for the TUN device (set after configuration)
-    interface_index: std::sync::Mutex<Option<u32>>,
-    /// Saved endpoint IP for route cleanup
-    saved_endpoint_ip: std::sync::Mutex<Option<IpAddr>>,
-}
+/// Windows platform implementation.
+///
+/// Holds no undo state. The previous version cached `interface_index`, but Wintun assigns a NEW
+/// adapter index every time an adapter is created — so a cached index from an earlier attempt
+/// pointed at an unrelated system interface, and routes and DNS were applied to it. The index is
+/// now read fresh per attempt and carried in the rollback step that used it.
+pub struct WindowsPlatform;
 
 impl WindowsPlatform {
     pub fn new() -> Self {
-        Self {
-            interface_index: std::sync::Mutex::new(None),
-            saved_endpoint_ip: std::sync::Mutex::new(None),
-        }
+        Self
     }
 
-    /// Run netsh command and return result
-    fn run_netsh(&self, args: &[&str]) -> Result<String, String> {
-        debug!("Running netsh: {:?}", args);
+    /// Run a netsh command.
+    ///
+    /// Note the deliberate change: success is decided by the EXIT STATUS alone. The previous
+    /// version also scanned stdout for the English substrings "error" and "failed", so on a
+    /// localized Windows a successful command was reported as a failure — and, worse, a genuinely
+    /// failed one on an English system reported failure after the change had been applied. Either
+    /// way "returned Err" never implied "nothing happened", which is exactly why every rollback
+    /// step is pushed before it is applied.
+    fn run_netsh(&self, args: &[&str]) -> Result<String, PlatformError> {
+        debug!("Running netsh: {args:?}");
 
         let output = Command::new("netsh")
             .args(args)
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|e| format!("Failed to run netsh: {}", e))?;
+            .map_err(|e| PlatformError::Unavailable(format!("failed to run netsh: {e}")))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
         if output.status.success() {
-            Ok(stdout)
-        } else {
-            // netsh sometimes returns success even with errors in stdout
-            if !stderr.is_empty() {
-                Err(format!("netsh failed: {}", stderr))
-            } else if stdout.contains("error") || stdout.contains("failed") {
-                Err(format!("netsh failed: {}", stdout))
-            } else {
-                Ok(stdout)
-            }
+            return Ok(stdout);
         }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
+        // netsh exits 1 for "requires elevation" among many other things; there is no dedicated
+        // code, so elevation is detected by the caller running as a non-admin, not guessed here.
+        Err(PlatformError::Failed(format!("netsh failed: {detail}")))
     }
 
-    /// Get interface index by name
-    fn get_interface_index(&self, iface: &str) -> Result<u32, String> {
+    /// Get interface index by name, read fresh from the OS every time.
+    fn get_interface_index(&self, iface: &str) -> Result<u32, PlatformError> {
         // Try to parse from netsh output
         let output = self.run_netsh(&["interface", "ip", "show", "interfaces"])?;
 
@@ -77,16 +81,18 @@ impl WindowsPlatform {
             }
         }
 
-        Err(format!("Interface {} not found", iface))
+        Err(PlatformError::Failed(format!(
+            "interface {iface} not found"
+        )))
     }
 
     /// Get the default gateway IP from the routing table
-    fn get_default_gateway() -> Result<Option<String>, String> {
+    fn get_default_gateway() -> Result<Option<String>, PlatformError> {
         let output = Command::new("cmd")
             .args(["/C", "route", "print", "0.0.0.0"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map_err(|e| format!("Failed to get default route: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to read default route: {e}")))?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         // Parse "0.0.0.0    0.0.0.0    192.168.1.1    ..." from Active Routes section
         for line in stdout.lines() {
@@ -124,312 +130,285 @@ impl Default for WindowsPlatform {
 #[async_trait]
 impl Platform for WindowsPlatform {
     fn tun_params(&self) -> TunParams {
-        let wintun_file = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("wintun.dll")));
-
         TunParams {
             manage_device: true,
             fwmark: None,
-            wintun_file,
+            wintun_file: wintun_path(),
         }
     }
 
-    async fn prepare_tun(&self, iface: &str) -> Result<(), String> {
-        // Clean up any stale Wintun adapter left behind by a crash, force-kill,
-        // or a previous failed TUN creation (e.g. adapter created but session failed).
-        let wintun_path = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("wintun.dll")));
+    async fn preflight(&self) -> Result<(), PlatformError> {
+        // netsh needs an elevated token; probe with a harmless read so the failure surfaces
+        // before anything is mutated rather than midway up the ladder.
+        self.run_netsh(&["interface", "ip", "show", "interfaces"])
+            .map(|_| ())
+    }
 
-        if let Some(ref path) = wintun_path {
-            match unsafe { wintun_bindings::load_from_path(path) } {
-                Ok(wintun) => {
-                    match wintun_bindings::Adapter::open(&wintun, iface) {
-                        Ok(adapter) => {
-                            info!("Found stale Wintun adapter '{iface}', closing it");
-                            drop(adapter); // WintunCloseAdapter is called in Drop
-                        }
-                        Err(_) => {
-                            // No stale adapter — nothing to clean up
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to load wintun.dll for stale adapter cleanup: {e}");
+    async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        // Close any stale Wintun adapter left by a crash or a force-kill. Without this the
+        // adapter lingers and the next session fails to create one with the same name.
+        let Some(path) = wintun_path() else {
+            warn!("wintun.dll not found next to the executable");
+            return Ok(());
+        };
+        match unsafe { wintun_bindings::load_from_path(&path) } {
+            Ok(wintun) => {
+                if let Ok(adapter) = wintun_bindings::Adapter::open(&wintun, iface.as_str()) {
+                    info!("Found stale Wintun adapter '{iface}', closing it");
+                    drop(adapter); // WintunCloseAdapter runs in Drop
                 }
             }
+            Err(e) => warn!("Failed to load wintun.dll for stale adapter cleanup: {e}"),
         }
-
         Ok(())
     }
 
-    async fn configure_address(&self, iface: &str, addr: IpNetwork) -> Result<(), String> {
-        info!("Configuring address {} on interface {}", addr, iface);
+    async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
+        // The adapter is destroyed when the backend drops its DeviceHandle, which the
+        // StartBackend step below this one on the stack already does.
+        debug!("Windows: adapter for {iface} is released with the backend");
+        Ok(())
+    }
 
-        let ip = addr.ip().to_string();
-        let mask = addr.mask().to_string();
-
-        // Set static IP address
-        // netsh interface ip set address name="interface" source=static addr=x.x.x.x mask=y.y.y.y
+    async fn configure_address(
+        &self,
+        iface: &InterfaceName,
+        addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        info!("Configuring address {addr} on interface {iface}");
         self.run_netsh(&[
             "interface",
             "ip",
             "set",
             "address",
-            &format!("name={}", iface),
+            &format!("name={iface}"),
             "source=static",
-            &format!("addr={}", ip),
-            &format!("mask={}", mask),
-        ])?;
+            &format!("addr={}", addr.ip()),
+            &format!("mask={}", addr.mask()),
+        ])
+        .map(|_| ())
+    }
 
-        // Store interface index for later use
-        if let Ok(idx) = self.get_interface_index(iface) {
-            *self.interface_index.lock().unwrap() = Some(idx);
-        }
-
+    async fn deconfigure_address(
+        &self,
+        iface: &InterfaceName,
+        _addr: IpNetwork,
+    ) -> Result<(), PlatformError> {
+        // No-op ONLY because Step::StartBackend sits below this on the stack: dropping the
+        // Wintun adapter takes its addresses with it. If the ladder is ever reordered so that
+        // the address outlives the adapter, this must start deleting the address explicitly.
+        debug!("Windows: address on {iface} is released with the adapter");
         Ok(())
     }
 
-    async fn add_endpoint_route(&self, endpoint_ip: IpAddr) -> Result<(), String> {
-        let gateway =
-            Self::get_default_gateway()?.ok_or_else(|| "No default gateway found".to_string())?;
+    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
+        Ok(Self::get_default_gateway()?.map(Gateway))
+    }
 
-        info!("Adding endpoint route: {} via {}", endpoint_ip, gateway);
+    async fn interface_index(&self, iface: &InterfaceName) -> Option<u32> {
+        self.get_interface_index(iface.as_str()).ok()
+    }
 
-        let output = if endpoint_ip.is_ipv4() {
-            Command::new("route")
+    async fn add_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        let gateway = gateway.ok_or_else(|| {
+            PlatformError::Failed("no default gateway; cannot pin the endpoint route".to_string())
+        })?;
+        info!("Adding endpoint route: {endpoint} via {}", gateway.0);
+
+        if endpoint.is_ipv4() {
+            let output = Command::new("route")
                 .args([
                     "add",
-                    &endpoint_ip.to_string(),
+                    &endpoint.to_string(),
                     "mask",
                     "255.255.255.255",
-                    &gateway,
+                    &gateway.0,
                 ])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
+                .map_err(|e| PlatformError::Failed(format!("failed to add endpoint route: {e}")))?;
+            if !output.status.success() {
+                return Err(PlatformError::Failed(format!(
+                    "route add failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            Ok(())
         } else {
-            // IPv6: netsh interface ipv6 add route <ip>/128 nexthop=<gateway>
-            Command::new("netsh")
-                .args([
-                    "interface",
-                    "ipv6",
-                    "add",
-                    "route",
-                    &format!("{}/128", endpoint_ip),
-                    &format!("nexthop={}", gateway),
-                ])
+            self.run_netsh(&[
+                "interface",
+                "ipv6",
+                "add",
+                "route",
+                &format!("{endpoint}/128"),
+                &format!("nexthop={}", gateway.0),
+            ])
+            .map(|_| ())
+        }
+    }
+
+    async fn remove_endpoint_route(
+        &self,
+        endpoint: IpAddr,
+        gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        info!("Removing endpoint route: {endpoint}");
+        if endpoint.is_ipv4() {
+            let mut args = vec!["delete".to_string(), endpoint.to_string()];
+            // Scope the delete to the gateway the route was added with, so a route installed by
+            // something else to the same destination is left alone.
+            if let Some(gw) = gateway {
+                args.push("mask".into());
+                args.push("255.255.255.255".into());
+                args.push(gw.0.clone());
+            }
+            let output = Command::new("route")
+                .args(&args)
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
-        }
-        .map_err(|e| format!("Failed to add endpoint route: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("route add failed: {}", stderr));
-        }
-
-        *self.saved_endpoint_ip.lock().unwrap() = Some(endpoint_ip);
-        Ok(())
-    }
-
-    async fn remove_endpoint_route(&self) -> Result<(), String> {
-        if let Some(endpoint_ip) = self.saved_endpoint_ip.lock().unwrap().take() {
-            info!("Removing endpoint route: {}", endpoint_ip);
-            if endpoint_ip.is_ipv4() {
-                let _ = Command::new("route")
-                    .args(["delete", &endpoint_ip.to_string()])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output();
-            } else {
-                let _ = Command::new("netsh")
-                    .args([
-                        "interface",
-                        "ipv6",
-                        "delete",
-                        "route",
-                        &format!("{}/128", endpoint_ip),
-                    ])
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .output();
+                .map_err(|e| {
+                    PlatformError::Failed(format!("failed to remove endpoint route: {e}"))
+                })?;
+            if !output.status.success() {
+                // Already gone is the common case and is not a failure worth retrying.
+                debug!(
+                    "route delete reported: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
             }
-        }
-        Ok(())
-    }
-
-    async fn add_routes(&self, iface: &str, allowed_ips: &[IpNetwork]) -> Result<(), String> {
-        info!(
-            "Adding {} routes via interface {}",
-            allowed_ips.len(),
-            iface
-        );
-
-        // Get interface index
-        let if_index = self
-            .interface_index
-            .lock()
-            .unwrap()
-            .or_else(|| self.get_interface_index(iface).ok())
-            .ok_or_else(|| format!("Could not get interface index for {}", iface))?;
-
-        for network in allowed_ips {
-            // For default route (0.0.0.0/0 or ::/0), split into two /1 routes
-            if network.prefix() == 0 {
-                if network.is_ipv4() {
-                    // Split into 0.0.0.0/1 and 128.0.0.0/1
-                    self.run_netsh(&[
-                        "interface",
-                        "ip",
-                        "add",
-                        "route",
-                        "0.0.0.0/1",
-                        &if_index.to_string(),
-                    ])?;
-                    self.run_netsh(&[
-                        "interface",
-                        "ip",
-                        "add",
-                        "route",
-                        "128.0.0.0/1",
-                        &if_index.to_string(),
-                    ])?;
-                } else {
-                    // IPv6: split into ::/1 and 8000::/1
-                    self.run_netsh(&[
-                        "interface",
-                        "ipv6",
-                        "add",
-                        "route",
-                        "::/1",
-                        &if_index.to_string(),
-                    ])?;
-                    self.run_netsh(&[
-                        "interface",
-                        "ipv6",
-                        "add",
-                        "route",
-                        "8000::/1",
-                        &if_index.to_string(),
-                    ])?;
-                }
-            } else {
-                // Regular route
-                let proto = if network.is_ipv4() { "ip" } else { "ipv6" };
-                self.run_netsh(&[
-                    "interface",
-                    proto,
-                    "add",
-                    "route",
-                    &network.to_string(),
-                    &if_index.to_string(),
-                ])?;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn remove_routes(&self, iface: &str) -> Result<(), String> {
-        info!("Removing routes via interface {}", iface);
-
-        let if_index = self
-            .interface_index
-            .lock()
-            .unwrap()
-            .or_else(|| self.get_interface_index(iface).ok());
-
-        if let Some(idx) = if_index {
-            let idx_str = idx.to_string();
-            // Remove split routes - ignore errors as they may not exist
-            let _ = self.run_netsh(&["interface", "ip", "delete", "route", "0.0.0.0/1", &idx_str]);
+            Ok(())
+        } else {
             let _ = self.run_netsh(&[
                 "interface",
-                "ip",
+                "ipv6",
                 "delete",
                 "route",
-                "128.0.0.0/1",
-                &idx_str,
+                &format!("{endpoint}/128"),
             ]);
-            let _ = self.run_netsh(&["interface", "ipv6", "delete", "route", "::/1", &idx_str]);
-            let _ = self.run_netsh(&["interface", "ipv6", "delete", "route", "8000::/1", &idx_str]);
+            Ok(())
         }
+    }
 
+    async fn add_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
+        if routes.is_empty() {
+            return Ok(());
+        }
+        let idx = if_index
+            .or_else(|| self.get_interface_index(iface.as_str()).ok())
+            .ok_or_else(|| {
+                PlatformError::Failed(format!("could not get interface index for {iface}"))
+            })?
+            .to_string();
+
+        info!("Adding {} routes via interface {iface}", routes.len());
+        // The list arrives already split by `split_default`, so no /0 reaches netsh.
+        for network in routes {
+            let proto = if network.is_ipv4() { "ip" } else { "ipv6" };
+            self.run_netsh(&[
+                "interface",
+                proto,
+                "add",
+                "route",
+                &network.to_string(),
+                &idx,
+            ])?;
+        }
         Ok(())
     }
 
-    async fn configure_dns(&self, iface: &str, servers: &[IpAddr]) -> Result<(), String> {
+    async fn remove_routes(
+        &self,
+        iface: &InterfaceName,
+        routes: &[IpNetwork],
+        if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
+        if routes.is_empty() {
+            return Ok(());
+        }
+        let Some(idx) = if_index.or_else(|| self.get_interface_index(iface.as_str()).ok()) else {
+            // The adapter is already gone, and its routes went with it.
+            debug!("Windows: no interface index for {iface}; routes already released");
+            return Ok(());
+        };
+        let idx = idx.to_string();
+
+        info!("Removing {} routes via interface {iface}", routes.len());
+        // Exactly the routes that were added — not the hardcoded four /1s the previous version
+        // deleted, which left any non-default AllowedIP installed forever.
+        for network in routes {
+            let proto = if network.is_ipv4() { "ip" } else { "ipv6" };
+            let _ = self.run_netsh(&[
+                "interface",
+                proto,
+                "delete",
+                "route",
+                &network.to_string(),
+                &idx,
+            ]);
+        }
+        Ok(())
+    }
+
+    async fn capture_dns(
+        &self,
+        _iface: &InterfaceName,
+        _if_index: Option<u32>,
+    ) -> Result<DnsSnapshot, PlatformError> {
+        // Windows restores by handing the interface back to DHCP; there is nothing to carry.
+        Ok(DnsSnapshot::Dhcp)
+    }
+
+    async fn configure_dns(
+        &self,
+        iface: &InterfaceName,
+        servers: &[IpAddr],
+        if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
         if servers.is_empty() {
             info!("No DNS servers to configure");
             return Ok(());
         }
+        let idx = if_index
+            .or_else(|| self.get_interface_index(iface.as_str()).ok())
+            .ok_or_else(|| {
+                PlatformError::Failed(format!("could not get interface index for {iface}"))
+            })?
+            .to_string();
 
-        info!("Configuring DNS servers: {:?}", servers);
+        info!("Configuring DNS servers: {servers:?}");
+        let (v4, v6): (Vec<&IpAddr>, Vec<&IpAddr>) = servers.iter().partition(|s| s.is_ipv4());
 
-        // Get interface index
-        let if_index = self
-            .interface_index
-            .lock()
-            .unwrap()
-            .or_else(|| self.get_interface_index(iface).ok())
-            .ok_or_else(|| format!("Could not get interface index for {}", iface))?;
-
-        let idx_str = if_index.to_string();
-
-        // Separate IPv4 and IPv6 DNS servers
-        let (ipv4_servers, ipv6_servers): (Vec<&IpAddr>, Vec<&IpAddr>) =
-            servers.iter().partition(|s| s.is_ipv4());
-
-        // Configure IPv4 DNS
-        if !ipv4_servers.is_empty() {
-            // Set first server
+        for (proto, list) in [("ipv4", v4), ("ipv6", v6)] {
+            let Some((first, rest)) = list.split_first() else {
+                continue;
+            };
             self.run_netsh(&[
                 "interface",
-                "ipv4",
+                proto,
                 "set",
                 "dnsservers",
-                &format!("name={}", idx_str),
+                &format!("name={idx}"),
                 "source=static",
-                &format!("address={}", ipv4_servers[0]),
+                &format!("address={first}"),
                 "validate=no",
             ])?;
-
-            // Add additional servers
-            for server in ipv4_servers.iter().skip(1) {
+            for server in rest {
                 self.run_netsh(&[
                     "interface",
-                    "ipv4",
+                    proto,
                     "add",
                     "dnsservers",
-                    &format!("name={}", idx_str),
-                    &format!("address={}", server),
-                    "validate=no",
-                ])?;
-            }
-        }
-
-        // Configure IPv6 DNS
-        if !ipv6_servers.is_empty() {
-            // Set first server
-            self.run_netsh(&[
-                "interface",
-                "ipv6",
-                "set",
-                "dnsservers",
-                &format!("name={}", idx_str),
-                "source=static",
-                &format!("address={}", ipv6_servers[0]),
-                "validate=no",
-            ])?;
-
-            // Add additional servers
-            for server in ipv6_servers.iter().skip(1) {
-                self.run_netsh(&[
-                    "interface",
-                    "ipv6",
-                    "add",
-                    "dnsservers",
-                    &format!("name={}", idx_str),
-                    &format!("address={}", server),
+                    &format!("name={idx}"),
+                    &format!("address={server}"),
                     "validate=no",
                 ])?;
             }
@@ -439,60 +418,41 @@ impl Platform for WindowsPlatform {
         Ok(())
     }
 
-    async fn restore_dns(&self, iface: &str) -> Result<(), String> {
-        info!("Restoring DNS configuration for {}", iface);
+    async fn restore_dns(
+        &self,
+        iface: &InterfaceName,
+        _snapshot: &DnsSnapshot,
+        if_index: Option<u32>,
+    ) -> Result<(), PlatformError> {
+        info!("Restoring DNS configuration for {iface}");
+        let Some(idx) = if_index.or_else(|| self.get_interface_index(iface.as_str()).ok()) else {
+            debug!("Windows: no interface index for {iface}; DNS already released");
+            return Ok(());
+        };
+        let idx = idx.to_string();
 
-        let if_index = self
-            .interface_index
-            .lock()
-            .unwrap()
-            .or_else(|| self.get_interface_index(iface).ok());
-
-        if let Some(idx) = if_index {
-            let idx_str = idx.to_string();
-
-            // Clear DNS servers (set to DHCP/automatic)
+        for proto in ["ipv4", "ipv6"] {
             let _ = self.run_netsh(&[
                 "interface",
-                "ipv4",
+                proto,
                 "set",
                 "dnsservers",
-                &format!("name={}", idx_str),
-                "source=dhcp",
-            ]);
-
-            let _ = self.run_netsh(&[
-                "interface",
-                "ipv6",
-                "set",
-                "dnsservers",
-                &format!("name={}", idx_str),
+                &format!("name={idx}"),
                 "source=dhcp",
             ]);
         }
-
         flush_dns_cache();
         Ok(())
     }
 
-    async fn cleanup(&self, iface: &str) -> Result<(), String> {
-        info!("Cleaning up interface {}", iface);
-
-        // Restore DNS first
-        let _ = self.restore_dns(iface).await;
-
-        // Remove routes
-        let _ = self.remove_routes(iface).await;
-
-        // Remove endpoint route
-        let _ = self.remove_endpoint_route().await;
-
-        // Clear interface index
-        *self.interface_index.lock().unwrap() = None;
-
-        // Note: The TUN device will be destroyed when DeviceHandle is dropped
-        // We don't need to explicitly remove the interface
-
-        Ok(())
+    async fn ipv6_enabled(&self) -> bool {
+        true
     }
+}
+
+/// `wintun.dll` ships next to the executable.
+fn wintun_path() -> Option<std::path::PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("wintun.dll")))
 }

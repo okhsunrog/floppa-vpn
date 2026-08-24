@@ -1,6 +1,6 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
-use super::platform::{Platform, PlatformImpl};
+use super::platform::PlatformImpl;
 use super::protocol::{InterfaceName, Preference, Protocol};
 use super::state::{
     AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
@@ -218,10 +218,6 @@ pub struct SafeAreaInsets {
     pub top: f64,
     pub bottom: f64,
 }
-
-/// The tunnel interface name. Validated shape lives in [`InterfaceName`]; C2 threads the newtype
-/// itself through the platform layer, at which point this const goes away.
-const INTERFACE_NAME: &str = InterfaceName::DEFAULT;
 
 /// Consecutive unreachable polls (`get_all_info` → None) tolerated before a
 /// Connected/Verifying tunnel is treated as stopped. Guards against the Android
@@ -476,23 +472,58 @@ async fn connect_desktop(
     _selected_apps: Option<Vec<String>>,
 ) -> Result<(), ConnectError> {
     use super::platform::Platform;
+    use super::rollback::{Journal, RollbackStack, Step, split_default, unwind};
+
+    let iface = InterfaceName::default();
+
+    // Surface a missing privileged helper before touching anything, rather than discovering it
+    // halfway up the ladder.
+    platform
+        .preflight()
+        .await
+        .map_err(|e| ConnectError::from_platform(&e))?;
+
+    let journal = vpn_config::config_dir()
+        .ok()
+        .map(|dir| Journal::new(Journal::default_path(&dir)));
+    let mut stack = RollbackStack::new(journal);
+
+    // Every failure below funnels through here: unwind exactly what was applied, in reverse, then
+    // report. There is no path that leaves a partially configured machine behind, and no path that
+    // undoes something that was never done.
+    macro_rules! bail {
+        ($stack:expr, $err:expr) => {{
+            let err = $err;
+            let report = unwind(&mut $stack, None, platform.as_ref(), backend.as_ref(), 2).await;
+            if !report.is_clean() {
+                error!(residual = ?report.residual, "rollback left residue");
+            }
+            let mut conn = state.connection.write().await;
+            conn.status = ConnectionStatus::Disconnected;
+            return Err(err);
+        }};
+    }
 
     let phase_start = std::time::Instant::now();
-    let endpoint = tokio::net::lookup_host(config.endpoint_str())
-        .await
-        .map_err(|e| {
-            format!(
+    let endpoint = match tokio::net::lookup_host(config.endpoint_str()).await {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => addr,
+            None => bail!(
+                stack,
+                ConnectError::tunnel(format!(
+                    "Endpoint '{}' resolved to no addresses",
+                    config.endpoint_str()
+                ))
+            ),
+        },
+        Err(e) => bail!(
+            stack,
+            ConnectError::tunnel(format!(
                 "Failed to resolve endpoint '{}': {e}",
                 config.endpoint_str()
-            )
-        })?
-        .next()
-        .ok_or_else(|| {
-            format!(
-                "Endpoint '{}' resolved to no addresses",
-                config.endpoint_str()
-            )
-        })?;
+            ))
+        ),
+    };
     let endpoint_ip = endpoint.ip();
     info!(
         phase = "dns_resolve",
@@ -500,30 +531,35 @@ async fn connect_desktop(
         "DNS resolution complete"
     );
 
+    // 1. Link ------------------------------------------------------------------------------
     let phase_start = std::time::Instant::now();
-    if let Err(e) = platform.prepare_tun(INTERFACE_NAME).await {
+    stack.push(Step::PrepareLink {
+        iface: iface.clone(),
+    });
+    if let Err(e) = platform.prepare_link(&iface).await {
         error!("Failed to prepare TUN interface: {e}");
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Disconnected;
-        return Err(ConnectError::tunnel(format!(
-            "Failed to prepare TUN interface: {e}"
-        )));
+        bail!(stack, ConnectError::from_platform(&e));
     }
-
+    stack.confirm_top(Step::PrepareLink {
+        iface: iface.clone(),
+    });
     info!(
         phase = "tun_prepare",
         duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         "TUN interface prepared"
     );
 
+    // 2. Tunnel ----------------------------------------------------------------------------
     let tun_params = platform.tun_params();
-
-    // Try starting with fwmark; if it fails due to permissions, retry without.
     let phase_start = std::time::Instant::now();
+    stack.push(Step::StartBackend {
+        iface: iface.clone(),
+    });
     let start_result = match backend
-        .start(&config, INTERFACE_NAME, &tun_params, endpoint)
+        .start(&config, iface.as_str(), &tun_params, endpoint)
         .await
     {
+        // Retry without fwmark when the kernel refuses it for lack of privileges.
         Err(e)
             if tun_params.fwmark.is_some()
                 && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
@@ -532,118 +568,163 @@ async fn connect_desktop(
             let mut retry_params = tun_params;
             retry_params.fwmark = None;
             backend
-                .start(&config, INTERFACE_NAME, &retry_params, endpoint)
+                .start(&config, iface.as_str(), &retry_params, endpoint)
                 .await
         }
         result => result,
     };
+    if let Err(e) = start_result {
+        error!("Connection failed: {e}");
+        bail!(stack, ConnectError::tunnel(e));
+    }
+    stack.confirm_top(Step::StartBackend {
+        iface: iface.clone(),
+    });
+    info!(
+        phase = "tunnel_start",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "Tunnel started"
+    );
 
-    match start_result {
-        Ok(()) => {
-            info!(
-                phase = "tunnel_start",
-                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                "Tunnel started"
-            );
-            let addr = config.address_network()?;
-            if let Err(e) = platform.configure_address(INTERFACE_NAME, addr).await {
-                error!("Failed to configure address: {e}");
-                let _ = backend.stop().await;
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Disconnected;
-                return Err(ConnectError::tunnel(e));
-            }
+    // 3. Address ---------------------------------------------------------------------------
+    let addr = match config.address_network() {
+        Ok(addr) => addr,
+        Err(e) => bail!(stack, ConnectError::tunnel(e)),
+    };
+    stack.push(Step::Address {
+        iface: iface.clone(),
+        addr,
+    });
+    if let Err(e) = platform.configure_address(&iface, addr).await {
+        error!("Failed to configure address: {e}");
+        bail!(stack, ConnectError::from_platform(&e));
+    }
+    stack.confirm_top(Step::Address {
+        iface: iface.clone(),
+        addr,
+    });
 
-            if let Err(e) = platform.add_endpoint_route(endpoint_ip).await {
-                error!("Failed to add endpoint route: {e}");
-                let _ = platform.cleanup(INTERFACE_NAME).await;
-                let _ = backend.stop().await;
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Disconnected;
-                return Err(ConnectError::tunnel(e));
-            }
+    // 4. Endpoint route --------------------------------------------------------------------
+    // The gateway is read BEFORE the push so the undo can match on it; otherwise the undo
+    // deletes any route to the endpoint, which after roaming is the wrong one.
+    let gateway = platform.default_gateway().await.unwrap_or_default();
+    stack.push(Step::EndpointRoute {
+        endpoint: endpoint_ip,
+        gateway: gateway.clone(),
+    });
+    if let Err(e) = platform
+        .add_endpoint_route(endpoint_ip, gateway.as_ref())
+        .await
+    {
+        error!("Failed to add endpoint route: {e}");
+        bail!(stack, ConnectError::from_platform(&e));
+    }
+    stack.confirm_top(Step::EndpointRoute {
+        endpoint: endpoint_ip,
+        gateway,
+    });
 
-            let allowed_ips = config.allowed_ips_networks();
-            if let Err(e) = platform.add_routes(INTERFACE_NAME, &allowed_ips).await {
-                error!("Failed to add routes: {e}");
-                let _ = platform.cleanup(INTERFACE_NAME).await;
-                let _ = backend.stop().await;
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::Disconnected;
-                return Err(ConnectError::tunnel(e));
-            }
+    // 5. Routes ----------------------------------------------------------------------------
+    let if_index = platform.interface_index(&iface).await;
+    let routes = split_default(
+        &config.allowed_ips_networks(),
+        platform.ipv6_enabled().await,
+    );
+    stack.push(Step::Routes {
+        iface: iface.clone(),
+        routes: routes.clone(),
+        if_index,
+    });
+    if let Err(e) = platform.add_routes(&iface, &routes, if_index).await {
+        error!("Failed to add routes: {e}");
+        bail!(stack, ConnectError::from_platform(&e));
+    }
+    stack.confirm_top(Step::Routes {
+        iface: iface.clone(),
+        routes,
+        if_index,
+    });
 
-            let dns_servers = config.dns_servers();
-            if !dns_servers.is_empty()
-                && let Err(e) = platform.configure_dns(INTERFACE_NAME, &dns_servers).await
-            {
-                error!("Failed to configure DNS: {e}");
-            }
-
-            // Protocol-specific verification
-            {
-                let mut conn = state.connection.write().await;
-                conn.status = ConnectionStatus::VerifyingConnection;
-            }
-
-            let phase_start = std::time::Instant::now();
-            match &config {
-                ProtocolConfig::WireGuard(_) | ProtocolConfig::AmneziaWg(_) => {
-                    info!("Tunnel up, verifying handshake...");
-                    if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                        .await
-                        .is_err()
-                    {
-                        info!("No handshake after 5s — peer likely invalid, disconnecting");
-                        let _ = platform.cleanup(INTERFACE_NAME).await;
-                        let _ = backend.stop().await;
-                        let mut conn = state.connection.write().await;
-                        conn.status = ConnectionStatus::Disconnected;
-                        return Err(ConnectError::verify(
-                            "Connection verification failed — config may be invalid",
-                        ));
-                    }
+    // 6. DNS -------------------------------------------------------------------------------
+    // Captured before the mutation and owned by the Step, so a second connect can never snapshot
+    // the resolv.conf that floppa itself wrote.
+    let dns_servers = config.dns_servers();
+    if !dns_servers.is_empty() {
+        match platform.capture_dns(&iface, if_index).await {
+            Ok(snapshot) => {
+                stack.push(Step::Dns {
+                    iface: iface.clone(),
+                    snapshot: snapshot.clone(),
+                    if_index,
+                });
+                if let Err(e) = platform.configure_dns(&iface, &dns_servers, if_index).await {
+                    // DNS is not fatal: the tunnel works, name resolution may not. Leave the step
+                    // on the stack so the undo still runs.
+                    error!("Failed to configure DNS: {e}");
+                } else {
+                    stack.confirm_top(Step::Dns {
+                        iface: iface.clone(),
+                        snapshot,
+                        if_index,
+                    });
                 }
-                ProtocolConfig::Vless(vless) => {
-                    info!("Tunnel up, verifying VLESS connectivity...");
-                    if let Err(e) =
-                        verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
-                    {
-                        info!("VLESS connectivity check failed: {e}");
-                        let _ = platform.cleanup(INTERFACE_NAME).await;
-                        let _ = backend.stop().await;
-                        let mut conn = state.connection.write().await;
-                        conn.status = ConnectionStatus::Disconnected;
-                        return Err(ConnectError::verify(format!(
-                            "Connection verification failed: {e}"
-                        )));
-                    }
-                }
             }
-
-            info!(
-                phase = "verify",
-                duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-                "Connection verified"
-            );
-
-            state.speed_tracker.write().await.reset();
-            let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Connected;
-            conn.protocol = Some(config.protocol());
-            conn.connected_at = Some(chrono::Utc::now().timestamp());
-            conn.server_endpoint = Some(config.endpoint_str().to_string());
-            conn.assigned_ip = Some(config.address().to_string());
-            info!("Connected successfully");
-            Ok(())
-        }
-        Err(e) => {
-            let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Disconnected;
-            error!("Connection failed: {e}");
-            Err(ConnectError::tunnel(e))
+            Err(e) => error!("Failed to capture DNS state, leaving DNS untouched: {e}"),
         }
     }
+
+    // 7. Verify ----------------------------------------------------------------------------
+    {
+        let mut conn = state.connection.write().await;
+        conn.status = ConnectionStatus::VerifyingConnection;
+    }
+
+    let phase_start = std::time::Instant::now();
+    match &config {
+        ProtocolConfig::WireGuard(_) | ProtocolConfig::AmneziaWg(_) => {
+            info!("Tunnel up, verifying handshake...");
+            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
+                .await
+                .is_err()
+            {
+                info!("No handshake after 5s — peer likely invalid, disconnecting");
+                bail!(
+                    stack,
+                    ConnectError::verify("Connection verification failed — config may be invalid")
+                );
+            }
+        }
+        ProtocolConfig::Vless(vless) => {
+            info!("Tunnel up, verifying VLESS connectivity...");
+            if let Err(e) =
+                verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
+            {
+                info!("VLESS connectivity check failed: {e}");
+                bail!(
+                    stack,
+                    ConnectError::verify(format!("Connection verification failed: {e}"))
+                );
+            }
+        }
+    }
+    info!(
+        phase = "verify",
+        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        "Connection verified"
+    );
+
+    // Success: hand the stack to the shared slot so `disconnect` can unwind exactly this.
+    *state.held_stack.lock().await = Some(stack);
+
+    state.speed_tracker.write().await.reset();
+    let mut conn = state.connection.write().await;
+    conn.status = ConnectionStatus::Connected;
+    conn.protocol = Some(config.protocol());
+    conn.connected_at = Some(chrono::Utc::now().timestamp());
+    conn.server_endpoint = Some(config.endpoint_str().to_string());
+    conn.assigned_ip = Some(config.address().to_string());
+    info!("Connected successfully");
+    Ok(())
 }
 
 /// After tunnel is up, wait for the first WireGuard handshake to confirm
@@ -707,7 +788,32 @@ pub async fn disconnect(
         conn.status = ConnectionStatus::Disconnecting;
     }
 
-    let _ = platform.cleanup(INTERFACE_NAME).await;
+    // Undo exactly what the connect applied, in reverse. When there is no stack — an adopted
+    // tunnel, or a process that restarted under a live one — the tunnel itself is still ours to
+    // stop, so it is passed as the extra undo.
+    {
+        use super::rollback::{ExtraUndo, RollbackStack, unwind};
+        let mut held = state.held_stack.lock().await;
+        match held.take() {
+            Some(mut stack) => {
+                let report = unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 2).await;
+                if !report.is_clean() {
+                    error!(residual = ?report.residual, "rollback left residue on disconnect");
+                }
+            }
+            None => {
+                let mut empty = RollbackStack::default();
+                let _ = unwind(
+                    &mut empty,
+                    Some(ExtraUndo::StopBackend),
+                    platform.as_ref(),
+                    backend.as_ref(),
+                    2,
+                )
+                .await;
+            }
+        }
+    }
 
     if let Err(e) = backend.stop().await {
         error!("Backend stop failed: {e}");

@@ -1,0 +1,182 @@
+//! On-disk record of the rollback steps that outlive the process.
+//!
+//! Routes and DNS survive a `kill -9`; nothing else does. If the app dies mid-connect, the next
+//! start reads this file and unwinds what was left behind, so a crash cannot strand a machine with
+//! VPN routes and a rewritten `/etc/resolv.conf` pointing at a tunnel that no longer exists.
+//!
+//! Every failure here is non-fatal by design: a journal that cannot be written, read or parsed
+//! must never prevent a connect. A missing journal degrades to today's behaviour.
+
+use super::Applied;
+use std::path::{Path, PathBuf};
+use tracing::{debug, info, warn};
+
+#[derive(Debug, Clone)]
+pub struct Journal {
+    path: PathBuf,
+}
+
+impl Journal {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    /// Where the journal lives, given the app config directory.
+    pub fn default_path(config_dir: &Path) -> PathBuf {
+        config_dir.join("rollback.json")
+    }
+
+    /// Overwrite the journal with the durable steps currently on the stack.
+    pub fn write<'a>(&self, steps: impl Iterator<Item = &'a Applied>) {
+        let steps: Vec<&Applied> = steps.collect();
+        if steps.is_empty() {
+            self.clear();
+            return;
+        }
+        let json = match serde_json::to_vec_pretty(&steps) {
+            Ok(j) => j,
+            Err(e) => {
+                warn!(error = %e, "failed to serialise rollback journal");
+                return;
+            }
+        };
+        if let Err(e) = write_private(&self.path, &json) {
+            warn!(error = %e, path = %self.path.display(), "failed to write rollback journal");
+        }
+    }
+
+    pub fn clear(&self) {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => debug!("rollback journal cleared"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!(error = %e, "failed to clear rollback journal"),
+        }
+    }
+
+    /// Read a journal left by a previous process. Returns an empty vec if there is nothing to do,
+    /// including when the file is unreadable or corrupt — recovery is best-effort by definition.
+    pub fn read_orphaned(&self) -> Vec<Applied> {
+        let raw = match std::fs::read(&self.path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) => {
+                warn!(error = %e, "failed to read rollback journal");
+                return Vec::new();
+            }
+        };
+        match serde_json::from_slice::<Vec<Applied>>(&raw) {
+            Ok(steps) => {
+                if !steps.is_empty() {
+                    info!(
+                        count = steps.len(),
+                        "found rollback steps from a previous run"
+                    );
+                }
+                steps
+            }
+            Err(e) => {
+                warn!(error = %e, "rollback journal is corrupt, discarding");
+                self.clear();
+                Vec::new()
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(bytes)
+}
+
+#[cfg(not(unix))]
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vpn::platform::DnsSnapshot;
+    use crate::vpn::protocol::InterfaceName;
+    use crate::vpn::rollback::{Evidence, Step};
+
+    fn tmp() -> (tempfile::TempDir, Journal) {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(Journal::default_path(dir.path()));
+        (dir, journal)
+    }
+
+    fn dns_step() -> Applied {
+        Applied {
+            step: Step::Dns {
+                iface: InterfaceName::default(),
+                snapshot: DnsSnapshot::Resolvectl,
+                if_index: None,
+            },
+            evidence: Evidence::Done,
+        }
+    }
+
+    #[test]
+    fn missing_journal_reads_as_nothing_to_do() {
+        let (_dir, journal) = tmp();
+        assert!(journal.read_orphaned().is_empty());
+    }
+
+    #[test]
+    fn steps_survive_a_write_read_cycle() {
+        let (_dir, journal) = tmp();
+        let step = dns_step();
+        journal.write([&step].into_iter());
+
+        let read = journal.read_orphaned();
+        assert_eq!(read, vec![step]);
+    }
+
+    #[test]
+    fn writing_an_empty_stack_removes_the_file() {
+        let (_dir, journal) = tmp();
+        let step = dns_step();
+        journal.write([&step].into_iter());
+        journal.write(std::iter::empty());
+        assert!(journal.read_orphaned().is_empty());
+    }
+
+    #[test]
+    fn a_corrupt_journal_is_discarded_rather_than_propagated() {
+        let (dir, journal) = tmp();
+        std::fs::write(Journal::default_path(dir.path()), b"{ not json").unwrap();
+
+        assert!(journal.read_orphaned().is_empty());
+        // ...and it does not come back to haunt the next read.
+        assert!(!Journal::default_path(dir.path()).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn journal_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (dir, journal) = tmp();
+        journal.write([&dns_step()].into_iter());
+
+        let mode = std::fs::metadata(Journal::default_path(dir.path()))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "journal must not be group/world accessible"
+        );
+    }
+}
