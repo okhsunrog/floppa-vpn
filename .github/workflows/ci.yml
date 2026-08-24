@@ -259,7 +259,7 @@ jobs:
         run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
 
   kotlin:
-    name: Kotlin format check
+    name: Kotlin checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -273,3 +273,11 @@ jobs:
 
       - name: Check Kotlin formatting
         run: just check-kotlin
+
+      # Lint runs Gradle against the real Android SDK, so unlike the format check it needs one.
+      - uses: android-actions/setup-android@v4
+
+      # ktfmt only formats. Android Lint is what sees platform misuse — it is how the
+      # API-26-on-minSdk-24 call in openNotificationSettings was found.
+      - name: Android Lint (vpn plugin)
+        run: just lint-kotlin

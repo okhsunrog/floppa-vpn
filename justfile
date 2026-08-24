@@ -57,7 +57,7 @@ package-target: build-target
 
 # ktfmt (Kotlin formatter) — auto-downloaded on first use
 
-ktfmt_version := "0.61"
+ktfmt_version := "0.64"
 ktfmt_jar := ".cache/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
 ktfmt_url := "https://repo1.maven.org/maven2/com/facebook/ktfmt/" + ktfmt_version + "/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
 kotlin_sources := "tauri-plugin-vpn/android/src"
@@ -73,6 +73,15 @@ fmt-kotlin: ensure-ktfmt
     set -euo pipefail
     echo "ktfmt..."
     out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
+
+# Android Lint on the VPN plugin — the only linter that sees Android platform misuse
+# (API-level guards, manifest correctness, policy-sensitive intents). ktfmt only formats.
+lint-kotlin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "android lint..."
+    cd floppa-client/src-tauri/gen/android
+    out=$(./gradlew :tauri-plugin-vpn:lintRelease --console=plain 2>&1) || { echo "$out"; exit 1; }
 
 # Check Kotlin formatting
 check-kotlin: ensure-ktfmt
@@ -113,6 +122,7 @@ client-check:
     echo "floppa-client: build..."
     run vp run --filter floppa-client build
     just check-kotlin
+    just lint-kotlin
 
 # Server: workspace Rust (fmt + clippy + tests) + admin panel frontend (floppa-face)
 server-check:
