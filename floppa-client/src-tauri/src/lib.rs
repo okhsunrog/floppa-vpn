@@ -217,7 +217,7 @@ pub fn run() {
                 tauri::async_runtime::block_on(async {
                     if backend.get_all_info().await.is_some_and(|i| i.is_running) {
                         info!("App exiting with active VPN tunnel — cleaning up");
-                        let _ = platform.cleanup("floppa0").await;
+                        let _ = platform.cleanup(vpn::InterfaceName::DEFAULT).await;
                         let _ = backend.stop().await;
                         info!("VPN cleanup complete");
                     }

@@ -1656,6 +1656,7 @@ dependencies = [
  "serde_json",
  "shoes-lite",
  "specta",
+ "specta-serde",
  "specta-typescript",
  "tar",
  "tarpc",

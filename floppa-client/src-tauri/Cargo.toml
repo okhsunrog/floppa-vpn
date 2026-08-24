@@ -95,3 +95,6 @@ codegen-units = 1
 # upstream version so the patch keeps applying (a lower fork version gets ignored when the
 # crates-io requirement resolves to a newer release).
 wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "a2fd8d080c2d1230c277237740c15b23c27e5dd4" }
+
+[dev-dependencies]
+specta-serde = "0.0.12"

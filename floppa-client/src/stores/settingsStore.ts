@@ -1,8 +1,26 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { commands, type AppInfo } from '../bindings'
+import { commands, type AppInfo, type Protocol } from '../bindings'
 
 export type SplitMode = 'all' | 'include' | 'exclude'
+
+/** Probe order used until the user reorders it. Mirrors `Protocol::ALL` in Rust: AmneziaWG first,
+ *  because plain WireGuard is DPI-blocked on the networks this client targets. */
+const DEFAULT_PROTOCOL_ORDER: Protocol[] = ['amneziawg', 'wireguard', 'vless']
+
+const KNOWN_PROTOCOLS = new Set<string>(DEFAULT_PROTOCOL_ORDER)
+
+/** Persisted orders are user data from an older build: drop anything that is no longer a protocol,
+ *  then append protocols added since, so the list is always exactly the known set. */
+function sanitizeProtocolOrder(stored: unknown): Protocol[] {
+  const kept = Array.isArray(stored)
+    ? (stored.filter(
+        (p): p is Protocol => typeof p === 'string' && KNOWN_PROTOCOLS.has(p),
+      ) as Protocol[])
+    : []
+  const deduped = [...new Set(kept)]
+  return [...deduped, ...DEFAULT_PROTOCOL_ORDER.filter((p) => !deduped.includes(p))]
+}
 
 export const useSettingsStore = defineStore(
   'vpn-settings',
@@ -16,8 +34,8 @@ export const useSettingsStore = defineStore(
     const autoSelect = ref(true)
 
     // User-defined probe order for auto-select (most preferred first). Editable in
-    // the Protocol settings modal; defaults to performance order.
-    const protocolOrder = ref<string[]>(['wireguard', 'amneziawg', 'vless'])
+    // the Protocol settings modal.
+    const protocolOrder = ref<Protocol[]>([...DEFAULT_PROTOCOL_ORDER])
 
     // One-time guard: on upgrade to auto-select we forget the previously-used
     // protocol once (see VpnCard) so the cycle re-probes from the priority order.
@@ -82,6 +100,11 @@ export const useSettingsStore = defineStore(
   {
     persist: {
       pick: ['splitMode', 'selectedApps', 'autoSelect', 'protocolOrder', 'protocolDefaultsApplied'],
+      // localStorage holds whatever an older build wrote. Narrow it back to Protocol[] on load,
+      // so an unknown string can never reach `t(\`vpn.${proto}\`)` or a probe order.
+      afterHydrate: (ctx) => {
+        ctx.store.protocolOrder = sanitizeProtocolOrder(ctx.store.protocolOrder)
+      },
     },
   },
 )

@@ -22,7 +22,7 @@ export const commands = {
 	loadSavedConfig: () => typedError<boolean, string>(__TAURI_INVOKE("load_saved_config")),
 	/**  Get active protocol's config (without private key for security) */
 	getConfig: () => typedError<{
-	protocol: string,
+	protocol: Protocol,
 	address: string,
 	dns: string | null,
 	server_endpoint: string,
@@ -30,9 +30,9 @@ export const commands = {
 	mtu: number | null,
 } | null, string>(__TAURI_INVOKE("get_config")),
 	/**  Switch the active protocol (must disconnect first) */
-	setActiveProtocol: (protocol: string) => typedError<null, string>(__TAURI_INVOKE("set_active_protocol", { protocol })),
+	setActiveProtocol: (protocol: Protocol) => typedError<null, string>(__TAURI_INVOKE("set_active_protocol", { protocol })),
 	/**  Get list of protocols that have cached configs */
-	getAvailableProtocols: () => typedError<string[], string>(__TAURI_INVOKE("get_available_protocols")),
+	getAvailableProtocols: () => typedError<Protocol[], string>(__TAURI_INVOKE("get_available_protocols")),
 	/**  Connect to VPN */
 	connect: (splitMode: "all" | "include" | "exclude" | null, selectedApps: string[] | null) => typedError<null, ConnectError>(__TAURI_INVOKE("connect", { splitMode, selectedApps })),
 	/**  Disconnect from VPN */
@@ -92,7 +92,7 @@ export type AppInfo = {
 
 /**  Safe config info (no private keys or secrets) */
 export type ConfigSafe = {
-	protocol: string,
+	protocol: Protocol,
 	address: string,
 	dns: string | null,
 	server_endpoint: string,
@@ -117,7 +117,7 @@ export type ConnectErrorCode = "busy" | "permission_denied" | "verify_failed" | 
 /**  Connection information */
 export type ConnectionInfo = {
 	status: ConnectionStatus,
-	protocol: string | null,
+	protocol: Protocol | null,
 	server_endpoint: string | null,
 	assigned_ip: string | null,
 	connected_at: number | null,
@@ -144,6 +144,15 @@ export type LogConfig = {
 };
 
 export type LogProfile = "normal" | "verbose";
+
+/**
+ *  The ONLY protocol representation in the crate.
+ * 
+ *  The serde renames are load-bearing: these exact strings are already on users' disks and in
+ *  their OS keyrings via the old `SavedVpnConfigs.active_protocol: String`, and in all three
+ *  arms of the migration chain in `config.rs::parse_stored_configs`.
+ */
+export type Protocol = "wireguard" | "amneziawg" | "vless";
 
 /**  Safe area insets (status bar, nav bar) in dp */
 export type SafeAreaInsets = {
