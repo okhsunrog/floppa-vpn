@@ -348,6 +348,20 @@ pub enum WorldView {
     Unreachable(UnreachableCause),
 }
 
+impl WorldView {
+    /// The protocol of a tunnel the peer confirmed is running.
+    ///
+    /// `None` covers both "no tunnel" and "we could not ask" — which is fine for the one caller
+    /// that waits for a tunnel to appear, and is exactly why every *other* caller goes through
+    /// [`World::classify`] instead, where those two are kept apart.
+    pub fn running_protocol(&self) -> Option<Protocol> {
+        match self {
+            Self::Reachable(t) => t.running.as_ref().map(|r| r.protocol),
+            Self::Unreachable(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnreachableCause {
     /// Nothing is listening: the peer never bound its socket, or it is an older build.

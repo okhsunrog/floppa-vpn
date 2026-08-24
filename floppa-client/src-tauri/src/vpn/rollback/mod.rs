@@ -66,6 +66,13 @@ pub enum Step {
         snapshot: DnsSnapshot,
         if_index: Option<u32>,
     },
+    /// Android's single platform step: `VpnService.Builder.establish()` applies the address,
+    /// routes and DNS as one unit, so there is nothing finer to record.
+    ///
+    /// Its undo is cross-process, and the OS can also perform it unilaterally — revoked consent, a
+    /// low-memory kill — so "undo returned Ok" is not the same as "it is gone". The caller
+    /// re-observes rather than trusting the return value.
+    AndroidService { epoch: u64 },
 }
 
 #[derive(
@@ -88,6 +95,7 @@ pub enum StepKind {
     EndpointRoute,
     Routes,
     Dns,
+    AndroidService,
 }
 
 impl Step {
@@ -99,6 +107,7 @@ impl Step {
             Self::EndpointRoute { .. } => StepKind::EndpointRoute,
             Self::Routes { .. } => StepKind::Routes,
             Self::Dns { .. } => StepKind::Dns,
+            Self::AndroidService { .. } => StepKind::AndroidService,
         }
     }
 
@@ -376,6 +385,8 @@ async fn undo_step(
             .restore_dns(iface, snapshot, *if_index)
             .await
             .map_err(|e| e.to_string()),
+        // Stopping the service tears down the link and everything the builder applied with it.
+        Step::AndroidService { .. } => backend.stop().await,
     }
 }
 
