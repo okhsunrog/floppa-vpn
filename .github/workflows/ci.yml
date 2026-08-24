@@ -203,6 +203,37 @@ jobs:
       - name: Test (vpn plugin)
         run: cargo test --manifest-path tauri-plugin-vpn/Cargo.toml
 
+  # Same reason as the Windows job: the Android branch is cfg-gated, so a Linux-host clippy run
+  # never compiles it. Uses cargo-ndk rather than a full APK build — it needs no keystore and no
+  # Gradle, and it is stricter, because the APK build only runs `cargo build`.
+  client-android:
+    name: Client checks (Android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - uses: android-actions/setup-android@v4
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Clippy (client, Android)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy -- -D warnings
+
   # The Windows platform layer is cfg-gated, so nothing on a Linux runner compiles it. Without
   # this job a Windows-only type error is not caught until release.yml runs on a tag.
   client-windows:

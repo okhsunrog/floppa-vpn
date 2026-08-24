@@ -291,7 +291,7 @@ impl GotatunTunnel {
 
         // HACK: the `tun` crate stubs out MTU on Android (it just stores the value).
         // gotatun reads MTU from this, so we need to set it here with the correct value.
-        let mtu = config.get_mtu() as u16;
+        let mtu = config.get_mtu();
         tun_device
             .set_mtu(mtu)
             .map_err(|e| format!("Failed to set MTU: {}", e))?;

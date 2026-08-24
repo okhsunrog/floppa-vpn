@@ -1,7 +1,7 @@
 use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::platform::PlatformImpl;
-use super::protocol::{InterfaceName, Preference, Protocol};
+use super::protocol::{Preference, Protocol};
 use super::state::{
     AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
     VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
@@ -45,10 +45,9 @@ pub fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .get_device_id()
-            .map_err(|e| format!("Failed to get ANDROID_ID: {e}"));
+            .map_err(|e| format!("Failed to get ANDROID_ID: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
@@ -472,6 +471,7 @@ async fn connect_desktop(
     _selected_apps: Option<Vec<String>>,
 ) -> Result<(), ConnectError> {
     use super::platform::Platform;
+    use super::protocol::InterfaceName;
     use super::rollback::{Journal, RollbackStack, Step, split_default, unwind};
 
     let iface = InterfaceName::default();
@@ -977,10 +977,9 @@ pub async fn is_battery_optimization_disabled(
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .is_battery_optimization_disabled()
-            .map_err(|e| format!("Failed to check battery optimization: {e}"));
+            .map_err(|e| format!("Failed to check battery optimization: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
@@ -999,10 +998,9 @@ pub async fn request_disable_battery_optimization(
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .request_disable_battery_optimization()
-            .map_err(|e| format!("Failed to request battery optimization: {e}"));
+            .map_err(|e| format!("Failed to request battery optimization: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1020,10 +1018,9 @@ pub async fn are_notifications_enabled(
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .are_notifications_enabled()
-            .map_err(|e| format!("Failed to check notifications: {e}"));
+            .map_err(|e| format!("Failed to check notifications: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1042,10 +1039,9 @@ pub async fn open_notification_settings(
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .open_notification_settings()
-            .map_err(|e| format!("Failed to request notification permission: {e}"));
+            .map_err(|e| format!("Failed to request notification permission: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
@@ -1064,10 +1060,9 @@ pub async fn set_status_bar_style(
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        return app
-            .vpn()
+        app.vpn()
             .set_status_bar_style(is_dark)
-            .map_err(|e| format!("Failed to set status bar style: {e}"));
+            .map_err(|e| format!("Failed to set status bar style: {e}"))
     }
 
     #[cfg(not(target_os = "android"))]
