@@ -289,7 +289,7 @@ async fn resolve_subscription_expires(
     // Validate the plan even when the caller supplied an explicit duration or requested a permanent
     // subscription; otherwise the later FK failure is reported as an internal database error.
     let plan_trial =
-        sqlx::query_scalar::<_, Option<i32>>("SELECT trial_days FROM plans WHERE id = $1")
+        sqlx::query_scalar::<_, Option<i32>>("SELECT trial_minutes FROM plans WHERE id = $1")
             .bind(plan_id)
             .fetch_optional(pool)
             .await?
@@ -298,19 +298,21 @@ async fn resolve_subscription_expires(
     if permanent {
         return Ok(None);
     }
-    let days = if let Some(d) = days {
-        d
+    // The admin `days` override is in whole days; the plan's own default trial duration is
+    // stored in minutes (`trial_minutes`) so it can express sub-day trials (e.g. taster).
+    let minutes = if let Some(d) = days {
+        d * 1440
     } else {
         match plan_trial {
-            Some(trial_days) => trial_days as i64,
+            Some(trial_minutes) => trial_minutes as i64,
             None => {
                 return Err(ApiError::bad_request(
-                    "Days not specified and plan has no trial_days",
+                    "Days not specified and plan has no trial duration",
                 ));
             }
         }
     };
-    Ok(Some(now + Duration::days(days)))
+    Ok(Some(now + Duration::minutes(minutes)))
 }
 
 // Public endpoints

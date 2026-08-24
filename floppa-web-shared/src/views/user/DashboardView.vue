@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery, getMyPeersQuery } from '../../client/@pinia/colada.gen'
 import { useAuthStore } from '../../stores'
-import { formatBytes, formatDate } from '../../utils'
+import { formatBytes, formatDate, durationUnit } from '../../utils'
 import StatsCard from '../../components/StatsCard.vue'
 
 const props = withDefaults(defineProps<{ skipLoadingSpinner?: boolean }>(), {
@@ -31,6 +31,17 @@ const totalTraffic = computed(() => {
 
 const hasSubscription = computed(() => !!me.value?.subscription)
 const isTaster = computed(() => me.value?.subscription?.source === 'taster')
+
+// Real taster length (expires_at - starts_at), shown in the banner so it always matches
+// the plan's actual duration instead of a hardcoded string.
+const tasterDurationLabel = computed(() => {
+  const sub = me.value?.subscription
+  if (!sub?.starts_at || !sub.expires_at) return ''
+  const ms = new Date(sub.expires_at).getTime() - new Date(sub.starts_at).getTime()
+  if (ms <= 0) return ''
+  const { unit, n } = durationUnit(Math.round(ms / 60000))
+  return t(`info.${unit}`, { n })
+})
 
 const isPermanent = computed(() => {
   return me.value?.subscription?.expires_at === null
@@ -62,7 +73,7 @@ const daysRemaining = computed(() => {
           color="warning"
           variant="subtle"
           icon="i-lucide-hourglass"
-          :title="t('userDashboard.tasterTitle')"
+          :title="t('userDashboard.tasterTitle', { d: tasterDurationLabel })"
           :description="t('userDashboard.tasterBody')"
           :actions="[
             {

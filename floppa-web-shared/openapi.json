@@ -161,7 +161,7 @@
         "tags": [
           "auth"
         ],
-        "summary": "Register a new account with a login + password (no Telegram). Grants a short taster trial.",
+        "summary": "Register a new account with a login + password (no Telegram). Grants a short taster trial\n(duration comes from the 'taster' plan's `trial_minutes`).",
         "operationId": "register_account",
         "requestBody": {
           "content": {
@@ -1838,7 +1838,7 @@
             }
           },
           "400": {
-            "description": "Days not specified and plan has no trial_days",
+            "description": "Days not specified and plan has no trial duration",
             "content": {
               "application/json": {
                 "schema": {
@@ -2149,7 +2149,7 @@
             "description": "Subscription set"
           },
           "400": {
-            "description": "Days not specified and plan has no trial_days",
+            "description": "Days not specified and plan has no trial duration",
             "content": {
               "application/json": {
                 "schema": {
@@ -2605,7 +2605,7 @@
             ],
             "format": "int32"
           },
-          "trial_days": {
+          "trial_minutes": {
             "type": [
               "integer",
               "null"
@@ -3216,7 +3216,7 @@
             ],
             "format": "int32"
           },
-          "trial_days": {
+          "trial_minutes": {
             "type": [
               "integer",
               "null"
@@ -3289,7 +3289,7 @@
             ],
             "format": "int32"
           },
-          "trial_days": {
+          "trial_minutes": {
             "type": [
               "integer",
               "null"
@@ -3325,7 +3325,7 @@
               "null"
             ],
             "format": "int64",
-            "description": "Duration in days. If omitted, uses the plan's trial_days (for trial plans).\nUse `permanent: true` to create a subscription with no expiration."
+            "description": "Duration in days. If omitted, uses the plan's trial duration (for trial plans).\nUse `permanent: true` to create a subscription with no expiration."
           },
           "permanent": {
             "type": "boolean",
@@ -3509,7 +3509,7 @@
           "clear_speed_limit": {
             "type": "boolean"
           },
-          "clear_trial_days": {
+          "clear_trial_minutes": {
             "type": "boolean"
           },
           "default_speed_limit_mbps": {
@@ -3552,7 +3552,7 @@
             ],
             "format": "int32"
           },
-          "trial_days": {
+          "trial_minutes": {
             "type": [
               "integer",
               "null"

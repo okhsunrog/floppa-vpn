@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days FROM plans ORDER BY id",
+  "query": "\n        UPDATE plans SET\n            display_name = COALESCE($2, display_name),\n            default_speed_limit_mbps = CASE WHEN $3 THEN NULL ELSE COALESCE($4, default_speed_limit_mbps) END,\n            max_peers = COALESCE($5, max_peers),\n            is_public = COALESCE($6, is_public),\n            trial_minutes = CASE WHEN $7 THEN NULL ELSE COALESCE($8, trial_minutes) END,\n            price_stars = CASE WHEN $9 THEN NULL ELSE COALESCE($10, price_stars) END,\n            period_days = CASE WHEN $11 THEN NULL ELSE COALESCE($12, period_days) END\n        WHERE id = $1\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -71,12 +71,12 @@
       },
       {
         "ordinal": 6,
-        "name": "trial_days",
+        "name": "trial_minutes",
         "type_info": "Int4",
         "origin": {
           "Table": {
             "table": "plans",
-            "name": "trial_days"
+            "name": "trial_minutes"
           }
         }
       },
@@ -104,7 +104,20 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int4",
+        "Text",
+        "Bool",
+        "Int4",
+        "Int4",
+        "Bool",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Int4",
+        "Bool",
+        "Int4"
+      ]
     },
     "nullable": [
       false,
@@ -118,5 +131,5 @@
       true
     ]
   },
-  "hash": "56d04f97eee1c7e89bef73e968a0c835babaa8e57a4d97794508df5b76a67165"
+  "hash": "e0167507c954e7f0a2dd25f0bd596b57e5a6005a7a15bd8b85c9fb5740a81bd1"
 }

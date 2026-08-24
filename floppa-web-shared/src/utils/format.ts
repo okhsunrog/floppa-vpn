@@ -55,6 +55,17 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Split a minute count into the largest whole unit, for localized display of plan
+ * trial durations (e.g. 10080 -> {unit:'days', n:7}, 120 -> {unit:'hours', n:2},
+ * 90 -> {unit:'minutes', n:90}). The caller renders it via the matching i18n key.
+ */
+export function durationUnit(minutes: number): { unit: 'days' | 'hours' | 'minutes'; n: number } {
+  if (minutes % 1440 === 0) return { unit: 'days', n: minutes / 1440 }
+  if (minutes % 60 === 0) return { unit: 'hours', n: minutes / 60 }
+  return { unit: 'minutes', n: minutes }
+}
+
+/**
  * Format speed limit (null = unlimited)
  */
 export function formatSpeedLimit(

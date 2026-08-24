@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_days, price_stars, period_days\n        ",
+  "query": "\n        INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n        RETURNING id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days\n        ",
   "describe": {
     "columns": [
       {
@@ -71,12 +71,12 @@
       },
       {
         "ordinal": 6,
-        "name": "trial_days",
+        "name": "trial_minutes",
         "type_info": "Int4",
         "origin": {
           "Table": {
             "table": "plans",
-            "name": "trial_days"
+            "name": "trial_minutes"
           }
         }
       },
@@ -127,5 +127,5 @@
       true
     ]
   },
-  "hash": "a6f00ab687d0d4182bde6e378c3106c33a31117df416a7be2f263d1b93a24aae"
+  "hash": "cd25196c8f9629a171a16fb3505edc039610701a38bb2ee2f3e7b889bfdfe3cb"
 }
