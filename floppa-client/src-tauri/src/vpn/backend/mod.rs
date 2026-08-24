@@ -3,16 +3,16 @@
 //! Provides a unified interface for tunnel management across platforms:
 //! - **Desktop** (Linux/Windows/macOS): in-process tunnel via gotatun
 //! - **Android**: IPC to separate `:vpn` process via tarpc over Unix socket
-//! - **iOS** (future): IPC to Network Extension via Apple's NE framework
+//!
+//! iOS is not implemented. It had a stub here that returned `Err` from every method, was never
+//! constructed, and compiled everywhere — so every change to the trait below had to be mirrored
+//! into a type nothing calls. The design it carried is in `docs/IOS-BACKEND-PLAN.md`.
 
 #[cfg(not(target_os = "android"))]
 mod in_process;
 
 #[cfg(target_os = "android")]
 mod android_ipc;
-
-// iOS backend — stub for future implementation
-mod ios;
 
 use super::platform::TunParams;
 use super::state::ProtocolConfig;
