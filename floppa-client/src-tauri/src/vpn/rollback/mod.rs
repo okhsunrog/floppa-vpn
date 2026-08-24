@@ -69,8 +69,18 @@ pub enum Step {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    specta::Type,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum StepKind {
     PrepareLink,
     StartBackend,
