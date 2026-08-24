@@ -1,6 +1,7 @@
 package dev.okhsunrog.floppavpn.vpn
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -18,6 +19,9 @@ import android.util.Log
 import android.webkit.WebView
 import androidx.activity.result.ActivityResult
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
@@ -163,63 +167,62 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     fun getInstalledApps(invoke: Invoke) {
         // Run on background thread to avoid blocking the Android UI thread
         Thread {
-                val pm = activity.packageManager
-                val apps =
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-                    } else {
-                        @Suppress("DEPRECATION") pm.getInstalledApplications(0)
-                    }
-
-                val ownPackage = activity.packageName
-                val result = JSObject()
-                val appList = JSArray()
-                val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
-
-                for (appInfo in apps) {
-                    if (appInfo.packageName == ownPackage) continue
-
-                    // Preinstalled apps carry FLAG_SYSTEM, but user-facing ones (YouTube, Maps,
-                    // Chrome, …) have a launcher entry. Treat those as non-system so they show up
-                    // in the main list instead of being hidden behind "show system apps".
-                    val isSystemFlag = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                    val hasLauncher = pm.getLaunchIntentForPackage(appInfo.packageName) != null
-                    val isSystem = isSystemFlag && !hasLauncher
-
-                    val entry = JSObject()
-                    entry.put("packageName", appInfo.packageName)
-                    entry.put("label", appInfo.loadLabel(pm).toString())
-                    entry.put("isSystem", isSystem)
-
-                    try {
-                        val drawable = appInfo.loadIcon(pm)
-                        val bitmap =
-                            if (drawable is BitmapDrawable) {
-                                Bitmap.createScaledBitmap(drawable.bitmap, iconSize, iconSize, true)
-                            } else {
-                                val bmp =
-                                    Bitmap.createBitmap(iconSize, iconSize, Bitmap.Config.ARGB_8888)
-                                val canvas = Canvas(bmp)
-                                drawable.setBounds(0, 0, iconSize, iconSize)
-                                drawable.draw(canvas)
-                                bmp
-                            }
-                        val stream = ByteArrayOutputStream()
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
-                        entry.put(
-                            "icon",
-                            Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP),
-                        )
-                    } catch (_: Exception) {
-                        // Icon loading failed, leave null
-                    }
-
-                    appList.put(entry)
+            val pm = activity.packageManager
+            val apps =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+                } else {
+                    @Suppress("DEPRECATION") pm.getInstalledApplications(0)
                 }
 
-                result.put("apps", appList)
-                invoke.resolve(result)
+            val ownPackage = activity.packageName
+            val result = JSObject()
+            val appList = JSArray()
+            val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
+
+            for (appInfo in apps) {
+                if (appInfo.packageName == ownPackage) continue
+
+                // Preinstalled apps carry FLAG_SYSTEM, but user-facing ones (YouTube, Maps,
+                // Chrome, …) have a launcher entry. Treat those as non-system so they show up
+                // in the main list instead of being hidden behind "show system apps".
+                val isSystemFlag = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val hasLauncher = pm.getLaunchIntentForPackage(appInfo.packageName) != null
+                val isSystem = isSystemFlag && !hasLauncher
+
+                val entry = JSObject()
+                entry.put("packageName", appInfo.packageName)
+                entry.put("label", appInfo.loadLabel(pm).toString())
+                entry.put("isSystem", isSystem)
+
+                try {
+                    val drawable = appInfo.loadIcon(pm)
+                    val bitmap =
+                        if (drawable is BitmapDrawable) {
+                            drawable.bitmap.scale(iconSize, iconSize)
+                        } else {
+                            val bmp = createBitmap(iconSize, iconSize)
+                            val canvas = Canvas(bmp)
+                            drawable.setBounds(0, 0, iconSize, iconSize)
+                            drawable.draw(canvas)
+                            bmp
+                        }
+                    val stream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
+                    entry.put(
+                        "icon",
+                        Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP),
+                    )
+                } catch (_: Exception) {
+                    // Icon loading failed, leave null
+                }
+
+                appList.put(entry)
             }
+
+            result.put("apps", appList)
+            invoke.resolve(result)
+        }
             .start()
     }
 
@@ -264,7 +267,15 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve()
     }
 
-    /** Get a stable device ID that persists across app reinstalls. */
+    /**
+     * Get a stable device ID that persists across app reinstalls.
+     *
+     * ANDROID_ID deliberately: a peer record on the server is keyed to a device, and an identifier
+     * that changed on reinstall would orphan the peer and consume a second slot from the user's
+     * limit. It is per-app-signing-key and not a hardware serial, so it identifies this
+     * installation rather than the handset.
+     */
+    @SuppressLint("HardwareIds")
     @Command
     fun getDeviceId(invoke: Invoke) {
         val androidId =
@@ -305,11 +316,12 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
      * asking to allow unrestricted background usage. Resolves with { "disabled": true/false } after
      * the user responds.
      */
+    @SuppressLint("BatteryLife")
     @Command
     fun requestDisableBatteryOptimization(invoke: Invoke) {
         try {
             val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            intent.data = Uri.parse("package:${activity.packageName}")
+            intent.data = "package:${activity.packageName}".toUri()
             startActivityForResult(invoke, intent, "batteryOptimizationResult")
         } catch (e: Exception) {
             Log.e("VpnPlugin", "requestDisableBatteryOptimization error", e)
@@ -353,9 +365,17 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                     "notificationPermissionCallback",
                 )
             } else {
+                // ACTION_APP_NOTIFICATION_SETTINGS only exists from API 26; below that the app
+                // details page is where notifications are toggled.
                 val intent =
-                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                        putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                            putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                        }
+                    } else {
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", activity.packageName, null)
+                        }
                     }
                 activity.startActivity(intent)
                 val ret = JSObject()

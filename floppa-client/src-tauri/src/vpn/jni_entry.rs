@@ -138,6 +138,35 @@ pub fn stop_vpn_service() {
     }
 }
 
+/// Tell the service its tunnel is up, so the notification stops claiming it before it is.
+///
+/// Best-effort: a failure here costs a stale notification line, never the tunnel.
+pub fn set_service_connected(connected: bool) {
+    let Some(vm) = JAVA_VM.get() else {
+        return;
+    };
+    let Ok(guard) = VPN_SERVICE_REF.lock() else {
+        return;
+    };
+    let Some(service_ref) = guard.as_ref() else {
+        return;
+    };
+
+    let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+        env.call_method(
+            service_ref.as_ref(),
+            jni::jni_str!("setConnected"),
+            jni::jni_sig!("(Z)V"),
+            &[connected.into()],
+        )?;
+        Ok(())
+    });
+
+    if let Err(e) = result {
+        warn!("failed to update the VPN notification: {e}");
+    }
+}
+
 /// Called once in `FloppaVpnService.onCreate()`.
 ///
 /// Initializes the Rust runtime, logging, and stores the JavaVM reference.

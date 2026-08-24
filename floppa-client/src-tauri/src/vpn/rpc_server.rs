@@ -151,6 +151,10 @@ impl VpnRpc for VpnRpcServer {
         match result {
             Ok(()) => {
                 info!(protocol = %config.protocol(), "tunnel started");
+                // The notification has been saying "connecting" since the service came up; this is
+                // the first moment it is entitled to say anything else.
+                #[cfg(target_os = "android")]
+                super::jni_entry::set_service_connected(true);
                 Ok(())
             }
             Err(e) => {
