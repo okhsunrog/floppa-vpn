@@ -203,6 +203,25 @@ jobs:
       - name: Test (vpn plugin)
         run: cargo test --manifest-path tauri-plugin-vpn/Cargo.toml
 
+  # The Windows platform layer is cfg-gated, so nothing on a Linux runner compiles it. Without
+  # this job a Windows-only type error is not caught until release.yml runs on a tag.
+  client-windows:
+    name: Client checks (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "floppa-client/src-tauri -> target"
+
+      - name: Clippy (client, Windows)
+        run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
+
   kotlin:
     name: Kotlin format check
     runs-on: ubuntu-latest
