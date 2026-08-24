@@ -52,6 +52,9 @@ struct PendingTelegramLoginState {
 struct PendingTelegramLoginCode {
     auth_response: auth::AuthResponse,
     expires_at: chrono::DateTime<Utc>,
+    /// Set on first exchange. The code stays exchangeable for a short grace window afterwards so
+    /// the client can retry when the response was lost mid-flight (app switch on mobile).
+    consumed_at: Option<chrono::DateTime<Utc>>,
 }
 
 fn openapi_router() -> OpenApiRouter<AppState> {

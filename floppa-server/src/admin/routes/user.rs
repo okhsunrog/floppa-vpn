@@ -303,7 +303,7 @@ pub(super) async fn start_telegram_link(
     let _ = sqlx::query!("DELETE FROM telegram_link_codes WHERE expires_at < NOW()")
         .execute(&state.pool)
         .await;
-    let code = super::auth::generate_nonce();
+    let code = super::auth::generate_link_code();
     let expires_at = Utc::now() + chrono::Duration::minutes(10);
     sqlx::query!(
         "INSERT INTO telegram_link_codes (code, user_id, expires_at) VALUES ($1, $2, $3)",

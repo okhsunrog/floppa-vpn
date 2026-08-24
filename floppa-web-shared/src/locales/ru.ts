@@ -79,6 +79,8 @@ export default {
     codeInvalid: 'Неверный или просроченный код. Попробуйте ещё раз.',
     miniAppLoggingIn: 'Вход через Telegram...',
     miniAppFailed: 'Ошибка авторизации Mini App. Попробуйте перезагрузить.',
+    deepLinkLoggingIn: 'Завершаем вход...',
+    deepLinkFailed: 'Вход не завершился. Попробуйте ещё раз.',
     tabAccount: 'Аккаунт',
     createAccount: 'Создать аккаунт',
     signIn: 'Войти',

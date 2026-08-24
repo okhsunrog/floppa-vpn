@@ -80,6 +80,8 @@ export default {
     codeInvalid: 'Invalid or expired code. Please try again.',
     miniAppLoggingIn: 'Logging in via Telegram...',
     miniAppFailed: 'Mini App authentication failed. Try reloading.',
+    deepLinkLoggingIn: 'Finishing sign-in...',
+    deepLinkFailed: 'Sign-in did not complete. Please try again.',
     tabAccount: 'Account',
     createAccount: 'Create account',
     signIn: 'Sign in',

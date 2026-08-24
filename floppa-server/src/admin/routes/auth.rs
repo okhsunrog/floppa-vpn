@@ -67,6 +67,13 @@ pub(super) fn generate_nonce() -> String {
     format!("{:032x}{:032x}", random::<u128>(), random::<u128>())
 }
 
+/// Telegram caps deep-link `start` payloads at 64 chars and inline-button `callback_data` at
+/// 64 bytes; the code travels as both `link_<code>` and `link_merge:<code>`, so it must stay
+/// ≤ 53 chars. 128 bits is ample for a single-use code with a 10-minute TTL.
+pub(super) fn generate_link_code() -> String {
+    format!("{:032x}", random::<u128>())
+}
+
 fn is_allowed_redirect_uri(uri: &str) -> bool {
     uri.starts_with("floppa://") || uri.starts_with("http://127.0.0.1:")
 }
@@ -315,6 +322,7 @@ pub(super) async fn telegram_deep_link_callback(
             super::PendingTelegramLoginCode {
                 auth_response,
                 expires_at: now + Duration::minutes(2),
+                consumed_at: None,
             },
         );
     }
@@ -444,14 +452,25 @@ pub(super) async fn exchange_telegram_login_code(
     Json(request): Json<ExchangeTelegramLoginCodeRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     let now = Utc::now();
-    let pending = {
+    let auth_response = {
         let mut login_codes = state.telegram_login_codes.write().await;
-        login_codes.retain(|_, value| value.expires_at > now);
-        login_codes.remove(&request.code)
-    }
-    .ok_or_else(ApiError::unauthorized)?;
+        // Drop expired codes and codes whose post-consumption grace window has passed. The grace
+        // window lets the client retry the exchange when the first response was lost mid-flight
+        // (e.g. the webview got suspended during the browser → app switch on mobile).
+        login_codes.retain(|_, value| {
+            value.expires_at > now
+                && value
+                    .consumed_at
+                    .is_none_or(|consumed| now - consumed < Duration::seconds(30))
+        });
+        let pending = login_codes
+            .get_mut(&request.code)
+            .ok_or_else(ApiError::unauthorized)?;
+        pending.consumed_at.get_or_insert(now);
+        pending.auth_response.clone()
+    };
 
-    Ok(Json(pending.auth_response))
+    Ok(Json(auth_response))
 }
 
 /// Authenticate via Telegram Login Widget
@@ -633,4 +652,20 @@ pub(super) async fn login_account(
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
     let result = fetch_user_result(&state, user_id).await?;
     Ok(Json(build_auth_response(&state, result)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_link_code;
+
+    /// Telegram rejects deep-link `start` payloads over 64 chars and inline-button
+    /// `callback_data` over 64 bytes; the link code travels as both `link_<code>`
+    /// and `link_merge:<code>`.
+    #[test]
+    fn link_code_fits_telegram_limits() {
+        let code = generate_link_code();
+        assert!(format!("link_{code}").len() <= 64);
+        assert!(format!("link_merge:{code}").len() <= 64);
+        assert!(code.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }

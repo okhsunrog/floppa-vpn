@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
@@ -19,9 +19,15 @@ const props = withDefaults(
   defineProps<{
     authMode?: 'widget' | 'deep-link'
     deepLinkLoginUrl?: string
+    /** True while the app is exchanging a deep-link login code returned from the browser. */
+    deepLinkBusy?: boolean
+    /** True when the last deep-link login exchange failed. */
+    deepLinkFailed?: boolean
   }>(),
   {
     authMode: 'widget',
+    deepLinkBusy: false,
+    deepLinkFailed: false,
   },
 )
 
@@ -43,6 +49,15 @@ const manualCodeError = ref<string | null>(null)
 
 // Login surface: account (login + password) leads; Telegram is secondary.
 const tab = ref<'account' | 'telegram'>('account')
+
+// A failed deep-link exchange means the user was mid-Telegram-login — open that tab for retry.
+watch(
+  () => props.deepLinkFailed,
+  (failed) => {
+    if (failed) tab.value = 'telegram'
+  },
+  { immediate: true },
+)
 const accountMode = ref<'register' | 'login'>('register')
 const accountLogin = ref('')
 const accountPassword = ref('')
@@ -180,15 +195,18 @@ async function handleManualCode() {
       </template>
 
       <div class="flex flex-col gap-4 py-4">
-        <!-- Mini App auto-login in progress (takes precedence over tabs) -->
-        <template v-if="miniAppLoading">
+        <!-- Auto-login in progress (Mini App initData or deep-link code exchange) -->
+        <template v-if="miniAppLoading || props.deepLinkBusy">
           <div class="flex flex-col items-center gap-4">
             <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
-            <p class="text-sm text-[var(--ui-text-muted)]">{{ t('login.miniAppLoggingIn') }}</p>
+            <p class="text-sm text-[var(--ui-text-muted)]">
+              {{ miniAppLoading ? t('login.miniAppLoggingIn') : t('login.deepLinkLoggingIn') }}
+            </p>
           </div>
         </template>
 
         <template v-else>
+          <UAlert v-if="props.deepLinkFailed" color="error" :title="t('login.deepLinkFailed')" />
           <!-- Tab toggle: Account (primary) / Telegram (secondary) -->
           <div class="flex gap-1 p-1 rounded-lg bg-[var(--ui-bg-elevated)]">
             <UButton
