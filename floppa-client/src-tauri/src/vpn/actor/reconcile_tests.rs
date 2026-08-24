@@ -218,6 +218,30 @@ fn a_caller_who_specified_split_rules_never_adopts_an_unknown_tunnel() {
 }
 
 #[test]
+fn the_startup_intent_never_starts_a_tunnel_by_itself() {
+    // Caught on a device: startup used an ordinary Up intent, so the table did what it was asked
+    // and connected — the app dialled out on every launch. An intent with no parameters cannot
+    // build a tunnel, because it does not know its split rules; adoption is all it can do.
+    for world in [World::Clear, World::Dark] {
+        let d = go(&Status::Idle, &up_intent(1, &[AWG], None), &world, t0());
+        assert!(
+            matches!(d.next, Status::Idle),
+            "startup must stay idle when there is nothing to adopt ({world:?})"
+        );
+        assert!(d.effects.is_empty());
+    }
+}
+
+#[test]
+fn a_request_that_carries_parameters_still_starts_normally() {
+    for world in [World::Clear, World::Dark] {
+        let d = go(&Status::Idle, &up_intent(1, &[AWG], params()), &world, t0());
+        assert!(matches!(d.next, Status::Connecting { .. }), "{world:?}");
+        assert!(has_begin(&d, AWG));
+    }
+}
+
+#[test]
 fn a_tunnel_of_an_unwanted_protocol_is_replaced_not_adopted() {
     let d = go(
         &Status::Idle,

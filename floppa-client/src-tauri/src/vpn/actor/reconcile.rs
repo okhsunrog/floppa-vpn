@@ -133,6 +133,22 @@ fn unwinding(owner: UnwindOwner, cycle: Option<Cycle>, reason: UnwindReason) -> 
     }
 }
 
+/// Begin an attempt, unless the intent has no parameters to build a tunnel from.
+///
+/// An intent without [`TunnelParams`](super::types::TunnelParams) is not a weaker request for a
+/// tunnel — it is a request to take over one that already exists. It cannot start anything,
+/// because a tunnel cannot be built without knowing its split rules; adoption is the only thing it
+/// can do. So when there is nothing to adopt, the honest answer is to do nothing.
+///
+/// This is what the startup intent uses. Treating it as an ordinary Up made the app connect by
+/// itself on every launch.
+fn start_or_idle(up: &UpIntent, now: Instant, policy: &Policy) -> Decision {
+    if up.params.is_none() {
+        return Decision::to(Status::Idle);
+    }
+    connecting(Cycle::start(up, policy), now, policy)
+}
+
 /// Adopt a tunnel someone else is running.
 fn adopt(up: &UpIntent, rt: &super::types::RunningTunnel, now_unix: i64) -> Decision {
     let connected_at = rt
@@ -183,10 +199,8 @@ pub fn reconcile(
             .with(Effect::Unwind {
                 extra: Some(ExtraUndo::StopBackend),
             }),
-            // 4: the normal start.
-            (Rel::Same(up) | Rel::Newer(up), World::Clear) => {
-                connecting(Cycle::start(up, policy), now, policy)
-            }
+            // 4: the normal start — but only for an intent that knows what to build.
+            (Rel::Same(up) | Rel::Newer(up), World::Clear) => start_or_idle(up, now, policy),
             (Rel::Same(up) | Rel::Newer(up), World::Running(rt)) => {
                 // 5a: only the bootstrap intent adopts. It is the one that carries no params,
                 // because it is not asking for any particular tunnel — just for whatever is there.
@@ -208,9 +222,7 @@ pub fn reconcile(
             }
             // 7: from Idle there is nothing to protect, so a non-authoritative observation must
             // not block a connect.
-            (Rel::Same(up) | Rel::Newer(up), World::Dark) => {
-                connecting(Cycle::start(up, policy), now, policy)
-            }
+            (Rel::Same(up) | Rel::Newer(up), World::Dark) => start_or_idle(up, now, policy),
         },
 
         // ---------------------------------------------------------------------- Connecting
