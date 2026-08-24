@@ -476,6 +476,7 @@ export default {
       'You have reached your config limit. Delete a config from "My Configs" to free up a slot.',
     connectionLost: 'Connection lost. Max reconnect attempts reached.',
     reconnecting: 'Connection lost. Reconnecting ({current}/{max})...',
+    retryingIn: 'Next attempt in {seconds}s',
     vpnPermissionDenied: 'VPN permission denied',
     noActiveConfig: 'No config imported',
     backendUnavailable: 'Cannot reach server. Connect to the internet and try again.',

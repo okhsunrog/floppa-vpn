@@ -15,7 +15,7 @@ import {
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { platform } from '@tauri-apps/plugin-os'
 import { useVpnStore } from '../stores/vpnStore'
-import type { Protocol } from '../bindings'
+import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useAndroidPermissions } from '../composables/useAndroidPermissions'
 
@@ -138,12 +138,6 @@ async function doServerSync(): Promise<SyncResult> {
       // Non-critical — continue with peer sync even if installation upsert fails
     }
 
-    // Remember active protocol before sync (setActiveConfig switches to last-set protocol).
-    // Source of truth is the persisted active_protocol (loaded into config on mount).
-    // On first start (no loaded config) leave null so we default to the first available
-    // protocol after sync — AmneziaWG, which is listed first.
-    const prevProtocol = vpn.hasConfig ? vpn.activeProtocol : null
-
     // AmneziaWG is the default wg-family protocol when the server offers it; WireGuard otherwise.
     let amneziaAvailable = false
     try {
@@ -234,15 +228,6 @@ async function setupAutoPeer() {
   }
 }
 
-async function handleReconnectFailed() {
-  if (!vpn.deviceId) return
-  await setupAutoPeer()
-  // If sync got us a new config, auto-connect
-  if (vpn.hasConfig) {
-    await vpn.connect()
-  }
-}
-
 onMounted(async () => {
   await vpn.initPlatform()
 
@@ -280,41 +265,75 @@ async function handleConnect() {
     await vpn.disconnect()
     return
   }
+  await handleOutcome(await vpn.connect())
+}
 
-  const outcome = await vpn.connect()
+/**
+ * React to a cycle that ended without connecting.
+ *
+ * The one thing this cannot do is decide *why* it failed — that comes typed from the actor. A
+ * protocol whose verification failed is the signal that its peer may have been deleted
+ * server-side, and it is looked up by name rather than by "whichever protocol was tried last",
+ * which is what the old code assumed and got wrong whenever the order had more than one entry.
+ */
+async function handleOutcome(outcome: CycleOutcome | null) {
+  if (!outcome) return
 
-  // Every protocol failed. If any of them failed *verification*, the peer may have been deleted
-  // server-side — check that one specifically, rather than whichever protocol happened to be
-  // tried last.
   const verifyFailed =
-    outcome?.outcome === 'exhausted'
+    outcome.outcome === 'exhausted'
       ? outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
-      : undefined
+      : outcome.outcome === 'lost_gave_up'
+        ? outcome.protocol
+        : undefined
 
-  if (verifyFailed && vpn.deviceId) {
-    reprovisioning.value = true
-    try {
-      console.info('[VpnCard] Connection verification failed, checking peer with server...')
-      const { data: peer } = await getMyPeerByDevice({
-        path: { device_id: vpn.deviceId },
-        query: { protocol: verifyFailed },
-      })
-      if (!peer) {
-        console.info('[VpnCard] Peer not found on server, recreating...')
-        await setupAutoPeer()
-        if (vpn.hasConfig) {
-          console.info('[VpnCard] New config obtained, reconnecting...')
-          await vpn.connect()
-        }
-      } else {
-        console.info('[VpnCard] Peer exists on server, connection issue is elsewhere')
-        vpn.error = t('vpn.connectionFailed')
+  if (!verifyFailed || !vpn.deviceId) return
+
+  reprovisioning.value = true
+  try {
+    console.info('[VpnCard] checking whether the peer still exists on the server...')
+    const { data: peer } = await getMyPeerByDevice({
+      path: { device_id: vpn.deviceId },
+      query: { protocol: verifyFailed },
+    })
+    if (!peer) {
+      console.info('[VpnCard] peer is gone, recreating it')
+      await setupAutoPeer()
+      if (vpn.hasConfig) {
+        console.info('[VpnCard] got a new config, reconnecting')
+        await vpn.connect()
       }
-    } finally {
-      reprovisioning.value = false
+    } else {
+      console.info('[VpnCard] the peer exists, so the problem is elsewhere')
+      vpn.error = t('vpn.connectionFailed')
     }
+  } finally {
+    reprovisioning.value = false
   }
 }
+
+/**
+ * Outcomes of cycles nobody asked for.
+ *
+ * When a live tunnel drops, the actor reconnects on its own — there is no caller awaiting that
+ * epoch, so if it eventually gives up, nothing would ever surface it. This watcher is the only
+ * consumer of those. It ignores anything produced while a command of ours is in flight, because
+ * `handleConnect` already owns that outcome, and it remembers the epoch it handled so a state
+ * refresh cannot make it fire twice.
+ */
+const handledEpoch = ref<number | null>(null)
+watch(
+  () => vpn.lastOutcome,
+  async (outcome) => {
+    if (!outcome || vpn.requesting) return
+    if (handledEpoch.value === vpn.state.epoch) return
+    handledEpoch.value = vpn.state.epoch
+
+    if (outcome.outcome === 'lost_gave_up') {
+      console.info('[VpnCard] the tunnel dropped and reconnecting gave up')
+      await handleOutcome(outcome)
+    }
+  },
+)
 
 /**
  * The button's label and its spinner both come from `vpn.isBusy`/`vpn.phase`, which arrive in the
@@ -436,6 +455,19 @@ const healthDotClass = computed(() => {
             "
           />
         </div>
+      </div>
+
+      <!--
+        Backing off between passes. Shown because the actor keeps working here with nothing else
+        on screen to say so: without it a reconnect looks identical to a hung app.
+      -->
+      <div v-else-if="vpn.retry" class="flex flex-col items-center gap-1">
+        <span class="text-sm text-[var(--ui-text-muted)]">
+          {{ t('vpn.reconnecting', { current: vpn.retry.pass, max: vpn.retry.max }) }}
+        </span>
+        <span class="text-xs text-[var(--ui-text-muted)]">
+          {{ t('vpn.retryingIn', { seconds: Math.ceil(vpn.retry.resume_in_ms / 1000) }) }}
+        </span>
       </div>
 
       <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
