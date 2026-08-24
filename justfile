@@ -98,6 +98,10 @@ client-check:
     echo "clippy (client crates)..."
     cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
     cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+    # The root workspace excludes these crates, so `just server-check`'s cargo test misses them.
+    echo "tests (client crates)..."
+    run cargo test --quiet --manifest-path floppa-client/src-tauri/Cargo.toml
+    run cargo test --quiet --manifest-path tauri-plugin-vpn/Cargo.toml
     for pkg in floppa-web-shared floppa-client; do
         echo "$pkg: format + lint..."
         cd "$pkg"
