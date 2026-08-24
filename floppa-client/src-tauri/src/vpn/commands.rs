@@ -1157,7 +1157,7 @@ pub async fn export_logs(app: AppHandle) -> Result<bool, String> {
 
         let api = app.android_fs_async();
         let uri = api
-            .file_picker()
+            .picker()
             .save_file(None, &filename, Some("application/gzip"), false)
             .await
             .map_err(|e| format!("Save dialog failed: {e}"))?;

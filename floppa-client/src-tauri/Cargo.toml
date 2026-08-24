@@ -91,7 +91,7 @@ lto = true
 codegen-units = 1
 
 [patch.crates-io]
-# Fork = upstream 0.7.38 + our "hide console window on run_command" patch. Must track the
+# Fork = upstream 0.7.39 + our "hide console window on run_command" patch. Must track the
 # upstream version so the patch keeps applying (a lower fork version gets ignored when the
 # crates-io requirement resolves to a newer release).
-wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "e32c31df190ee71126f0caa15b1a5aa2a8f3d23c" }
+wintun-bindings = { git = "https://github.com/okhsunrog/wintun-bindings", rev = "a2fd8d080c2d1230c277237740c15b23c27e5dd4" }
