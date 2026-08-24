@@ -13,6 +13,9 @@
 //! ```
 
 use super::{VpnBackend, VpnFullInfo};
+use crate::vpn::actor::types::{
+    Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, WorldView,
+};
 use crate::vpn::rpc::VpnRpcClient;
 use crate::vpn::state::{ProtocolConfig, TrafficStats};
 use async_trait::async_trait;
@@ -41,6 +44,14 @@ impl AndroidIpcBackend {
     /// Get or create a tarpc client connection.
     /// Lazily connects on first use, reconnects on error.
     async fn get_client(&self) -> Result<VpnRpcClient, String> {
+        self.get_client_typed().await.map_err(|(_, msg)| msg)
+    }
+
+    /// As [`Self::get_client`], but keeping *why* the connection failed.
+    ///
+    /// The distinction is the whole point of the observation type: "nothing is listening" and
+    /// "something refused us" are different facts, and neither of them means "there is no tunnel".
+    async fn get_client_typed(&self) -> Result<VpnRpcClient, (UnreachableCause, String)> {
         let mut guard = self.client.lock().await;
         if let Some(client) = guard.as_ref() {
             return Ok(client.clone());
@@ -48,7 +59,14 @@ impl AndroidIpcBackend {
 
         let stream = tokio::net::UnixStream::connect(&self.socket_path)
             .await
-            .map_err(|e| format!("Failed to connect to VPN socket: {e}"))?;
+            .map_err(|e| {
+                let cause = match e.kind() {
+                    std::io::ErrorKind::NotFound => UnreachableCause::NotStarted,
+                    std::io::ErrorKind::ConnectionRefused => UnreachableCause::ConnectRefused,
+                    _ => UnreachableCause::TransportBroken,
+                };
+                (cause, format!("Failed to connect to VPN socket: {e}"))
+            })?;
 
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
         let transport =
@@ -58,6 +76,17 @@ impl AndroidIpcBackend {
 
         *guard = Some(client.clone());
         Ok(client)
+    }
+
+    /// A per-call deadline of our own.
+    ///
+    /// tarpc's default is 10 seconds, which is longer than any sensible poll interval — so a wedged
+    /// peer used to stall every observation behind it, and any debounce counted in polls became
+    /// meaningless because the polls stopped arriving.
+    fn deadline(timeout: std::time::Duration) -> tarpc::context::Context {
+        let mut ctx = tarpc::context::current();
+        ctx.deadline = std::time::SystemTime::now() + timeout;
+        ctx
     }
 
     /// Invalidate the cached client (e.g. after an RPC error).
@@ -186,4 +215,83 @@ impl VpnBackend for AndroidIpcBackend {
             }
         }
     }
+
+    async fn observe(&self) -> Observation {
+        let observed_at = std::time::Instant::now();
+        let unreachable = |cause| Observation {
+            observed_at,
+            view: WorldView::Unreachable(cause),
+        };
+
+        let client = match self.get_client_typed().await {
+            Ok(c) => {
+                if self.last_connect_failed.swap(false, Ordering::Relaxed) {
+                    debug!("Reconnected to :vpn process");
+                }
+                c
+            }
+            Err((cause, _)) => {
+                if !self.last_connect_failed.swap(true, Ordering::Relaxed) {
+                    debug!("VPN service not reachable: {cause:?}");
+                }
+                return unreachable(cause);
+            }
+        };
+
+        let ctx = Self::deadline(RPC_DEADLINE);
+        match client.get_full_info(ctx).await {
+            Ok(info) => Observation {
+                observed_at,
+                view: WorldView::Reachable(TunnelObservation {
+                    // A running tunnel that cannot say what it is gets treated as no tunnel at
+                    // all rather than being adopted on a guess. With the versioned socket this
+                    // only happens to a peer we should not be talking to anyway.
+                    running: match (info.is_running, info.protocol) {
+                        (true, Some(protocol)) => Some(RunningTunnel {
+                            protocol,
+                            epoch: None,
+                            endpoint: info.endpoint.unwrap_or_default(),
+                            address: info.address.unwrap_or_default(),
+                            connected_secs: info.connected_secs,
+                        }),
+                        (true, None) => {
+                            warn!("running tunnel did not report its protocol; ignoring it");
+                            None
+                        }
+                        (false, _) => None,
+                    },
+                    starting: false,
+                    start_error: None,
+                    raw_stats: match (info.tx_bytes, info.rx_bytes) {
+                        (Some(tx_bytes), Some(rx_bytes)) => Some(RawStats { tx_bytes, rx_bytes }),
+                        _ => None,
+                    },
+                    last_packet_secs: info.last_packet_received,
+                }),
+            },
+            Err(e) => {
+                warn!("RPC get_full_info failed: {e}");
+                self.invalidate_client().await;
+                let cause = if matches!(e, tarpc::client::RpcError::DeadlineExceeded) {
+                    UnreachableCause::Timeout
+                } else {
+                    UnreachableCause::TransportBroken
+                };
+                unreachable(cause)
+            }
+        }
+    }
+
+    /// The tunnel lives in another process that Android may restart underneath us, so a gap in
+    /// answers must be tolerated for a while before the tunnel is presumed gone.
+    fn liveness_grace(&self) -> std::time::Duration {
+        LIVENESS_GRACE
+    }
 }
+
+/// Bound on a single RPC. Shorter than any poll interval, so a wedged peer delays one observation
+/// rather than starving all of them.
+const RPC_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long the `:vpn` process may stay silent before its tunnel is presumed lost.
+const LIVENESS_GRACE: std::time::Duration = std::time::Duration::from_secs(6);

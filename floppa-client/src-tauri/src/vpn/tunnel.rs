@@ -1,6 +1,7 @@
 //! GotatunTunnel - WireGuard tunnel using gotatun library
 
 use super::platform::TunParams;
+use super::protocol::Protocol;
 use super::state::{AwgObfuscation, TrafficStats, WgConfig};
 use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
 use gotatun::tun::tun_async_device::TunDevice;
@@ -450,9 +451,21 @@ impl ActiveTunnel {
     }
 }
 
+/// What is running, reported by the process that owns it.
+///
+/// Recorded at start rather than inferred later: the protocol used to be guessed from whichever
+/// config the settings happened to name, so an adopted tunnel could confidently report the wrong
+/// one after a failed probe cycle had rewritten that setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TunnelMeta {
+    pub protocol: Protocol,
+    pub endpoint: String,
+    pub address: String,
+}
+
 /// Tunnel manager that owns the tunnel and provides thread-safe access
 pub struct TunnelManager {
-    tunnel: RwLock<Option<ActiveTunnel>>,
+    tunnel: RwLock<Option<(ActiveTunnel, TunnelMeta)>>,
 }
 
 impl TunnelManager {
@@ -463,11 +476,18 @@ impl TunnelManager {
     }
 
     /// Stop existing tunnel if any (helper for start methods).
-    async fn stop_existing(tunnel_guard: &mut Option<ActiveTunnel>) -> Result<(), String> {
-        if let Some(tunnel) = tunnel_guard.take() {
+    async fn stop_existing(
+        tunnel_guard: &mut Option<(ActiveTunnel, TunnelMeta)>,
+    ) -> Result<(), String> {
+        if let Some((tunnel, _)) = tunnel_guard.take() {
             tunnel.stop().await?;
         }
         Ok(())
+    }
+
+    /// Identity of the running tunnel, if there is one.
+    pub async fn meta(&self) -> Option<TunnelMeta> {
+        self.tunnel.read().await.as_ref().map(|(_, m)| m.clone())
     }
 
     /// Start WireGuard tunnel on desktop platforms (creates TUN device)
@@ -484,7 +504,18 @@ impl TunnelManager {
         Self::stop_existing(&mut tunnel_guard).await?;
 
         let tunnel = GotatunTunnel::new(config, interface_name, tun_params, endpoint, awg).await?;
-        *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
+        *tunnel_guard = Some((
+            ActiveTunnel::WireGuard(tunnel),
+            TunnelMeta {
+                protocol: if awg.is_some() {
+                    Protocol::AmneziaWg
+                } else {
+                    Protocol::WireGuard
+                },
+                endpoint: endpoint.to_string(),
+                address: config.address.clone(),
+            },
+        ));
 
         Ok(())
     }
@@ -516,7 +547,18 @@ impl TunnelManager {
         Self::stop_existing(&mut tunnel_guard).await?;
 
         let tunnel = GotatunTunnel::from_fd(config, tun_fd, awg).await?;
-        *tunnel_guard = Some(ActiveTunnel::WireGuard(tunnel));
+        *tunnel_guard = Some((
+            ActiveTunnel::WireGuard(tunnel),
+            TunnelMeta {
+                protocol: if awg.is_some() {
+                    Protocol::AmneziaWg
+                } else {
+                    Protocol::WireGuard
+                },
+                endpoint: config.peer_endpoint.clone(),
+                address: config.address.clone(),
+            },
+        ));
 
         Ok(())
     }
@@ -556,7 +598,7 @@ impl TunnelManager {
         }
 
         let tunnel = shoes_lite::api::VlessTunnel::start(config, tun_config).await?;
-        *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
+        *tunnel_guard = Some((ActiveTunnel::Vless(tunnel), vless_meta(config)));
         Ok(())
     }
 
@@ -575,13 +617,13 @@ impl TunnelManager {
 
         let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd).await?;
         info!("VLESS tunnel started successfully from fd={}", tun_fd);
-        *tunnel_guard = Some(ActiveTunnel::Vless(tunnel));
+        *tunnel_guard = Some((ActiveTunnel::Vless(tunnel), vless_meta(config)));
         Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), String> {
         let mut tunnel_guard = self.tunnel.write().await;
-        if let Some(tunnel) = tunnel_guard.take() {
+        if let Some((tunnel, _)) = tunnel_guard.take() {
             tunnel.stop().await?;
         }
         Ok(())
@@ -593,7 +635,7 @@ impl TunnelManager {
 
     pub async fn get_stats(&self) -> Option<TrafficStats> {
         let tunnel_guard = self.tunnel.read().await;
-        if let Some(tunnel) = tunnel_guard.as_ref() {
+        if let Some((tunnel, _)) = tunnel_guard.as_ref() {
             tunnel.get_stats().await
         } else {
             None
@@ -602,7 +644,7 @@ impl TunnelManager {
 
     pub async fn get_last_packet_received(&self) -> Option<i64> {
         let tunnel_guard = self.tunnel.read().await;
-        if let Some(tunnel) = tunnel_guard.as_ref() {
+        if let Some((tunnel, _)) = tunnel_guard.as_ref() {
             tunnel.get_last_packet_received().await
         } else {
             None
@@ -611,13 +653,15 @@ impl TunnelManager {
 
     pub async fn get_connection_duration(&self) -> Option<Duration> {
         let tunnel_guard = self.tunnel.read().await;
-        tunnel_guard.as_ref().and_then(|t| t.connection_duration())
+        tunnel_guard
+            .as_ref()
+            .and_then(|(t, _)| t.connection_duration())
     }
 
     pub async fn ping(&self) -> Result<(), String> {
         let tunnel_guard = self.tunnel.read().await;
         match tunnel_guard.as_ref() {
-            Some(tunnel) => tunnel.ping().await,
+            Some((tunnel, _)) => tunnel.ping().await,
             None => Err("No tunnel running".to_string()),
         }
     }
@@ -626,7 +670,7 @@ impl TunnelManager {
         let tunnel_guard = self.tunnel.read().await;
         tunnel_guard
             .as_ref()
-            .map(|t| t.interface_name().to_string())
+            .map(|(t, _)| t.interface_name().to_string())
     }
 }
 
@@ -635,5 +679,13 @@ impl Default for TunnelManager {
         Self {
             tunnel: RwLock::new(None),
         }
+    }
+}
+
+fn vless_meta(config: &shoes_lite::api::VlessConfig) -> TunnelMeta {
+    TunnelMeta {
+        protocol: Protocol::Vless,
+        endpoint: config.server_addr.to_string(),
+        address: config.address.clone().unwrap_or_default(),
     }
 }

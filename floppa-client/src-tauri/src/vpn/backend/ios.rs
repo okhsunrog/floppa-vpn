@@ -124,4 +124,20 @@ impl VpnBackend for IosBackend {
             ..Default::default()
         })
     }
+
+    /// Reports "reachable, nothing running" rather than "unreachable", because an unimplemented
+    /// backend that claimed darkness would make the actor wait out a grace period on every poll.
+    async fn observe(&self) -> crate::vpn::actor::types::Observation {
+        use crate::vpn::actor::types::{Observation, TunnelObservation, WorldView};
+        Observation {
+            observed_at: std::time::Instant::now(),
+            view: WorldView::Reachable(TunnelObservation {
+                running: None,
+                starting: false,
+                start_error: None,
+                raw_stats: None,
+                last_packet_secs: None,
+            }),
+        }
+    }
 }

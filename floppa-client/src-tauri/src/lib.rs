@@ -226,7 +226,10 @@ pub fn run() {
                     .path()
                     .app_data_dir()
                     .expect("Failed to get app data dir");
-                let socket_path = data_dir.join("vpn.sock").to_string_lossy().to_string();
+                let socket_path = data_dir
+                    .join(vpn::rpc::SOCKET_NAME)
+                    .to_string_lossy()
+                    .to_string();
                 info!("Android tarpc socket path: {socket_path}");
                 let backend = vpn::create_backend(socket_path);
                 app.manage(backend);

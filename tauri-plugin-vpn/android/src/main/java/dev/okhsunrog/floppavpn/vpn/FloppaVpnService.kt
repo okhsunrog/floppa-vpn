@@ -103,7 +103,10 @@ class FloppaVpnService : VpnService() {
             Log.i(TAG, "TUN interface created with fd: $fd")
 
             // Start the tunnel and tarpc RPC server via JNI
-            val socketPath = applicationInfo.dataDir + "/vpn.sock"
+            // Versioned by name: an older surviving :vpn keeps the old path, so a newer UI simply
+            // does not find it rather than mis-decoding its bincode replies. Keep in sync with
+            // SOCKET_NAME in rpc.rs.
+            val socketPath = applicationInfo.dataDir + "/vpn-v2.sock"
             nativeStartTunnel(fd, protocolConfig, socketPath)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN tunnel", e)

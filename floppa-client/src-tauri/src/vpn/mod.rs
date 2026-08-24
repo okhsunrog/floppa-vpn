@@ -12,6 +12,7 @@ pub mod rpc;
 #[cfg(target_os = "android")]
 pub mod rpc_server;
 pub mod state;
+pub mod store;
 pub mod tunnel;
 pub mod wire;
 
