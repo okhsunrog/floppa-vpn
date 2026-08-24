@@ -186,6 +186,10 @@ openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
     cd floppa-web-shared && vp exec openapi-ts
 
+# Regenerate tauri-specta bindings (no running app needed)
+bindings:
+    cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --bin export_bindings
+
 android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
 android_pkg := "dev.okhsunrog.floppa_vpn"
 

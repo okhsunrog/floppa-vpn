@@ -25,10 +25,14 @@ struct SingleInstancePayload {
     cwd: String,
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    // Setup Specta builder and register commands/events
-    let specta_builder = tauri_specta::Builder::<tauri::Wry>::new()
+/// The command and event surface that crosses into TypeScript.
+///
+/// Split out of [`run`] so the `export-bindings` binary can produce `bindings.ts` from the same
+/// definition without starting an app. Building this touches no window, no runtime and no VPN
+/// state — it is type reflection and nothing else — which is why regenerating bindings does not
+/// need a GUI.
+pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
+    tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
             vpn::commands::get_device_id,
             vpn::commands::get_device_name,
@@ -60,17 +64,33 @@ pub fn run() {
         ])
         // specta rc.25 forbids exporting BigInt-style types (i64/u64/usize/…) by default.
         // We export them as TS `number` (as before the upgrade) — IDs/byte counters stay numbers.
-        .dangerously_cast_bigints_to_number();
+        .dangerously_cast_bigints_to_number()
+}
 
-    // Export TypeScript bindings in debug mode on desktop.
-    // Use if-let to avoid panicking when launched from a different working directory
-    // (e.g. via deep-link handler where the second instance only needs single-instance relay).
+/// Write the TypeScript bindings for the surface [`specta_builder`] declares.
+///
+/// The one place the exporter is configured, so a file written by the standalone binary and one
+/// written by a running dev build are byte-identical — a difference between them would show up as
+/// a spurious diff and teach everyone to ignore the real ones.
+pub fn export_bindings(path: impl AsRef<std::path::Path>) -> Result<(), String> {
+    specta_builder()
+        .export(
+            specta_typescript::Typescript::default().header("/* eslint-disable */\n// @ts-nocheck"),
+            path.as_ref(),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let specta_builder = specta_builder();
+
+    // Keep a dev build self-correcting: `bun tauri dev` still refreshes the bindings on startup.
+    // Reported rather than propagated, because a second instance launched from a deep-link handler
+    // runs from a different working directory and only needs to relay its argv.
     #[cfg(all(debug_assertions, not(target_os = "android")))]
     {
-        if let Err(err) = specta_builder.export(
-            specta_typescript::Typescript::default().header("/* eslint-disable */\n// @ts-nocheck"),
-            "../src/bindings.ts",
-        ) {
+        if let Err(err) = export_bindings("../src/bindings.ts") {
             eprintln!("Warning: Failed to export TypeScript bindings: {err}");
         }
     }
