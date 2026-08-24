@@ -19,7 +19,7 @@ use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
     AttemptPhase, AttemptResult, CycleOutcome, Intent, IntentAccepted, IntentEpoch, IntentError,
-    Observation, Policy, Status, TunnelState, UnwindOwner, UpIntent, World,
+    Observation, Policy, Status, TunnelState, UpIntent, World,
 };
 use crate::vpn::backend::VpnBackend;
 use crate::vpn::platform::PlatformImpl;
@@ -47,8 +47,6 @@ struct AttemptHandle {
     epoch: IntentEpoch,
     index: usize,
     cancel: CancellationToken,
-    #[allow(dead_code)]
-    join: JoinHandle<()>,
 }
 
 /// Whether a command changed anything the decision table cares about.
@@ -199,7 +197,6 @@ impl TunnelActor {
                 );
                 self.held_stack = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
                 self.status = Status::Unwinding {
-                    owner: UnwindOwner::Actor,
                     cycle: None,
                     reason: types::UnwindReason::CrashRecovery,
                     tries: 0,
@@ -400,7 +397,6 @@ impl TunnelActor {
         self.cancel_issued = false;
 
         let now = Instant::now();
-        let now_unix = chrono::Utc::now().timestamp();
 
         // While unwinding, the attempt was cancelled *by* that unwind, so its report completes the
         // teardown rather than being a connect outcome. This is the only path a late-succeeding
@@ -438,7 +434,6 @@ impl TunnelActor {
             &self.intent,
             report.result,
             now,
-            now_unix,
             &self.policy,
         );
         self.apply(decision, now);
@@ -515,10 +510,8 @@ impl TunnelActor {
                 protocol,
                 epoch,
                 index,
-                total,
             } => {
                 debug_assert!(self.attempt.is_none(), "beginning while an attempt is live");
-                let _ = total;
 
                 let Some(config) = self.configs.get(protocol) else {
                     // A missing config is an attempt failure, not a panic and not a silent stall.
@@ -527,7 +520,7 @@ impl TunnelActor {
                     // the status would wait forever.
                     let cancel = CancellationToken::new();
                     let tx = self.cmd_tx.clone();
-                    let join = tokio::spawn(attempt::run_immediate_failure(
+                    tokio::spawn(attempt::run_immediate_failure(
                         tx,
                         epoch,
                         index,
@@ -537,7 +530,6 @@ impl TunnelActor {
                         epoch,
                         index,
                         cancel,
-                        join,
                     });
                     return;
                 };
@@ -559,12 +551,11 @@ impl TunnelActor {
                     #[cfg(target_os = "android")]
                     app: self.app.clone(),
                 };
-                let join = tokio::spawn(attempt::run(ctx));
+                tokio::spawn(attempt::run(ctx));
                 self.attempt = Some(AttemptHandle {
                     epoch,
                     index,
                     cancel,
-                    join,
                 });
                 self.cancel_issued = false;
             }

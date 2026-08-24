@@ -39,7 +39,6 @@ pub struct AttemptCtx {
     pub protocol: Protocol,
     pub config: ProtocolConfig,
     pub iface: InterfaceName,
-    #[allow(dead_code)]
     pub params: TunnelParams,
     pub backend: Arc<dyn VpnBackend>,
     pub platform: Arc<PlatformImpl>,

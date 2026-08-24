@@ -99,15 +99,6 @@ impl TunnelHandle {
         self.state.borrow().clone()
     }
 
-    pub fn subscribe(&self) -> watch::Receiver<TunnelState> {
-        self.state.clone()
-    }
-
-    /// The channel the actor's own spawned tasks report on.
-    pub fn sender(&self) -> mpsc::Sender<Command> {
-        self.tx.clone()
-    }
-
     pub async fn set_intent(&self, intent: IntentRequest) -> Result<IntentAccepted, IntentError> {
         let (reply, rx) = oneshot::channel();
         self.tx

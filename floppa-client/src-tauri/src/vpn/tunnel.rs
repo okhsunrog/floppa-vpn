@@ -513,21 +513,6 @@ impl TunnelManager {
         Ok(())
     }
 
-    /// Start WireGuard tunnel on Android using fd from VpnService
-    #[cfg(target_os = "android")]
-    pub async fn start_wireguard(
-        &self,
-        _config: &WgConfig,
-        _interface_name: &str,
-        _tun_params: &TunParams,
-        _awg: Option<&AwgObfuscation>,
-    ) -> Result<(), String> {
-        Err(
-            "On Android, call start_wireguard_with_fd() after receiving fd from VpnService"
-                .to_string(),
-        )
-    }
-
     /// Start WireGuard / AmneziaWG tunnel using a raw file descriptor (Android only)
     #[cfg(target_os = "android")]
     pub async fn start_wireguard_with_fd(

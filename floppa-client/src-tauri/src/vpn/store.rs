@@ -102,10 +102,6 @@ impl ConfigStore {
         self.save();
     }
 
-    pub fn has_any(&self) -> bool {
-        self.configs.has_any()
-    }
-
     /// The probe order actually usable right now: the caller's order narrowed to protocols we hold
     /// a config for, with the last known-good one moved to the front so a reconnect goes straight
     /// to what worked.
@@ -195,7 +191,7 @@ AllowedIPs = 0.0.0.0/0
     fn an_empty_config_is_rejected_rather_than_stored() {
         let mut store = store_with(SavedVpnConfigs::default());
         assert_eq!(store.import("   "), Err(ConfigError::Empty));
-        assert!(!store.has_any());
+        assert!(store.view().available.is_empty());
     }
 
     #[test]

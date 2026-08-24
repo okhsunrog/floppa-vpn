@@ -290,7 +290,6 @@ fn an_attempt_is_cancelled_but_never_dropped_when_the_intent_goes_down() {
     assert!(matches!(
         d.next,
         Status::Unwinding {
-            owner: UnwindOwner::Attempt,
             reason: UnwindReason::IntentDown,
             ..
         }
@@ -575,7 +574,6 @@ fn unwinding_absorbs_every_input() {
     // This is what makes "a late teardown runs against a newer connection" unwritable.
     let now = t0();
     let status = Status::Unwinding {
-        owner: UnwindOwner::Actor,
         cycle: Some(cycle(1, &[AWG], 1)),
         reason: UnwindReason::IntentDown,
         tries: 0,
@@ -650,7 +648,7 @@ fn going_down_during_a_retry_is_immediate() {
 // ------------------------------------------------------------------------------ attempt outcomes
 
 fn attempt_done(status: &Status, intent: &Intent, result: AttemptResult, now: Instant) -> Decision {
-    on_attempt_done(status, intent, result, now, 1_000, &policy())
+    on_attempt_done(status, intent, result, now, &policy())
 }
 
 fn established(protocol: Protocol) -> AttemptResult {
@@ -804,7 +802,6 @@ fn unwind_done(status: &Status, intent: &Intent, world: &World, now: Instant) ->
 
 fn unwinding_status(reason: UnwindReason, cycle: Option<Cycle>, tries: u32) -> Status {
     Status::Unwinding {
-        owner: UnwindOwner::Actor,
         cycle,
         reason,
         tries,

@@ -316,7 +316,6 @@ mod tests {
                 deadline: now + Duration::from_secs(25),
             },
             Status::Unwinding {
-                owner: UnwindOwner::Actor,
                 cycle: None,
                 reason: UnwindReason::IntentDown,
                 tries: 0,

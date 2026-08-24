@@ -227,14 +227,6 @@ pub struct UpStatus {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnwindOwner {
-    /// The attempt task is unwinding its own partial ladder; its terminal report ends the unwind.
-    Attempt,
-    /// The actor spawned an unwind over the stack it holds.
-    Actor,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnwindReason {
     IntentDown,
     IntentChanged,
@@ -268,8 +260,11 @@ pub enum Status {
     ///
     /// This variant **absorbs every input**. It is the reason a late teardown can no longer race a
     /// newer connect: while unwinding there is no transition that starts anything.
+    ///
+    /// Who is doing the unwinding is deliberately not recorded. It was, and nothing read it: an
+    /// attempt cancelled mid-ladder unwinds itself and reports, and that report is routed by the
+    /// status already being `Unwinding` — not by a field saying so.
     Unwinding {
-        owner: UnwindOwner,
         cycle: Option<Cycle>,
         reason: UnwindReason,
         /// How many times this unwind has been re-run after the world still reported Running.
@@ -298,10 +293,6 @@ impl Status {
             Self::Up(u) => Some(u.epoch),
             other => other.cycle().map(|c| c.epoch),
         }
-    }
-
-    pub fn is_unwinding(&self) -> bool {
-        matches!(self, Self::Unwinding { .. })
     }
 }
 
@@ -332,20 +323,6 @@ impl Observation {
 pub enum WorldView {
     Reachable(TunnelObservation),
     Unreachable(UnreachableCause),
-}
-
-impl WorldView {
-    /// The protocol of a tunnel the peer confirmed is running.
-    ///
-    /// `None` covers both "no tunnel" and "we could not ask" — which is fine for the one caller
-    /// that waits for a tunnel to appear, and is exactly why every *other* caller goes through
-    /// [`World::classify`] instead, where those two are kept apart.
-    pub fn running_protocol(&self) -> Option<Protocol> {
-        match self {
-            Self::Reachable(t) => t.running.as_ref().map(|r| r.protocol),
-            Self::Unreachable(_) => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -727,13 +704,9 @@ pub enum DnsFailurePolicy {
 /// Plain data, so [`reconcile`](super::reconcile) stays a pure function of its arguments.
 #[derive(Debug, Clone)]
 pub struct Policy {
-    /// Observation cadence while idle.
-    pub poll_idle: Duration,
-    /// Observation cadence while something is happening or the tunnel is up.
+    /// Observation cadence. One rate, not one per situation: the actor is never so idle that it
+    /// stops caring whether a tunnel appeared underneath it.
     pub poll_active: Duration,
-    /// Hard per-call deadline. Replaces the transport's own 10s default, which is what made any
-    /// debounce measured in poll *counts* meaningless.
-    pub rpc_deadline: Duration,
     /// An observation older than this is dark regardless of what it said.
     pub obs_stale_after: Duration,
     /// How long darkness is tolerated before an up tunnel is declared lost. Zero on desktop, where
@@ -743,8 +716,6 @@ pub struct Policy {
     pub attempt_budget: Duration,
     pub verify_wg: Duration,
     pub verify_vless: Duration,
-    /// Budget for the Android observe-then-stop undo.
-    pub android_stop_budget: Duration,
     /// Passes over the order for a cold, user-initiated connect. One means fail fast.
     pub cold_passes: u32,
     /// Passes over the order after a tunnel that was up died.
@@ -763,15 +734,12 @@ pub struct Policy {
 impl Default for Policy {
     fn default() -> Self {
         Self {
-            poll_idle: Duration::from_secs(5),
             poll_active: Duration::from_secs(1),
-            rpc_deadline: Duration::from_secs(2),
             obs_stale_after: Duration::from_secs(3),
             dark_grace: Duration::ZERO,
             attempt_budget: Duration::from_secs(25),
             verify_wg: Duration::from_secs(5),
             verify_vless: Duration::from_secs(10),
-            android_stop_budget: Duration::from_secs(8),
             cold_passes: 1,
             reconnect_passes: 3,
             backoff_base: Duration::from_secs(1),

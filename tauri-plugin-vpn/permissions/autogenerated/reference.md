@@ -7,9 +7,7 @@ Default permissions for VPN plugin
 - `allow-prepare-vpn`
 - `allow-start-vpn`
 - `allow-stop-vpn`
-- `allow-get-vpn-status`
 - `allow-get-installed-apps`
-- `allow-protect-socket`
 - `allow-get-safe-area-insets`
 - `allow-register-listener`
 - `allow-is-battery-optimization-disabled`
@@ -161,32 +159,6 @@ Denies the get_safe_area_insets command without any pre-configured scope.
 <tr>
 <td>
 
-`vpn:allow-get-vpn-status`
-
-</td>
-<td>
-
-Enables the get_vpn_status command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`vpn:deny-get-vpn-status`
-
-</td>
-<td>
-
-Denies the get_vpn_status command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `vpn:allow-is-battery-optimization-disabled`
 
 </td>
@@ -258,32 +230,6 @@ Enables the prepare_vpn command without any pre-configured scope.
 <td>
 
 Denies the prepare_vpn command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`vpn:allow-protect-socket`
-
-</td>
-<td>
-
-Enables the protect_socket command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`vpn:deny-protect-socket`
-
-</td>
-<td>
-
-Denies the protect_socket command without any pre-configured scope.
 
 </td>
 </tr>

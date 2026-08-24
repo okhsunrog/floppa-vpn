@@ -161,31 +161,6 @@ impl WgConfig {
             persistent_keepalive,
         })
     }
-
-    /// Convert to WireGuard config file format
-    pub fn to_config_str(&self) -> String {
-        let mut config = String::new();
-        config.push_str("[Interface]\n");
-        config.push_str(&format!("PrivateKey = {}\n", self.private_key));
-        config.push_str(&format!("Address = {}\n", self.address));
-        if let Some(dns) = &self.dns {
-            config.push_str(&format!("DNS = {}\n", dns));
-        }
-        if let Some(mtu) = self.mtu {
-            config.push_str(&format!("MTU = {}\n", mtu));
-        }
-        config.push_str("\n[Peer]\n");
-        config.push_str(&format!("PublicKey = {}\n", self.peer_public_key));
-        if let Some(psk) = &self.peer_preshared_key {
-            config.push_str(&format!("PresharedKey = {}\n", psk));
-        }
-        config.push_str(&format!("Endpoint = {}\n", self.peer_endpoint));
-        config.push_str(&format!("AllowedIPs = {}\n", self.allowed_ips));
-        if let Some(keepalive) = self.persistent_keepalive {
-            config.push_str(&format!("PersistentKeepalive = {}\n", keepalive));
-        }
-        config
-    }
 }
 
 /// Traffic statistics
@@ -499,49 +474,6 @@ impl AwgConfig {
             obfuscation: obf,
         })
     }
-
-    /// Render back to an AmneziaWG `.conf` (used for the Android IPC handoff and export).
-    pub fn to_config_str(&self) -> String {
-        let wg = &self.wg;
-        let o = &self.obfuscation;
-        let mut s = String::from("[Interface]\n");
-        s.push_str(&format!("PrivateKey = {}\n", wg.private_key));
-        s.push_str(&format!("Address = {}\n", wg.address));
-        if let Some(dns) = &wg.dns {
-            s.push_str(&format!("DNS = {dns}\n"));
-        }
-        if let Some(mtu) = wg.mtu {
-            s.push_str(&format!("MTU = {mtu}\n"));
-        }
-        s.push_str(&format!(
-            "Jc = {}\nJmin = {}\nJmax = {}\n",
-            o.jc, o.jmin, o.jmax
-        ));
-        s.push_str(&format!(
-            "S1 = {}\nS2 = {}\nS3 = {}\nS4 = {}\n",
-            o.s1, o.s2, o.s3, o.s4
-        ));
-        s.push_str(&format!(
-            "H1 = {}\nH2 = {}\nH3 = {}\nH4 = {}\n",
-            o.h1, o.h2, o.h3, o.h4
-        ));
-        for (n, val) in [(1, &o.i1), (2, &o.i2), (3, &o.i3), (4, &o.i4), (5, &o.i5)] {
-            if let Some(spec) = val {
-                s.push_str(&format!("I{n} = {spec}\n"));
-            }
-        }
-        s.push_str("\n[Peer]\n");
-        s.push_str(&format!("PublicKey = {}\n", wg.peer_public_key));
-        if let Some(psk) = &wg.peer_preshared_key {
-            s.push_str(&format!("PresharedKey = {psk}\n"));
-        }
-        s.push_str(&format!("Endpoint = {}\n", wg.peer_endpoint));
-        s.push_str(&format!("AllowedIPs = {}\n", wg.allowed_ips));
-        if let Some(keepalive) = wg.persistent_keepalive {
-            s.push_str(&format!("PersistentKeepalive = {keepalive}\n"));
-        }
-        s
-    }
 }
 
 /// Protocol-agnostic VPN configuration.
@@ -656,19 +588,6 @@ impl SavedVpnConfigs {
             Protocol::AmneziaWg => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
             Protocol::Vless => self.vless.clone().map(ProtocolConfig::Vless),
         }
-    }
-
-    /// The config the connect flow should use: the remembered preference when it is still
-    /// available, otherwise the first available protocol in [`Protocol::ALL`] order.
-    ///
-    /// The fallback replaces the old `_ => wireguard` catch-all, which turned both "no preference
-    /// recorded yet" and "preference is a string we do not recognise" into WireGuard — the one
-    /// protocol that is DPI-blocked on the networks this client targets.
-    pub fn preferred_config(&self) -> Option<ProtocolConfig> {
-        self.preferred_protocol
-            .0
-            .and_then(|p| self.get(p))
-            .or_else(|| Protocol::ALL.iter().find_map(|&p| self.get(p)))
     }
 
     /// Which protocols have a cached config. This is a SET: the order is [`Protocol::ALL`] for

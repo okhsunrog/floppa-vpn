@@ -40,13 +40,8 @@ class VpnConfigArgs {
     var mtu: Int = 1280
     var disallowedApps: Array<String> = emptyArray()
     var allowedApps: Array<String> = emptyArray()
-    /** Raw protocol config string (WG config text or vless:// URI), passed to :vpn process */
+    /** Generation of the request, echoed back so a superseded service instance is rejectable. */
     var epoch: Long = 0
-}
-
-@InvokeArg
-class ProtectSocketArgs {
-    var fd: Int = -1
 }
 
 @InvokeArg
@@ -156,16 +151,6 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             Log.e("VpnPlugin", "stopVpn: failed to send stop intent", e)
         }
         invoke.resolve()
-    }
-
-    @Command
-    fun getVpnStatus(invoke: Invoke) {
-        // In the two-process architecture, we can't check FloppaVpnService.instance
-        // from the UI process. The UI queries status via tarpc through Rust commands.
-        // This command returns "unknown" — the TS side should use getConnectionInfo() instead.
-        val ret = JSObject()
-        ret.put("status", "unknown")
-        invoke.resolve(ret)
     }
 
     /**
@@ -392,23 +377,6 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         Log.d("VpnPlugin", "notificationPermissionCallback: enabled=$enabled")
         val ret = JSObject()
         ret.put("enabled", enabled)
-        invoke.resolve(ret)
-    }
-
-    /**
-     * Protect a socket from VPN routing.
-     *
-     * Note: In the two-process architecture, this is primarily used by Rust JNI in the :vpn process
-     * (calling FloppaVpnService.protectSocket directly). This Tauri command is kept for backwards
-     * compatibility but may not work cross-process.
-     */
-    @Command
-    fun protectSocket(invoke: Invoke) {
-        invoke.parseArgs(ProtectSocketArgs::class.java)
-        val ret = JSObject()
-        // This won't work cross-process since FloppaVpnService.instance is per-process.
-        // Socket protection is handled locally in the :vpn process via JNI.
-        ret.put("protected", false)
         invoke.resolve(ret)
     }
 }
