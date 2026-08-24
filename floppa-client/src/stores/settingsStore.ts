@@ -4,9 +4,23 @@ import { commands, type AppInfo, type Protocol } from '../bindings'
 
 export type SplitMode = 'all' | 'include' | 'exclude'
 
-/** Probe order used until the user reorders it. Mirrors `Protocol::ALL` in Rust: AmneziaWG first,
- *  because plain WireGuard is DPI-blocked on the networks this client targets. */
-const DEFAULT_PROTOCOL_ORDER: Protocol[] = ['amneziawg', 'wireguard', 'vless']
+/**
+ * Probe priority used until the user reorders it, lowest first. AmneziaWG leads because plain
+ * WireGuard is DPI-blocked on the networks this client targets.
+ *
+ * A `Record` and not an array: `Protocol` is generated from Rust, so this stops compiling the
+ * moment a protocol is added there and nobody has said where it belongs. As a list it would
+ * simply have been short, and the missing protocol would have been unreachable in auto-select.
+ */
+const DEFAULT_PRIORITY: Record<Protocol, number> = {
+  amneziawg: 0,
+  wireguard: 1,
+  vless: 2,
+}
+
+const DEFAULT_PROTOCOL_ORDER: Protocol[] = (Object.keys(DEFAULT_PRIORITY) as Protocol[]).sort(
+  (a, b) => DEFAULT_PRIORITY[a] - DEFAULT_PRIORITY[b],
+)
 
 const KNOWN_PROTOCOLS = new Set<string>(DEFAULT_PROTOCOL_ORDER)
 
