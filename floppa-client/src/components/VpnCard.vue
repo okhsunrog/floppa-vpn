@@ -17,12 +17,12 @@ import { platform } from '@tauri-apps/plugin-os'
 import { useVpnStore } from '../stores/vpnStore'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useAndroidPermissions } from '../composables/useAndroidPermissions'
+import { usePermissionsStore } from '../stores/permissionsStore'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
-const permissions = useAndroidPermissions()
+const permissions = usePermissionsStore()
 const setupErrorKey = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
@@ -549,7 +549,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Notification Prompt -->
-  <UCard v-if="permissions.showNotificationPrompt.value" class="mb-4">
+  <UCard v-if="permissions.showNotificationPrompt" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-bell-off" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
@@ -574,7 +574,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Battery Optimization Prompt -->
-  <UCard v-if="permissions.showBatteryPrompt.value" class="mb-4">
+  <UCard v-if="permissions.showBatteryPrompt" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-battery-warning" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />

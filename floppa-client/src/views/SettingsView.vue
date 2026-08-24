@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useVpnStore } from '../stores/vpnStore'
 import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
-import { useAndroidPermissions } from '../composables/useAndroidPermissions'
+import { usePermissionsStore } from '../stores/permissionsStore'
 import { commands, type LogCaptureStatus, type LogConfig, type LogProfile } from '../bindings'
 import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
 
@@ -19,7 +19,7 @@ const toast = useToast()
 const vpn = useVpnStore()
 const settings = useSettingsStore()
 const updateStore = useUpdateStore()
-const permissions = useAndroidPermissions()
+const permissions = usePermissionsStore()
 const appVersion = __APP_VERSION__
 
 const exportingLogs = ref(false)
@@ -272,7 +272,7 @@ function selectMode(mode: SplitMode) {
     </UCard>
 
     <!-- Notifications (Android only) -->
-    <UCard v-if="vpn.isAndroid && permissions.notificationsEnabled.value !== null" class="mb-4">
+    <UCard v-if="vpn.isAndroid && permissions.notificationsEnabled !== null" class="mb-4">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-bell" class="size-5" />
@@ -288,23 +288,21 @@ function selectMode(mode: SplitMode) {
         <div class="flex items-center gap-2">
           <UIcon
             :name="
-              permissions.notificationsEnabled.value
-                ? 'i-lucide-check-circle'
-                : 'i-lucide-alert-triangle'
+              permissions.notificationsEnabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'
             "
-            :class="permissions.notificationsEnabled.value ? 'text-green-500' : 'text-yellow-500'"
+            :class="permissions.notificationsEnabled ? 'text-green-500' : 'text-yellow-500'"
             class="size-5"
           />
           <span class="text-sm">
             {{
-              permissions.notificationsEnabled.value
+              permissions.notificationsEnabled
                 ? t('settings.notificationsOn')
                 : t('settings.notificationsOff')
             }}
           </span>
         </div>
         <UButton
-          v-if="!permissions.notificationsEnabled.value"
+          v-if="!permissions.notificationsEnabled"
           :label="t('settings.enableNotifications')"
           color="warning"
           size="sm"
@@ -314,7 +312,7 @@ function selectMode(mode: SplitMode) {
     </UCard>
 
     <!-- Battery Optimization (Android only) -->
-    <UCard v-if="vpn.isAndroid && permissions.batteryOptDisabled.value !== null" class="mb-4">
+    <UCard v-if="vpn.isAndroid && permissions.batteryOptDisabled !== null" class="mb-4">
       <template #header>
         <div class="flex items-center gap-2">
           <UIcon name="i-lucide-battery" class="size-5" />
@@ -330,23 +328,21 @@ function selectMode(mode: SplitMode) {
         <div class="flex items-center gap-2">
           <UIcon
             :name="
-              permissions.batteryOptDisabled.value
-                ? 'i-lucide-check-circle'
-                : 'i-lucide-alert-triangle'
+              permissions.batteryOptDisabled ? 'i-lucide-check-circle' : 'i-lucide-alert-triangle'
             "
-            :class="permissions.batteryOptDisabled.value ? 'text-green-500' : 'text-yellow-500'"
+            :class="permissions.batteryOptDisabled ? 'text-green-500' : 'text-yellow-500'"
             class="size-5"
           />
           <span class="text-sm">
             {{
-              permissions.batteryOptDisabled.value
+              permissions.batteryOptDisabled
                 ? t('settings.batteryDisabled')
                 : t('settings.batteryEnabled')
             }}
           </span>
         </div>
         <UButton
-          v-if="!permissions.batteryOptDisabled.value"
+          v-if="!permissions.batteryOptDisabled"
           :label="t('settings.disableBatteryOptimization')"
           color="warning"
           size="sm"
