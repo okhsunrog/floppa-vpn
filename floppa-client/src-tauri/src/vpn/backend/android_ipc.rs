@@ -119,7 +119,18 @@ impl VpnBackend for AndroidIpcBackend {
     }
 
     async fn stop(&self) -> Result<(), String> {
-        let client = self.get_client().await?;
+        let client = match self.get_client_typed().await {
+            Ok(client) => client,
+            // Nothing is listening, so there is nothing running to stop: the desired end state is
+            // already true. Reporting that as a failure made the actor re-run a teardown that had
+            // in fact already happened, and then give up on it.
+            Err((UnreachableCause::NotStarted | UnreachableCause::ConnectRefused, reason)) => {
+                debug!("nothing to stop: {reason}");
+                return Ok(());
+            }
+            Err((_, reason)) => return Err(reason),
+        };
+
         match client.stop(tarpc::context::current()).await {
             Ok(result) => {
                 self.invalidate_client().await;

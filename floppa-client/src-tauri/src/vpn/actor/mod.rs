@@ -82,6 +82,9 @@ pub struct TunnelActor {
     // ---- in-flight work ----
     attempt: Option<AttemptHandle>,
     unwind: Option<JoinHandle<()>>,
+    /// When the in-flight unwind started, so its result is judged against a later look at the
+    /// world rather than one taken before it ran.
+    unwind_started: Option<Instant>,
     cancel_issued: bool,
 
     // ---- bookkeeping ----
@@ -126,6 +129,7 @@ impl TunnelActor {
             app: app.clone(),
             attempt: None,
             unwind: None,
+            unwind_started: None,
             cancel_issued: false,
             next_epoch: 1,
             seq: 0,
@@ -443,7 +447,19 @@ impl TunnelActor {
     fn on_unwind_done(&mut self, report: UnwindReport) {
         self.unwind = None;
         let now = Instant::now();
-        let world = World::classify(&self.last_obs, now, &self.policy);
+
+        // Judge the teardown only against a look taken *after* it ran.
+        //
+        // An observation from before the unwind says nothing about whether it worked, and every
+        // retry here happens in microseconds — far faster than the poll interval — so re-checking
+        // the same pre-teardown observation would fail the same way every time and burn the whole
+        // retry budget in under a millisecond. Treating it as dark falls through to the ordinary
+        // rows, which re-observe.
+        let world = match self.unwind_started {
+            Some(started) if self.last_obs.observed_at < started => World::Dark,
+            _ => World::classify(&self.last_obs, now, &self.policy),
+        };
+        self.unwind_started = None;
         let decision = reconcile::on_unwind_done(
             &self.status,
             &self.intent,
@@ -578,6 +594,7 @@ impl TunnelActor {
                 let backend = self.backend.clone();
                 let retries = self.policy.undo_retries;
                 let tx = self.cmd_tx.clone();
+                self.unwind_started = Some(Instant::now());
                 self.unwind = Some(tokio::spawn(async move {
                     let report = unwind(
                         &mut stack,
