@@ -67,6 +67,13 @@ pub(super) fn generate_nonce() -> String {
     format!("{:032x}{:032x}", random::<u128>(), random::<u128>())
 }
 
+/// Telegram caps deep-link `start` payloads at 64 chars and inline-button `callback_data` at
+/// 64 bytes; the code travels as both `link_<code>` and `link_merge:<code>`, so it must stay
+/// ≤ 53 chars. 128 bits is ample for a single-use code with a 10-minute TTL.
+pub(super) fn generate_link_code() -> String {
+    format!("{:032x}", random::<u128>())
+}
+
 fn is_allowed_redirect_uri(uri: &str) -> bool {
     uri.starts_with("floppa://") || uri.starts_with("http://127.0.0.1:")
 }
@@ -633,4 +640,20 @@ pub(super) async fn login_account(
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
     let result = fetch_user_result(&state, user_id).await?;
     Ok(Json(build_auth_response(&state, result)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::generate_link_code;
+
+    /// Telegram rejects deep-link `start` payloads over 64 chars and inline-button
+    /// `callback_data` over 64 bytes; the link code travels as both `link_<code>`
+    /// and `link_merge:<code>`.
+    #[test]
+    fn link_code_fits_telegram_limits() {
+        let code = generate_link_code();
+        assert!(format!("link_{code}").len() <= 64);
+        assert!(format!("link_merge:{code}").len() <= 64);
+        assert!(code.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }
