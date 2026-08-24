@@ -96,6 +96,8 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
 ### Client App (Tauri 2)
 - Cross-platform: Linux, Windows, Android
 - AmneziaWG (default), WireGuard, and VLESS+REALITY tunnel support
+- [gotatun](https://github.com/okhsunrog/gotatun) — WireGuard and AmneziaWG in userspace, a fork of
+  Mullvad's boringtun carrying the AmneziaWG obfuscation work
 - Split tunneling with per-app selection (Android)
 - WireGuard config persistence via OS keyring (desktop) or encrypted file (Android)
 - Deep-link authentication (Telegram Login Widget → JWT)
@@ -107,7 +109,7 @@ The client uses trait-based abstraction (`VpnBackend` + `Platform`) to share Tau
 
 **Language split:**
 
-- **Rust** — all VPN logic: WireGuard tunnel (gotatun), VLESS tunnel (shoes-lite), connection management, route/DNS/TUN setup, config persistence, IPC between processes, Tauri commands. The entire `VpnBackend` and `Platform` trait hierarchy is Rust
+- **Rust** — all VPN logic: WireGuard/AmneziaWG tunnel ([gotatun](https://github.com/okhsunrog/gotatun)), VLESS tunnel ([shoes-lite](https://github.com/okhsunrog/shoes-lite)), connection management, route/DNS/TUN setup, config persistence, IPC between processes, Tauri commands. The entire `VpnBackend` and `Platform` trait hierarchy is Rust
 - **TypeScript / Vue** — UI layer: connection controls, stats display, settings, split tunneling picker, update checks, theme management
 - **Kotlin** (Android only) — thin platform bridge via `tauri-plugin-vpn`: VPN service lifecycle, TUN fd creation, `VpnService.Builder` for split tunneling, foreground notification, system API access (battery optimization, notification permissions, status bar style, safe area insets, device name)
 
@@ -204,7 +206,7 @@ graph TD
 | Daemon | Rust, WireGuard (`wg`) + AmneziaWG (`awg`, kernel DKMS module), Linux tc HFSC, Prometheus metrics |
 | VLESS Proxy | Rust, [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS+REALITY+Vision), Prometheus metrics |
 | Frontend | Vue 3, Nuxt UI v4, Pinia Colada, Tailwind v4 |
-| Client | Tauri 2, gotatun (Mullvad WireGuard + AmneziaWG obfuscation), shoes-lite (VLESS), tauri-specta, custom tauri-plugin-vpn |
+| Client | Tauri 2, [gotatun](https://github.com/okhsunrog/gotatun) (WireGuard + AmneziaWG obfuscation, fork of Mullvad's boringtun), [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS), tauri-specta, custom tauri-plugin-vpn |
 | Database | PostgreSQL with LISTEN/NOTIFY |
 | Metrics | VictoriaMetrics (Prometheus-compatible TSDB) |
 | Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), XTLS REALITY, JWT |
