@@ -215,7 +215,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: aarch64-linux-android
+
+      # rust-toolchain.toml pins the channel, so cargo does not run the toolchain this action
+      # installed — and a target added to `stable` is not present on the pinned one. Adding it
+      # here resolves the active toolchain from the checkout, which is the one that will build.
+      - name: Add the Android target to the pinned toolchain
+        run: rustup target add aarch64-linux-android
 
       - uses: Swatinem/rust-cache@v2
         with:

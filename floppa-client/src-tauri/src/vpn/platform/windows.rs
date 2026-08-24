@@ -73,10 +73,10 @@ impl WindowsPlatform {
                 // Format: "    Idx     Met         MTU          State                Name"
                 // Line:   "     12    4250        1500  connected     floppa0"
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 5 {
-                    if let Ok(idx) = parts[0].parse::<u32>() {
-                        return Ok(idx);
-                    }
+                if parts.len() >= 5
+                    && let Ok(idx) = parts[0].parse::<u32>()
+                {
+                    return Ok(idx);
                 }
             }
         }
