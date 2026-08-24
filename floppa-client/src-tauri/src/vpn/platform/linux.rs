@@ -32,8 +32,6 @@ const POLICY_CONTENT: &str =
 pub struct LinuxPlatform {
     /// Whether systemd-resolved is available.
     has_resolvectl: bool,
-    /// Whether the privileged helper installed cleanly at startup; surfaced by `preflight`.
-    helper_ready: Result<(), String>,
 }
 
 impl LinuxPlatform {
@@ -50,23 +48,12 @@ impl LinuxPlatform {
             debug!("resolvectl not available, will modify /etc/resolv.conf directly");
         }
 
-        // Install polkit policy + helper if missing or outdated. A failure here is remembered
-        // rather than only logged: `preflight` turns it into a typed error before anything is
-        // mutated, instead of letting the first privileged call fail opaquely mid-connect.
-        let helper_ready = Self::ensure_polkit_installed();
-        if let Err(e) = &helper_ready {
-            warn!("Failed to install polkit policy: {e}");
-        }
-
-        Self {
-            has_resolvectl,
-            helper_ready,
-        }
+        Self { has_resolvectl }
     }
 
     /// Check if the polkit policy and helper are installed and up-to-date.
     /// If not, write them to temp files and use pkexec to install (one password prompt).
-    fn ensure_polkit_installed() -> Result<(), String> {
+    fn ensure_polkit_installed() -> Result<(), PlatformError> {
         let helper_ok = std::fs::read_to_string(HELPER_PATH).is_ok_and(|c| c == HELPER_CONTENT);
         let policy_ok = std::fs::read_to_string(POLICY_PATH).is_ok_and(|c| c == POLICY_CONTENT);
 
@@ -81,16 +68,16 @@ impl LinuxPlatform {
         let tmp_helper = tempfile::Builder::new()
             .prefix("floppa-helper-")
             .tempfile()
-            .map_err(|e| format!("Failed to create temp helper: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to create temp helper: {e}")))?;
         let tmp_policy = tempfile::Builder::new()
             .prefix("floppa-policy-")
             .tempfile()
-            .map_err(|e| format!("Failed to create temp policy: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to create temp policy: {e}")))?;
 
         std::fs::write(tmp_helper.path(), HELPER_CONTENT)
-            .map_err(|e| format!("Failed to write temp helper: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to write temp helper: {e}")))?;
         std::fs::write(tmp_policy.path(), POLICY_CONTENT)
-            .map_err(|e| format!("Failed to write temp policy: {}", e))?;
+            .map_err(|e| PlatformError::Failed(format!("failed to write temp policy: {e}")))?;
 
         // Single pkexec call to install both files
         let script = format!(
@@ -106,17 +93,26 @@ impl LinuxPlatform {
         let output = Command::new("pkexec")
             .args(["sh", "-c", &script])
             .output()
-            .map_err(|e| format!("Failed to run pkexec: {}", e))?;
+            .map_err(|e| PlatformError::Unavailable(format!("failed to run pkexec: {e}")))?;
 
         // tmp_helper and tmp_policy are automatically cleaned up on drop
 
         if output.status.success() {
             info!("Polkit policy and helper installed successfully");
-            Ok(())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(format!("pkexec install failed: {}", stderr))
+            return Ok(());
         }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        // Same codes as `run_helper`: 126 is a declined or dismissed dialog, 127 is pkexec itself
+        // being unusable. Reported apart because "you said no" is not "your system is broken".
+        Err(match output.status.code() {
+            Some(126) => PlatformError::PermissionDenied(if stderr.is_empty() {
+                "authorisation declined".to_string()
+            } else {
+                stderr
+            }),
+            _ => PlatformError::Unavailable(format!("pkexec install failed: {stderr}")),
+        })
     }
 
     /// Run the network helper via pkexec.
@@ -251,11 +247,22 @@ impl Platform for LinuxPlatform {
         }
     }
 
+    /// Install the privileged helper if it is missing or outdated, and report whether it is usable.
+    ///
+    /// Deliberately here and not in the constructor. Installing runs `pkexec`, which raises an
+    /// authentication dialog — and the constructor runs during app startup, on the thread that has
+    /// not built the window yet, so a machine needing the helper sat on a password prompt with
+    /// nothing on screen to explain it. This is the first step of an attempt, which is exactly when
+    /// the user has asked for something that needs the privilege.
+    ///
+    /// Re-checked per attempt rather than remembered: when nothing needs installing this is two
+    /// file reads, and when the user dismisses the dialog, pressing Connect again asks again
+    /// instead of failing from a decision cached at startup.
     async fn preflight(&self) -> Result<(), PlatformError> {
-        match &self.helper_ready {
-            Ok(()) => Ok(()),
-            Err(e) => Err(PlatformError::Unavailable(e.clone())),
-        }
+        // Blocking: it spawns pkexec and waits for a human.
+        tokio::task::spawn_blocking(Self::ensure_polkit_installed)
+            .await
+            .map_err(|e| PlatformError::Unavailable(format!("helper install task panicked: {e}")))?
     }
 
     async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
