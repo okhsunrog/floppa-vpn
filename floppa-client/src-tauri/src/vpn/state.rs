@@ -6,94 +6,6 @@ use shoes_lite::api::VlessConfig;
 use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
-use tokio::sync::RwLock;
-
-/// Connection status enum
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectionStatus {
-    #[default]
-    Disconnected,
-    Connecting,
-    VerifyingConnection,
-    Connected,
-    Disconnecting,
-}
-
-/// Category of a connect failure. Lets the frontend decide what to do without
-/// string-matching error messages: `verify_failed` is worth trying another
-/// protocol (and may mean the peer was deleted), `permission_denied` needs user
-/// action, `tunnel_error` is usually environmental, `busy` is a re-entrancy guard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum ConnectErrorCode {
-    Busy,
-    PermissionDenied,
-    VerifyFailed,
-    TunnelError,
-}
-
-/// Structured error returned from the `connect` command.
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ConnectError {
-    pub code: ConnectErrorCode,
-    pub message: String,
-}
-
-impl ConnectError {
-    pub fn busy(message: impl Into<String>) -> Self {
-        Self {
-            code: ConnectErrorCode::Busy,
-            message: message.into(),
-        }
-    }
-    pub fn permission(message: impl Into<String>) -> Self {
-        Self {
-            code: ConnectErrorCode::PermissionDenied,
-            message: message.into(),
-        }
-    }
-    pub fn verify(message: impl Into<String>) -> Self {
-        Self {
-            code: ConnectErrorCode::VerifyFailed,
-            message: message.into(),
-        }
-    }
-    pub fn tunnel(message: impl Into<String>) -> Self {
-        Self {
-            code: ConnectErrorCode::TunnelError,
-            message: message.into(),
-        }
-    }
-
-    /// Map a platform failure onto the connect vocabulary, preserving the distinction the
-    /// platform already drew: a denied or unavailable privilege is not worth another attempt.
-    pub fn from_platform(e: &crate::vpn::platform::PlatformError) -> Self {
-        use crate::vpn::platform::PlatformError;
-        match e {
-            PlatformError::PermissionDenied(m) => Self::permission(m.clone()),
-            PlatformError::Unavailable(m) => Self::permission(m.clone()),
-            PlatformError::Failed(m) => Self::tunnel(m.clone()),
-        }
-    }
-}
-
-/// Setup/IO errors propagated via `?` (DNS, TUN, routing) are environmental —
-/// classify them as `tunnel_error`. Verify/permission/busy sites construct their
-/// variant explicitly instead of relying on this.
-impl From<String> for ConnectError {
-    fn from(message: String) -> Self {
-        Self::tunnel(message)
-    }
-}
-
-impl std::fmt::Display for ConnectError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message)
-    }
-}
 
 /// WireGuard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
@@ -283,32 +195,6 @@ pub struct TrafficStats {
     pub rx_bytes: u64,
     pub tx_bytes_per_sec: f64,
     pub rx_bytes_per_sec: f64,
-}
-
-/// Connection information
-#[derive(Debug, Clone, Serialize, Deserialize, Type)]
-pub struct ConnectionInfo {
-    pub status: ConnectionStatus,
-    pub protocol: Option<Protocol>,
-    pub server_endpoint: Option<String>,
-    pub assigned_ip: Option<String>,
-    pub connected_at: Option<i64>, // Unix timestamp
-    pub last_packet_received: Option<i64>,
-    pub stats: TrafficStats,
-}
-
-impl Default for ConnectionInfo {
-    fn default() -> Self {
-        Self {
-            status: ConnectionStatus::Disconnected,
-            protocol: None,
-            server_endpoint: None,
-            assigned_ip: None,
-            connected_at: None,
-            last_packet_received: None,
-            stats: TrafficStats::default(),
-        }
-    }
 }
 
 /// Tracks previous stats for computing transfer rates
@@ -798,45 +684,5 @@ impl SavedVpnConfigs {
     /// Whether any config is stored.
     pub fn has_any(&self) -> bool {
         self.wireguard.is_some() || self.amneziawg.is_some() || self.vless.is_some()
-    }
-}
-
-/// Global VPN state
-pub struct VpnState {
-    pub configs: RwLock<SavedVpnConfigs>,
-    /// The rollback stack for the tunnel that is currently up, if any.
-    ///
-    /// Temporary home: in the actor commit this becomes a local variable of the actor task, at
-    /// which point no lock guards it at all.
-    pub held_stack: tokio::sync::Mutex<Option<crate::vpn::rollback::RollbackStack>>,
-    pub connection: RwLock<ConnectionInfo>,
-    pub speed_tracker: RwLock<SpeedTracker>,
-    /// Consecutive polls where the backend was unreachable (`get_all_info` → None).
-    /// Used by `get_connection_info` to avoid mistaking a transient IPC gap (UI
-    /// process reconnecting to the Android :vpn process) for a stopped tunnel.
-    pub unreachable_polls: AtomicU32,
-}
-
-impl VpnState {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            configs: RwLock::new(SavedVpnConfigs::default()),
-            held_stack: tokio::sync::Mutex::new(None),
-            connection: RwLock::new(ConnectionInfo::default()),
-            speed_tracker: RwLock::new(SpeedTracker::new()),
-            unreachable_polls: AtomicU32::new(0),
-        })
-    }
-}
-
-impl Default for VpnState {
-    fn default() -> Self {
-        Self {
-            configs: RwLock::new(SavedVpnConfigs::default()),
-            held_stack: tokio::sync::Mutex::new(None),
-            connection: RwLock::new(ConnectionInfo::default()),
-            speed_tracker: RwLock::new(SpeedTracker::new()),
-            unreachable_polls: AtomicU32::new(0),
-        }
     }
 }

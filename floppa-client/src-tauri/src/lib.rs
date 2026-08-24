@@ -9,7 +9,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use tracing::{info, warn};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;
-use vpn::{PlatformImpl, VpnState, get_platform};
+use vpn::{PlatformImpl, get_platform};
 
 /// Log directory, set once at startup. Used by log export commands.
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -32,15 +32,14 @@ pub fn run() {
         .commands(tauri_specta::collect_commands![
             vpn::commands::get_device_id,
             vpn::commands::get_device_name,
-            vpn::commands::set_active_config,
-            vpn::commands::clear_config,
-            vpn::commands::load_saved_config,
-            vpn::commands::get_config,
-            vpn::commands::set_active_protocol,
-            vpn::commands::get_available_protocols,
-            vpn::commands::connect,
-            vpn::commands::disconnect,
-            vpn::commands::get_connection_info,
+            vpn::commands::tunnel_set_intent_up,
+            vpn::commands::tunnel_set_intent_down,
+            vpn::commands::tunnel_await_cycle,
+            vpn::commands::tunnel_get_state,
+            vpn::commands::import_config,
+            vpn::commands::list_configs,
+            vpn::commands::clear_configs,
+            vpn::commands::forget_preferred_protocol,
             vpn::commands::get_installed_apps,
             vpn::commands::is_battery_optimization_disabled,
             vpn::commands::request_disable_battery_optimization,
@@ -74,8 +73,7 @@ pub fn run() {
         }
     }
 
-    // Create VPN state and platform (persistent across calls)
-    let vpn_state = VpnState::new();
+    // The platform is stateless and shared; the tunnel state lives inside the actor.
     let platform: Arc<PlatformImpl> = Arc::new(get_platform());
 
     // Create VPN backend (desktop — Android backend is created in setup() where app paths are available)
@@ -109,8 +107,7 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(vpn_state.clone())
-        .manage(platform)
+        .manage(platform.clone())
         .invoke_handler(specta_builder.invoke_handler());
 
     // Desktop-only: fs and dialog plugins
@@ -161,40 +158,6 @@ pub fn run() {
                 vpn::config::init_config_dir(config_dir);
             }
 
-            // Replay any rollback steps a previous run left behind. Routes and DNS outlive the
-            // process, so a crash or force-kill mid-connect would otherwise strand the machine
-            // pointing at a tunnel that no longer exists. Runs before anything can connect.
-            #[cfg(not(target_os = "android"))]
-            {
-                use vpn::rollback::{Journal, RollbackStack, unwind};
-
-                let journal = vpn::config::config_dir()
-                    .ok()
-                    .map(|dir| Journal::new(Journal::default_path(&dir)));
-                if let Some(journal) = journal {
-                    let orphaned = journal.read_orphaned();
-                    if !orphaned.is_empty() {
-                        warn!(
-                            count = orphaned.len(),
-                            "previous run left network changes applied — unwinding"
-                        );
-                        let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
-                        let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
-                        tauri::async_runtime::spawn(async move {
-                            let mut stack = RollbackStack::from_orphaned(orphaned, Some(journal));
-                            let report =
-                                unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1)
-                                    .await;
-                            if report.is_clean() {
-                                info!("recovered cleanly from a previous run");
-                            } else {
-                                warn!(residual = ?report.residual, "recovery left residue");
-                            }
-                        });
-                    }
-                }
-            }
-
             #[cfg(not(mobile))]
             {
                 // Registering repoints the system-wide floppa:// handler at the current binary.
@@ -235,6 +198,26 @@ pub fn run() {
                 app.manage(backend);
             }
 
+            // Spawn the tunnel actor. From here on it is the only thing that touches the tunnel:
+            // every command is a message to it, and the published state is the only thing the UI
+            // reads. Crash recovery and adoption of a surviving tunnel happen in its bootstrap.
+            {
+                let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
+                let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
+                let journal = vpn::config::config_dir().ok().map(|dir| {
+                    vpn::rollback::Journal::new(vpn::rollback::Journal::default_path(&dir))
+                });
+
+                let handle = vpn::actor::TunnelActor::spawn(
+                    backend,
+                    platform,
+                    journal,
+                    #[cfg(target_os = "android")]
+                    app.handle().clone(),
+                );
+                app.manage(handle);
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -242,51 +225,30 @@ pub fn run() {
 
     app.run(
         |#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
-            // Graceful VPN cleanup on desktop exit — restore DNS, routes, stop tunnel
+            // Graceful teardown on desktop exit.
+            //
+            // Asking the actor to go down and waiting for it to actually be down, rather than
+            // reaching past it into the tunnel: it holds the record of what was applied, so it is
+            // the only thing that can undo exactly that. The previous version was gated on the
+            // tunnel still reporting as running, which left routes and DNS behind whenever the
+            // tunnel had already died.
             #[cfg(not(target_os = "android"))]
             if let tauri::RunEvent::Exit = event {
-                use vpn::backend::VpnBackend;
+                use vpn::actor::handle::TunnelHandle;
 
-                let backend = app_handle.state::<Arc<dyn VpnBackend>>();
-                let platform = app_handle.state::<Arc<PlatformImpl>>();
-                let state = app_handle.state::<Arc<vpn::VpnState>>();
-
-                tauri::async_runtime::block_on(async {
-                    use vpn::rollback::{ExtraUndo, RollbackStack, unwind};
-
-                    // Unwind whatever was applied, whether or not the tunnel still reports as
-                    // running: the previous version was gated on `is_running`, so an exit after
-                    // the tunnel had already died left routes and DNS behind.
-                    let held = state.held_stack.lock().await.take();
-                    match held {
-                        Some(mut stack) => {
-                            info!("App exiting with an applied tunnel — unwinding");
-                            let report = unwind(
-                                &mut stack,
-                                Some(ExtraUndo::StopBackend),
-                                platform.inner().as_ref(),
-                                backend.inner().as_ref(),
-                                1,
-                            )
-                            .await;
-                            if !report.is_clean() {
-                                warn!(residual = ?report.residual, "exit rollback left residue");
-                            }
-                            info!("VPN cleanup complete");
-                        }
-                        None if backend.get_all_info().await.is_some_and(|i| i.is_running) => {
-                            info!("App exiting with an adopted tunnel — stopping it");
-                            let mut empty = RollbackStack::default();
-                            let _ = unwind(
-                                &mut empty,
-                                Some(ExtraUndo::StopBackend),
-                                platform.inner().as_ref(),
-                                backend.inner().as_ref(),
-                                1,
-                            )
-                            .await;
-                        }
-                        None => {}
+                let handle = app_handle.state::<TunnelHandle>().inner().clone();
+                tauri::async_runtime::block_on(async move {
+                    let _ = handle
+                        .set_intent(vpn::actor::handle::IntentRequest::Down)
+                        .await;
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        handle.await_quiescent(),
+                    )
+                    .await
+                    {
+                        Ok(()) => info!("VPN cleanup complete"),
+                        Err(_) => warn!("timed out waiting for the tunnel to settle on exit"),
                     }
                 });
             }

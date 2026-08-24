@@ -1,15 +1,14 @@
+use super::actor::handle::{IntentRequest, TunnelHandle};
+use super::actor::types::{
+    ConfigsView, CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelParams, TunnelState,
+};
 use super::backend::VpnBackend;
 use super::config as vpn_config;
-use super::platform::PlatformImpl;
-use super::protocol::{Preference, Protocol};
-use super::state::{
-    AwgConfig, ConnectError, ConnectionInfo, ConnectionStatus, ProtocolConfig, SavedVpnConfigs,
-    VlessVpnConfig, VpnState, WgConfig, config_str_is_amneziawg,
-};
+use super::protocol::Protocol;
+use super::store::ConfigError;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::{AppHandle, State};
 #[allow(unused_imports)]
@@ -71,135 +70,94 @@ pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
     vpn_config::get_device_name()
 }
 
-/// Parse a config string (WireGuard or VLESS URI), store under the right protocol key, and persist.
+// ---------------------------------------------------------------------------------- the tunnel
+//
+// Every command here is a thin wrapper over the actor. None of them touches tunnel state, and
+// none of them can block on the tunnel: setting an intent returns as soon as the actor has
+// accepted it, and waiting for the result is a separate call the caller may drop.
+
+/// Ask for a tunnel.
+///
+/// Returns as soon as the actor accepts the intent — the epoch it returns identifies this request
+/// for [`tunnel_await_cycle`]. There is deliberately no "busy" failure: with a single owner and a
+/// write-only intent queue, there is no bad moment to ask.
 #[tauri::command]
 #[specta::specta]
-pub async fn set_active_config(
-    config_str: String,
-    state: State<'_, Arc<VpnState>>,
-) -> Result<(), String> {
-    info!("Setting active config");
-    let trimmed = config_str.trim();
-    let mut configs = state.configs.write().await;
-    if trimmed.starts_with("vless://") {
-        let vless = VlessVpnConfig::from_uri(trimmed)?;
-        configs.vless = Some(vless);
-        configs.preferred_protocol = Preference(Some(Protocol::Vless));
-    } else if config_str_is_amneziawg(&config_str) {
-        let awg = AwgConfig::from_config_str(&config_str)?;
-        configs.amneziawg = Some(awg);
-        configs.preferred_protocol = Preference(Some(Protocol::AmneziaWg));
-    } else {
-        let wg = WgConfig::from_config_str(&config_str)?;
-        configs.wireguard = Some(wg);
-        configs.preferred_protocol = Preference(Some(Protocol::WireGuard));
-    };
-    vpn_config::save_configs(&configs);
+pub async fn tunnel_set_intent_up(
+    order: Vec<Protocol>,
+    params: TunnelParams,
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<IntentAccepted, IntentError> {
+    tunnel.set_intent(IntentRequest::Up { order, params }).await
+}
+
+/// Ask for no tunnel. Also the cancel button: an intent change is how an in-flight attempt is
+/// stopped.
+#[tauri::command]
+#[specta::specta]
+pub async fn tunnel_set_intent_down(
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<IntentAccepted, IntentError> {
+    tunnel.set_intent(IntentRequest::Down).await
+}
+
+/// Wait for a request to reach a terminal outcome.
+///
+/// Safe to drop: dropping the future only discards the answer, it never cancels what the actor is
+/// doing. A caller that asks after the fact still gets the answer, because recent outcomes are
+/// retained.
+#[tauri::command]
+#[specta::specta]
+pub async fn tunnel_await_cycle(
+    epoch: IntentEpoch,
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<CycleOutcome, IntentError> {
+    tunnel.await_cycle(epoch).await
+}
+
+/// The current snapshot. A local read of the published state — no IPC, no lock.
+#[tauri::command]
+#[specta::specta]
+pub fn tunnel_get_state(tunnel: State<'_, TunnelHandle>) -> TunnelState {
+    tunnel.snapshot()
+}
+
+/// Store a config under its own protocol key.
+///
+/// Storing is not choosing: this does not change which protocol the next connect would use. The
+/// previous behaviour of switching to whatever was imported last is what let a server sync
+/// silently reorder the user's preference.
+#[tauri::command]
+#[specta::specta]
+pub async fn import_config(
+    raw: String,
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<Protocol, ConfigError> {
+    tunnel.import_config(raw).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn list_configs(tunnel: State<'_, TunnelHandle>) -> Result<ConfigsView, ()> {
+    Ok(tunnel.list_configs().await)
+}
+
+/// Forget every stored config.
+///
+/// Goes down and waits for the tunnel to actually be gone before wiping, rather than deciding from
+/// a status snapshot — which is how a live adopted tunnel could survive being forgotten.
+#[tauri::command]
+#[specta::specta]
+pub async fn clear_configs(tunnel: State<'_, TunnelHandle>) -> Result<(), IntentError> {
+    tunnel.clear_configs().await
+}
+
+/// Forget which protocol last worked, so the next connect probes from the top of the order again.
+#[tauri::command]
+#[specta::specta]
+pub async fn forget_preferred_protocol(tunnel: State<'_, TunnelHandle>) -> Result<(), ()> {
+    tunnel.forget_preferred().await;
     Ok(())
-}
-
-/// Clear all configs from memory and delete persisted config. Disconnects first if connected.
-#[tauri::command]
-#[specta::specta]
-pub async fn clear_config(
-    app: AppHandle,
-    state: State<'_, Arc<VpnState>>,
-    backend: State<'_, Arc<dyn VpnBackend>>,
-    platform: State<'_, Arc<PlatformImpl>>,
-) -> Result<(), String> {
-    let status = state.connection.read().await.status;
-    if status != ConnectionStatus::Disconnected {
-        disconnect(app, state.clone(), backend, platform).await?;
-    }
-    *state.configs.write().await = SavedVpnConfigs::default();
-    vpn_config::delete_configs();
-    Ok(())
-}
-
-/// Load persisted VPN configs into memory (called on startup).
-#[tauri::command]
-#[specta::specta]
-pub async fn load_saved_config(state: State<'_, Arc<VpnState>>) -> Result<bool, String> {
-    if state.configs.read().await.has_any() {
-        return Ok(true);
-    }
-    if let Some(configs) = vpn_config::load_configs() {
-        *state.configs.write().await = configs;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
-}
-
-/// Get active protocol's config (without private key for security)
-#[tauri::command]
-#[specta::specta]
-pub async fn get_config(state: State<'_, Arc<VpnState>>) -> Result<Option<ConfigSafe>, String> {
-    let configs = state.configs.read().await;
-    let config = configs.preferred_config();
-    Ok(config.as_ref().map(|c| ConfigSafe {
-        protocol: c.protocol(),
-        address: c.address().to_string(),
-        dns: match c {
-            ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.dns.clone(),
-            ProtocolConfig::Vless(vless) => vless.dns.clone(),
-        },
-        server_endpoint: c.endpoint_str().to_string(),
-        allowed_ips: match c {
-            ProtocolConfig::WireGuard(wg) => wg.allowed_ips.clone(),
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.allowed_ips.clone(),
-            ProtocolConfig::Vless(vless) => vless.allowed_ips.clone(),
-        },
-        mtu: Some(c.get_mtu()),
-    }))
-}
-
-/// Switch the active protocol (must disconnect first)
-#[tauri::command]
-#[specta::specta]
-pub async fn set_active_protocol(
-    protocol: Protocol,
-    state: State<'_, Arc<VpnState>>,
-) -> Result<(), String> {
-    let mut configs = state.configs.write().await;
-    if configs.get(protocol).is_none() {
-        return Err(format!("No cached config for protocol '{protocol}'"));
-    }
-    configs.preferred_protocol = Preference(Some(protocol));
-    vpn_config::save_configs(&configs);
-    Ok(())
-}
-
-/// Get list of protocols that have cached configs
-#[tauri::command]
-#[specta::specta]
-pub async fn get_available_protocols(
-    state: State<'_, Arc<VpnState>>,
-) -> Result<Vec<Protocol>, String> {
-    let configs = state.configs.read().await;
-    Ok(configs.available_protocols())
-}
-
-/// Safe config info (no private keys or secrets)
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Type)]
-pub struct ConfigSafe {
-    pub protocol: Protocol,
-    pub address: String,
-    pub dns: Option<String>,
-    pub server_endpoint: String,
-    pub allowed_ips: String,
-    pub mtu: Option<u16>,
-}
-
-/// Split tunneling mode
-#[derive(Debug, Clone, Serialize, Deserialize, Type, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum SplitMode {
-    #[default]
-    All,
-    Include,
-    Exclude,
 }
 
 /// Information about an installed app (for split tunneling UI)
@@ -216,726 +174,6 @@ pub struct AppInfo {
 pub struct SafeAreaInsets {
     pub top: f64,
     pub bottom: f64,
-}
-
-/// Consecutive unreachable polls (`get_all_info` → None) tolerated before a
-/// Connected/Verifying tunnel is treated as stopped. Guards against the Android
-/// UI↔:vpn IPC gap on app open being mistaken for a dropped tunnel (button flicker),
-/// while still detecting a genuinely dead :vpn process after a few seconds.
-const MAX_UNREACHABLE_POLLS: u32 = 5;
-
-/// Connect to VPN
-#[tauri::command]
-#[specta::specta]
-pub async fn connect(
-    #[allow(unused_variables)] app: AppHandle,
-    state: State<'_, Arc<VpnState>>,
-    backend: State<'_, Arc<dyn VpnBackend>>,
-    #[allow(unused_variables)] platform: State<'_, Arc<PlatformImpl>>,
-    split_mode: Option<SplitMode>,
-    selected_apps: Option<Vec<String>>,
-) -> Result<(), ConnectError> {
-    let connect_start = std::time::Instant::now();
-    info!("Connecting to VPN");
-
-    // Guard: only allow connect from Disconnected
-    {
-        let conn = state.connection.read().await;
-        match conn.status {
-            ConnectionStatus::Disconnected => {}
-            ConnectionStatus::Connecting | ConnectionStatus::VerifyingConnection => {
-                return Err(ConnectError::busy("Already connecting"));
-            }
-            ConnectionStatus::Connected => return Err(ConnectError::busy("Already connected")),
-            ConnectionStatus::Disconnecting => {
-                return Err(ConnectError::busy("Disconnecting in progress"));
-            }
-        }
-    }
-
-    let proto_config = state
-        .configs
-        .read()
-        .await
-        .preferred_config()
-        .ok_or_else(|| ConnectError::tunnel("No active config"))?;
-
-    {
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Connecting;
-    }
-
-    #[cfg(target_os = "android")]
-    let result = connect_android(
-        &app,
-        &state,
-        &backend,
-        proto_config,
-        split_mode,
-        selected_apps,
-    )
-    .await;
-
-    #[cfg(not(target_os = "android"))]
-    let result = connect_desktop(
-        &state,
-        &backend,
-        &platform,
-        proto_config,
-        split_mode,
-        selected_apps,
-    )
-    .await;
-
-    if result.is_ok() {
-        info!(
-            phase = "total",
-            duration_ms = connect_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-            "Total connect time"
-        );
-    }
-
-    result
-}
-
-#[cfg(target_os = "android")]
-async fn connect_android(
-    app: &AppHandle,
-    state: &Arc<VpnState>,
-    backend: &Arc<dyn VpnBackend>,
-    config: ProtocolConfig,
-    split_mode: Option<SplitMode>,
-    selected_apps: Option<Vec<String>>,
-) -> Result<(), ConnectError> {
-    use tauri_plugin_vpn::VpnExt;
-
-    let phase_start = std::time::Instant::now();
-    let granted = app
-        .vpn()
-        .prepare()
-        .map_err(|e| ConnectError::tunnel(format!("VPN prepare failed: {e}")))?;
-    if !granted {
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Disconnected;
-        return Err(ConnectError::permission("VPN permission denied"));
-    }
-
-    // Serialize config for the Android VPN service (WG/AWG config text or vless:// URI)
-    let protocol_config_str = match &config {
-        ProtocolConfig::WireGuard(wg) => wg.to_config_str(),
-        ProtocolConfig::AmneziaWg(awg) => awg.to_config_str(),
-        ProtocolConfig::Vless(vless) => vless.uri.clone(),
-    };
-
-    let dns = match &config {
-        ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
-        ProtocolConfig::AmneziaWg(awg) => awg.wg.dns.clone(),
-        ProtocolConfig::Vless(vless) => vless.dns.clone(),
-    };
-
-    let mut vpn_config = tauri_plugin_vpn::VpnConfig {
-        ipv4_addr: config.address().to_string(),
-        ipv6_addr: None,
-        routes: vec!["0.0.0.0/0".into(), "::/0".into()],
-        dns,
-        mtu: config.get_mtu() as u32,
-        disallowed_apps: vec![],
-        allowed_apps: vec![],
-        protocol_config: Some(protocol_config_str),
-    };
-
-    let mode = split_mode.unwrap_or_default();
-    let apps = selected_apps.unwrap_or_default();
-    match mode {
-        SplitMode::Exclude if !apps.is_empty() => vpn_config.disallowed_apps = apps,
-        SplitMode::Include if !apps.is_empty() => vpn_config.allowed_apps = apps,
-        _ => {}
-    }
-
-    info!(
-        phase = "vpn_prepare",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "Android VPN prepared"
-    );
-
-    let phase_start = std::time::Instant::now();
-    if let Err(e) = app.vpn().start(vpn_config) {
-        error!("VPN start failed: {e}");
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Disconnected;
-        return Err(ConnectError::tunnel(format!("VPN start failed: {e}")));
-    }
-
-    // Poll until connected or timeout
-    let timeout = std::time::Duration::from_secs(10);
-    let poll_interval = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    let mut poll_count = 0u32;
-    loop {
-        tokio::time::sleep(poll_interval).await;
-        poll_count += 1;
-        if backend.get_all_info().await.is_some_and(|i| i.is_running) {
-            info!(
-                "Tunnel ready after {poll_count} polls ({:.1}s)",
-                start.elapsed().as_secs_f64()
-            );
-            break;
-        }
-        if start.elapsed() > timeout {
-            error!(
-                "Tunnel not ready after {poll_count} polls ({:.1}s)",
-                start.elapsed().as_secs_f64()
-            );
-            // IPC is likely down (that's why we timed out), so use Kotlin-side stop
-            if let Err(e) = app.vpn().stop() {
-                error!("Failed to stop VPN service after timeout: {e}");
-            }
-            let mut conn = state.connection.write().await;
-            *conn = ConnectionInfo::default();
-            return Err(ConnectError::tunnel("Connection timed out"));
-        }
-    }
-
-    info!(
-        phase = "tunnel_start",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "Android tunnel started"
-    );
-
-    {
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::VerifyingConnection;
-    }
-
-    let phase_start = std::time::Instant::now();
-    match &config {
-        ProtocolConfig::WireGuard(_) | ProtocolConfig::AmneziaWg(_) => {
-            info!("Tunnel up on Android, verifying handshake...");
-            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                .await
-                .is_err()
-            {
-                info!("No handshake after 5s — peer likely invalid, stopping tunnel");
-                if let Err(e) = backend.stop().await {
-                    error!("Failed to stop tunnel after verification failure: {e}");
-                }
-                let mut conn = state.connection.write().await;
-                *conn = ConnectionInfo::default();
-                return Err(ConnectError::verify(
-                    "Connection verification failed — config may be invalid",
-                ));
-            }
-        }
-        ProtocolConfig::Vless(vless) => {
-            info!("Tunnel up on Android, verifying VLESS connectivity...");
-            if let Err(e) =
-                verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
-            {
-                info!("VLESS connectivity check failed: {e}");
-                if let Err(e) = backend.stop().await {
-                    error!("Failed to stop tunnel after verification failure: {e}");
-                }
-                let mut conn = state.connection.write().await;
-                *conn = ConnectionInfo::default();
-                return Err(ConnectError::verify(format!(
-                    "Connection verification failed: {e}"
-                )));
-            }
-        }
-    }
-
-    info!(
-        phase = "verify",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "Connection verified"
-    );
-
-    state.speed_tracker.write().await.reset();
-    let mut conn = state.connection.write().await;
-    conn.status = ConnectionStatus::Connected;
-    conn.protocol = Some(config.protocol());
-    conn.connected_at = Some(chrono::Utc::now().timestamp());
-    conn.server_endpoint = Some(config.endpoint_str().to_string());
-    conn.assigned_ip = Some(config.address().to_string());
-    info!("Connected successfully on Android");
-    Ok(())
-}
-
-#[cfg(not(target_os = "android"))]
-async fn connect_desktop(
-    state: &Arc<VpnState>,
-    backend: &Arc<dyn VpnBackend>,
-    platform: &Arc<PlatformImpl>,
-    config: ProtocolConfig,
-    _split_mode: Option<SplitMode>,
-    _selected_apps: Option<Vec<String>>,
-) -> Result<(), ConnectError> {
-    use super::platform::Platform;
-    use super::protocol::InterfaceName;
-    use super::rollback::{Journal, RollbackStack, Step, split_default, unwind};
-
-    let iface = InterfaceName::default();
-
-    // Surface a missing privileged helper before touching anything, rather than discovering it
-    // halfway up the ladder.
-    platform
-        .preflight()
-        .await
-        .map_err(|e| ConnectError::from_platform(&e))?;
-
-    let journal = vpn_config::config_dir()
-        .ok()
-        .map(|dir| Journal::new(Journal::default_path(&dir)));
-    let mut stack = RollbackStack::new(journal);
-
-    // Every failure below funnels through here: unwind exactly what was applied, in reverse, then
-    // report. There is no path that leaves a partially configured machine behind, and no path that
-    // undoes something that was never done.
-    macro_rules! bail {
-        ($stack:expr, $err:expr) => {{
-            let err = $err;
-            let report = unwind(&mut $stack, None, platform.as_ref(), backend.as_ref(), 2).await;
-            if !report.is_clean() {
-                error!(residual = ?report.residual, "rollback left residue");
-            }
-            let mut conn = state.connection.write().await;
-            conn.status = ConnectionStatus::Disconnected;
-            return Err(err);
-        }};
-    }
-
-    let phase_start = std::time::Instant::now();
-    let endpoint = match tokio::net::lookup_host(config.endpoint_str()).await {
-        Ok(mut addrs) => match addrs.next() {
-            Some(addr) => addr,
-            None => bail!(
-                stack,
-                ConnectError::tunnel(format!(
-                    "Endpoint '{}' resolved to no addresses",
-                    config.endpoint_str()
-                ))
-            ),
-        },
-        Err(e) => bail!(
-            stack,
-            ConnectError::tunnel(format!(
-                "Failed to resolve endpoint '{}': {e}",
-                config.endpoint_str()
-            ))
-        ),
-    };
-    let endpoint_ip = endpoint.ip();
-    info!(
-        phase = "dns_resolve",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "DNS resolution complete"
-    );
-
-    // 1. Link ------------------------------------------------------------------------------
-    let phase_start = std::time::Instant::now();
-    stack.push(Step::PrepareLink {
-        iface: iface.clone(),
-    });
-    if let Err(e) = platform.prepare_link(&iface).await {
-        error!("Failed to prepare TUN interface: {e}");
-        bail!(stack, ConnectError::from_platform(&e));
-    }
-    stack.confirm_top(Step::PrepareLink {
-        iface: iface.clone(),
-    });
-    info!(
-        phase = "tun_prepare",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "TUN interface prepared"
-    );
-
-    // 2. Tunnel ----------------------------------------------------------------------------
-    let tun_params = platform.tun_params();
-    let phase_start = std::time::Instant::now();
-    stack.push(Step::StartBackend {
-        iface: iface.clone(),
-    });
-    let start_result = match backend
-        .start(&config, iface.as_str(), &tun_params, endpoint)
-        .await
-    {
-        // Retry without fwmark when the kernel refuses it for lack of privileges.
-        Err(e)
-            if tun_params.fwmark.is_some()
-                && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
-        {
-            warn!("Tunnel start with fwmark failed due to permissions, retrying without fwmark");
-            let mut retry_params = tun_params;
-            retry_params.fwmark = None;
-            backend
-                .start(&config, iface.as_str(), &retry_params, endpoint)
-                .await
-        }
-        result => result,
-    };
-    if let Err(e) = start_result {
-        error!("Connection failed: {e}");
-        bail!(stack, ConnectError::tunnel(e));
-    }
-    stack.confirm_top(Step::StartBackend {
-        iface: iface.clone(),
-    });
-    info!(
-        phase = "tunnel_start",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "Tunnel started"
-    );
-
-    // 3. Address ---------------------------------------------------------------------------
-    let addr = match config.address_network() {
-        Ok(addr) => addr,
-        Err(e) => bail!(stack, ConnectError::tunnel(e)),
-    };
-    stack.push(Step::Address {
-        iface: iface.clone(),
-        addr,
-    });
-    if let Err(e) = platform.configure_address(&iface, addr).await {
-        error!("Failed to configure address: {e}");
-        bail!(stack, ConnectError::from_platform(&e));
-    }
-    stack.confirm_top(Step::Address {
-        iface: iface.clone(),
-        addr,
-    });
-
-    // 4. Endpoint route --------------------------------------------------------------------
-    // The gateway is read BEFORE the push so the undo can match on it; otherwise the undo
-    // deletes any route to the endpoint, which after roaming is the wrong one.
-    let gateway = platform.default_gateway().await.unwrap_or_default();
-    stack.push(Step::EndpointRoute {
-        endpoint: endpoint_ip,
-        gateway: gateway.clone(),
-    });
-    if let Err(e) = platform
-        .add_endpoint_route(endpoint_ip, gateway.as_ref())
-        .await
-    {
-        error!("Failed to add endpoint route: {e}");
-        bail!(stack, ConnectError::from_platform(&e));
-    }
-    stack.confirm_top(Step::EndpointRoute {
-        endpoint: endpoint_ip,
-        gateway,
-    });
-
-    // 5. Routes ----------------------------------------------------------------------------
-    let if_index = platform.interface_index(&iface).await;
-    let routes = split_default(
-        &config.allowed_ips_networks(),
-        platform.ipv6_enabled().await,
-    );
-    stack.push(Step::Routes {
-        iface: iface.clone(),
-        routes: routes.clone(),
-        if_index,
-    });
-    if let Err(e) = platform.add_routes(&iface, &routes, if_index).await {
-        error!("Failed to add routes: {e}");
-        bail!(stack, ConnectError::from_platform(&e));
-    }
-    stack.confirm_top(Step::Routes {
-        iface: iface.clone(),
-        routes,
-        if_index,
-    });
-
-    // 6. DNS -------------------------------------------------------------------------------
-    // Captured before the mutation and owned by the Step, so a second connect can never snapshot
-    // the resolv.conf that floppa itself wrote.
-    let dns_servers = config.dns_servers();
-    if !dns_servers.is_empty() {
-        match platform.capture_dns(&iface, if_index).await {
-            Ok(snapshot) => {
-                stack.push(Step::Dns {
-                    iface: iface.clone(),
-                    snapshot: snapshot.clone(),
-                    if_index,
-                });
-                if let Err(e) = platform.configure_dns(&iface, &dns_servers, if_index).await {
-                    // DNS is not fatal: the tunnel works, name resolution may not. Leave the step
-                    // on the stack so the undo still runs.
-                    error!("Failed to configure DNS: {e}");
-                } else {
-                    stack.confirm_top(Step::Dns {
-                        iface: iface.clone(),
-                        snapshot,
-                        if_index,
-                    });
-                }
-            }
-            Err(e) => error!("Failed to capture DNS state, leaving DNS untouched: {e}"),
-        }
-    }
-
-    // 7. Verify ----------------------------------------------------------------------------
-    {
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::VerifyingConnection;
-    }
-
-    let phase_start = std::time::Instant::now();
-    match &config {
-        ProtocolConfig::WireGuard(_) | ProtocolConfig::AmneziaWg(_) => {
-            info!("Tunnel up, verifying handshake...");
-            if wait_for_handshake(backend, std::time::Duration::from_secs(5))
-                .await
-                .is_err()
-            {
-                info!("No handshake after 5s — peer likely invalid, disconnecting");
-                bail!(
-                    stack,
-                    ConnectError::verify("Connection verification failed — config may be invalid")
-                );
-            }
-        }
-        ProtocolConfig::Vless(vless) => {
-            info!("Tunnel up, verifying VLESS connectivity...");
-            if let Err(e) =
-                verify_vless_connectivity(vless, std::time::Duration::from_secs(10)).await
-            {
-                info!("VLESS connectivity check failed: {e}");
-                bail!(
-                    stack,
-                    ConnectError::verify(format!("Connection verification failed: {e}"))
-                );
-            }
-        }
-    }
-    info!(
-        phase = "verify",
-        duration_ms = phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
-        "Connection verified"
-    );
-
-    // Success: hand the stack to the shared slot so `disconnect` can unwind exactly this.
-    *state.held_stack.lock().await = Some(stack);
-
-    state.speed_tracker.write().await.reset();
-    let mut conn = state.connection.write().await;
-    conn.status = ConnectionStatus::Connected;
-    conn.protocol = Some(config.protocol());
-    conn.connected_at = Some(chrono::Utc::now().timestamp());
-    conn.server_endpoint = Some(config.endpoint_str().to_string());
-    conn.assigned_ip = Some(config.address().to_string());
-    info!("Connected successfully");
-    Ok(())
-}
-
-/// After tunnel is up, wait for the first WireGuard handshake to confirm
-/// the peer actually exists on the server. Returns Ok if handshake observed,
-/// Err if timed out (peer likely deleted/invalid).
-async fn wait_for_handshake(
-    backend: &Arc<dyn VpnBackend>,
-    timeout: std::time::Duration,
-) -> Result<(), ()> {
-    let poll_interval = std::time::Duration::from_millis(500);
-    let start = std::time::Instant::now();
-    loop {
-        if let Some(info) = backend.get_all_info().await
-            && let Some(secs) = info.last_packet_received
-            && secs < 10
-        {
-            return Ok(());
-        }
-        if start.elapsed() > timeout {
-            return Err(());
-        }
-        tokio::time::sleep(poll_interval).await;
-    }
-}
-
-/// Verify VLESS connectivity by making a test TCP connection through the proxy chain directly.
-/// Bypasses TUN — proves: server reachable → REALITY handshake → UUID accepted → proxy works.
-async fn verify_vless_connectivity(
-    vless_config: &VlessVpnConfig,
-    timeout: std::time::Duration,
-) -> Result<(), String> {
-    vless_config
-        .to_shoes_config()
-        .check_connectivity(timeout)
-        .await
-}
-
-/// Disconnect from VPN
-#[tauri::command]
-#[specta::specta]
-pub async fn disconnect(
-    #[allow(unused_variables)] app: AppHandle,
-    state: State<'_, Arc<VpnState>>,
-    backend: State<'_, Arc<dyn VpnBackend>>,
-    platform: State<'_, Arc<PlatformImpl>>,
-) -> Result<(), String> {
-    info!("Disconnecting from VPN");
-
-    // Guard: reject if not connected or already disconnecting
-    {
-        let conn = state.connection.read().await;
-        match conn.status {
-            ConnectionStatus::Disconnecting => return Err("Already disconnecting".to_string()),
-            ConnectionStatus::Disconnected => return Err("Not connected".to_string()),
-            _ => {}
-        }
-    }
-
-    {
-        let mut conn = state.connection.write().await;
-        conn.status = ConnectionStatus::Disconnecting;
-    }
-
-    // Undo exactly what the connect applied, in reverse. When there is no stack — an adopted
-    // tunnel, or a process that restarted under a live one — the tunnel itself is still ours to
-    // stop, so it is passed as the extra undo.
-    {
-        use super::rollback::{ExtraUndo, RollbackStack, unwind};
-        let mut held = state.held_stack.lock().await;
-        match held.take() {
-            Some(mut stack) => {
-                let report = unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 2).await;
-                if !report.is_clean() {
-                    error!(residual = ?report.residual, "rollback left residue on disconnect");
-                }
-            }
-            None => {
-                let mut empty = RollbackStack::default();
-                let _ = unwind(
-                    &mut empty,
-                    Some(ExtraUndo::StopBackend),
-                    platform.as_ref(),
-                    backend.as_ref(),
-                    2,
-                )
-                .await;
-            }
-        }
-    }
-
-    if let Err(e) = backend.stop().await {
-        error!("Backend stop failed: {e}");
-        // IPC failed — fall back to Kotlin-side stop via ACTION_STOP intent
-        #[cfg(target_os = "android")]
-        {
-            use tauri_plugin_vpn::VpnExt;
-            info!("Falling back to Kotlin-side stop");
-            if let Err(e2) = app.vpn().stop() {
-                error!("Kotlin stop also failed: {e2}");
-            }
-        }
-    }
-
-    let mut conn = state.connection.write().await;
-    *conn = ConnectionInfo::default();
-    state.speed_tracker.write().await.reset();
-    info!("Disconnected");
-    Ok(())
-}
-
-/// Get current connection info with live traffic stats
-#[tauri::command]
-#[specta::specta]
-pub async fn get_connection_info(
-    state: State<'_, Arc<VpnState>>,
-    backend: State<'_, Arc<dyn VpnBackend>>,
-) -> Result<ConnectionInfo, String> {
-    let mut conn = state.connection.write().await;
-
-    let info = backend.get_all_info().await;
-    // Some(true) = confirmed running, Some(false) = confirmed stopped,
-    // None = backend unreachable (e.g. Android UI process reconnecting to :vpn).
-    let running = info.as_ref().map(|i| i.is_running);
-    let is_running = running == Some(true);
-
-    // A single unreachable poll must NOT tear down a live tunnel — that conflation
-    // made the connect/disconnect button flicker on app open while IPC reconnected.
-    // Treat as stopped only on a confirmed Some(false), or after a sustained streak
-    // of unreachable polls (so a genuinely dead :vpn process is still detected).
-    let stopped = match running {
-        Some(true) => {
-            state.unreachable_polls.store(0, Ordering::Relaxed);
-            false
-        }
-        Some(false) => {
-            state.unreachable_polls.store(0, Ordering::Relaxed);
-            true
-        }
-        None => {
-            state.unreachable_polls.fetch_add(1, Ordering::Relaxed) + 1 >= MAX_UNREACHABLE_POLLS
-        }
-    };
-
-    match conn.status {
-        // Auto-detect: on Android the :vpn process can outlive the app.
-        // If the tunnel is running, show Connected so the user can disconnect.
-        ConnectionStatus::Disconnected if is_running => {
-            let configs = state.configs.read().await;
-            let config = configs.preferred_config();
-            let connected_at = info
-                .as_ref()
-                .and_then(|i| i.connected_secs)
-                .map(|secs| chrono::Utc::now().timestamp() - secs as i64)
-                .unwrap_or_else(|| chrono::Utc::now().timestamp());
-            conn.connected_at = Some(connected_at);
-            conn.last_packet_received = info.as_ref().and_then(|i| i.last_packet_received);
-            if let Some(ref cfg) = config {
-                conn.protocol = Some(cfg.protocol());
-                conn.server_endpoint = Some(cfg.endpoint_str().to_string());
-                conn.assigned_ip = Some(cfg.address().to_string());
-            }
-            state.speed_tracker.write().await.reset();
-            conn.status = ConnectionStatus::Connected;
-            info!("Detected running tunnel, updated status to Connected");
-
-            // For VLESS, ping the tunnel in the background to update health dot.
-            // VLESS has no keepalives, so last_packet_received may be stale.
-            if config
-                .as_ref()
-                .is_some_and(|c| matches!(c, ProtocolConfig::Vless(_)))
-            {
-                let backend = backend.inner().clone();
-                tokio::spawn(async move {
-                    if let Err(e) = backend.ping().await {
-                        warn!("Background VLESS ping failed: {e}");
-                    }
-                });
-            }
-        }
-        // Tunnel died during connection verification
-        ConnectionStatus::VerifyingConnection if stopped => {
-            *conn = ConnectionInfo::default();
-            state.unreachable_polls.store(0, Ordering::Relaxed);
-            info!("Tunnel stopped during connection verification, reset to Disconnected");
-        }
-        // Tunnel dropped while connected
-        ConnectionStatus::Connected if stopped => {
-            *conn = ConnectionInfo::default();
-            state.unreachable_polls.store(0, Ordering::Relaxed);
-        }
-        // Normal connected state — update stats
-        ConnectionStatus::Connected if is_running => {
-            if let Some(ref info) = info {
-                if let Some(ref raw_stats) = info.stats {
-                    let mut tracker = state.speed_tracker.write().await;
-                    let (tx_speed, rx_speed) =
-                        tracker.update(raw_stats.tx_bytes, raw_stats.rx_bytes);
-                    conn.stats = super::state::TrafficStats {
-                        tx_bytes: raw_stats.tx_bytes,
-                        rx_bytes: raw_stats.rx_bytes,
-                        tx_bytes_per_sec: tx_speed,
-                        rx_bytes_per_sec: rx_speed,
-                    };
-                }
-                conn.last_packet_received = info.last_packet_received;
-            }
-        }
-        _ => {}
-    }
-
-    Ok(conn.clone())
 }
 
 /// Get list of installed apps for split tunneling (Android only)

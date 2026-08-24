@@ -2,434 +2,246 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
   commands,
-  type ConnectionInfo,
-  type ConfigSafe,
-  type ConnectError,
+  type CycleOutcome,
   type Protocol,
+  type TunnelParams,
+  type TunnelState,
 } from '../bindings'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
-import { i18n } from '../i18n'
 
-const t = i18n.global.t
-
-const MAX_RECONNECT_ATTEMPTS = 3
-
-/** Result of a single connect attempt — success, or the typed failure category. */
-type ConnectOutcome = { ok: true } | { ok: false; error: ConnectError }
-
+/**
+ * A read-only mirror of the tunnel state the Rust actor publishes.
+ *
+ * Everything about the tunnel arrives as one value, so the phase, the probe progress and the retry
+ * countdown cannot disagree with each other. That is what makes the old spinner-with-"Connect"
+ * button unrepresentable: there is no second source left to disagree with.
+ *
+ * Deleted from here and deliberately not replaced:
+ *
+ * - `isLoading` — the phase already says whether the tunnel is busy
+ * - `connectError` — the outcome is typed and arrives with the state
+ * - `attempt`, `abortGen`, `runAutoCycle`, `autoOrder` — the actor walks the protocol order
+ * - `userIntent`, `reconnectAttempts`, `reconnectTimeoutId` — auto-reconnect is what the actor
+ *   does when an Up intent outlives a failure; nothing here implements it
+ * - `setProtocol` — the order is part of the request, and which protocol worked is recorded by
+ *   the side that watched it work
+ */
 export const useVpnStore = defineStore(
   'vpn',
   () => {
-    const config = ref<ConfigSafe | null>(null)
-    const connectionInfo = ref<ConnectionInfo | null>(null)
-    const isLoading = ref(false)
+    /** The mirror. Replaced wholesale by refresh(); never edited piecemeal. */
+    const state = ref<TunnelState>(emptyState())
+
+    /** True only while a command is in flight — distinct from the tunnel itself being busy. */
+    const requesting = ref(false)
+
+    /** Errors that are not about the tunnel: importing a config, reaching the actor. */
     const error = ref<string | null>(null)
-    // Structured error from the last connect() attempt — lets callers branch on
-    // the failure category (e.g. re-provision peer on 'verify_failed') instead of
-    // string-matching the human-readable message.
-    const connectError = ref<ConnectError | null>(null)
+
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
-    const availableProtocols = ref<Protocol[]>([])
 
-    // What the user wants the tunnel to be. Auto-reconnect only fires while the
-    // user intends to stay connected; an explicit disconnect flips this to
-    // 'disconnected' so a clean teardown isn't mistaken for a dropped tunnel.
-    const userIntent = ref<'connected' | 'disconnected'>('disconnected')
+    const phase = computed(() => state.value.phase)
+    const isConnected = computed(() => phase.value === 'connected')
+    const isBusy = computed(
+      () =>
+        requesting.value ||
+        phase.value === 'connecting' ||
+        phase.value === 'verifying_connection' ||
+        phase.value === 'disconnecting' ||
+        phase.value === 'retrying',
+    )
+    const isCancellable = computed(
+      () =>
+        phase.value === 'connecting' ||
+        phase.value === 'verifying_connection' ||
+        phase.value === 'retrying',
+    )
 
-    // Auto-reconnect state
-    const reconnectAttempts = ref(0)
-    let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null
-    let onReconnectFailed: (() => void) | null = null
+    const availableProtocols = computed(() => state.value.configs.available)
+    const hasConfig = computed(() => availableProtocols.value.length > 0)
+    /** What is running, or failing that what last worked. */
+    const activeProtocol = computed(
+      () => state.value.protocol ?? state.value.configs.preferred ?? availableProtocols.value[0],
+    )
+    const attempt = computed(() => state.value.attempt)
+    const retry = computed(() => state.value.retry)
+    const lastOutcome = computed(() => state.value.last_outcome)
 
-    // Auto-protocol-select state. `attempt` describes the protocol currently being
-    // probed (for the UI stepper); `abortGen` is bumped on disconnect so an
-    // in-flight probe cycle bails instead of fighting a user-requested teardown.
-    const attempt = ref<{ protocol: Protocol; index: number; total: number } | null>(null)
-    let abortGen = 0
-
-    const isConnected = computed(() => connectionInfo.value?.status === 'connected')
-    const hasConfig = computed(() => config.value !== null)
-    const activeProtocol = computed(() => config.value?.protocol ?? 'wireguard')
-
-    const connectionStatus = computed(() => {
-      if (isConnected.value) return 'connected' as const
-      const s = connectionInfo.value?.status
-      if (s === 'connecting' || s === 'verifying_connection') return 'connecting' as const
-      if (s === 'disconnecting') return 'disconnecting' as const
-      return 'disconnected' as const
-    })
-
-    // Initialize platform detection and device info
     async function initPlatform() {
       try {
-        const os = platform()
-        isAndroid.value = os === 'android'
-
-        // Load device identifiers
-        try {
-          const result = await commands.getDeviceId()
-          if (result.status === 'ok') deviceId.value = result.data
-        } catch (e) {
-          console.error('Failed to get device id:', e)
-        }
-        try {
-          deviceName.value = await commands.getDeviceName()
-        } catch (e) {
-          console.error('Failed to get device name:', e)
-        }
+        isAndroid.value = platform() === 'android'
       } catch (e) {
-        console.error('[vpnStore] Failed to detect platform:', e)
-      }
-    }
-
-    function cleanup() {
-      if (reconnectTimeoutId) {
-        clearTimeout(reconnectTimeoutId)
-        reconnectTimeoutId = null
-      }
-    }
-
-    /** Set config from server API response and persist it */
-    async function setActiveConfig(configStr: string) {
-      error.value = null
-      try {
-        const result = await commands.setActiveConfig(configStr)
-        if (result.status === 'error') {
-          error.value = result.error
-          return
-        }
-        await loadConfig()
-      } catch (e) {
-        error.value = String(e)
-      }
-    }
-
-    /** Clear config from memory and delete persisted config */
-    async function clearConfig() {
-      isLoading.value = true
-      error.value = null
-      userIntent.value = 'disconnected'
-      abortGen++
-      attempt.value = null
-      reconnectAttempts.value = 0
-      if (reconnectTimeoutId) {
-        clearTimeout(reconnectTimeoutId)
-        reconnectTimeoutId = null
+        console.error('[vpnStore] failed to detect the platform:', e)
       }
       try {
-        const result = await commands.clearConfig()
-        if (result.status === 'error') {
-          error.value = result.error
-          return
-        }
-        config.value = null
-        connectionInfo.value = null
+        const result = await commands.getDeviceId()
+        if (result.status === 'ok') deviceId.value = result.data
       } catch (e) {
-        error.value = String(e)
-      } finally {
-        isLoading.value = false
+        console.error('[vpnStore] failed to get the device id:', e)
       }
-    }
-
-    async function loadConfig() {
       try {
-        // Try loading persisted config from keyring/file into memory
-        await commands.loadSavedConfig()
-        const result = await commands.getConfig()
-        if (result.status === 'ok') {
-          config.value = result.data
-        } else {
-          console.error('Failed to load config:', result.error)
-        }
-        // Load available protocols
-        const protocolsResult = await commands.getAvailableProtocols()
-        if (protocolsResult.status === 'ok') {
-          availableProtocols.value = protocolsResult.data
-        }
+        deviceName.value = await commands.getDeviceName()
       } catch (e) {
-        console.error('Failed to load config:', e)
+        console.error('[vpnStore] failed to get the device name:', e)
       }
     }
 
-    /**
-     * Run a single connect attempt against the currently-active protocol.
-     * Shows optimistic 'connecting' status, polls intermediate states, and maps
-     * the typed command result to a ConnectOutcome. The caller owns isLoading,
-     * userIntent and the reconnect counters — this primitive only attempts.
-     */
-    async function runAttempt(): Promise<ConnectOutcome> {
-      connectError.value = null
-
-      // Optimistically set connecting status for instant UI feedback.
-      // TODO: consider replacing polling with Tauri events for real-time state sync:
-      // Rust side: app.emit("vpn-status", &conn_info) on each ConnectionStatus transition
-      // TS side: listen("vpn-status", (e) => { connectionInfo.value = e.payload })
-      // This would eliminate polling and give instant UI updates for all transitions
-      // (connecting → verifying_connection → connected), but adds complexity
-      // (event setup, specta typing, dedup with refreshStatus). Current approach
-      // (optimistic status + 500ms poll) is good enough for now.
-      connectionInfo.value = {
-        status: 'connecting',
-        protocol: null,
-        server_endpoint: null,
-        assigned_ip: null,
-        connected_at: null,
-        last_packet_received: null,
-        stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
-      }
-
-      // Poll status during connect to show intermediate states (connecting → verifying_connection)
-      const pollId = setInterval(() => refreshStatus(), 500)
-
+    /** Pull the published snapshot. On the Rust side this is a local read — no IPC, no lock. */
+    async function refresh() {
       try {
-        const settings = useSettingsStore()
-        const splitMode = settings.splitMode !== 'all' ? settings.splitMode : null
-        const selectedApps =
-          splitMode && settings.selectedApps.length > 0 ? [...settings.selectedApps] : null
-
-        const result = await commands.connect(splitMode, selectedApps)
-        await refreshStatus()
-        if (result.status === 'error') {
-          connectError.value = result.error
-          return { ok: false, error: result.error }
-        }
-        return { ok: true }
-      } finally {
-        clearInterval(pollId)
+        const next = await commands.tunnelGetState()
+        // seq only ever increases, so a slow reply can never overwrite a fresher one.
+        if (next.seq >= state.value.seq) state.value = next
+      } catch (e) {
+        console.error('[vpnStore] failed to read the tunnel state:', e)
       }
     }
 
-    /**
-     * Probe order for auto-select: the user-defined priority (settings.protocolOrder)
-     * limited to protocols that actually have a cached config, plus any available
-     * protocol missing from the saved order, with the last-active (= last working)
-     * protocol moved to the front so reconnects skip straight to it.
-     */
-    function autoOrder(): Protocol[] {
+    function params(): TunnelParams {
       const settings = useSettingsStore()
-      const available = availableProtocols.value
-      const ordered = settings.protocolOrder.filter((p) => available.includes(p))
-      for (const p of available) {
-        if (!ordered.includes(p)) ordered.push(p)
-      }
-      const remembered = config.value?.protocol
-      if (remembered && ordered.includes(remembered)) {
-        return [remembered, ...ordered.filter((p) => p !== remembered)]
-      }
-      return ordered
+      const apps = settings.splitMode === 'all' ? [] : [...settings.selectedApps]
+      return { split_mode: settings.splitMode, apps }
     }
 
     /**
-     * Auto-select: try each protocol in autoOrder() until one connects, then stay
-     * on it. Aborts cleanly if the user disconnects mid-cycle (abortGen). Leaves
-     * connectError set to the last failure so the caller can react (e.g. re-provision
-     * the peer when every protocol reports verify_failed).
+     * Ask for a tunnel, and wait for the request to reach a terminal outcome.
+     *
+     * The order sent is the user's priority list as-is. Narrowing it to protocols we actually hold
+     * a config for, and moving whichever one last worked to the front, is the actor's job — it is
+     * the side that knows both.
      */
-    async function runAutoCycle() {
-      const order = autoOrder()
-      const gen = abortGen
-      for (let i = 0; i < order.length; i++) {
-        if (gen !== abortGen) return
-        const proto = order[i]!
-        attempt.value = { protocol: proto, index: i + 1, total: order.length }
-        await setProtocol(proto)
-        const outcome = await runAttempt()
-        // User disconnected while this attempt was in flight — disconnect() already
-        // tore the tunnel down, so don't claim success or keep probing.
-        if (gen !== abortGen) {
-          attempt.value = null
-          return
-        }
-        if (outcome.ok) {
-          attempt.value = null
-          reconnectAttempts.value = 0
-          return
-        }
-      }
-      attempt.value = null
-      error.value = t('vpn.allProtocolsFailed')
-    }
+    async function connect(): Promise<CycleOutcome | null> {
+      const settings = useSettingsStore()
+      const order = settings.autoSelect
+        ? [...settings.protocolOrder]
+        : [activeProtocol.value].filter((p): p is Protocol => !!p)
 
-    async function connect() {
-      if (!hasConfig.value || !config.value) {
-        error.value = t('vpn.noActiveConfig')
-        return
-      }
-      isLoading.value = true
       error.value = null
-      userIntent.value = 'connected'
-
+      requesting.value = true
       try {
-        const settings = useSettingsStore()
-        if (settings.autoSelect && availableProtocols.value.length > 1) {
-          await runAutoCycle()
-        } else {
-          const outcome = await runAttempt()
-          if (outcome.ok) {
-            reconnectAttempts.value = 0
-          } else {
-            error.value = outcome.error.message
-          }
+        const accepted = await commands.tunnelSetIntentUp(order, params())
+        if (accepted.status === 'error') {
+          error.value = accepted.error.kind
+          return null
         }
+        await refresh()
+
+        const outcome = await commands.tunnelAwaitCycle(accepted.data.epoch)
+        await refresh()
+        return outcome.status === 'ok' ? outcome.data : null
       } catch (e) {
         error.value = String(e)
+        return null
       } finally {
-        attempt.value = null
-        isLoading.value = false
+        requesting.value = false
       }
     }
 
-    async function reconnect() {
-      await disconnect()
-      await connect()
-    }
-
+    /** Also the cancel button: stopping an attempt is a change of intent, not a separate action. */
     async function disconnect() {
-      isLoading.value = true
       error.value = null
-
-      userIntent.value = 'disconnected'
-      abortGen++
-      attempt.value = null
-      reconnectAttempts.value = 0
-      if (reconnectTimeoutId) {
-        clearTimeout(reconnectTimeoutId)
-        reconnectTimeoutId = null
-      }
-
+      requesting.value = true
       try {
-        const result = await commands.disconnect()
-        if (result.status === 'error') {
-          error.value = result.error
+        const accepted = await commands.tunnelSetIntentDown()
+        if (accepted.status === 'error') {
+          error.value = accepted.error.kind
+          return
         }
-        await refreshStatus()
+        await refresh()
+        await commands.tunnelAwaitCycle(accepted.data.epoch)
+        await refresh()
       } catch (e) {
         error.value = String(e)
       } finally {
-        isLoading.value = false
+        requesting.value = false
       }
     }
 
-    async function refreshStatus() {
-      try {
-        const result = await commands.getConnectionInfo()
-        if (result.status === 'ok') {
-          const prevStatus = connectionInfo.value?.status
-          connectionInfo.value = result.data
-
-          if (
-            prevStatus === 'connected' &&
-            result.data.status === 'disconnected' &&
-            userIntent.value === 'connected'
-          ) {
-            handleUnexpectedDisconnect()
-          }
-        }
-      } catch (e) {
-        console.error('Failed to refresh status:', e)
-      }
-    }
-
-    function handleUnexpectedDisconnect() {
-      if (!hasConfig.value) {
-        reconnectAttempts.value = 0
-        return
-      }
-
-      if (reconnectAttempts.value >= MAX_RECONNECT_ATTEMPTS) {
-        reconnectAttempts.value = 0
-        if (onReconnectFailed) {
-          onReconnectFailed()
-        } else {
-          error.value = t('vpn.connectionLost')
-        }
-        return
-      }
-
-      reconnectAttempts.value++
-      const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.value - 1), 10000)
-      error.value = t('vpn.reconnecting', {
-        current: reconnectAttempts.value,
-        max: MAX_RECONNECT_ATTEMPTS,
-      })
-
-      reconnectTimeoutId = setTimeout(async () => {
-        reconnectTimeoutId = null
-        try {
-          await connect()
-        } catch {
-          // Will be retried on next refreshStatus cycle if still disconnected
-        }
-      }, delay)
-    }
-
-    async function setProtocol(protocol: Protocol) {
+    /** Store a config. Storing is not choosing: this does not change what the next connect uses. */
+    async function importConfig(raw: string) {
       error.value = null
       try {
-        const result = await commands.setActiveProtocol(protocol)
+        const result = await commands.importConfig(raw)
         if (result.status === 'error') {
-          error.value = result.error
+          error.value = result.error.kind
           return
         }
-        await loadConfig()
+        await refresh()
       } catch (e) {
         error.value = String(e)
       }
     }
 
-    /**
-     * Forget the remembered protocol: reset the active protocol to the first
-     * preferred one that's available (per AUTO_PROTOCOL_ORDER), so auto-select
-     * probes from the top of the order again instead of sticking to the last
-     * working protocol.
-     */
-    async function resetProtocolPreference() {
-      const settings = useSettingsStore()
-      const fallback =
-        settings.protocolOrder.find((p) => availableProtocols.value.includes(p)) ??
-        availableProtocols.value[0]
-      if (fallback) await setProtocol(fallback)
+    /** Forget which protocol last worked, so the next connect probes from the top again. */
+    async function forgetPreferred() {
+      await commands.forgetPreferredProtocol()
+      await refresh()
     }
 
-    function setOnReconnectFailed(cb: (() => void) | null) {
-      onReconnectFailed = cb
+    async function clearConfigs() {
+      error.value = null
+      requesting.value = true
+      try {
+        const result = await commands.clearConfigs()
+        if (result.status === 'error') error.value = result.error.kind
+        await refresh()
+      } finally {
+        requesting.value = false
+      }
     }
 
     return {
-      config,
-      connectionInfo,
-      isLoading,
+      state,
       error,
-      connectError,
-      attempt,
+      requesting,
+      phase,
       isConnected,
-      hasConfig,
+      isBusy,
+      isCancellable,
       isAndroid,
       deviceId,
       deviceName,
-      connectionStatus,
-      activeProtocol,
       availableProtocols,
+      hasConfig,
+      activeProtocol,
+      attempt,
+      retry,
+      lastOutcome,
       initPlatform,
-      cleanup,
-      loadConfig,
-      setActiveConfig,
-      clearConfig,
+      refresh,
       connect,
       disconnect,
-      reconnect,
-      refreshStatus,
-      setProtocol,
-      resetProtocolPreference,
-      setOnReconnectFailed,
+      importConfig,
+      forgetPreferred,
+      clearConfigs,
     }
   },
-  {
-    persist: false,
-  },
+  { persist: false },
 )
 
-export type { ConnectionInfo, ConfigSafe, ConnectError, Protocol }
+function emptyState(): TunnelState {
+  return {
+    seq: 0,
+    phase: 'disconnected',
+    intent: 'down',
+    epoch: 0,
+    intent_order: [],
+    protocol: null,
+    adopted: false,
+    attempt: null,
+    retry: null,
+    server_endpoint: null,
+    assigned_ip: null,
+    connected_at: null,
+    last_packet_received: null,
+    stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
+    last_outcome: null,
+    configs: { available: [], preferred: null, summaries: [] },
+    backend_reachable: false,
+  }
+}
+
+export type { TunnelState, CycleOutcome, Protocol }

@@ -133,8 +133,11 @@ impl TunnelActor {
             state_tx,
         };
 
-        tokio::spawn(observer(backend, cmd_tx.clone(), policy));
-        tokio::spawn(actor.run(cmd_rx));
+        // Tauri's `setup` runs outside a Tokio runtime context, so these two must go through
+        // Tauri's runtime handle. Everything the actor spawns afterwards runs inside its own task
+        // and can use `tokio::spawn` directly.
+        tauri::async_runtime::spawn(observer(backend, cmd_tx.clone(), policy));
+        tauri::async_runtime::spawn(actor.run(cmd_rx));
 
         TunnelHandle::new(cmd_tx, state_rx)
     }

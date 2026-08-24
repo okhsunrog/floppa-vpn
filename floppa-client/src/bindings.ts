@@ -14,31 +14,47 @@ export const commands = {
 	getDeviceId: () => typedError<string, string>(__TAURI_INVOKE("get_device_id")),
 	/**  Get the device name (Android: manufacturer+model, desktop: hostname) */
 	getDeviceName: () => __TAURI_INVOKE<string>("get_device_name"),
-	/**  Parse a config string (WireGuard or VLESS URI), store under the right protocol key, and persist. */
-	setActiveConfig: (configStr: string) => typedError<null, string>(__TAURI_INVOKE("set_active_config", { configStr })),
-	/**  Clear all configs from memory and delete persisted config. Disconnects first if connected. */
-	clearConfig: () => typedError<null, string>(__TAURI_INVOKE("clear_config")),
-	/**  Load persisted VPN configs into memory (called on startup). */
-	loadSavedConfig: () => typedError<boolean, string>(__TAURI_INVOKE("load_saved_config")),
-	/**  Get active protocol's config (without private key for security) */
-	getConfig: () => typedError<{
-	protocol: Protocol,
-	address: string,
-	dns: string | null,
-	server_endpoint: string,
-	allowed_ips: string,
-	mtu: number | null,
-} | null, string>(__TAURI_INVOKE("get_config")),
-	/**  Switch the active protocol (must disconnect first) */
-	setActiveProtocol: (protocol: Protocol) => typedError<null, string>(__TAURI_INVOKE("set_active_protocol", { protocol })),
-	/**  Get list of protocols that have cached configs */
-	getAvailableProtocols: () => typedError<Protocol[], string>(__TAURI_INVOKE("get_available_protocols")),
-	/**  Connect to VPN */
-	connect: (splitMode: "all" | "include" | "exclude" | null, selectedApps: string[] | null) => typedError<null, ConnectError>(__TAURI_INVOKE("connect", { splitMode, selectedApps })),
-	/**  Disconnect from VPN */
-	disconnect: () => typedError<null, string>(__TAURI_INVOKE("disconnect")),
-	/**  Get current connection info with live traffic stats */
-	getConnectionInfo: () => typedError<ConnectionInfo, string>(__TAURI_INVOKE("get_connection_info")),
+	/**
+	 *  Ask for a tunnel.
+	 * 
+	 *  Returns as soon as the actor accepts the intent — the epoch it returns identifies this request
+	 *  for [`tunnel_await_cycle`]. There is deliberately no "busy" failure: with a single owner and a
+	 *  write-only intent queue, there is no bad moment to ask.
+	 */
+	tunnelSetIntentUp: (order: Protocol[], params: TunnelParams) => typedError<IntentAccepted, IntentError>(__TAURI_INVOKE("tunnel_set_intent_up", { order, params })),
+	/**
+	 *  Ask for no tunnel. Also the cancel button: an intent change is how an in-flight attempt is
+	 *  stopped.
+	 */
+	tunnelSetIntentDown: () => typedError<IntentAccepted, IntentError>(__TAURI_INVOKE("tunnel_set_intent_down")),
+	/**
+	 *  Wait for a request to reach a terminal outcome.
+	 * 
+	 *  Safe to drop: dropping the future only discards the answer, it never cancels what the actor is
+	 *  doing. A caller that asks after the fact still gets the answer, because recent outcomes are
+	 *  retained.
+	 */
+	tunnelAwaitCycle: (epoch: IntentEpoch) => typedError<CycleOutcome, IntentError>(__TAURI_INVOKE("tunnel_await_cycle", { epoch })),
+	/**  The current snapshot. A local read of the published state — no IPC, no lock. */
+	tunnelGetState: () => __TAURI_INVOKE<TunnelState>("tunnel_get_state"),
+	/**
+	 *  Store a config under its own protocol key.
+	 * 
+	 *  Storing is not choosing: this does not change which protocol the next connect would use. The
+	 *  previous behaviour of switching to whatever was imported last is what let a server sync
+	 *  silently reorder the user's preference.
+	 */
+	importConfig: (raw: string) => typedError<Protocol, ConfigError>(__TAURI_INVOKE("import_config", { raw })),
+	listConfigs: () => typedError<ConfigsView, null>(__TAURI_INVOKE("list_configs")),
+	/**
+	 *  Forget every stored config.
+	 * 
+	 *  Goes down and waits for the tunnel to actually be gone before wiping, rather than deciding from
+	 *  a status snapshot — which is how a live adopted tunnel could survive being forgotten.
+	 */
+	clearConfigs: () => typedError<null, IntentError>(__TAURI_INVOKE("clear_configs")),
+	/**  Forget which protocol last worked, so the next connect probes from the top of the order again. */
+	forgetPreferredProtocol: () => typedError<null, null>(__TAURI_INVOKE("forget_preferred_protocol")),
 	/**  Get list of installed apps for split tunneling (Android only) */
 	getInstalledApps: () => typedError<AppInfo[], string>(__TAURI_INVOKE("get_installed_apps")),
 	/**  Check if battery optimization is disabled (Android only) */
@@ -90,43 +106,93 @@ export type AppInfo = {
 	icon: string | null,
 };
 
-/**  Safe config info (no private keys or secrets) */
-export type ConfigSafe = {
-	protocol: Protocol,
-	address: string,
-	dns: string | null,
-	server_endpoint: string,
-	allowed_ips: string,
-	mtu: number | null,
-};
+/**
+ *  Why a single attempt failed.
+ * 
+ *  Note what is deliberately absent: a blanket `From<String>`. The old `ConnectError` had one, and
+ *  it stamped every `?`-propagated error as a generic tunnel error — which is how a DNS-resolve
+ *  failure and an address-parse failure ended up indistinguishable from a dead peer. Every variant
+ *  here is constructed at exactly one call site.
+ */
+export type AttemptError = { kind: "permission_denied" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; detail: string } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" };
 
-/**  Structured error returned from the `connect` command. */
-export type ConnectError = {
-	code: ConnectErrorCode,
-	message: string,
+export type AttemptFailure = {
+	protocol: Protocol,
+	error: AttemptError,
+	pass: number,
 };
 
 /**
- *  Category of a connect failure. Lets the frontend decide what to do without
- *  string-matching error messages: `verify_failed` is worth trying another
- *  protocol (and may mean the peer was deleted), `permission_denied` needs user
- *  action, `tunnel_error` is usually environmental, `busy` is a re-entrancy guard.
+ *  Which protocol is being probed, and how far through the order we are.
+ * 
+ *  Part of the *same* snapshot as [`Phase`], so the cancel/connect swap and the label can no
+ *  longer disagree with each other.
  */
-export type ConnectErrorCode = "busy" | "permission_denied" | "verify_failed" | "tunnel_error";
-
-/**  Connection information */
-export type ConnectionInfo = {
-	status: ConnectionStatus,
-	protocol: Protocol | null,
-	server_endpoint: string | null,
-	assigned_ip: string | null,
-	connected_at: number | null,
-	last_packet_received: number | null,
-	stats: TrafficStats,
+export type AttemptProgress = {
+	protocol: Protocol,
+	index: number,
+	total: number,
 };
 
-/**  Connection status enum */
-export type ConnectionStatus = "disconnected" | "connecting" | "verifying_connection" | "connected" | "disconnecting";
+export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string };
+
+export type ConfigSummary = {
+	protocol: Protocol,
+	address: string,
+	server_endpoint: string,
+	dns: string | null,
+	allowed_ips: string,
+	mtu: number,
+};
+
+/**
+ *  `available` is a set; the order lives only in an [`UpIntent`]. `preferred` is "the protocol that
+ *  last actually worked", written only after a successful attempt — never before a probe.
+ */
+export type ConfigsView = {
+	available: Protocol[],
+	preferred: Protocol | null,
+	summaries: ConfigSummary[],
+};
+
+/**  How a cycle ended. */
+export type CycleOutcome = { outcome: "connected"; protocol: Protocol; adopted: boolean } | 
+/**
+ *  Every protocol in the order failed, for every allowed pass — or one failed fatally.
+ * 
+ *  `failures` carries one entry per probe, so the caller can find exactly which protocol
+ *  reported `verify_failed` and re-provision *that* peer, instead of assuming it was whichever
+ *  protocol happened to be tried last.
+ */
+{ outcome: "exhausted"; failures: AttemptFailure[] } | 
+/**  Was connected, the tunnel died, the reconnect budget ran out. */
+{ outcome: "lost_gave_up"; protocol: Protocol; passes: number } | 
+/**
+ *  A teardown could not be confirmed: after the allowed re-runs the world still reported a
+ *  running tunnel. The intent is demoted and the machine may be dirty.
+ */
+{ outcome: "unwind_failed" } | 
+/**  Superseded by a newer intent, or torn down by an explicit Down. */
+{ outcome: "cancelled" } | 
+/**  An explicit Down reached terminal Down. */
+{ outcome: "down" };
+
+export type IntentAccepted = {
+	epoch: IntentEpoch,
+};
+
+/**
+ *  Monotonic, bumped on every accepted intent change — including Down.
+ * 
+ *  Carried into the Android service and echoed back by it, so an observation from a previous
+ *  service instance, or a stop for a superseded generation, is rejectable by value rather than by
+ *  guesswork.
+ */
+export type IntentEpoch = number;
+
+export type IntentError = { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" };
+
+export type IntentView = "down" | "up";
 
 export type LogCaptureStatus = {
 	active: boolean,
@@ -146,6 +212,12 @@ export type LogConfig = {
 export type LogProfile = "normal" | "verbose";
 
 /**
+ *  The five original status literals are preserved verbatim so the existing indicator component
+ *  and its translation keys keep working. `Retrying` is the one addition.
+ */
+export type Phase = "disconnected" | "connecting" | "verifying_connection" | "connected" | "disconnecting" | "retrying";
+
+/**
  *  The ONLY protocol representation in the crate.
  * 
  *  The serde renames are load-bearing: these exact strings are already on users' disks and in
@@ -154,21 +226,65 @@ export type LogProfile = "normal" | "verbose";
  */
 export type Protocol = "wireguard" | "amneziawg" | "vless";
 
+export type RetryProgress = {
+	pass: number,
+	max: number,
+	resume_in_ms: number,
+};
+
 /**  Safe area insets (status bar, nav bar) in dp */
 export type SafeAreaInsets = {
 	top: number | null,
 	bottom: number | null,
 };
 
-/**  Split tunneling mode */
 export type SplitMode = "all" | "include" | "exclude";
 
-/**  Traffic statistics */
+export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
+
 export type TrafficStats = {
 	tx_bytes: number,
 	rx_bytes: number,
 	tx_bytes_per_sec: number | null,
 	rx_bytes_per_sec: number | null,
+};
+
+/**
+ *  Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to
+ *  supply it. `apps` is sorted and deduped on construction, so `PartialEq` means "the same tunnel"
+ *  rather than "the same list written the same way".
+ */
+export type TunnelParams = {
+	split_mode: SplitMode,
+	apps: string[],
+};
+
+/**  Everything the UI can know about the tunnel, in one value. */
+export type TunnelState = {
+	/**
+	 *  Bumped only when a state is actually published. Consumers drop any snapshot whose `seq` is
+	 *  not newer than the one they hold, which closes the seed-versus-first-event race at startup.
+	 */
+	seq: number,
+	phase: Phase,
+	intent: IntentView,
+	epoch: IntentEpoch,
+	intent_order: Protocol[],
+	/**  The protocol actually running — distinct from the preferred one. */
+	protocol: Protocol | null,
+	adopted: boolean,
+	attempt: AttemptProgress | null,
+	retry: RetryProgress | null,
+	server_endpoint: string | null,
+	assigned_ip: string | null,
+	connected_at: number | null,
+	last_packet_received: number | null,
+	stats: TrafficStats,
+	/**  Sticky until the next accepted intent. */
+	last_outcome: CycleOutcome | null,
+	configs: ConfigsView,
+	/**  False while the world is dark. This never by itself means the tunnel is down. */
+	backend_reachable: boolean,
 };
 
 /* Tauri Specta runtime */

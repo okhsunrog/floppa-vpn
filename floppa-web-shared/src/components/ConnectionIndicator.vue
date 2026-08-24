@@ -16,6 +16,7 @@ const statusKeys: Record<ConnectionStatus, string> = {
   verifying_connection: 'status.verifyingConnection',
   disconnected: 'status.disconnected',
   disconnecting: 'status.disconnecting',
+  retrying: 'status.retrying',
 }
 
 const dotClass = computed(() => {
@@ -25,6 +26,7 @@ const dotClass = computed(() => {
     verifying_connection: 'bg-yellow-500',
     disconnected: 'bg-neutral-400',
     disconnecting: 'bg-yellow-500',
+    retrying: 'bg-yellow-500',
   }
   return classes[props.status]
 })
@@ -33,7 +35,8 @@ const isPulsing = computed(
   () =>
     props.status === 'connecting' ||
     props.status === 'verifying_connection' ||
-    props.status === 'disconnecting',
+    props.status === 'disconnecting' ||
+    props.status === 'retrying',
 )
 </script>
 
