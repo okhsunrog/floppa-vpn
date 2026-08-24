@@ -85,6 +85,10 @@ pub fn render(
     TunnelState {
         seq,
         phase,
+        // Derived here, once, from the phase they belong to — so they cannot describe a different
+        // phase than the one in the same snapshot.
+        busy: phase.is_busy(),
+        cancellable: phase.is_cancellable(),
         intent: if intent.is_up() {
             IntentView::Up
         } else {
@@ -210,8 +214,8 @@ mod tests {
         };
         let state = render_with(&status, &Intent::default(), now);
 
-        assert!(state.phase.is_busy());
-        assert!(state.phase.is_cancellable());
+        assert!(state.busy);
+        assert!(state.cancellable);
         let progress = state.attempt.expect("a busy connect must report progress");
         assert_eq!(progress.protocol, Protocol::AmneziaWg);
         assert_eq!(progress.index, 1);
@@ -241,8 +245,8 @@ mod tests {
         let state = render_observed(&Status::Idle, &Intent::default(), now, false);
 
         assert_eq!(state.phase, Phase::Unknown);
-        assert!(state.phase.is_busy(), "pending, not actionable");
-        assert!(!state.phase.is_cancellable(), "there is nothing to cancel");
+        assert!(state.busy, "pending, not actionable");
+        assert!(!state.cancellable, "there is nothing to cancel");
     }
 
     #[test]
@@ -250,7 +254,7 @@ mod tests {
         let now = Instant::now();
         let state = render_observed(&Status::Idle, &Intent::default(), now, true);
         assert_eq!(state.phase, Phase::Disconnected);
-        assert!(!state.phase.is_busy());
+        assert!(!state.busy);
     }
 
     #[test]
@@ -276,7 +280,7 @@ mod tests {
             true,
         );
         assert_eq!(state.phase, Phase::Disconnected);
-        assert!(!state.phase.is_busy(), "must not spin forever");
+        assert!(!state.busy, "must not spin forever");
     }
 
     #[test]
@@ -284,10 +288,59 @@ mod tests {
         let now = Instant::now();
         let state = render_with(&Status::Idle, &Intent::default(), now);
         assert_eq!(state.phase, Phase::Disconnected);
-        assert!(!state.phase.is_busy());
+        assert!(!state.busy);
         assert!(state.attempt.is_none());
         assert!(state.retry.is_none());
         assert!(state.protocol.is_none());
+    }
+
+    /// The snapshot answers "is the button busy?" itself.
+    ///
+    /// It used to answer only "which phase?", and the consumer turned that into a boolean from its
+    /// own copy of the list — in TypeScript, where nothing checks it against this one. Two lists
+    /// that happen to agree are not one source of truth; they are a bug waiting for the next phase
+    /// to be added.
+    #[test]
+    fn every_status_publishes_booleans_that_match_its_own_phase() {
+        let now = Instant::now();
+        let statuses = [
+            Status::Idle,
+            Status::Connecting {
+                cycle: cycle(&[Protocol::AmneziaWg]),
+                phase: AttemptPhase::Preparing,
+                deadline: now + Duration::from_secs(25),
+            },
+            Status::Connecting {
+                cycle: cycle(&[Protocol::AmneziaWg]),
+                phase: AttemptPhase::Verifying,
+                deadline: now + Duration::from_secs(25),
+            },
+            Status::Unwinding {
+                owner: UnwindOwner::Actor,
+                cycle: None,
+                reason: UnwindReason::IntentDown,
+                tries: 0,
+            },
+            Status::Retrying {
+                cycle: cycle(&[Protocol::AmneziaWg]),
+                resume_at: now + Duration::from_secs(1),
+            },
+        ];
+
+        for observed_once in [false, true] {
+            for status in &statuses {
+                let state = render_observed(status, &Intent::default(), now, observed_once);
+                assert_eq!(
+                    state.busy,
+                    state.phase.is_busy(),
+                    "{:?} published busy={} for phase {:?}",
+                    status,
+                    state.busy,
+                    state.phase
+                );
+                assert_eq!(state.cancellable, state.phase.is_cancellable());
+            }
+        }
     }
 
     #[test]
@@ -299,7 +352,7 @@ mod tests {
         };
         let state = render_with(&status, &Intent::default(), now);
         assert_eq!(state.phase, Phase::Retrying);
-        assert!(state.phase.is_busy(), "a retry is still work in progress");
+        assert!(state.busy, "a retry is still work in progress");
         let retry = state.retry.expect("a retry must report its countdown");
         assert!((3_900..=4_000).contains(&retry.resume_in_ms));
     }

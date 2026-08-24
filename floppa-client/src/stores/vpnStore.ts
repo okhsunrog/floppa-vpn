@@ -47,23 +47,15 @@ export const useVpnStore = defineStore(
 
     const phase = computed(() => state.value.phase)
     const isConnected = computed(() => phase.value === 'connected')
-    const isBusy = computed(
-      () =>
-        requesting.value ||
-        // Pending, not actionable: offering to connect before we know whether we already are
-        // would be offering a decision we cannot yet judge.
-        phase.value === 'unknown' ||
-        phase.value === 'connecting' ||
-        phase.value === 'verifying_connection' ||
-        phase.value === 'disconnecting' ||
-        phase.value === 'retrying',
-    )
-    const isCancellable = computed(
-      () =>
-        phase.value === 'connecting' ||
-        phase.value === 'verifying_connection' ||
-        phase.value === 'retrying',
-    )
+    /**
+     * Busy as the actor reports it, or because a command of ours is still in flight.
+     *
+     * Only the second half is decided here, and it has to be: `requesting` is about this webview's
+     * pending call, which the actor has no view of. Which phases count as work in progress used to
+     * be decided here too, from a copy of the Rust list — the two agreed, and nothing made them.
+     */
+    const isBusy = computed(() => requesting.value || state.value.busy)
+    const isCancellable = computed(() => state.value.cancellable)
 
     const availableProtocols = computed(() => state.value.configs.available)
     const hasConfig = computed(() => availableProtocols.value.length > 0)
@@ -269,6 +261,9 @@ function emptyState(): TunnelState {
     // Not 'disconnected': before the first snapshot arrives we have no idea whether a tunnel is
     // running, and saying otherwise is what made an active tunnel flash as down on app start.
     phase: 'unknown',
+    // Matches what Rust publishes for 'unknown': pending, and nothing to cancel.
+    busy: true,
+    cancellable: false,
     intent: 'down',
     epoch: 0,
     intent_order: [],

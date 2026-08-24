@@ -580,6 +580,10 @@ impl Phase {
     /// "spinner showing while the label says Connect" unrepresentable: there is no second source.
     /// `Unknown` counts as busy: the honest thing to show while we do not know is a pending
     /// indicator, not an actionable button offering to do something we cannot yet judge.
+    ///
+    /// Published as [`TunnelState::busy`] rather than left for the consumer to re-derive. It was
+    /// re-derived, in TypeScript, from a second copy of this list — so the claim above was true of
+    /// this function and false of the app: adding a phase here would not have reached the button.
     pub const fn is_busy(self) -> bool {
         matches!(
             self,
@@ -659,6 +663,11 @@ pub struct TunnelState {
     /// not newer than the one they hold, which closes the seed-versus-first-event race at startup.
     pub seq: u64,
     pub phase: Phase,
+    /// [`Phase::is_busy`] for [`Self::phase`], carried so the consumer never restates which phases
+    /// count as work in progress.
+    pub busy: bool,
+    /// [`Phase::is_cancellable`] for [`Self::phase`].
+    pub cancellable: bool,
     pub intent: IntentView,
     pub epoch: IntentEpoch,
     pub intent_order: Vec<Protocol>,
@@ -686,6 +695,8 @@ impl TunnelState {
             // Not Disconnected: at seq 0 nothing has been observed, and claiming there is no
             // tunnel before looking is what made an already-running tunnel flash as down.
             phase: Phase::Unknown,
+            busy: Phase::Unknown.is_busy(),
+            cancellable: Phase::Unknown.is_cancellable(),
             intent: IntentView::Down,
             epoch: IntentEpoch(0),
             intent_order: Vec::new(),
