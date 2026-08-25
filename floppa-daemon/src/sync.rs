@@ -76,18 +76,13 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     // next periodic sync.
     let listener = connect_listener(pool).await?;
 
-    // Initial sync on startup
+    // Initial sync on startup: first put every `active` peer back onto its
+    // interface (WireGuard/AmneziaWG interfaces don't survive a reboot and may
+    // be recreated empty; `sync_peers` only looks at pending rows), then apply
+    // pending changes, then re-create the ephemeral tc limits.
     info!("Running initial sync");
-    restore_active_peers(pool, config).await?;
-    sync_peers(pool, config).await?;
-
-    // Reconcile every `active` peer onto its interface. WireGuard/AmneziaWG
-    // interfaces don't survive a reboot (and may be recreated empty), but
-    // `sync_peers` only processes `pending_add`/`pending_remove` — so peers
-    // already marked `active` would otherwise silently never be (re)added.
     reconcile_active_peers(pool, config).await?;
-
-    // Reapply rate limits for active peers (tc rules are ephemeral)
+    sync_peers(pool, config).await?;
     reapply_rate_limits(pool, config).await?;
 
     // Spawn listener task
@@ -141,60 +136,6 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
         r = listener_handle => Err(anyhow!("listener task exited unexpectedly: {r:?}")),
         r = periodic_handle => Err(anyhow!("periodic task exited unexpectedly: {r:?}")),
     }
-}
-
-/// Restore all database-active peers to their protocol interfaces.
-///
-/// Kernel WireGuard state is ephemeral: interfaces or their peer lists can be
-/// recreated independently of the database during package upgrades, network
-/// reconfiguration, or a host reboot. Re-adding a peer with `wg/awg set` is
-/// idempotent, so reconcile every active row before processing pending changes.
-async fn restore_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
-    let targets = proto_targets(config);
-    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
-
-    let peers = sqlx::query!(
-        r#"
-        SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!", protocol
-        FROM peers
-        WHERE sync_status = 'active'
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut restored = 0usize;
-    for peer in &peers {
-        let Some(target) = target_for(&peer.protocol) else {
-            error!(
-                peer_id = peer.id,
-                protocol = %peer.protocol,
-                "No configured interface for active peer — skipping restore"
-            );
-            continue;
-        };
-
-        match crate::wg::add_peer(
-            target.tool,
-            &target.interface,
-            &peer.public_key,
-            &peer.assigned_ip,
-        ) {
-            Ok(()) => restored += 1,
-            Err(e) => error!(
-                peer_id = peer.id,
-                interface = %target.interface,
-                error = %e,
-                "Failed to restore active peer"
-            ),
-        }
-    }
-
-    info!(
-        total_active = peers.len(),
-        restored, "Restored active peers"
-    );
-    Ok(())
 }
 
 /// Open a dedicated LISTEN connection subscribed to all daemon channels.
