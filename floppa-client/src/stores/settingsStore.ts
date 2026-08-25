@@ -1,8 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { commands, type AppInfo, type Protocol } from '../bindings'
-
-export type SplitMode = 'all' | 'include' | 'exclude'
+import { commands, type AppInfo, type Protocol, type SplitMode } from '../bindings'
 
 /**
  * Probe priority used until the user reorders it, lowest first. AmneziaWG leads because plain
@@ -56,8 +54,7 @@ export const useSettingsStore = defineStore(
     // the auto-select priority. `null` until the user has picked one.
     const manualProtocol = ref<Protocol | null>(null)
 
-    // One-time guard: on upgrade to auto-select we forget the previously-used
-    // protocol once (see VpnCard) so the cycle re-probes from the priority order.
+    // One-time guard for the upgrade to auto-select; applied in `afterHydrate` below.
     const protocolDefaultsApplied = ref(false)
 
     // Cached app list (not persisted — fetched once per session)
@@ -132,6 +129,18 @@ export const useSettingsStore = defineStore(
       afterHydrate: (ctx) => {
         ctx.store.protocolOrder = sanitizeProtocolOrder(ctx.store.protocolOrder)
         if (!isProtocol(ctx.store.manualProtocol)) ctx.store.manualProtocol = null
+
+        // One-time on upgrade to auto-select: enable it and forget the previously-used protocol,
+        // so the first cycle probes from the configured priority instead of inheriting an old
+        // manual pick. A migration of persisted state, so it lives with the hydration — not in
+        // whichever component happens to mount first.
+        if (!ctx.store.protocolDefaultsApplied) {
+          ctx.store.autoSelect = true
+          ctx.store.protocolDefaultsApplied = true
+          commands.forgetPreferredProtocol().catch((e: unknown) => {
+            console.error('[settingsStore] failed to forget the preferred protocol:', e)
+          })
+        }
       },
     },
   },

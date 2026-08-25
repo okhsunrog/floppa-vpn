@@ -2,10 +2,16 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useVpnStore } from '../stores/vpnStore'
-import { useSettingsStore, type SplitMode } from '../stores/settingsStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import { useUpdateStore } from '../stores/updateStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
-import { commands, type LogCaptureStatus, type LogConfig, type LogProfile } from '../bindings'
+import {
+  commands,
+  type LogCaptureStatus,
+  type LogConfig,
+  type LogProfile,
+  type SplitMode,
+} from '../bindings'
 import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
 
 const protocolModalOpen = ref(false)
@@ -165,7 +171,7 @@ onMounted(async () => {
   if (vpn.isAndroid) {
     permissions.checkBatteryOptimization()
     permissions.checkNotifications()
-    // App list is preloaded at startup (VpnCard); this is a fallback
+    // App list is preloaded when the connection card mounts; this is a fallback
     settings.loadApps()
   }
 
