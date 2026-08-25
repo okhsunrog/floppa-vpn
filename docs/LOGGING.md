@@ -81,9 +81,11 @@ enum decides only two things: the name of the capture file (`ui.log` / `vpn.log`
 do with a leftover `active-capture` marker.
 
 A diagnostic capture copies log events into `<log_dir>/captures/<capture_id>/<process>.log`
-while it is active; logcat/stdout output continues regardless. The UI owns the
-`active-capture` marker file: it writes it when a capture starts and removes it when the
-capture stops. The `:vpn` process reads the marker at startup, so a service restart mid-capture
+while it is active; logcat/stdout output continues regardless. In the UI process the capture is
+owned by `logging::capture::CaptureSession`, held in Tauri state: start, stop, status and export
+run under one lock for their whole duration, so two starts cannot race and a stop cannot
+interleave with the start it undoes. The UI owns the `active-capture` marker file: it writes it
+when a capture starts and removes it when the capture stops. The `:vpn` process reads the marker at startup, so a service restart mid-capture
 resumes writing to the same capture. A marker found by a starting UI means the previous UI died
 mid-capture, so the UI removes it instead of resuming.
 

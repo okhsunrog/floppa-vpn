@@ -61,13 +61,13 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 **`tauri-plugin-vpn/`** — **Android only.** `src/android.rs` holds the implementation (`Vpn<R>`, async `VpnExt::vpn()` → `run_mobile_plugin_async` → Kotlin `@Command` methods); on other platforms `init()` registers nothing. `Error { Register, PluginInvoke }`. Kotlin side: VPN lifecycle, TUN creation, split tunneling, foreground notification, device info (`Build.MODEL`), safe area insets (`docs/SAFE-AREA-AND-Z-INDEX.md`). No iOS implementation (`docs/IOS-BACKEND-PLAN.md`).
 
 **Key files** in `floppa-client/src-tauri/src/`:
-- `vpn/commands.rs` — Tauri commands with `#[cfg]` branches for Android vs desktop
+- `vpn/commands/` — Tauri commands: `vpn.rs` (actor wrappers), `logs.rs` (log config + captures), and `android.rs` / `desktop.rs` — one is compiled, both define the same command names, so `lib.rs` and `bindings.ts` are platform-free
 - `vpn/backend/` — `VpnBackend` trait (`mod.rs`), `in_process.rs` (desktop), `android_ipc.rs` (tarpc client)
 - `vpn/platform/` — `Platform` trait (`mod.rs`: routes, DNS, TUN, `default_gateway(family) -> Gateway(IpAddr)`), `linux.rs`, `windows.rs`, `android.rs`
-- `vpn/actor/` — connection state machine (intents, epochs, reconcile); `vpn/rollback/` — journal of undo steps (`Step::EndpointRoute` is durable across restarts)
+- `vpn/actor/` — connection state machine (intents, epochs, reconcile). Vocabulary split by axis: `intent.rs`, `status.rs`, `world.rs`, `outcome.rs`, `snapshot.rs`, `policy.rs`; `types.rs` re-exports them all and is the path callers use. `vpn/rollback/` — journal of undo steps (`Step::EndpointRoute` is durable across restarts)
 - `vpn/state.rs` — `ProtocolConfig` = `WgConfig`/`AwgConfig` (typed `floppa_tunnel_config::TunnelConfig`, persisted through the legacy string shape via `serde(try_from/into)`) or `VlessVpnConfig`; `SavedVpnConfigs` store
 - `vpn/config.rs` — device identity; VPN config persistence as an envelope `{updated_at, configs}`: desktop writes the OS keyring first with a 0600 file fallback (newest copy wins, file migrates back into the keyring); Android is file only (0600, private app dir)
-- `logging.rs` — `init_tracing(log_dir, LogProcess::{Ui, Vpn})`, `LogProfile::{Normal, Verbose}` + custom filter, diagnostic captures capped at 64 MiB (`docs/LOGGING.md`)
+- `logging.rs` — `init_tracing(log_dir, LogProcess::{Ui, Vpn})`, `LogProfile::{Normal, Verbose}` + custom filter, diagnostic captures capped at 64 MiB (`docs/LOGGING.md`); `logging/capture.rs` — `CaptureSession` (Tauri state) owns start/stop/status/export of a capture under one lock
 
 ## Database
 
