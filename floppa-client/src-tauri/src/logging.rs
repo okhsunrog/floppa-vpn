@@ -13,14 +13,44 @@ static RELOAD_HANDLE: OnceLock<FilterHandle> = OnceLock::new();
 /// Current in-memory log config. Protected by RwLock for concurrent reads.
 static LOG_CONFIG: OnceLock<RwLock<LogConfig>> = OnceLock::new();
 
-/// Directory where log-config.json is persisted.
-static LOG_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// The log directory: where `log-config.json`, the active-capture marker and the captures live.
+/// Set once by [`init_tracing`]; the single source for every path under it.
+static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// File capture state. Logcat/stdout remains active independently from this.
 static FILE_CAPTURE: OnceLock<Mutex<Option<FileCapture>>> = OnceLock::new();
 
 const LOG_CONFIG_FILENAME: &str = "log-config.json";
 const ACTIVE_CAPTURE_FILENAME: &str = "active-capture";
+
+/// Upper bound on one process's capture file.
+///
+/// A capture is meant to be minutes long and exported; one that is forgotten — a UI that died
+/// mid-capture with the `:vpn` process still writing — must not grow until the disk is full.
+/// Writes past the cap are dropped, not rotated: the beginning of a capture is the useful part.
+const MAX_CAPTURE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Which process is initialising tracing.
+///
+/// The two used to be two near-identical functions. The differences are exactly these: the name
+/// on the capture file, and what to do with a leftover `active-capture` marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogProcess {
+    /// The Tauri UI process. Owns the capture marker: it writes it when a capture starts and
+    /// removes it when the capture stops.
+    Ui,
+    /// The Android `:vpn` process. Reads the marker so a capture survives a service restart.
+    Vpn,
+}
+
+impl LogProcess {
+    const fn capture_name(self) -> &'static str {
+        match self {
+            Self::Ui => "ui",
+            Self::Vpn => "vpn",
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -133,7 +163,7 @@ fn load_log_config_from_disk(log_dir: &Path) -> LogConfig {
 }
 
 pub fn save_log_config_to_disk(config: &LogConfig) {
-    let Some(dir) = LOG_CONFIG_DIR.get() else {
+    let Some(dir) = LOG_DIR.get() else {
         return;
     };
     let path = dir.join(LOG_CONFIG_FILENAME);
@@ -160,8 +190,9 @@ pub fn get_log_config() -> LogConfig {
         .unwrap_or_default()
 }
 
+/// The log directory, once [`init_tracing`] has run.
 pub fn get_log_dir() -> Option<&'static PathBuf> {
-    LOG_CONFIG_DIR.get()
+    LOG_DIR.get()
 }
 
 /// Apply a new log config at runtime: update in-memory and reload filter.
@@ -192,6 +223,8 @@ pub fn start_file_capture(
         .append(true)
         .open(&path)
         .map_err(|e| format!("Failed to open capture log: {e}"))?;
+    // Resuming an existing file (a restarted `:vpn` process) counts what is already there.
+    let written = file.metadata().map(|m| m.len()).unwrap_or(0);
 
     let lock = FILE_CAPTURE.get_or_init(|| Mutex::new(None));
     if let Ok(mut guard) = lock.lock() {
@@ -199,6 +232,7 @@ pub fn start_file_capture(
             process_name,
             file,
             path: path.clone(),
+            written,
         });
     }
 
@@ -235,20 +269,21 @@ pub fn clear_active_capture_id(log_dir: &Path) {
     let _ = std::fs::remove_file(log_dir.join(ACTIVE_CAPTURE_FILENAME));
 }
 
-/// Initialize tracing for the main UI process.
+/// Initialize tracing for `process`.
 ///
-/// Loads persisted log config from disk to set the initial filter.
-/// Outputs go to either stdout (desktop) or logcat (Android). File output is
-/// enabled only while a diagnostic capture is active.
-pub fn init_tracing(log_dir: &Path) {
+/// Loads persisted log config from disk to set the initial filter. Output goes to stdout
+/// (desktop) or logcat (Android); file output is enabled only while a diagnostic capture is
+/// active. Stores a reload handle so the log config can be changed at runtime (and, in the `:vpn`
+/// process, over RPC).
+pub fn init_tracing(log_dir: &Path, process: LogProcess) {
     let _ = std::fs::create_dir_all(log_dir);
-    let _ = LOG_CONFIG_DIR.set(log_dir.to_path_buf());
+    let _ = LOG_DIR.set(log_dir.to_path_buf());
 
     let config = load_log_config_from_disk(log_dir);
     let initial_filter = build_filter_from_config(&config);
     let _ = LOG_CONFIG.set(RwLock::new(config));
 
-    let file_layer = build_file_layer("ui");
+    let file_layer = build_file_layer(process.capture_name());
 
     let (filter, reload_handle) = reload::Layer::new(initial_filter);
     let _ = RELOAD_HANDLE.set(reload_handle);
@@ -275,36 +310,23 @@ pub fn init_tracing(log_dir: &Path) {
             .with(file_layer)
             .try_init();
     }
-}
 
-/// Initialize tracing for the Android `:vpn` process (separate from UI).
-///
-/// Loads persisted log config from disk to set the initial filter.
-/// Outputs go to logcat. File output is enabled only while a diagnostic
-/// capture is active.
-/// Stores a reload handle so log config can be updated via RPC.
-#[cfg(target_os = "android")]
-pub fn init_tracing_vpn_process(log_dir: &Path) {
-    let _ = std::fs::create_dir_all(log_dir);
-    let _ = LOG_CONFIG_DIR.set(log_dir.to_path_buf());
-
-    let config = load_log_config_from_disk(log_dir);
-    let initial_filter = build_filter_from_config(&config);
-    let _ = LOG_CONFIG.set(RwLock::new(config));
-
-    let file_layer = build_file_layer("vpn");
-
-    let (filter, reload_handle) = reload::Layer::new(initial_filter);
-    let _ = RELOAD_HANDLE.set(reload_handle);
-
-    let _ = tracing_subscriber::registry()
-        .with(filter)
-        .with(build_logcat_layer())
-        .with(file_layer)
-        .try_init();
-
-    if let Some(capture_id) = active_capture_id(log_dir) {
-        let _ = start_file_capture(log_dir, "vpn", &capture_id);
+    match (process, active_capture_id(log_dir)) {
+        // The service restarted under a running capture: keep writing to the same one.
+        (LogProcess::Vpn, Some(capture_id)) => {
+            let _ = start_file_capture(log_dir, process.capture_name(), &capture_id);
+        }
+        // The UI owns the marker and clears it when a capture stops, so a marker present at UI
+        // start means the previous UI died mid-capture. Left in place, every later `:vpn` start
+        // resumed a capture nobody was going to export.
+        (LogProcess::Ui, Some(capture_id)) => {
+            tracing::warn!(
+                capture_id,
+                "removing a capture marker left by a previous run"
+            );
+            clear_active_capture_id(log_dir);
+        }
+        (_, None) => {}
     }
 }
 
@@ -316,6 +338,8 @@ struct FileCapture {
     process_name: &'static str,
     file: File,
     path: PathBuf,
+    /// Bytes in the file so far, against [`MAX_CAPTURE_BYTES`].
+    written: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -351,7 +375,12 @@ impl Write for CaptureWriter {
         if capture.process_name != self.process_name {
             return Ok(buf.len());
         }
+        if capture.written >= MAX_CAPTURE_BYTES {
+            // Full. Dropped silently: logging from inside the log writer would recurse.
+            return Ok(buf.len());
+        }
         capture.file.write_all(buf)?;
+        capture.written += buf.len() as u64;
         Ok(buf.len())
     }
 

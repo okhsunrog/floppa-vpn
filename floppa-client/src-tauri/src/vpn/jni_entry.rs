@@ -219,7 +219,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
 
         // Initialize logging with file layer
         let log_dir_str: String = log_dir.mutf8_chars(env)?.to_string();
-        crate::logging::init_tracing_vpn_process(std::path::Path::new(&log_dir_str));
+        crate::logging::init_tracing(
+            std::path::Path::new(&log_dir_str),
+            crate::logging::LogProcess::Vpn,
+        );
 
         // Set a panic hook to ensure panics are logged to logcat
         std::panic::set_hook(Box::new(|info| {

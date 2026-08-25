@@ -325,7 +325,7 @@ pub fn get_log_capture_status() -> LogCaptureStatus {
                 .map(|capture| capture.id.clone())
                 .or_else(|| guard.latest_capture_id.clone())
                 .or_else(|| {
-                    crate::get_log_dir()
+                    crate::logging::get_log_dir()
                         .and_then(|log_dir| latest_capture_dir(log_dir.as_path()))
                         .and_then(|path| {
                             path.file_name()
@@ -346,7 +346,7 @@ pub fn get_log_capture_status() -> LogCaptureStatus {
 pub async fn start_log_capture(
     backend: State<'_, Arc<dyn VpnBackend>>,
 ) -> Result<LogCaptureStatus, String> {
-    let log_dir = crate::get_log_dir().ok_or("Log directory not initialized")?;
+    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
     let state = LOG_CAPTURE_STATE.get_or_init(|| Mutex::new(LogCaptureState::default()));
 
     {
@@ -404,7 +404,7 @@ pub async fn start_log_capture(
 pub async fn stop_log_capture(
     backend: State<'_, Arc<dyn VpnBackend>>,
 ) -> Result<LogCaptureStatus, String> {
-    let log_dir = crate::get_log_dir().ok_or("Log directory not initialized")?;
+    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
     let state = LOG_CAPTURE_STATE.get_or_init(|| Mutex::new(LogCaptureState::default()));
     let active = {
         let mut guard = state.lock().map_err(|_| "Capture state poisoned")?;
@@ -442,7 +442,7 @@ pub async fn stop_log_capture(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_logs(app: AppHandle) -> Result<bool, String> {
-    let log_dir = crate::get_log_dir().ok_or("Log directory not initialized")?;
+    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
     let capture_dir = latest_capture_dir(log_dir).ok_or("No diagnostic captures found")?;
     let capture_id = capture_dir
         .file_name()

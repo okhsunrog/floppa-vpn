@@ -1,8 +1,7 @@
 pub mod logging;
 pub mod vpn;
 
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 #[allow(unused_imports)]
@@ -10,13 +9,6 @@ use tracing::{info, warn};
 #[cfg(not(target_os = "android"))]
 use vpn::create_backend;
 use vpn::{PlatformImpl, get_platform};
-
-/// Log directory, set once at startup. Used by log export commands.
-static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
-
-pub fn get_log_dir() -> Option<&'static PathBuf> {
-    LOG_DIR.get()
-}
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Clone, serde::Serialize)]
@@ -162,8 +154,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("Failed to get app data dir")
                 .join("logs");
-            logging::init_tracing(&log_dir);
-            let _ = LOG_DIR.set(log_dir);
+            logging::init_tracing(&log_dir, logging::LogProcess::Ui);
             info!("Logging initialized.");
 
             // Initialize config dir from Tauri path resolver
