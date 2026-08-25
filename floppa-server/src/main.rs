@@ -57,8 +57,14 @@ async fn main() -> Result<()> {
     let pool = db::init_pool(&secrets.database_url).await?;
     info!("Connected to database");
 
-    // Derive WG public key for client configs
+    // Derive the server public keys for client configs. A configured AmneziaWG section with
+    // a bad/missing awg_private_key is a startup error, not a silently disabled protocol.
     let wg_public_key = secrets.wg_public_key()?;
+    let awg_public_key = config
+        .amneziawg
+        .as_ref()
+        .map(|_| secrets.awg_public_key())
+        .transpose()?;
 
     // Build teloxide bot (shared between Axum and dispatcher)
     let bot = Bot::new(&bot_secrets.token);
@@ -91,13 +97,15 @@ async fn main() -> Result<()> {
     }
 
     // Build Axum router
-    let api_router = admin::routes::create_router(
+    let state = admin::routes::AppState::new(
         pool.clone(),
         config.clone(),
         secrets.clone(),
         wg_public_key.clone(),
+        awg_public_key,
         bot.clone(),
-    );
+    )?;
+    let api_router = admin::routes::create_router(state);
 
     let static_routes = memory_serve::load!()
         .index_file(Some("/index.html"))
@@ -125,7 +133,7 @@ async fn main() -> Result<()> {
             .allow_headers([
                 axum::http::header::CONTENT_TYPE,
                 axum::http::header::AUTHORIZATION,
-                axum::http::HeaderName::from_static("x-client-version"),
+                axum::http::HeaderName::from_static(admin::routes::CLIENT_VERSION_HEADER),
             ])
             .expose_headers([axum::http::HeaderName::from_static(
                 admin::routes::REFRESHED_TOKEN_HEADER,

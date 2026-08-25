@@ -115,20 +115,11 @@ fn build_auth_response(
     state: &AppState,
     result: services::UpsertResult,
 ) -> Result<AuthResponse, ApiError> {
-    let auth_secrets = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets not set"))?;
-
-    let default_auth = floppa_core::AuthConfig::default();
-    let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
-
     let token = create_jwt(
         result.id,
         result.is_admin,
-        &auth_secrets.jwt_secret,
-        auth_config.jwt_expiration_hours,
+        &state.auth_secrets.jwt_secret,
+        state.auth_config.jwt_expiration_hours,
     )
     .map_err(|e| ApiError::internal(format!("Failed to create JWT: {e}")))?;
 
@@ -152,13 +143,7 @@ async fn upsert_and_create_jwt(
     username: Option<&str>,
     profile: services::TelegramProfile<'_>,
 ) -> Result<AuthResponse, ApiError> {
-    let is_config_admin = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets not set"))?
-        .admin_telegram_ids
-        .contains(&telegram_id);
+    let is_config_admin = state.auth_secrets.admin_telegram_ids.contains(&telegram_id);
 
     let result =
         services::upsert_user(&state.pool, telegram_id, username, profile, is_config_admin)
@@ -603,16 +588,10 @@ pub(super) async fn register_account(
     headers: HeaderMap,
     Json(req): Json<AccountRegisterRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let limit = state
-        .config
-        .auth
-        .as_ref()
-        .map(|a| a.register_rate_limit_per_hour)
-        .unwrap_or_else(|| floppa_core::AuthConfig::default().register_rate_limit_per_hour);
     state.rate_limiter.check(
         RateLimitScope::Register,
         client_ip(&headers, peer).to_string(),
-        limit,
+        state.auth_config.register_rate_limit_per_hour,
         Duration::hours(1),
     )?;
 
@@ -638,12 +617,7 @@ pub(super) async fn login_account(
     headers: HeaderMap,
     Json(req): Json<AccountLoginRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let limit = state
-        .config
-        .auth
-        .as_ref()
-        .map(|a| a.login_rate_limit_per_15min)
-        .unwrap_or_else(|| floppa_core::AuthConfig::default().login_rate_limit_per_15min);
+    let limit = state.auth_config.login_rate_limit_per_15min;
     let window = Duration::minutes(15);
     // Per IP against one client trying many accounts; per login name against many addresses
     // trying one account. Logins are matched case-insensitively, so key on the lowercase form.

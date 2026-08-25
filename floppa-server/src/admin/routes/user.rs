@@ -496,18 +496,10 @@ pub(super) async fn create_my_peer(
     State(state): State<AppState>,
     body: Option<Json<CreatePeerRequest>>,
 ) -> Result<Json<CreatePeerResponse>, ApiError> {
-    let encryption_key = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets required for encryption"))?
-        .get_encryption_key()
-        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
-
     let ctx = services::CreatePeerContext {
         pool: &state.pool,
         config: &state.config,
-        encryption_key: &encryption_key,
+        encryption_key: &state.encryption_key,
         wg_public_key: &state.wg_public_key,
         awg_public_key: state.awg_public_key.as_deref(),
     };
@@ -614,18 +606,10 @@ pub(super) async fn get_my_peer_config(
     .await?
     .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
-    let encryption_key = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
-        .get_encryption_key()
-        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
-
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
         ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
     })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key)
+    let private_key = decrypt_private_key(encrypted, &state.encryption_key)
         .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
 
     render_peer_config(&state, &peer.protocol, &private_key, &peer.assigned_ip)
@@ -663,18 +647,10 @@ pub(super) async fn send_my_peer_config(
     .await?
     .ok_or_else(|| ApiError::not_found("Peer not found"))?;
 
-    let encryption_key = state
-        .secrets
-        .auth
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("Auth secrets required for decryption"))?
-        .get_encryption_key()
-        .map_err(|e| ApiError::internal(format!("Invalid encryption key: {e}")))?;
-
     let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
         ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
     })?;
-    let private_key = decrypt_private_key(encrypted, &encryption_key)
+    let private_key = decrypt_private_key(encrypted, &state.encryption_key)
         .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
 
     let wg_config = render_peer_config(&state, &peer.protocol, &private_key, &peer.assigned_ip)?;

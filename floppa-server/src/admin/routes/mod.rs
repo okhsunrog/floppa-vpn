@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{DateTime, Duration, Utc};
-use floppa_core::{Config, DbPool, Secrets};
+use floppa_core::{AuthConfig, Config, DbPool, Secrets, config::AuthSecrets};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
 use teloxide::prelude::*;
@@ -23,11 +23,34 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 pub(crate) use crate::admin::error::ApiError;
 use crate::admin::rate_limit::RateLimiter;
 
+/// Request header the client app sends with its own semver version; the 426 middleware compares
+/// it against `min_client_version`, and CORS must allow it.
+pub const CLIENT_VERSION_HEADER: &str = "x-client-version";
+
+/// Config/secrets problems that would otherwise surface as a 500 on the first request.
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    #[error("secrets.toml: the [auth] section (jwt_secret, encryption_key) is required")]
+    MissingAuthSecrets,
+    #[error("secrets.toml: auth.encryption_key: {0}")]
+    InvalidEncryptionKey(#[from] floppa_core::crypto::CryptoError),
+    #[error("config.toml: min_client_version {0:?} is not a semver version: {1}")]
+    InvalidMinClientVersion(String, semver::Error),
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
     pub config: Config,
     pub secrets: Secrets,
+    /// `config.auth` with the defaults filled in when the section is absent.
+    pub auth_config: AuthConfig,
+    /// `secrets.auth`, present by construction (see [`AppState::new`]).
+    pub auth_secrets: AuthSecrets,
+    /// `auth_secrets.encryption_key`, parsed once.
+    pub encryption_key: [u8; 32],
+    /// `config.min_client_version`, parsed once; `None` disables the 426 check.
+    pub min_client_version: Option<semver::Version>,
     pub wg_public_key: String,
     /// AmneziaWG server public key (None if AmneziaWG is not configured).
     pub awg_public_key: Option<String>,
@@ -208,19 +231,18 @@ async fn version_check_middleware(
     request: axum::extract::Request,
     next: Next,
 ) -> axum::response::Response {
-    // No X-Client-Version header = browser/admin panel, skip check
-    if let Some(min_version_str) = &state.config.min_client_version
-        && let Some(client_header) = request.headers().get("X-Client-Version")
+    // No version header = browser/admin panel, skip check
+    if let Some(min_ver) = &state.min_client_version
+        && let Some(client_header) = request.headers().get(CLIENT_VERSION_HEADER)
         && let Ok(client_str) = client_header.to_str()
-        && let Ok(min_ver) = semver::Version::parse(min_version_str)
         && let Ok(client_ver) = semver::Version::parse(client_str)
-        && client_ver < min_ver
+        && client_ver < *min_ver
     {
         return (
             StatusCode::UPGRADE_REQUIRED,
             Json(serde_json::json!({
                 "error": "upgrade_required",
-                "min_version": min_version_str,
+                "min_version": min_ver.to_string(),
                 "message": "Please update the app to continue"
             })),
         )
@@ -257,10 +279,7 @@ async fn token_refresh_middleware(
     let Some(token) = bearer else {
         return response;
     };
-    let Some(auth_secrets) = state.secrets.auth.as_ref() else {
-        return response;
-    };
-    let Ok(claims) = crate::admin::auth::verify_jwt(&token, &auth_secrets.jwt_secret) else {
+    let Ok(claims) = crate::admin::auth::verify_jwt(&token, &state.auth_secrets.jwt_secret) else {
         return response;
     };
     if Utc::now().timestamp() - claims.iat < TOKEN_REFRESH_AFTER_SECS {
@@ -278,13 +297,11 @@ async fn token_refresh_middleware(
         }
     };
 
-    let default_auth = floppa_core::AuthConfig::default();
-    let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
     if let Ok(fresh) = crate::admin::auth::create_jwt(
         claims.sub,
         is_admin,
-        &auth_secrets.jwt_secret,
-        auth_config.jwt_expiration_hours,
+        &state.auth_secrets.jwt_secret,
+        state.auth_config.jwt_expiration_hours,
     ) && let Ok(value) = axum::http::HeaderValue::from_str(&fresh)
     {
         response.headers_mut().insert(REFRESHED_TOKEN_HEADER, value);
@@ -292,36 +309,61 @@ async fn token_refresh_middleware(
     response
 }
 
-pub fn create_router(
-    pool: DbPool,
-    config: Config,
-    secrets: Secrets,
-    wg_public_key: String,
-    bot: Bot,
-) -> axum::Router {
-    let vm_url = config
-        .metrics
-        .as_ref()
-        .map(|m| m.victoria_metrics_url.clone())
-        .unwrap_or_else(|| "http://127.0.0.1:8428".to_string());
+impl AppState {
+    /// Validate and derive everything the handlers need up front, so a misconfigured server
+    /// fails on boot rather than with a 500 on the first request.
+    ///
+    /// `awg_public_key` is the AmneziaWG server public key when AmneziaWG is configured; the
+    /// caller derives it (and fails) at startup rather than letting it silently vanish.
+    pub fn new(
+        pool: DbPool,
+        config: Config,
+        secrets: Secrets,
+        wg_public_key: String,
+        awg_public_key: Option<String>,
+        bot: Bot,
+    ) -> Result<Self, StartupError> {
+        let auth_secrets = secrets
+            .auth
+            .clone()
+            .ok_or(StartupError::MissingAuthSecrets)?;
+        let encryption_key = auth_secrets.get_encryption_key()?;
+        let auth_config = config.auth.clone().unwrap_or_default();
+        let min_client_version = config
+            .min_client_version
+            .as_deref()
+            .map(|raw| {
+                semver::Version::parse(raw)
+                    .map_err(|e| StartupError::InvalidMinClientVersion(raw.to_owned(), e))
+            })
+            .transpose()?;
+        let vm_url = config
+            .metrics
+            .as_ref()
+            .map(|m| m.victoria_metrics_url.clone())
+            .unwrap_or_else(|| "http://127.0.0.1:8428".to_string());
 
-    // Derived from secrets.awg_private_key; None when AmneziaWG isn't configured.
-    let awg_public_key = secrets.awg_public_key().ok();
+        Ok(Self {
+            pool,
+            config,
+            secrets,
+            auth_config,
+            auth_secrets,
+            encryption_key,
+            min_client_version,
+            wg_public_key,
+            awg_public_key,
+            bot,
+            http_client: reqwest::Client::new(),
+            vm_url,
+            telegram_login_states: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
+            telegram_login_codes: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
+            rate_limiter: Arc::new(RateLimiter::default()),
+        })
+    }
+}
 
-    let state = AppState {
-        pool,
-        config,
-        secrets,
-        wg_public_key,
-        awg_public_key,
-        bot,
-        http_client: reqwest::Client::new(),
-        vm_url,
-        telegram_login_states: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
-        telegram_login_codes: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
-        rate_limiter: Arc::new(RateLimiter::default()),
-    };
-
+pub fn create_router(state: AppState) -> axum::Router {
     let (router, _openapi) = openapi_router().with_state(state.clone()).split_for_parts();
     router
         .layer(middleware::from_fn_with_state(
@@ -416,7 +458,7 @@ struct PublicConfig {
 async fn get_public_config(State(state): State<AppState>) -> Json<PublicConfig> {
     Json(PublicConfig {
         telegram_bot_username: state.config.bot.as_ref().and_then(|b| b.username.clone()),
-        amneziawg_available: state.config.amneziawg.is_some() && state.awg_public_key.is_some(),
+        amneziawg_available: state.awg_public_key.is_some(),
         vless_available: state.config.vless.is_some() && state.secrets.vless.is_some(),
     })
 }
