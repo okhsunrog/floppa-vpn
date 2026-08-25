@@ -157,7 +157,7 @@ Run on a Pixel 8 Pro, release build, 25 August 2026.
 | always-on start with no UI | intent raised from the persisted one, 0.8 s; a UI opened later shows the truth with no adoption — **pass** |
 | `:vpn` restarts under a live UI | *not runnable* — `am kill`/`am crash` are refused for a release build; covered by the host test in `rpc_server.rs` |
 | swipe-kill after a *fallback* connect | *not run* — forcing a mid-ladder failure needs a server-side change |
-| peer deleted on the server, tunnel running | silence at 180 s → probe → `PeerSilent` → AmneziaWG failed verification → WireGuard carried it, traffic never stopped for more than the cycle — **pass** |
+| peer deleted on the server, tunnel running | silence at 180 s → probe → `PeerSilent` → AmneziaWG failed verification → WireGuard carried it → the dead peer was recreated in the background, tunnel untouched, and connects again — **pass** (three runs; the first two found the two frontend bugs below) |
 | log out | *not run* — it signs the owner out |
 
 Two defects the device found, both fixed: the network callback watched the *default* network, which
@@ -165,12 +165,19 @@ after the tunnel comes up is our own VPN — so a real Wi-Fi to mobile switch pr
 all; and a cold start by the system stood the service down mid-start, because a freshly booted actor
 publishes Disconnected before anything has asked it for a tunnel.
 
-A third defect came out of replaying the incident that started all this — a peer deleted on the
-server while the tunnel was up. The actor did everything right: noticed the silence, probed, gave
-up on AmneziaWG and carried on over WireGuard. What did *not* happen was the repair of the dead
-peer, because `VpnCard`'s outcome watcher returned early unless the outcome "needed attention" —
-and a cycle that connected does not. The repair could therefore never run for the reconnects it
-exists for. Every outcome is offered to the handler now.
+Replaying the incident that started all this — a peer deleted on the server while the tunnel was
+up — took three runs, because the actor half worked immediately and the frontend half was broken
+in two separate ways. Both were invisible until a *background reconnect that succeeds* became a
+thing that happens, which is exactly what this branch introduced.
+
+First: `VpnCard`'s outcome watcher returned early unless the outcome "needed attention", and a
+cycle that connected does not — so the repair could never run for the reconnects it exists for.
+
+Second, and deeper: the sticky outcome was deduplicated by `{ epoch, outcome }`, and a reconnect
+runs under the *same intent*. A tunnel that dropped and came back therefore reports `connected`
+twice under one epoch with the same tag, and the second — the one carrying "a protocol was stepped
+over" — was swallowed as a duplicate of the connect the user had pressed minutes earlier. The
+actor now stamps every outcome with a serial, and that is the whole key.
 
 One gap it also found: an outage longer than the reconnect budget ends in `LostGaveUp` and the
 intent is demoted, so only always-on brings the tunnel back afterwards. "There is no network at
