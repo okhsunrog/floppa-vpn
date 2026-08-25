@@ -112,6 +112,10 @@ pub fn setup_tc(interface: &str, total_bandwidth_mbit: u32) -> Result<()> {
 /// Add rate limit for a specific peer.
 /// Creates HFSC class and filter for both egress and ingress.
 ///
+/// Idempotent: the class is `replace`d and the filter is deleted before it is
+/// re-added, so a retry after a partial failure (class created, filter not)
+/// converges instead of erroring out or stacking duplicate filters.
+///
 /// # Arguments
 /// * `interface` - WireGuard interface name
 /// * `peer_ip` - Peer's assigned IP (e.g., "10.100.0.5")
@@ -120,91 +124,54 @@ pub fn add_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Result<
     let ifb = ifb_device(interface);
     let class_id = ip_to_class_id(peer_ip)?;
     let classid_str = format!("1:{}", class_id);
+    let prio = class_id.to_string();
     let rate = format!("{}mbit", rate_mbit);
-    let dst = format!("{}/32", peer_ip);
-    let src = format!("{}/32", peer_ip);
+    let ip_mask = format!("{}/32", peer_ip);
 
-    // === EGRESS (traffic TO peer) ===
-    // Create class with rate limit
-    tc(&[
-        "class",
-        "add",
-        "dev",
-        interface,
-        "parent",
-        "1:1",
-        "classid",
-        &classid_str,
-        "hfsc",
-        "ls",
-        "rate",
-        &rate,
-        "ul",
-        "rate",
-        &rate,
-    ])?;
+    // Egress: traffic TO the peer (match dst). Ingress: traffic FROM the peer, via IFB (match src).
+    for (dev, direction) in [(interface, "dst"), (ifb.as_str(), "src")] {
+        tc(&[
+            "class",
+            "replace",
+            "dev",
+            dev,
+            "parent",
+            "1:1",
+            "classid",
+            &classid_str,
+            "hfsc",
+            "ls",
+            "rate",
+            &rate,
+            "ul",
+            "rate",
+            &rate,
+        ])?;
 
-    // Filter to match destination IP
-    tc(&[
-        "filter",
-        "add",
-        "dev",
-        interface,
-        "parent",
-        "1:",
-        "protocol",
-        "ip",
-        "prio",
-        "1",
-        "u32",
-        "match",
-        "ip",
-        "dst",
-        &dst,
-        "classid",
-        &classid_str,
-    ])?;
-
-    // === INGRESS (traffic FROM peer, via IFB) ===
-    // Create class on IFB
-    tc(&[
-        "class",
-        "add",
-        "dev",
-        &ifb,
-        "parent",
-        "1:1",
-        "classid",
-        &classid_str,
-        "hfsc",
-        "ls",
-        "rate",
-        &rate,
-        "ul",
-        "rate",
-        &rate,
-    ])?;
-
-    // Filter to match source IP on IFB
-    tc(&[
-        "filter",
-        "add",
-        "dev",
-        &ifb,
-        "parent",
-        "1:",
-        "protocol",
-        "ip",
-        "prio",
-        "1",
-        "u32",
-        "match",
-        "ip",
-        "src",
-        &src,
-        "classid",
-        &classid_str,
-    ])?;
+        // Clear a filter left behind by a previous partial attempt (ignore "not found").
+        let _ = tc(&[
+            "filter", "del", "dev", dev, "parent", "1:", "protocol", "ip", "prio", &prio,
+        ]);
+        tc(&[
+            "filter",
+            "add",
+            "dev",
+            dev,
+            "parent",
+            "1:",
+            "protocol",
+            "ip",
+            "prio",
+            &prio,
+            "u32",
+            "match",
+            "ip",
+            direction,
+            &ip_mask,
+            "classid",
+            &classid_str,
+        ])?;
+    }
 
     info!(peer_ip, rate_mbit, class_id, "Added rate limit for peer");
 
@@ -217,40 +184,25 @@ pub fn remove_peer_limit(interface: &str, peer_ip: &str) -> Result<()> {
     let ifb = ifb_device(interface);
     let class_id = ip_to_class_id(peer_ip)?;
     let classid_str = format!("1:{}", class_id);
-    let dst = format!("{}/32", peer_ip);
-    let src = format!("{}/32", peer_ip);
+    let prio = class_id.to_string();
 
-    // Remove egress filter and class
-    let _ = tc(&[
-        "filter", "del", "dev", interface, "parent", "1:", "protocol", "ip", "prio", "1", "u32",
-        "match", "ip", "dst", &dst,
-    ]);
-    let _ = tc(&[
-        "class",
-        "del",
-        "dev",
-        interface,
-        "parent",
-        "1:1",
-        "classid",
-        &classid_str,
-    ]);
-
-    // Remove ingress filter and class from IFB
-    let _ = tc(&[
-        "filter", "del", "dev", &ifb, "parent", "1:", "protocol", "ip", "prio", "1", "u32",
-        "match", "ip", "src", &src,
-    ]);
-    let _ = tc(&[
-        "class",
-        "del",
-        "dev",
-        &ifb,
-        "parent",
-        "1:1",
-        "classid",
-        &classid_str,
-    ]);
+    for dev in [interface, ifb.as_str()] {
+        // Each peer's filter lives at its own prio: deleting by prio without a
+        // handle removes every filter at that prio, which is exactly this peer's.
+        let _ = tc(&[
+            "filter", "del", "dev", dev, "parent", "1:", "protocol", "ip", "prio", &prio,
+        ]);
+        let _ = tc(&[
+            "class",
+            "del",
+            "dev",
+            dev,
+            "parent",
+            "1:1",
+            "classid",
+            &classid_str,
+        ]);
+    }
 
     info!(peer_ip, class_id, "Removed rate limit for peer");
 

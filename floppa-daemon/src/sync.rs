@@ -366,39 +366,45 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
 
         info!(peer_id = peer.id, ip = %peer.assigned_ip, interface = %target.interface, "Adding peer");
 
-        match crate::wg::add_peer(
+        if let Err(e) = crate::wg::add_peer(
             target.tool,
             &target.interface,
             &peer.public_key,
             &peer.assigned_ip,
         ) {
-            Ok(()) => {
-                // Apply rate limit if configured
-                if target.rate_limit_enabled
-                    && let Some(speed_limit) = peer.speed_limit_mbps
-                {
-                    if let Err(e) = crate::tc::add_peer_limit(
-                        &target.interface,
-                        &peer.assigned_ip,
-                        speed_limit as u32,
-                    ) {
-                        error!(peer_id = peer.id, error = %e, "Failed to apply rate limit");
-                    } else {
-                        info!(peer_id = peer.id, speed_limit, "Rate limit applied");
-                    }
-                }
+            error!(peer_id = peer.id, error = %e, "Failed to add peer");
+            continue;
+        }
 
-                sqlx::query!(
-                    "UPDATE peers SET sync_status = 'active' WHERE id = $1",
-                    peer.id
-                )
-                .execute(&ctx.pool)
-                .await?;
-                info!(peer_id = peer.id, "Peer added successfully");
+        // The peer is only `active` once both the interface and tc agree. If the
+        // limit can't be applied, leave it `pending_add` and retry on the next
+        // sync (add_peer / add_peer_limit are idempotent) rather than letting an
+        // unlimited peer through.
+        if target.rate_limit_enabled
+            && let Some(speed_limit) = peer.speed_limit_mbps
+        {
+            if let Err(e) =
+                crate::tc::add_peer_limit(&target.interface, &peer.assigned_ip, speed_limit as u32)
+            {
+                error!(
+                    peer_id = peer.id,
+                    error = %e,
+                    "Failed to apply rate limit; peer stays pending_add"
+                );
+                continue;
             }
-            Err(e) => {
-                error!(peer_id = peer.id, error = %e, "Failed to add peer");
-            }
+            info!(peer_id = peer.id, speed_limit, "Rate limit applied");
+        }
+
+        match sqlx::query!(
+            "UPDATE peers SET sync_status = 'active' WHERE id = $1",
+            peer.id
+        )
+        .execute(&ctx.pool)
+        .await
+        {
+            Ok(_) => info!(peer_id = peer.id, "Peer added successfully"),
+            Err(e) => error!(peer_id = peer.id, error = %e, "Failed to mark peer active"),
         }
     }
 
@@ -426,19 +432,20 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
             let _ = crate::tc::remove_peer_limit(&target.interface, &peer.assigned_ip);
         }
 
-        match crate::wg::remove_peer(target.tool, &target.interface, &peer.public_key) {
-            Ok(()) => {
-                sqlx::query!(
-                    "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
-                    peer.id
-                )
-                .execute(&ctx.pool)
-                .await?;
-                info!(peer_id = peer.id, "Peer removed successfully");
-            }
-            Err(e) => {
-                error!(peer_id = peer.id, error = %e, "Failed to remove peer");
-            }
+        if let Err(e) = crate::wg::remove_peer(target.tool, &target.interface, &peer.public_key) {
+            error!(peer_id = peer.id, error = %e, "Failed to remove peer");
+            continue;
+        }
+
+        match sqlx::query!(
+            "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
+            peer.id
+        )
+        .execute(&ctx.pool)
+        .await
+        {
+            Ok(_) => info!(peer_id = peer.id, "Peer removed successfully"),
+            Err(e) => error!(peer_id = peer.id, error = %e, "Failed to mark peer removed"),
         }
     }
 
