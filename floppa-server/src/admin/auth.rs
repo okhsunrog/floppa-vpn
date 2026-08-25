@@ -1,18 +1,15 @@
 //! Authentication module for Telegram Login and JWT tokens
 
-use axum::{
-    extract::FromRequestParts,
-    http::{StatusCode, request::Parts},
-};
+use axum::{extract::FromRequestParts, http::request::Parts};
 use chrono::{Duration, Utc};
 use hmac::{Hmac, Mac};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use tracing::{error, warn};
+use tracing::warn;
 use utoipa::ToSchema;
 
-use crate::admin::routes::AppState;
+use crate::admin::{error::ApiError, routes::AppState};
 
 /// Data received from Telegram Login Widget
 #[derive(Debug, Deserialize, ToSchema)]
@@ -213,7 +210,7 @@ pub struct AuthUser {
 }
 
 impl FromRequestParts<AppState> for AuthUser {
-    type Rejection = StatusCode;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -226,7 +223,7 @@ impl FromRequestParts<AppState> for AuthUser {
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
 
-        let token = auth_header.ok_or(StatusCode::UNAUTHORIZED)?;
+        let token = auth_header.ok_or_else(ApiError::unauthorized)?;
 
         // Get JWT secret from secrets
         let secret = state
@@ -234,12 +231,12 @@ impl FromRequestParts<AppState> for AuthUser {
             .auth
             .as_ref()
             .map(|a| a.jwt_secret.as_str())
-            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+            .ok_or_else(|| ApiError::internal("Auth secrets not configured"))?;
 
         // Verify token
         let claims = verify_jwt(token, secret).map_err(|e| {
             warn!("JWT verification failed: {}", e);
-            StatusCode::UNAUTHORIZED
+            ApiError::unauthorized()
         })?;
 
         Ok(AuthUser {
@@ -256,7 +253,7 @@ impl FromRequestParts<AppState> for AuthUser {
 pub struct AdminUser(pub AuthUser);
 
 impl FromRequestParts<AppState> for AdminUser {
-    type Rejection = StatusCode;
+    type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -268,11 +265,7 @@ impl FromRequestParts<AppState> for AdminUser {
         let is_admin =
             sqlx::query_scalar!("SELECT is_admin FROM users WHERE id = $1", user.user_id)
                 .fetch_optional(&state.pool)
-                .await
-                .map_err(|e| {
-                    error!("Failed to verify admin status: {}", e);
-                    StatusCode::INTERNAL_SERVER_ERROR
-                })?;
+                .await?;
 
         match is_admin {
             Some(true) => Ok(AdminUser(user)),
@@ -281,11 +274,11 @@ impl FromRequestParts<AppState> for AdminUser {
                     "User {} has admin JWT but is_admin=false in DB",
                     user.user_id
                 );
-                Err(StatusCode::FORBIDDEN)
+                Err(ApiError::forbidden("Not an admin"))
             }
             None => {
                 warn!("User {} from JWT not found in DB", user.user_id);
-                Err(StatusCode::UNAUTHORIZED)
+                Err(ApiError::unauthorized())
             }
         }
     }
