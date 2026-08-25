@@ -1,5 +1,6 @@
 //! GotatunTunnel - WireGuard tunnel using gotatun library
 
+#[cfg(not(target_os = "android"))]
 use super::platform::TunParams;
 use super::protocol::Protocol;
 use super::state::{AwgObfuscation, WgConfig};
@@ -324,16 +325,6 @@ impl GotatunTunnel {
         })
     }
 
-    /// Stub for Android - use from_fd instead
-    #[cfg(target_os = "android")]
-    pub async fn new(
-        _config: &WgConfig,
-        _interface_name: &str,
-        _tun_params: &TunParams,
-    ) -> Result<Self, String> {
-        Err("On Android, use from_fd() with the fd from VpnService".to_string())
-    }
-
     /// Get traffic statistics
     pub async fn get_stats(&self) -> Result<RawStats, String> {
         let device = self.device.as_ref().ok_or("Device not initialized")?;
@@ -459,9 +450,7 @@ pub struct TunnelManager {
 
 impl TunnelManager {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            tunnel: RwLock::new(None),
-        })
+        Arc::new(Self::default())
     }
 
     /// Stop existing tunnel if any (helper for start methods).

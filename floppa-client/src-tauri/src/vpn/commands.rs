@@ -1,6 +1,6 @@
 use super::actor::handle::{IntentRequest, TunnelHandle};
 use super::actor::types::{
-    ConfigsView, CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelParams, TunnelState,
+    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelParams, TunnelState,
 };
 use super::backend::VpnBackend;
 use super::config as vpn_config;
@@ -135,12 +135,6 @@ pub async fn import_config(
     tunnel: State<'_, TunnelHandle>,
 ) -> Result<Protocol, ConfigError> {
     tunnel.import_config(raw).await
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn list_configs(tunnel: State<'_, TunnelHandle>) -> Result<ConfigsView, ()> {
-    Ok(tunnel.list_configs().await)
 }
 
 /// Forget every stored config.
@@ -314,15 +308,6 @@ pub async fn set_status_bar_style(
     {
         Ok(())
     }
-}
-
-/// Get the log directory path
-#[tauri::command]
-#[specta::specta]
-pub fn get_log_dir() -> Result<String, String> {
-    crate::get_log_dir()
-        .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| "Log directory not initialized".to_string())
 }
 
 /// Get current diagnostic capture status.

@@ -46,7 +46,6 @@ export const commands = {
 	 *  silently reorder the user's preference.
 	 */
 	importConfig: (raw: string) => typedError<Protocol, ConfigError>(__TAURI_INVOKE("import_config", { raw })),
-	listConfigs: () => typedError<ConfigsView, null>(__TAURI_INVOKE("list_configs")),
 	/**
 	 *  Forget every stored config.
 	 * 
@@ -76,8 +75,6 @@ export const commands = {
 	getSafeAreaInsets: () => typedError<SafeAreaInsets, string>(__TAURI_INVOKE("get_safe_area_insets")),
 	/**  Set status bar icon style to match app theme (Android only) */
 	setStatusBarStyle: (isDark: boolean) => typedError<null, string>(__TAURI_INVOKE("set_status_bar_style", { isDark })),
-	/**  Get the log directory path */
-	getLogDir: () => typedError<string, string>(__TAURI_INVOKE("get_log_dir")),
 	/**  Get current diagnostic capture status. */
 	getLogCaptureStatus: () => __TAURI_INVOKE<LogCaptureStatus>("get_log_capture_status"),
 	/**
