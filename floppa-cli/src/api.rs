@@ -336,6 +336,19 @@ impl ApiClient {
         Ok(created.config)
     }
 
+    /// End one of the current user's sessions — normally this CLI's own, on `logout`.
+    pub async fn delete_session(&self, session_id: uuid::Uuid) -> Result<(), ApiClientError> {
+        const WHAT: &str = "DELETE /me/sessions/{id}";
+        let resp = self
+            .client
+            .delete(self.url(&format!("/me/sessions/{session_id}")))
+            .bearer_auth(&self.token)
+            .send()
+            .await?;
+        check(resp, WHAT).await?;
+        Ok(())
+    }
+
     /// Fetch VLESS config for the current user.
     pub async fn get_vless_config(&self) -> Result<String, ApiClientError> {
         const WHAT: &str = "GET /me/vless-config";

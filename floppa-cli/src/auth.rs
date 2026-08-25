@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow, bail};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -148,6 +149,16 @@ impl TokenSource {
         }
         Ok(())
     }
+}
+
+/// The session (`jti`) a login token belongs to, read from its payload without verifying the
+/// signature — the CLI only needs the id to ask the server to end that session; the server
+/// verifies the token itself. `None` for a malformed token or one issued before sessions.
+pub fn session_id(token: &str) -> Option<uuid::Uuid> {
+    let payload = token.split('.').nth(1)?;
+    let json = URL_SAFE_NO_PAD.decode(payload).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&json).ok()?;
+    claims.get("jti")?.as_str()?.parse().ok()
 }
 
 /// What the server tracks a peer by: a stable per-installation UUID plus a display name.
@@ -338,6 +349,26 @@ async fn respond(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn session_id_comes_from_the_unverified_payload() {
+        let jwt = |claims: &str| {
+            format!(
+                "eyJhbGciOiJIUzI1NiJ9.{}.sig",
+                URL_SAFE_NO_PAD.encode(claims.as_bytes())
+            )
+        };
+        let id = "0f3a1c2e-9b7d-4e6a-8c1f-2d3e4f5a6b7c";
+        assert_eq!(
+            session_id(&jwt(&format!(r#"{{"sub":1,"jti":"{id}"}}"#))),
+            Some(id.parse().unwrap())
+        );
+        // Legacy token (no jti), a non-UUID jti, and garbage.
+        assert_eq!(session_id(&jwt(r#"{"sub":1}"#)), None);
+        assert_eq!(session_id(&jwt(r#"{"jti":"nope"}"#)), None);
+        assert_eq!(session_id("not.a.jwt"), None);
+        assert_eq!(session_id(""), None);
+    }
 
     #[test]
     fn callback_requires_path_state_and_code() {

@@ -71,8 +71,11 @@ enum Command {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
-    /// Remove saved login token
-    Logout,
+    /// Sign out: end this login's session on the server and remove the saved token
+    Logout {
+        #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
+        api_url: String,
+    },
 }
 
 fn is_vless(config_str: &str) -> bool {
@@ -196,7 +199,31 @@ async fn main() -> Result<()> {
             };
             print!("{config}");
         }
-        Command::Logout => {
+        Command::Logout { api_url } => {
+            // Best effort on the server side: a token the server no longer accepts (expired,
+            // already signed out elsewhere) is exactly the one that must still go locally.
+            if let Some(token) = tokens.load()? {
+                match auth::session_id(&token) {
+                    Some(session_id) => {
+                        match api::ApiClient::new(&api_url, &token)
+                            .delete_session(session_id)
+                            .await
+                        {
+                            Ok(()) => eprintln!("Session ended on the server."),
+                            Err(
+                                api::ApiClientError::Unauthorized
+                                | api::ApiClientError::NotFound(_),
+                            ) => {
+                                eprintln!("The server had already ended this session.")
+                            }
+                            Err(e) => eprintln!("Could not end the session on the server: {e}"),
+                        }
+                    }
+                    None => {
+                        eprintln!("Token has no session to end on the server; removing it locally.")
+                    }
+                }
+            }
             tokens.remove()?;
             eprintln!("Logged out.");
         }
