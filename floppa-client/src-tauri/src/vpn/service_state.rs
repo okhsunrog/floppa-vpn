@@ -121,8 +121,8 @@ impl ServiceState {
 
     /// Is this generation still on its way up?
     ///
-    /// The one judgement behind [`TunnelInfo::starting`](crate::vpn::rpc::TunnelInfo::starting),
-    /// and the reason it is a method rather than an expression at the call site: it used to be
+    /// The one judgement the descriptor callbacks consult, and the reason it is a method rather
+    /// than an expression at the call site: it used to be
     /// derived as "no tunnel and no error", which a *stopped* generation also satisfies — so a
     /// stopped instance kept claiming to be starting, the observation classified as dark rather
     /// than clear, and the actor sat out the whole darkness grace before believing the tunnel had

@@ -22,6 +22,9 @@ pub mod protocol;
 #[cfg(unix)]
 pub mod remote;
 pub mod rollback;
+/// The wire itself. Unix-gated like both of its ends: on Windows nothing speaks it, and the
+/// vocabulary the service trait imports would sit there unused.
+#[cfg(unix)]
 pub mod rpc;
 /// Unix-only rather than Android-only, so the accept loop's lifetime rule is tested on the host.
 #[cfg(unix)]

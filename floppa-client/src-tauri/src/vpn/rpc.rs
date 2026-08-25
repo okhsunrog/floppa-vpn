@@ -81,7 +81,6 @@ pub const SOCKET_NAME: &str = "vpn.sock";
 ///
 /// A `Command` is not sent over the wire and cannot be — it carries the `oneshot` senders the
 /// actor replies through. Typed methods are the honest spelling.
-#[cfg(unix)]
 #[tarpc::service]
 pub trait VpnRpc {
     /// The first published state newer than what the caller holds.
