@@ -27,33 +27,33 @@ async fn main() -> Result<()> {
     let wg_public_key = secrets.wg_public_key()?;
     info!(public_key = %wg_public_key, "Derived WireGuard public key");
 
-    // Ensure WireGuard interface exists
-    wg::ensure_interface(
-        &config.wireguard.interface,
-        &secrets.wg_private_key,
-        config.wireguard.get_listen_port(),
-        &config.wireguard.get_server_ip().to_string(),
-        &config.wireguard.client_subnet.to_string(),
-    )?;
-    info!(
-        interface = %config.wireguard.interface,
-        port = config.wireguard.get_listen_port(),
-        "WireGuard interface ready"
-    );
+    // Ensure WireGuard interface exists and matches config
+    wg::ensure_interface(&wg::InterfaceSpec {
+        tool: wg::WgTool::Wg,
+        interface: &config.wireguard.interface,
+        private_key: &secrets.wg_private_key,
+        listen_port: config.wireguard.get_listen_port(),
+        server_ip: config.wireguard.get_server_ip(),
+        subnet: config.wireguard.client_subnet,
+        obfuscation: None,
+    })?;
 
-    // Ensure AmneziaWG interface exists (if configured)
+    // Ensure AmneziaWG interface exists and matches config (if configured)
     if let Some(ref awg) = config.amneziawg {
         let awg_private_key = secrets.awg_private_key.as_deref().ok_or_else(|| {
             anyhow::anyhow!("amneziawg configured but awg_private_key secret is missing")
         })?;
         let awg_public_key = secrets.awg_public_key()?;
-        wg::ensure_awg_interface(awg, awg_private_key)?;
-        info!(
-            interface = %awg.interface,
-            port = awg.get_listen_port(),
-            public_key = %awg_public_key,
-            "AmneziaWG interface ready"
-        );
+        wg::ensure_interface(&wg::InterfaceSpec {
+            tool: wg::WgTool::Awg,
+            interface: &awg.interface,
+            private_key: awg_private_key,
+            listen_port: awg.get_listen_port(),
+            server_ip: awg.get_server_ip(),
+            subnet: awg.client_subnet,
+            obfuscation: Some(&awg.obfuscation),
+        })?;
+        info!(public_key = %awg_public_key, "AmneziaWG interface ready");
     }
 
     // Start Prometheus metrics exporter

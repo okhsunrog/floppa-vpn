@@ -1,10 +1,11 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use floppa_core::AmneziaWgConfig;
 use floppa_core::config::AwgObfuscation;
+use ipnetwork::Ipv4Network;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
+use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
@@ -42,6 +43,28 @@ pub struct PeerStat {
     pub last_handshake: Option<DateTime<Utc>>,
 }
 
+impl WgTool {
+    /// `ip link add ... type <link_type>` for this tool's kernel module.
+    fn link_type(self) -> &'static str {
+        match self {
+            WgTool::Wg => "wireguard",
+            WgTool::Awg => "amneziawg",
+        }
+    }
+}
+
+/// Everything an interface must look like. `obfuscation` is `Some` for AmneziaWG only.
+pub struct InterfaceSpec<'a> {
+    pub tool: WgTool,
+    pub interface: &'a str,
+    pub private_key: &'a str,
+    pub listen_port: u16,
+    pub server_ip: Ipv4Addr,
+    /// Client subnet; only its prefix length is used for the server address.
+    pub subnet: Ipv4Network,
+    pub obfuscation: Option<&'a AwgObfuscation>,
+}
+
 /// Check if WireGuard interface exists
 fn interface_exists(interface: &str) -> bool {
     Command::new("ip")
@@ -51,184 +74,113 @@ fn interface_exists(interface: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Ensure WireGuard interface exists and is configured.
-/// Creates the interface if it doesn't exist.
-pub fn ensure_interface(
-    interface: &str,
-    private_key: &str,
-    listen_port: u16,
-    server_ip: &str,
-    subnet: &str,
-) -> Result<()> {
-    if interface_exists(interface) {
-        debug!(interface, "WireGuard interface already exists");
-        return Ok(());
+/// Run an `ip` subcommand, failing on a non-zero exit.
+fn ip(args: &[&str]) -> Result<()> {
+    let output = Command::new("ip")
+        .args(args)
+        .output()
+        .with_context(|| format!("Failed to run ip {}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "ip {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
+    Ok(())
+}
 
-    info!(interface, "Creating WireGuard interface");
+/// Ensure the interface exists and matches `spec`, creating and/or reconfiguring it.
+///
+/// Idempotent and convergent: the live `[Interface]` (`wg/awg showconf`) is diffed
+/// against the spec and only the differing params go into a single `set`, then the
+/// address and link state are (re)applied unconditionally. That covers a config
+/// change across a restart, an interface left half-configured by an earlier crash,
+/// and — for AmneziaWG — a steady state where no `awg set` is issued at all.
+///
+/// Not touching a correctly configured AmneziaWG interface matters: every `awg set`
+/// re-runs `jp_spec_setup` in the kernel module, and on builds before ac946a9
+/// (2026-03-25) that races the handshake-send path whenever an I-packet is
+/// configured — a use-after-free that has taken the whole VPS down.
+pub fn ensure_interface(spec: &InterfaceSpec<'_>) -> Result<()> {
+    let InterfaceSpec {
+        tool, interface, ..
+    } = *spec;
 
-    // Create interface
-    let status = Command::new("ip")
-        .args(["link", "add", "dev", interface, "type", "wireguard"])
-        .status()
-        .context("Failed to create WireGuard interface")?;
+    let created = if interface_exists(interface) {
+        debug!(interface, %tool, "Interface already exists; reconciling");
+        false
+    } else {
+        info!(interface, %tool, "Creating interface");
+        ip(&["link", "add", "dev", interface, "type", tool.link_type()]).with_context(|| {
+            format!(
+                "Failed to create {} interface (is the {} kernel module loaded?)",
+                tool,
+                tool.link_type()
+            )
+        })?;
+        true
+    };
 
-    if !status.success() {
-        return Err(anyhow!("ip link add failed"));
-    }
+    let current = if created {
+        HashMap::new()
+    } else {
+        read_interface_conf(tool, interface).unwrap_or_else(|e| {
+            warn!(interface, error = %e, "Could not read interface config; applying spec blindly");
+            HashMap::new()
+        })
+    };
 
-    // Set private key using process substitution workaround
-    // We write the key to wg via stdin
-    let mut child = Command::new("wg")
-        .args([
-            "set",
+    // Everything that differs goes into one `set`; the private key is fed over stdin.
+    let params = params_to_set(&current, spec);
+    if params.is_empty() {
+        debug!(interface, %tool, "Interface config already matches spec");
+    } else {
+        info!(
             interface,
-            "private-key",
-            "/dev/stdin",
-            "listen-port",
-            &listen_port.to_string(),
-        ])
-        .stdin(Stdio::piped())
-        .spawn()
-        .context("Failed to spawn wg set")?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(private_key.trim().as_bytes())?;
+            %tool,
+            params = ?params.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            "Applying interface config"
+        );
+        let needs_key = params.iter().any(|(_, v)| v == PRIVATE_KEY_STDIN);
+        let mut args: Vec<String> = vec!["set".into(), interface.into()];
+        args.extend(params.into_iter().flat_map(|(k, v)| [k, v]));
+        run_set(tool, &args, needs_key.then(|| spec.private_key.trim()))?;
     }
 
-    let status = child.wait()?;
-    if !status.success() {
-        return Err(anyhow!("wg set private-key failed"));
-    }
-
-    // Calculate address with prefix from subnet
-    let prefix = subnet.split('/').nth(1).unwrap_or("24");
-    let address = format!("{}/{}", server_ip, prefix);
-
-    // Assign IP address
-    let status = Command::new("ip")
-        .args(["address", "add", &address, "dev", interface])
-        .status()
-        .context("Failed to assign IP address")?;
-
-    if !status.success() {
-        return Err(anyhow!("ip address add failed"));
-    }
-
-    // Bring interface up
-    let status = Command::new("ip")
-        .args(["link", "set", interface, "up"])
-        .status()
-        .context("Failed to bring interface up")?;
-
-    if !status.success() {
-        return Err(anyhow!("ip link set up failed"));
-    }
+    let address = format!("{}/{}", spec.server_ip, spec.subnet.prefix());
+    ip(&["address", "replace", &address, "dev", interface])?;
+    ip(&["link", "set", interface, "up"])?;
 
     info!(
         interface,
-        address, listen_port, "WireGuard interface created"
+        %tool,
+        address,
+        listen_port = spec.listen_port,
+        created,
+        "Interface ready"
     );
     Ok(())
 }
 
-/// Ensure the AmneziaWG interface exists and is configured.
-///
-/// AmneziaWG is WireGuard plus interface-wide obfuscation. The kernel `amneziawg` module
-/// provides the `amneziawg` link type, and `awg` is a drop-in superset of `wg`. We bring the
-/// interface up with `awg setconf` (the same path `awg-quick` uses), feeding it an
-/// `[Interface]`-only config (PrivateKey + ListenPort + obfuscation params; Address/DNS/MTU
-/// are kernel-level and applied via `ip`, not `awg`).
-pub fn ensure_awg_interface(awg: &AmneziaWgConfig, private_key: &str) -> Result<()> {
-    let interface = &awg.interface;
-    if interface_exists(interface) {
-        // Interface persists across daemon restarts. Reconcile the obfuscation params from config
-        // (via device-level `awg set`, which leaves peers + key + listen-port intact) so changes
-        // to the params take effect on restart without a manual interface recreation.
-        debug!(
-            interface,
-            "AmneziaWG interface exists; reconciling obfuscation params"
-        );
-        reconcile_awg_obfuscation(interface, &awg.obfuscation)?;
-        return Ok(());
-    }
-
-    info!(interface, "Creating AmneziaWG interface");
-
-    let status = Command::new("ip")
-        .args(["link", "add", "dev", interface, "type", "amneziawg"])
-        .status()
-        .context("Failed to create AmneziaWG interface (is the amneziawg kernel module loaded?)")?;
-    if !status.success() {
-        return Err(anyhow!("ip link add type amneziawg failed"));
-    }
-
-    // [Interface] config for `awg setconf` (peerless at creation; peers are added incrementally).
-    let conf = build_awg_setconf(awg, private_key);
-    let mut child = Command::new("awg")
-        .args(["setconf", interface, "/dev/stdin"])
-        .stdin(Stdio::piped())
+/// Run `<tool> set ...`, feeding `private_key` over stdin when the args reference `/dev/stdin`.
+fn run_set(tool: WgTool, args: &[String], private_key: Option<&str>) -> Result<()> {
+    let mut child = Command::new(tool.binary())
+        .args(args)
+        .stdin(if private_key.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .spawn()
-        .context("Failed to spawn awg setconf")?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(conf.as_bytes())?;
+        .with_context(|| format!("Failed to spawn {tool} set"))?;
+    if let (Some(key), Some(mut stdin)) = (private_key, child.stdin.take()) {
+        stdin.write_all(key.as_bytes())?;
     }
     if !child.wait()?.success() {
-        return Err(anyhow!("awg setconf failed"));
+        return Err(anyhow!("{tool} set failed"));
     }
-
-    let address = format!("{}/{}", awg.get_server_ip(), awg.client_subnet.prefix());
-    let status = Command::new("ip")
-        .args(["address", "add", &address, "dev", interface])
-        .status()
-        .context("Failed to assign AmneziaWG IP address")?;
-    if !status.success() {
-        return Err(anyhow!("ip address add failed"));
-    }
-
-    let status = Command::new("ip")
-        .args(["link", "set", interface, "up"])
-        .status()
-        .context("Failed to bring AmneziaWG interface up")?;
-    if !status.success() {
-        return Err(anyhow!("ip link set up failed"));
-    }
-
-    info!(
-        interface,
-        address,
-        port = awg.get_listen_port(),
-        "AmneziaWG interface created"
-    );
     Ok(())
-}
-
-/// Build the `awg setconf` `[Interface]` block (no Address/DNS/MTU — those are not `awg` keys).
-fn build_awg_setconf(awg: &AmneziaWgConfig, private_key: &str) -> String {
-    let o = &awg.obfuscation;
-    let mut s = format!(
-        "[Interface]\nPrivateKey = {}\nListenPort = {}\n",
-        private_key.trim(),
-        awg.get_listen_port(),
-    );
-    s.push_str(&format!(
-        "Jc = {}\nJmin = {}\nJmax = {}\n",
-        o.jc, o.jmin, o.jmax
-    ));
-    s.push_str(&format!(
-        "S1 = {}\nS2 = {}\nS3 = {}\nS4 = {}\n",
-        o.s1, o.s2, o.s3, o.s4
-    ));
-    s.push_str(&format!(
-        "H1 = {}\nH2 = {}\nH3 = {}\nH4 = {}\n",
-        o.h1, o.h2, o.h3, o.h4
-    ));
-    for (n, val) in [(1, &o.i1), (2, &o.i2), (3, &o.i3), (4, &o.i4), (5, &o.i5)] {
-        if !val.is_empty() {
-            s.push_str(&format!("I{n} = {val}\n"));
-        }
-    }
-    s
 }
 
 /// Desired obfuscation params as `(key, value)` pairs in `awg set` / lowercase `showconf` form.
@@ -307,59 +259,39 @@ fn normalize_range(value: &str) -> String {
     }
 }
 
-/// Whether every desired param already has that value on the interface.
-fn awg_params_in_sync(current: &HashMap<String, String>, desired: &[(&str, String)]) -> bool {
-    desired.iter().all(|(k, v)| {
-        current
-            .get(*k)
-            .is_some_and(|cur| normalize_range(cur) == normalize_range(v))
-    })
+/// Whether the interface already has `value` for lowercase showconf key `key`.
+fn param_matches(current: &HashMap<String, String>, key: &str, value: &str) -> bool {
+    current
+        .get(key)
+        .is_some_and(|cur| normalize_range(cur) == normalize_range(value))
 }
 
-/// Re-apply AmneziaWG obfuscation params to an existing interface via device-level `awg set`,
-/// but only when they differ from what the interface already has.
-///
-/// Every `awg set` on a live interface re-runs `jp_spec_setup` in the kernel module, and on
-/// module builds before ac946a9 (2026-03-25) that races the handshake-send path when an
-/// I-packet is configured — a use-after-free that has taken the whole VPS down. A daemon
-/// restart must therefore not touch a correctly configured interface at all; the diff makes
-/// the reconcile a pure read in the steady state.
-fn reconcile_awg_obfuscation(interface: &str, o: &AwgObfuscation) -> Result<()> {
-    let desired = awg_obfuscation_params(o);
+/// Marker value for the private key in [`params_to_set`]; the key itself goes over stdin.
+const PRIVATE_KEY_STDIN: &str = "/dev/stdin";
 
-    match read_interface_conf(WgTool::Awg, interface) {
-        Ok(current) if awg_params_in_sync(&current, &desired) => {
-            debug!(
-                interface,
-                "AmneziaWG obfuscation params already match config; skipping awg set"
-            );
-            return Ok(());
+/// `<tool> set` key/value pairs needed to bring `current` (parsed showconf) in line with
+/// `spec`. Empty when the interface already matches. The private key, if it differs, is
+/// reported as `("private-key", "/dev/stdin")` and never as its value.
+fn params_to_set(
+    current: &HashMap<String, String>,
+    spec: &InterfaceSpec<'_>,
+) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    if current.get("privatekey").map(String::as_str) != Some(spec.private_key.trim()) {
+        params.push(("private-key".to_string(), PRIVATE_KEY_STDIN.to_string()));
+    }
+    let port = spec.listen_port.to_string();
+    if !param_matches(current, "listenport", &port) {
+        params.push(("listen-port".to_string(), port));
+    }
+    if let Some(o) = spec.obfuscation {
+        for (k, v) in awg_obfuscation_params(o) {
+            if !param_matches(current, k, &v) {
+                params.push((k.to_string(), v));
+            }
         }
-        Ok(_) => info!(
-            interface,
-            "AmneziaWG obfuscation params differ from config; applying"
-        ),
-        Err(e) => warn!(
-            interface,
-            error = %e,
-            "Could not read AmneziaWG interface config; applying obfuscation params blindly"
-        ),
     }
-
-    let mut args: Vec<String> = vec!["set".into(), interface.into()];
-    for (k, v) in desired {
-        args.push(k.into());
-        args.push(v);
-    }
-
-    let status = Command::new("awg")
-        .args(&args)
-        .status()
-        .context("Failed to spawn awg set for obfuscation reconcile")?;
-    if !status.success() {
-        return Err(anyhow!("awg set (obfuscation reconcile) failed"));
-    }
-    Ok(())
+    params
 }
 
 /// Add a peer to a WireGuard/AmneziaWG interface.
@@ -485,21 +417,84 @@ mod tests {
         assert!(!conf.contains_key("allowedips"));
     }
 
+    fn awg_spec<'a>(o: &'a AwgObfuscation, private_key: &'a str) -> InterfaceSpec<'a> {
+        InterfaceSpec {
+            tool: WgTool::Awg,
+            interface: "awg-floppa",
+            private_key,
+            listen_port: 51821,
+            server_ip: Ipv4Addr::new(10, 101, 0, 1),
+            subnet: "10.101.0.0/24".parse().unwrap(),
+            obfuscation: Some(o),
+        }
+    }
+
     #[test]
-    fn default_obfuscation_matches_its_own_showconf() {
+    fn matching_interface_needs_no_set() {
         let conf = parse_showconf_interface(SHOWCONF);
         let mut o = AwgObfuscation::default();
         o.i1.clear();
-        assert!(awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+        assert!(params_to_set(&conf, &awg_spec(&o, "cHJpdmF0ZQ==\n")).is_empty());
+    }
 
-        // A configured I1 that the interface lacks is a diff.
-        o.i1 = "<b 0x01>".to_string();
-        assert!(!awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
-
-        // And so is any changed scalar.
+    #[test]
+    fn only_differing_params_are_set() {
+        let conf = parse_showconf_interface(SHOWCONF);
+        let mut o = AwgObfuscation::default();
         o.i1.clear();
+
+        // A configured I1 the interface lacks, and a changed scalar
+        o.i1 = "<b 0x01>".to_string();
         o.jc = 7;
-        assert!(!awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+        let params = params_to_set(&conf, &awg_spec(&o, "cHJpdmF0ZQ=="));
+        assert_eq!(
+            params,
+            vec![
+                ("jc".to_string(), "7".to_string()),
+                ("i1".to_string(), "<b 0x01>".to_string()),
+            ]
+        );
+
+        // Key and port differ → set over stdin, key never appears in the args
+        o = AwgObfuscation::default();
+        o.i1.clear();
+        let mut spec = awg_spec(&o, "b3RoZXI=");
+        spec.listen_port = 51899;
+        let params = params_to_set(&conf, &spec);
+        assert_eq!(
+            params,
+            vec![
+                ("private-key".to_string(), PRIVATE_KEY_STDIN.to_string()),
+                ("listen-port".to_string(), "51899".to_string()),
+            ]
+        );
+        assert!(params.iter().all(|(_, v)| !v.contains("b3RoZXI=")));
+    }
+
+    #[test]
+    fn fresh_interface_gets_everything() {
+        let o = AwgObfuscation::default();
+        let params = params_to_set(&HashMap::new(), &awg_spec(&o, "cHJpdmF0ZQ=="));
+        let keys: Vec<&str> = params.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "private-key",
+                "listen-port",
+                "jc",
+                "jmin",
+                "jmax",
+                "s1",
+                "s2",
+                "s3",
+                "s4",
+                "h1",
+                "h2",
+                "h3",
+                "h4",
+                "i1"
+            ]
+        );
     }
 
     /// Captured from `wg show wg-floppa dump` (keys shortened).
