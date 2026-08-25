@@ -7,6 +7,7 @@ use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
 use super::state::ProtocolConfig;
 use super::tunnel::TunnelManager;
 use futures::StreamExt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tarpc::context::Context;
 use tarpc::server::Channel;
@@ -18,11 +19,33 @@ use tracing::{debug, error, info, warn};
 /// Handle to a running RPC server. Drop or call `shutdown()` to stop it.
 pub struct RpcServerHandle {
     shutdown_tx: watch::Sender<bool>,
+    socket_path: PathBuf,
 }
 
 impl RpcServerHandle {
+    /// Stop accepting connections. The socket file is left in place.
+    ///
+    /// Deliberately: the path is shared between service generations, and by the time the previous
+    /// generation is shut down the next one has usually already bound the same path (see
+    /// `SERVER_EPOCH` in `jni_entry.rs`). Unlinking here would remove *its* socket.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
+    }
+
+    /// Stop accepting connections and unlink the socket file.
+    ///
+    /// Only for the generation that owns the path — i.e. a `nativeStop` whose epoch matched — and
+    /// never from a handle that has been superseded.
+    pub fn shutdown_and_unlink(self) {
+        self.shutdown();
+        match std::fs::remove_file(&self.socket_path) {
+            Ok(()) => debug!("removed socket {}", self.socket_path.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => warn!(
+                "failed to remove socket {}: {e}",
+                self.socket_path.display()
+            ),
+        }
     }
 }
 
@@ -227,8 +250,6 @@ pub fn start_server(
         tunnel_manager,
         service,
     };
-    let socket_path_owned = socket_path.to_owned();
-
     tokio::spawn(async move {
         let mut shutdown_rx = shutdown_rx;
         loop {
@@ -264,9 +285,16 @@ pub fn start_server(
                 }
             }
         }
-        // Clean up socket file
-        let _ = std::fs::remove_file(&socket_path_owned);
+        // The socket file is *not* unlinked here. This task exits asynchronously after
+        // `shutdown()`, and `shutdown()` is what `nativeStartServer` calls on the previous
+        // generation right after binding the new one to the same path. An unlink from here raced
+        // that bind and won often enough to remove the new generation's socket, leaving the UI
+        // with `NotFound` until it gave up. Unlinking is done only before a bind (above) and by
+        // the owning generation's `nativeStop` via [`RpcServerHandle::shutdown_and_unlink`].
     });
 
-    Ok(RpcServerHandle { shutdown_tx })
+    Ok(RpcServerHandle {
+        shutdown_tx,
+        socket_path: PathBuf::from(socket_path),
+    })
 }

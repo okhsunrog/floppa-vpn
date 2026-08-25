@@ -300,11 +300,12 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'
 
     info!("nativeStop: stopping tunnel and RPC server (epoch {epoch})");
 
-    // Shutdown RPC server
+    // Shutdown RPC server. This generation owns the socket path (the epoch matched above and
+    // `nativeStartServer` runs on the same main thread), so unlinking is safe here and only here.
     if let Ok(mut guard) = RPC_HANDLE.lock()
         && let Some(handle) = guard.take()
     {
-        handle.shutdown();
+        handle.shutdown_and_unlink();
     }
 
     // Stop tunnel
