@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod dns;
 mod net;
+mod rollback;
 mod tunnel;
 mod vless;
 
@@ -220,17 +221,20 @@ async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> R
     eprintln!("Configuring networking...");
     let addr = tunnel::bring_up_interface(&wg_config, interface)?;
     let endpoint = wg_config.peer_socket_addr().await?;
-    let applied =
-        net::configure_routes(endpoint.ip(), &wg_config.allowed_ips_networks(), interface)?;
+    let mut rollback = rollback::Rollback::new(net::configure_routes(
+        endpoint.ip(),
+        &wg_config.allowed_ips_networks(),
+        interface,
+    )?);
     eprintln!("VPN IP: {}", addr.ip());
     eprintln!("Endpoint: {}", wg_config.peer_endpoint);
 
-    let dns_changed = !no_dns && {
+    if !no_dns && !wg_config.dns_servers().is_empty() {
+        rollback.dns_changed();
         dns::set_dns(&wg_config)?;
-        !wg_config.dns_servers().is_empty()
-    };
+    }
 
-    wait_then_disconnect(applied, dns_changed, Tunnel::WireGuard(device)).await
+    wait_then_disconnect(rollback, Tunnel::WireGuard(device)).await
 }
 
 async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
@@ -244,51 +248,55 @@ async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Resul
 
     eprintln!("Configuring networking...");
     let endpoint = vless::endpoint_ip(&config).await?;
-    let applied =
-        net::configure_routes(endpoint, &vless::allowed_ips_networks(&config), interface)?;
+    let mut rollback = rollback::Rollback::new(net::configure_routes(
+        endpoint,
+        &vless::allowed_ips_networks(&config),
+        interface,
+    )?);
     eprintln!("VPN IP: {}", config.address.as_deref().unwrap_or("unknown"));
     eprintln!("Endpoint: {}", config.server_addr);
 
-    let mut dns_changed = false;
     if !no_dns && let Some(ref dns) = config.dns {
         let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
         if !servers.is_empty() {
+            rollback.dns_changed();
             dns::write_dns(&servers)?;
-            dns_changed = true;
         }
     }
 
-    wait_then_disconnect(applied, dns_changed, Tunnel::Vless(tunnel)).await
+    wait_then_disconnect(rollback, Tunnel::Vless(tunnel)).await
 }
 
-/// Announce readiness, block until the user asks to stop, then tear everything down.
-async fn wait_then_disconnect(
-    applied: net::AppliedNetworking,
-    dns_changed: bool,
-    tunnel: Tunnel,
-) -> Result<()> {
+/// Announce readiness, block until asked to stop, then tear everything down.
+async fn wait_then_disconnect(rollback: rollback::Rollback, tunnel: Tunnel) -> Result<()> {
     println!("READY");
     eprintln!("Connected! Press Ctrl+C to disconnect.");
-    tokio::signal::ctrl_c().await?;
+    let signal = wait_for_shutdown_signal().await?;
 
-    eprintln!("\nDisconnecting...");
-    disconnect(applied, dns_changed, tunnel).await?;
+    eprintln!("\n{signal} received, disconnecting...");
+    disconnect(rollback, tunnel).await?;
     eprintln!("Disconnected.");
     Ok(())
 }
 
-/// Undo the connection. DNS restore, route teardown and tunnel stop are independent: each runs
-/// even if the previous one failed, and the failures are reported together.
-async fn disconnect(
-    mut applied: net::AppliedNetworking,
-    dns_changed: bool,
-    tunnel: Tunnel,
-) -> Result<()> {
+/// Block until SIGINT (Ctrl+C), SIGTERM (systemd/docker stop) or SIGHUP arrives.
+async fn wait_for_shutdown_signal() -> Result<&'static str> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    let name = tokio::select! {
+        r = tokio::signal::ctrl_c() => { r?; "SIGINT" }
+        _ = terminate.recv() => "SIGTERM",
+        _ = hangup.recv() => "SIGHUP",
+    };
+    Ok(name)
+}
+
+/// Undo the connection. The host rollback (DNS, routes) and the tunnel stop are independent:
+/// each runs even if the other failed, and the failures are reported together.
+async fn disconnect(mut rollback: rollback::Rollback, tunnel: Tunnel) -> Result<()> {
     let mut errors = Vec::new();
-    if dns_changed && let Err(e) = dns::restore_dns() {
-        errors.push(e);
-    }
-    if let Err(e) = applied.teardown() {
+    if let Err(e) = rollback.run() {
         errors.push(e);
     }
     if let Err(e) = tunnel.stop().await {
