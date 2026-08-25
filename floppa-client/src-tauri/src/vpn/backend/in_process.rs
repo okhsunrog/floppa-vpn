@@ -58,6 +58,10 @@ impl VpnBackend for InProcessBackend {
         self.tunnel_manager.ping().await
     }
 
+    async fn probe(&self) -> Result<(), BackendError> {
+        self.tunnel_manager.probe().await
+    }
+
     /// Always reachable by construction: the tunnel is in this process, so an answer is always
     /// authoritative and there is no such thing as a dark observation here.
     async fn observe(&self) -> Observation {
@@ -93,6 +97,11 @@ impl VpnBackend for InProcessBackend {
                 start_error: None,
                 raw_stats: stats,
                 last_packet_secs: self.tunnel_manager.get_last_packet_received().await,
+                silent_secs: self
+                    .tunnel_manager
+                    .silence()
+                    .await
+                    .map(|d| d.as_secs() as i64),
             }),
         }
     }

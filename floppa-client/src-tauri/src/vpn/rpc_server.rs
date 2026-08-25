@@ -144,6 +144,11 @@ impl VpnRpc for VpnRpcServer {
             generation: self.service.generation,
             start_error,
             last_packet_received: self.tunnel_manager.get_last_packet_received().await,
+            silent_secs: self
+                .tunnel_manager
+                .silence()
+                .await
+                .map(|d| d.as_secs() as i64),
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
             rx_bytes: stats.as_ref().map(|s| s.rx_bytes),
         }
@@ -193,6 +198,10 @@ impl VpnRpc for VpnRpcServer {
 
     async fn ping(self, _ctx: Context) -> Result<(), String> {
         self.tunnel_manager.ping().await.map_err(|e| e.to_string())
+    }
+
+    async fn probe(self, _ctx: Context) -> Result<(), String> {
+        self.tunnel_manager.probe().await.map_err(|e| e.to_string())
     }
 
     async fn set_log_config(self, _ctx: Context, config: crate::logging::LogConfig) {

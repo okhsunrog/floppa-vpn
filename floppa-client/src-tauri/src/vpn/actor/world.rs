@@ -30,6 +30,12 @@ impl Observation {
     }
 }
 
+/// A look either found the owner and learned everything, or did not reach it at all — which is why
+/// one variant is a full description and the other a cause.
+// The size difference is inherent: describing a tunnel takes strings and split rules, and saying
+// "nobody answered" takes a discriminant. Boxing would buy an allocation on every look to shrink a
+// value that is already only moved inside `Box<Observation>` on the actor's channel.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum WorldView {
     Reachable(TunnelObservation),
@@ -72,6 +78,14 @@ pub struct TunnelObservation {
     pub raw_stats: Option<RawStats>,
     /// Seconds since the last inbound packet.
     pub last_packet_secs: Option<i64>,
+    /// Seconds since the far side last gave any evidence of being there: a completed handshake
+    /// for the WireGuard family, an inbound packet for VLESS.
+    ///
+    /// Reported by the process that owns the tunnel, because only it knows the protocol and holds
+    /// the peer's timers. `None` when there is no tunnel to ask about. Never on its own a reason
+    /// to tear anything down: a sleeping phone and a config without a keepalive are both silent
+    /// without anything being wrong, so what silence buys is a probe, not a verdict.
+    pub silent_secs: Option<i64>,
 }
 
 /// What one observation says about a service the caller is waiting to hand a tunnel to.
@@ -189,6 +203,7 @@ mod tests {
                 start_error: None,
                 raw_stats: None,
                 last_packet_secs: None,
+                silent_secs: None,
             }),
         };
         assert_eq!(World::classify(&obs, now, &policy), World::Clear);
@@ -211,6 +226,7 @@ mod tests {
                 start_error: None,
                 raw_stats: None,
                 last_packet_secs: None,
+                silent_secs: None,
             }),
         };
         assert_eq!(World::classify(&obs, now, &policy), World::Dark);
@@ -247,6 +263,7 @@ mod tests {
             start_error: start_error.map(str::to_owned),
             raw_stats: None,
             last_packet_secs: None,
+            silent_secs: None,
         }
     }
 

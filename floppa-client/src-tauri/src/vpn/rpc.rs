@@ -115,6 +115,10 @@ pub struct TunnelInfo {
     /// caller gets a reason instead of a timeout.
     pub start_error: Option<String>,
     pub last_packet_received: Option<i64>,
+    /// Seconds since the far side last gave evidence of being there — a completed handshake for
+    /// the WireGuard family, an inbound packet for VLESS. The owning process computes it because
+    /// only it knows which of the two applies.
+    pub silent_secs: Option<i64>,
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,
 }
@@ -162,6 +166,10 @@ pub trait VpnRpc {
     /// Ping the VLESS server through the proxy chain.
     /// Updates last_packet_received on success.
     async fn ping() -> Result<(), String>;
+
+    /// Make the far side prove it is there: a forced rehandshake for the WireGuard family, a ping
+    /// for VLESS. The answer is the verdict a silent tunnel is judged by — silence alone never is.
+    async fn probe() -> Result<(), String>;
 
     /// Apply a new log configuration in the VPN process.
     async fn set_log_config(config: crate::logging::LogConfig);
@@ -289,6 +297,7 @@ AllowedIPs = 0.0.0.0/0
                     tun_ready: false,
                     start_error: None,
                     last_packet_received: None,
+                    silent_secs: None,
                     tx_bytes: None,
                     rx_bytes: None,
                 },
@@ -300,6 +309,7 @@ AllowedIPs = 0.0.0.0/0
                     tun_ready: true,
                     start_error: None,
                     last_packet_received: None,
+                    silent_secs: None,
                     tx_bytes: None,
                     rx_bytes: None,
                 },
@@ -311,6 +321,7 @@ AllowedIPs = 0.0.0.0/0
                     tun_ready: false,
                     start_error: Some("VpnService.Builder.establish() returned null".into()),
                     last_packet_received: None,
+                    silent_secs: None,
                     tx_bytes: None,
                     rx_bytes: None,
                 },
@@ -323,6 +334,7 @@ AllowedIPs = 0.0.0.0/0
                     tun_ready: false,
                     start_error: None,
                     last_packet_received: Some(1_700_000_000),
+                    silent_secs: Some(0),
                     tx_bytes: Some(1),
                     rx_bytes: Some(2),
                 },
@@ -334,6 +346,8 @@ AllowedIPs = 0.0.0.0/0
                     tun_ready: false,
                     start_error: None,
                     last_packet_received: Some(0),
+                    // Silent long enough that the actor would want it probed.
+                    silent_secs: Some(240),
                     tx_bytes: Some(0),
                     rx_bytes: Some(0),
                 },
@@ -420,8 +434,9 @@ AllowedIPs = 0.0.0.0/0
             assert_eq!(survives("start_tunnel Err", &err), err);
         }
 
+        /// `stop`, `ping` and `probe` all take nothing and answer the same way.
         #[test]
-        fn stop_and_ping_results() {
+        fn stop_ping_and_probe_results() {
             for r in [Ok(()), Err("engine: stopped twice".to_string())] {
                 assert_eq!(survives("Result<(), String>", &r), r);
             }
@@ -489,6 +504,7 @@ AllowedIPs = 0.0.0.0/0
             tun_ready: true,
             start_error: None,
             last_packet_received: Some(1),
+            silent_secs: Some(3),
             tx_bytes: Some(10),
             rx_bytes: Some(20),
         };

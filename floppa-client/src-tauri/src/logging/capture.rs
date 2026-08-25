@@ -400,6 +400,10 @@ mod tests {
             Observation::unknown(Instant::now())
         }
 
+        async fn probe(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+
         async fn ping(&self) -> Result<(), BackendError> {
             Ok(())
         }

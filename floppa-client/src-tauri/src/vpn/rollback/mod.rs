@@ -622,6 +622,10 @@ mod tests {
         async fn observe(&self) -> crate::vpn::actor::types::Observation {
             unreachable!()
         }
+        async fn probe(&self) -> Result<(), crate::vpn::backend::BackendError> {
+            Ok(())
+        }
+
         async fn ping(&self) -> Result<(), crate::vpn::backend::BackendError> {
             Ok(())
         }

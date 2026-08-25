@@ -297,6 +297,59 @@ impl GotatunTunnel {
         None
     }
 
+    /// How long the far side has been silent.
+    ///
+    /// The discriminating signal here is the **handshake**, not the last inbound packet: an idle
+    /// but perfectly healthy tunnel receives nothing for minutes at a time, while
+    /// `PersistentKeepalive` keeps it *sending*, and a send past `REKEY_AFTER_TIME` starts a new
+    /// handshake. So a healthy peer rekeys about every two minutes whether or not anyone is using
+    /// the link, and a handshake older than one rekey cycle means the far side stopped answering.
+    ///
+    /// A peer with no session at all — `time_since_last_handshake` is `None` once the last one
+    /// expires — has been silent for as long as the tunnel has existed, which is why uptime is the
+    /// fallback rather than "unknown": that state is exactly what a peer deleted on the server
+    /// looks like a few minutes later.
+    ///
+    /// Inbound packets count as evidence too, and the most recent of the two wins: this must never
+    /// call a tunnel that is visibly carrying traffic silent.
+    pub async fn silence(&self) -> Option<Duration> {
+        let device = self.device.as_ref()?;
+        let uptime = self.connection_duration().unwrap_or_default();
+
+        let mut quietest: Option<Duration> = None;
+        for peer_stats in device.peers().await {
+            let evidence = [
+                peer_stats.stats.last_handshake,
+                peer_stats.stats.last_packet_received,
+            ]
+            .into_iter()
+            .flatten()
+            .min()
+            .unwrap_or(uptime);
+            quietest = Some(quietest.map_or(evidence, |q: Duration| q.min(evidence)));
+        }
+        // Capped by uptime: a peer's timers are its own, and a tunnel cannot have been silent for
+        // longer than it has existed.
+        Some(quietest.unwrap_or(uptime).min(uptime))
+    }
+
+    /// Rebind the tunnel's socket and force a fresh handshake, keeping the TUN.
+    ///
+    /// The whole tunnel does not need rebuilding when the phone changes network or the peer stops
+    /// answering: the descriptor, the routes and the split rules are all still right, and only the
+    /// UDP socket underneath is wrong. `suspend`/`resume` drops the connection tasks, binds a new
+    /// socket *through our factory* — which is what re-runs `VpnService.protect()` on Android —
+    /// and clears the sessions, so the next packet starts a handshake instead of using a key the
+    /// far side may have forgotten.
+    pub async fn rebind(&self) -> Result<(), BackendError> {
+        let device = self.device.as_ref().ok_or(BackendError::NotRunning)?;
+        device.suspend().await;
+        device
+            .resume()
+            .await
+            .map_err(|e| engine_error("rebinding the tunnel socket", e))
+    }
+
     /// Get connection duration
     pub fn connection_duration(&self) -> Option<Duration> {
         self.connected_at.map(|t| t.elapsed())
@@ -359,6 +412,54 @@ impl ActiveTunnel {
         match self {
             Self::WireGuard(t) => t.connection_duration(),
             Self::Vless(t) => Some(t.connection_duration()),
+        }
+    }
+
+    /// How long the far side has been silent — see [`GotatunTunnel::silence`].
+    ///
+    /// VLESS has no handshake to age, so its evidence is inbound traffic; a successful
+    /// [`Self::probe`] counts as inbound traffic, which is what keeps an idle proxy from looking
+    /// dead.
+    async fn silence(&self) -> Option<Duration> {
+        match self {
+            Self::WireGuard(t) => t.silence().await,
+            Self::Vless(t) => Some(
+                t.time_since_last_packet_received()
+                    .unwrap_or_else(|| t.connection_duration())
+                    .min(t.connection_duration()),
+            ),
+        }
+    }
+
+    /// Make the far side prove it is there, and return whether it did.
+    ///
+    /// Not the same question as [`Self::silence`], which only reads what has already happened.
+    /// This one costs a round trip, and it is the only thing entitled to turn silence into a
+    /// verdict: a tunnel with no keepalive, or one whose phone has been asleep, is silent without
+    /// being dead, and tearing such a tunnel down on age alone is how a healthy one gets killed on
+    /// wake.
+    async fn probe(&self) -> Result<(), BackendError> {
+        match self {
+            // A fresh handshake *is* the proof, and the rebind is what makes it happen now rather
+            // than at the next rekey.
+            Self::WireGuard(t) => t.rebind().await,
+            Self::Vless(t) => t
+                .ping(Duration::from_secs(10))
+                .await
+                .map_err(|detail| BackendError::Engine { detail }),
+        }
+    }
+
+    /// Recover from the ground moving: the phone changed network.
+    ///
+    /// WireGuard's socket is bound to a network that is now gone and every packet it sends falls
+    /// into a hole, so it is rebound. VLESS dials a TCP connection per flow and protects each one
+    /// as it is dialled, so it heals on its own — the connections open across the old network die
+    /// with it, and nothing here can save them.
+    async fn network_changed(&self) -> Result<(), BackendError> {
+        match self {
+            Self::WireGuard(t) => t.rebind().await,
+            Self::Vless(_) => Ok(()),
         }
     }
 
@@ -568,6 +669,36 @@ impl TunnelManager {
         match tunnel_guard.as_ref() {
             Some((tunnel, _)) => tunnel.ping().await,
             None => Err(BackendError::NotRunning),
+        }
+    }
+
+    /// How long the far side has been silent, if there is a tunnel to ask about.
+    pub async fn silence(&self) -> Option<Duration> {
+        let tunnel_guard = self.tunnel.read().await;
+        match tunnel_guard.as_ref() {
+            Some((tunnel, _)) => tunnel.silence().await,
+            None => None,
+        }
+    }
+
+    /// Ask the far side to prove it is there — see [`ActiveTunnel::probe`].
+    pub async fn probe(&self) -> Result<(), BackendError> {
+        let tunnel_guard = self.tunnel.read().await;
+        match tunnel_guard.as_ref() {
+            Some((tunnel, _)) => tunnel.probe().await,
+            None => Err(BackendError::NotRunning),
+        }
+    }
+
+    /// The phone changed network — see [`ActiveTunnel::network_changed`].
+    ///
+    /// Silently fine when nothing is running: this arrives from the OS, not from a caller who
+    /// knows what state we are in.
+    pub async fn network_changed(&self) -> Result<(), BackendError> {
+        let tunnel_guard = self.tunnel.read().await;
+        match tunnel_guard.as_ref() {
+            Some((tunnel, _)) => tunnel.network_changed().await,
+            None => Ok(()),
         }
     }
 }

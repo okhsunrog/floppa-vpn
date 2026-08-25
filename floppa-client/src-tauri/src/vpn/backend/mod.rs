@@ -135,6 +135,14 @@ pub trait VpnBackend: Send + Sync {
     /// Updates `last_packet_received` on success so the health dot reflects connectivity.
     async fn ping(&self) -> Result<(), BackendError>;
 
+    /// Make the far side prove it is there, and say whether it did.
+    ///
+    /// The counterpart to the passive silence an observation reports: that only says nothing has
+    /// arrived, which a sleeping phone and a keepalive-less config both produce without anything
+    /// being wrong. This costs a round trip — a forced rehandshake for the WireGuard family, a
+    /// ping for VLESS — and is what the actor waits on before calling a tunnel lost.
+    async fn probe(&self) -> Result<(), BackendError>;
+
     /// Propagate log config to the tunnel process.
     /// Default no-op for desktop (same-process, handled by logging module directly).
     async fn set_log_config(&self, _config: &crate::logging::LogConfig) {}

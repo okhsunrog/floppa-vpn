@@ -237,6 +237,25 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
+    async fn probe(&self) -> Result<(), BackendError> {
+        let client = self
+            .get_client_typed()
+            .await
+            .map_err(|(_, detail)| BackendError::ServiceUnreachable { detail })?;
+        // Longer than an observation's deadline and shorter than the grace the caller waits: a
+        // rehandshake is a round trip to the server, not a local question.
+        let ctx = Self::deadline(std::time::Duration::from_secs(10));
+        match client.probe(ctx).await {
+            Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),
+            Err(e) => {
+                self.invalidate_client().await;
+                Err(BackendError::ServiceUnreachable {
+                    detail: format!("RPC error: {e}"),
+                })
+            }
+        }
+    }
+
     async fn set_log_config(&self, config: &crate::logging::LogConfig) {
         if let Ok(client) = self.get_client().await
             && let Err(e) = client
@@ -317,6 +336,7 @@ impl VpnBackend for AndroidIpcBackend {
                             _ => None,
                         },
                         last_packet_secs: info.last_packet_received,
+                        silent_secs: info.silent_secs,
                     }),
                 }
             }

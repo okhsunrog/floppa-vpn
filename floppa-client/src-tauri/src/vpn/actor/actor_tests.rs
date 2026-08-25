@@ -47,6 +47,13 @@ struct FakeBackend {
     stops: AtomicUsize,
     /// Refuse every start, as a peer that was deleted server-side would look from here.
     refuse_starts: AtomicBool,
+    /// What the owner would say about how long the far side has been quiet. `None` until a test
+    /// makes the tunnel go silent, which reads as "nothing to report" rather than "silent".
+    silent_secs: std::sync::Mutex<Option<i64>>,
+    probes: AtomicUsize,
+    /// Whether a probe finds the far side there. A probe that succeeds also ends the silence, the
+    /// way a real rehandshake does.
+    probe_answers: AtomicBool,
 }
 
 impl FakeBackend {
@@ -104,12 +111,25 @@ impl VpnBackend for FakeBackend {
                 raw_stats: Some(RawStats::default()),
                 // A handshake straight away, so verification passes without waiting.
                 last_packet_secs: Some(0),
+                silent_secs: *self.silent_secs.lock().unwrap(),
             }),
         }
     }
 
     async fn ping(&self) -> Result<(), BackendError> {
         Ok(())
+    }
+
+    async fn probe(&self) -> Result<(), BackendError> {
+        self.probes.fetch_add(1, Ordering::SeqCst);
+        if self.probe_answers.load(Ordering::SeqCst) {
+            *self.silent_secs.lock().unwrap() = Some(0);
+            Ok(())
+        } else {
+            Err(BackendError::Engine {
+                detail: "no answer".into(),
+            })
+        }
     }
 }
 
