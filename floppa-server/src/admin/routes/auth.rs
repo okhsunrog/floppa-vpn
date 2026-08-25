@@ -127,7 +127,6 @@ fn build_auth_response(
     let token = create_jwt(
         result.id,
         result.is_admin,
-        result.username.clone(),
         &auth_secrets.jwt_secret,
         auth_config.jwt_expiration_hours,
     )

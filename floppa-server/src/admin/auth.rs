@@ -23,15 +23,17 @@ pub struct TelegramAuthData {
     pub hash: String,
 }
 
-/// JWT Claims
+/// JWT Claims.
+///
+/// Only `sub`, `exp` and `iat` are load-bearing: authorization is always re-read from the
+/// database (see [`AuthUser`]), `admin` is informational. Tokens issued by older builds carry a
+/// `username` claim too; serde ignores it, so they keep verifying.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     /// User ID
     pub sub: i64,
-    /// Is admin
+    /// Was an admin when the token was issued (informational — never used for authorization)
     pub admin: bool,
-    /// Username (for display)
-    pub username: Option<String>,
     /// Expiration time (Unix timestamp)
     pub exp: i64,
     /// Issued at (Unix timestamp)
@@ -99,7 +101,6 @@ pub fn verify_telegram_auth(data: &TelegramAuthData, bot_token: &str) -> bool {
 
 /// Data from Telegram Mini App initData
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct MiniAppUser {
     pub id: i64,
     pub first_name: Option<String>,
@@ -168,7 +169,6 @@ pub fn verify_telegram_mini_app(init_data: &str, bot_token: &str) -> Option<Mini
 pub fn create_jwt(
     user_id: i64,
     is_admin: bool,
-    username: Option<String>,
     secret: &str,
     expiration_hours: u64,
 ) -> Result<String, jsonwebtoken::errors::Error> {
@@ -178,7 +178,6 @@ pub fn create_jwt(
     let claims = Claims {
         sub: user_id,
         admin: is_admin,
-        username,
         exp: exp.timestamp(),
         iat: now.timestamp(),
     };
@@ -200,13 +199,15 @@ pub fn verify_jwt(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::err
     Ok(token_data.claims)
 }
 
-/// Authenticated user extracted from request
+/// The authenticated user behind a request: a valid bearer JWT whose subject still exists.
+///
+/// The existence check is one indexed SELECT per authenticated request; it also refreshes
+/// `is_admin` from the database, so a stale token can neither outlive its user (e.g. a husk
+/// account deleted by a Telegram merge) nor keep admin rights that were revoked.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AuthUser {
     pub user_id: i64,
     pub is_admin: bool,
-    pub username: Option<String>,
 }
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -239,17 +240,30 @@ impl FromRequestParts<AppState> for AuthUser {
             ApiError::unauthorized()
         })?;
 
+        let Some(is_admin) = lookup_is_admin(&state.pool, claims.sub).await? else {
+            warn!("User {} from JWT not found in DB", claims.sub);
+            return Err(ApiError::unauthorized());
+        };
+
         Ok(AuthUser {
             user_id: claims.sub,
-            is_admin: claims.admin,
-            username: claims.username,
+            is_admin,
         })
     }
 }
 
-/// Admin user extractor - requires is_admin = true
+/// `Some(is_admin)` for an existing user, `None` if the row is gone.
+pub(crate) async fn lookup_is_admin(
+    pool: &floppa_core::DbPool,
+    user_id: i64,
+) -> Result<Option<bool>, sqlx::Error> {
+    sqlx::query_scalar!("SELECT is_admin FROM users WHERE id = $1", user_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Admin user extractor - requires is_admin = true (as currently stored, not as in the JWT)
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AdminUser(pub AuthUser);
 
 impl FromRequestParts<AppState> for AdminUser {
@@ -260,27 +274,11 @@ impl FromRequestParts<AppState> for AdminUser {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let user = AuthUser::from_request_parts(parts, state).await?;
-
-        // Always verify admin status against DB (JWT may be stale)
-        let is_admin =
-            sqlx::query_scalar!("SELECT is_admin FROM users WHERE id = $1", user.user_id)
-                .fetch_optional(&state.pool)
-                .await?;
-
-        match is_admin {
-            Some(true) => Ok(AdminUser(user)),
-            Some(false) => {
-                warn!(
-                    "User {} has admin JWT but is_admin=false in DB",
-                    user.user_id
-                );
-                Err(ApiError::forbidden("Not an admin"))
-            }
-            None => {
-                warn!("User {} from JWT not found in DB", user.user_id);
-                Err(ApiError::unauthorized())
-            }
+        if !user.is_admin {
+            warn!("User {} is not an admin", user.user_id);
+            return Err(ApiError::forbidden("Not an admin"));
         }
+        Ok(AdminUser(user))
     }
 }
 
@@ -291,11 +289,27 @@ mod tests {
     #[test]
     fn test_jwt_roundtrip() {
         let secret = "test-secret";
-        let token = create_jwt(123, true, Some("testuser".into()), secret, 24).unwrap();
+        let token = create_jwt(123, true, secret, 24).unwrap();
         let claims = verify_jwt(&token, secret).unwrap();
 
         assert_eq!(claims.sub, 123);
         assert!(claims.admin);
-        assert_eq!(claims.username, Some("testuser".into()));
+    }
+
+    /// Tokens minted before the `username` claim was dropped must keep verifying.
+    #[test]
+    fn jwt_with_legacy_username_claim_still_verifies() {
+        let secret = "test-secret";
+        let now = Utc::now().timestamp();
+        let legacy = serde_json::json!({
+            "sub": 7, "admin": false, "username": "old", "exp": now + 3600, "iat": now
+        });
+        let token = encode(
+            &Header::default(),
+            &legacy,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+        assert_eq!(verify_jwt(&token, secret).unwrap().sub, 7);
     }
 }

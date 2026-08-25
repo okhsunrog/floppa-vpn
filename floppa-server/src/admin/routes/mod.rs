@@ -267,12 +267,22 @@ async fn token_refresh_middleware(
         return response;
     }
 
+    // Re-issue only for a user that still exists, with the admin flag as stored now — the
+    // refreshed token must not carry forward whatever the old one claimed.
+    let is_admin = match crate::admin::auth::lookup_is_admin(&state.pool, claims.sub).await {
+        Ok(Some(is_admin)) => is_admin,
+        Ok(None) => return response,
+        Err(e) => {
+            tracing::warn!(user_id = claims.sub, error = %e, "token refresh skipped");
+            return response;
+        }
+    };
+
     let default_auth = floppa_core::AuthConfig::default();
     let auth_config = state.config.auth.as_ref().unwrap_or(&default_auth);
     if let Ok(fresh) = crate::admin::auth::create_jwt(
         claims.sub,
-        claims.admin,
-        claims.username,
+        is_admin,
         &auth_secrets.jwt_secret,
         auth_config.jwt_expiration_hours,
     ) && let Ok(value) = axum::http::HeaderValue::from_str(&fresh)
