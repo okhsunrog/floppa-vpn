@@ -7,6 +7,7 @@ use chrono::{Duration, Utc};
 use ipnetwork::Ipv4Network;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
+use tracing::warn;
 
 /// Result of user upsert operation.
 #[derive(Debug)]
@@ -215,7 +216,11 @@ pub async fn create_credential_user(
     tx.commit().await?;
 
     // Best-effort taster trial after commit (duration from the 'taster' plan; missing = no-op).
-    grant_taster_trial(pool, user.id).await?;
+    // The account already exists, so a failure here must not turn into a registration error —
+    // the client would retry and get "login taken" for an account it cannot log into yet.
+    if let Err(e) = grant_taster_trial(pool, user.id).await {
+        warn!(user_id = user.id, error = %e, "Failed to grant taster trial after registration");
+    }
 
     Ok(UpsertResult {
         id: user.id,
@@ -257,12 +262,16 @@ pub async fn find_user_by_credential(pool: &DbPool, login: &str, password: &str)
         return Err(FloppaError::InvalidCredentials);
     }
 
-    let _ = sqlx::query!(
+    // Bookkeeping only: a failure here must not reject a correct login, but it should be visible.
+    if let Err(e) = sqlx::query!(
         "UPDATE auth_identities SET last_login_at = NOW() WHERE id = $1",
         r.id,
     )
     .execute(pool)
-    .await;
+    .await
+    {
+        warn!(identity_id = r.id, error = %e, "Failed to update last_login_at");
+    }
 
     Ok(r.user_id)
 }
