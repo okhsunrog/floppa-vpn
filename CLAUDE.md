@@ -115,4 +115,4 @@ define only what Vite+ has no built-in for (`dev`, `preview`, `openapi-ts`, `syn
 - `floppa-face/src/assets/main.css`: `@source "../../../floppa-web-shared/src";`
 - `floppa-client/src/styles.css`: `@source "../../floppa-web-shared/src";`
 
-Auth: Telegram Login Widget → JWT in localStorage → Bearer header.
+Auth: Telegram Login Widget → JWT in localStorage → Bearer header. Every JWT carries a `jti` naming a `sessions` row (revocable per device or "everywhere" via `users.tokens_valid_after`); tokens issued before sessions existed have no `jti` and are accepted until they expire.

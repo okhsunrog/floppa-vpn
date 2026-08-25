@@ -202,6 +202,14 @@ production before the deploy that carries them:
   NOW() WHERE id = …`) before deploying. Also from this version on, every new subscription
   (trial, purchase, admin grant) closes and demotes the previous one, and a Telegram merge
   keeps only the later-expiring of the two accounts' subscriptions.
+- **0018** adds the `sessions` table (one row per issued JWT, referenced by the token's `jti`)
+  and `users.tokens_valid_after`. Purely additive, nothing to verify — but note what it means
+  for the deploy: tokens issued before it carry no `jti` and stay valid until they expire, so
+  nobody is logged out; an active old client is moved onto a `legacy` session by its next
+  sliding refresh (within a day) and becomes revocable from the account page. "Sign out
+  everywhere" (user or admin) also sets `tokens_valid_after`, which is the only handle on the
+  old tokens. The number skips 0017 on purpose — it was left free for a migration developed in
+  parallel; sqlx applies whatever is unapplied, in version order, so the gap is harmless.
 
 ## 6. Rate limits (tc)
 
