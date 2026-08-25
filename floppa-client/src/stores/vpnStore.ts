@@ -101,6 +101,18 @@ export const useVpnStore = defineStore(
       const picked = useSettingsStore().manualProtocol
       return picked && availableProtocols.value.includes(picked) ? picked : activeProtocol.value
     })
+    /**
+     * Which entry the manual switcher highlights.
+     *
+     * What is *running* while a tunnel is up, and the user's pick otherwise. Highlighting the
+     * pick unconditionally meant that after adopting a tunnel — an always-on start brings back
+     * the last protocol that worked, which need not be the one selected — the card said
+     * "Connected" over a disabled switcher pointing at a protocol that was not carrying anything.
+     */
+    const switcherProtocol = computed(() =>
+      isConnected.value ? (state.value.protocol ?? manualProtocol.value) : manualProtocol.value,
+    )
+
     const attempt = computed(() => state.value.attempt)
     const retry = computed(() => state.value.retry)
     const lastOutcome = computed(() => state.value.last_outcome)
@@ -387,6 +399,7 @@ export const useVpnStore = defineStore(
       hasConfig,
       activeProtocol,
       manualProtocol,
+      switcherProtocol,
       attempt,
       retry,
       lastOutcome,

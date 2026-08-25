@@ -84,6 +84,12 @@ export function useLogConfig(notify: (n: LogNotice) => void, api: LogCommands = 
     }
   }
 
+  /**
+   * The `{status: 'error'}` branch is the command refusing; the `catch` is the IPC itself failing,
+   * which `typedError` rethrows. Both were reachable, only the first was handled — so a broken
+   * IPC became an unhandled rejection with the card already showing the profile it had not
+   * managed to save. Reloading puts it back to what is stored.
+   */
   async function save() {
     saving.value = true
     try {
@@ -92,6 +98,10 @@ export function useLogConfig(notify: (n: LogNotice) => void, api: LogCommands = 
         console.error('Failed to save log config:', result.error)
         notify({ kind: 'save_failed' })
       }
+    } catch (e) {
+      console.error('Failed to save the log settings:', e)
+      notify({ kind: 'save_failed' })
+      await load()
     } finally {
       saving.value = false
     }
@@ -134,6 +144,9 @@ export function useLogConfig(notify: (n: LogNotice) => void, api: LogCommands = 
       }
       captureStatus.value = result.data
       await loadConfig()
+    } catch (e) {
+      console.error('Failed to change the log capture:', e)
+      notify({ kind: 'capture_failed', detail: describeUnknown(e) })
     } finally {
       captureBusy.value = false
     }

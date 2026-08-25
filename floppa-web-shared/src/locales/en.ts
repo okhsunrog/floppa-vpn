@@ -506,6 +506,11 @@ export default {
     offlineMode: 'Offline mode',
     offlineModeHint: 'Server unreachable. Using saved configuration.',
     offlineModeNoConfig: 'Server unreachable. Server connection is needed for initial VPN setup.',
+    noDeviceIdentity:
+      'This device could not be identified, so its VPN keys cannot be set up. Restart the app; if it keeps happening, check that the app can write to its own settings folder.',
+    serviceNotAnswering:
+      'The VPN service is not answering. The tunnel may still be up — reconnect if traffic stops.',
+    adoptedTunnel: 'This tunnel was started outside the app (always-on VPN).',
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
     tryingProtocol: 'Trying {protocol}… ({current}/{total})',

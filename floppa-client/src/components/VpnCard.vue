@@ -174,6 +174,20 @@ const healthDotClass = computed(() => {
   <!-- Connection Card -->
   <UCard class="mb-4">
     <div class="flex flex-col items-center text-center gap-3">
+      <!--
+        No device identity: `getDeviceId` failed, so there is no peer to provision and the
+        Connect button is disabled with nothing on screen explaining why. Reachable on desktop
+        when the config directory cannot be written.
+      -->
+      <UAlert
+        v-if="vpn.ready && !vpn.deviceId"
+        color="error"
+        variant="soft"
+        icon="i-lucide-fingerprint"
+        :title="t('vpn.noDeviceIdentity')"
+        class="w-full max-w-sm"
+      />
+
       <!-- Offline mode banner -->
       <UAlert
         v-if="setupPhase === 'offline'"
@@ -259,7 +273,24 @@ const healthDotClass = computed(() => {
         {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.state.protocol}`) }) }}
       </UBadge>
 
+      <!--
+        Contract fields the snapshot has always published and nobody read. `backend_reachable` is
+        the only honest signal that the `:vpn` service has stopped answering while the tunnel is
+        still believed to be up — the card otherwise shows Connected with frozen counters —
+        and `adopted` says the tunnel was not started from here, which is what makes an
+        always-on start explicable rather than surprising.
+      -->
+      <UAlert
+        v-if="vpn.isConnected && !vpn.state.backend_reachable"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-plug-zap"
+        :title="t('vpn.serviceNotAnswering')"
+        class="mt-2 w-full max-w-sm"
+      />
+
       <div v-if="vpn.isConnected" class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]">
+        <span v-if="vpn.state.adopted" class="text-xs">{{ t('vpn.adoptedTunnel') }}</span>
         <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
         <span v-if="vpn.state.server_endpoint">
           {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
@@ -348,7 +379,7 @@ const healthDotClass = computed(() => {
             :disabled="vpn.isConnected || busy"
             class="px-4 py-1.5 text-sm rounded-md transition-all"
             :class="
-              vpn.manualProtocol === proto
+              vpn.switcherProtocol === proto
                 ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
                 : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
             "
