@@ -19,26 +19,57 @@ pub fn run_ip(args: &[&str]) -> Result<()> {
     }
 }
 
+/// A default route's next hop: the gateway address and the interface it is reached on. The
+/// interface matters for IPv6, where the gateway is almost always link-local (`fe80::…`) and a
+/// route `via` it is rejected without a `dev`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Gateway {
+    via: String,
+    dev: String,
+}
+
+impl Gateway {
+    /// The `via <gw> dev <dev>` tail of an `ip route` command.
+    fn args(&self) -> [&str; 4] {
+        ["via", &self.via, "dev", &self.dev]
+    }
+}
+
+/// The first route in `ip route show default` output that has both a `via` and a `dev`.
+fn parse_default_route(output: &str) -> Option<Gateway> {
+    output.lines().find_map(|line| {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let after = |key: &str| {
+            words
+                .iter()
+                .position(|&w| w == key)
+                .and_then(|i| words.get(i + 1))
+                .map(|s| s.to_string())
+        };
+        Some(Gateway {
+            via: after("via")?,
+            dev: after("dev")?,
+        })
+    })
+}
+
 /// The default gateway of `endpoint`'s address family (the host route must use the same one).
-fn default_gateway(endpoint: IpAddr) -> Result<Option<String>> {
+fn default_gateway(endpoint: IpAddr) -> Result<Option<Gateway>> {
     let family = if endpoint.is_ipv4() { "-4" } else { "-6" };
     let output = Command::new("ip")
         .args([family, "route", "show", "default"])
         .output()?;
-    let route_output = String::from_utf8_lossy(&output.stdout);
-    Ok(route_output
-        .split_whitespace()
-        .skip_while(|&w| w != "via")
-        .nth(1)
-        .map(|s| s.to_string()))
+    Ok(parse_default_route(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Host route that keeps the endpoint reachable through the physical gateway once the catch-all
-/// routes point at the tunnel. Deleted with the same `via` it was added with, so a route the
-/// system installed after a roaming event is left alone.
+/// routes point at the tunnel. Deleted with the same `via`/`dev` it was added with, so a route
+/// the system installed after a roaming event is left alone.
 struct EndpointRoute {
     destination: String,
-    gateway: String,
+    gateway: Gateway,
 }
 
 /// Everything `configure_routes` added, in the form needed to remove it again.
@@ -73,10 +104,12 @@ impl AppliedNetworking {
                 errors.push(e);
             }
         }
-        if let Some(route) = self.endpoint_route.take()
-            && let Err(e) = run_ip(&["route", "del", &route.destination, "via", &route.gateway])
-        {
-            errors.push(e);
+        if let Some(route) = self.endpoint_route.take() {
+            let mut args = vec!["route", "del", &route.destination];
+            args.extend(route.gateway.args());
+            if let Err(e) = run_ip(&args) {
+                errors.push(e);
+            }
         }
         collect_errors(errors)
     }
@@ -128,8 +161,13 @@ fn apply_routes(
         bail!("No default gateway for {endpoint}; cannot pin the endpoint route");
     };
     let destination = endpoint_route(endpoint);
-    run_ip(&["route", "replace", &destination, "via", &gateway])?;
-    eprintln!("Endpoint route: {destination} via {gateway}");
+    let mut args = vec!["route", "replace", &destination];
+    args.extend(gateway.args());
+    run_ip(&args)?;
+    eprintln!(
+        "Endpoint route: {destination} via {} dev {}",
+        gateway.via, gateway.dev
+    );
     applied.endpoint_route = Some(EndpointRoute {
         destination,
         gateway,
@@ -180,6 +218,52 @@ mod tests {
             endpoint_route("2001:db8::1".parse().unwrap()),
             "2001:db8::1/128"
         );
+    }
+
+    #[test]
+    fn default_route_parses_gateway_and_device() {
+        // IPv4, with the trailing attributes `ip` prints
+        assert_eq!(
+            parse_default_route(
+                "default via 192.168.1.1 dev wlan0 proto dhcp src 192.168.1.7 metric 600 \n"
+            ),
+            Some(Gateway {
+                via: "192.168.1.1".into(),
+                dev: "wlan0".into(),
+            })
+        );
+        // IPv6: link-local gateway, only usable together with its device
+        assert_eq!(
+            parse_default_route(
+                "default via fe80::1 dev eth0 proto ra metric 1024 expires 1797sec hoplimit 64 pref medium\n"
+            ),
+            Some(Gateway {
+                via: "fe80::1".into(),
+                dev: "eth0".into(),
+            })
+        );
+        // Several default routes: the first complete one wins; an on-link route without `via`
+        // (a ppp/tun default) is skipped
+        assert_eq!(
+            parse_default_route(
+                "default dev ppp0 scope link\ndefault via 10.0.0.1 dev eth0 metric 100\n"
+            ),
+            Some(Gateway {
+                via: "10.0.0.1".into(),
+                dev: "eth0".into(),
+            })
+        );
+        assert_eq!(parse_default_route(""), None);
+        assert_eq!(parse_default_route("default dev ppp0 scope link\n"), None);
+    }
+
+    #[test]
+    fn gateway_args_carry_the_device() {
+        let gw = Gateway {
+            via: "fe80::1".into(),
+            dev: "eth0".into(),
+        };
+        assert_eq!(gw.args(), ["via", "fe80::1", "dev", "eth0"]);
     }
 
     #[test]
