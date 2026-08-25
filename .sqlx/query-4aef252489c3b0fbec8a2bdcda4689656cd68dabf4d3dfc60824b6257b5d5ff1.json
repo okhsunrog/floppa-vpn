@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT u.id as user_id, u.vless_uuid,\n               pl.default_speed_limit_mbps as speed_limit_mbps\n        FROM users u\n        JOIN subscriptions s ON s.user_id = u.id\n        JOIN plans pl ON s.plan_id = pl.id\n        WHERE u.vless_uuid IS NOT NULL\n          AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ",
+  "query": "\n        SELECT u.id as user_id, u.vless_uuid, cs.speed_limit_mbps\n        FROM users u\n        JOIN current_subscriptions cs ON cs.user_id = u.id AND cs.is_active\n        WHERE u.vless_uuid IS NOT NULL\n        ",
   "describe": {
     "columns": [
       {
@@ -31,8 +31,8 @@
         "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "plans",
-            "name": "default_speed_limit_mbps"
+            "table": "current_subscriptions",
+            "name": "speed_limit_mbps"
           }
         }
       }
@@ -46,5 +46,5 @@
       true
     ]
   },
-  "hash": "d966c69d164c08607d56fe49a1fa69523fdf3b061c35fbe56effbeca8e95cbfb"
+  "hash": "4aef252489c3b0fbec8a2bdcda4689656cd68dabf4d3dfc60824b6257b5d5ff1"
 }

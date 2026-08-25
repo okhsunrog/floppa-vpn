@@ -17,13 +17,10 @@ use crate::auth::{MultiUserAuthenticator, RegistryUser};
 pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> anyhow::Result<()> {
     let rows = sqlx::query!(
         r#"
-        SELECT u.id as user_id, u.vless_uuid,
-               pl.default_speed_limit_mbps as speed_limit_mbps
+        SELECT u.id as user_id, u.vless_uuid, cs.speed_limit_mbps
         FROM users u
-        JOIN subscriptions s ON s.user_id = u.id
-        JOIN plans pl ON s.plan_id = pl.id
+        JOIN current_subscriptions cs ON cs.user_id = u.id AND cs.is_active
         WHERE u.vless_uuid IS NOT NULL
-          AND (s.expires_at IS NULL OR s.expires_at > NOW())
         "#
     )
     .fetch_all(pool)
