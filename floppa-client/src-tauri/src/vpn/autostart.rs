@@ -31,6 +31,9 @@ use tracing::{debug, info, warn};
 /// nothing usable stops rather than guessing.
 pub const BUNDLE_VERSION: u32 = 2;
 
+/// Also spelled out in `FloppaVpnTileService` on the Kotlin side: the Quick Settings tile has to
+/// know whether there is anything to start *before* starting anything, and the presence of this
+/// file is the only evidence of that available without booting the actor.
 pub const BUNDLE_FILENAME: &str = "autostart.json";
 
 /// What `VpnService.Builder` needs, derived from the config and the split rules once, at connect

@@ -110,6 +110,15 @@ class FloppaVpnService : VpnService() {
         const val ACTION_KEEP_ALIVE = "dev.okhsunrog.floppavpn.KEEP_ALIVE"
 
         /**
+         * The Quick Settings tile was tapped on.
+         *
+         * Handled exactly as a system start — there is no UI process to ask, so the intent comes
+         * from what the last successful connect recorded — but named, so a tile tap is not logged
+         * as the null-intent OEM oddity the system-start arm warns about.
+         */
+        const val ACTION_TILE_START = "dev.okhsunrog.floppavpn.TILE_START"
+
+        /**
          * "This instance is serving nothing". No generation is ever minted as this, so a teardown
          * that arrives after the one it belonged to has gone matches nothing.
          */
@@ -262,8 +271,9 @@ class FloppaVpnService : VpnService() {
                 awaitWork()
             }
 
-            // A start the system issued: always-on, boot, or a lockdown restore. Same requirement
-            // — foreground at once — and then the actor is told to want a tunnel.
+            // A start the system issued — always-on, boot, a lockdown restore — or the tile, which
+            // has no more context than the system does. Same requirement, foreground at once, and
+            // then the actor is told to want a tunnel.
             else -> {
                 if (intent == null) {
                     // START_NOT_STICKY means we should never be redelivered a null intent; some
@@ -342,6 +352,7 @@ class FloppaVpnService : VpnService() {
 
     override fun onDestroy() {
         Log.i(TAG, "the VPN service is being destroyed")
+        VpnPhaseHolder.publish(VpnPhase.Off)
         endGeneration()
         // The reference Rust calls back on is deliberately *not* cleared here. Instances share this
         // process and their teardown is asynchronous: a new instance's onCreate routinely runs
@@ -383,6 +394,9 @@ class FloppaVpnService : VpnService() {
      */
     fun shutdownService() {
         mainHandler.post {
+            // Ahead of the foreground check, for the same reason [setState] publishes early: a
+            // bound-only service settling at Disconnected still has to put the tile back to Off.
+            VpnPhaseHolder.publish(VpnPhase.Off)
             if (!foreground) return@post
             Log.i(TAG, "nothing is running; the service is standing down")
             stopWatchingNetwork()
@@ -546,6 +560,9 @@ class FloppaVpnService : VpnService() {
     fun setState(busy: Boolean, connected: Boolean) {
         mainHandler.post {
             if (busy) cancelAwaitWork()
+            // Published before the foreground check: the tile follows the tunnel, not the
+            // notification, and the actor can be working in a service the UI has only bound.
+            VpnPhaseHolder.publish(if (connected) VpnPhase.Connected else VpnPhase.Busy)
             if (!foreground) return@post
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(NOTIFICATION_ID, buildNotification(connected))

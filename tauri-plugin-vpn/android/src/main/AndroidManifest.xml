@@ -29,5 +29,23 @@
                 <action android:name="android.net.VpnService" />
             </intent-filter>
         </service>
+
+        <!--
+          The Quick Settings tile. In `:vpn` with the service, so the phase it shows is a
+          process-local read and no `:vpn` process means no tunnel — which is the truth it wants
+          to show. Exported because the system, not this app, binds it; the tile permission is
+          what keeps that to the system.
+        -->
+        <service
+            android:name="dev.okhsunrog.floppavpn.vpn.FloppaVpnTileService"
+            android:process=":vpn"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:label="@string/vpn_tile_label"
+            android:icon="@drawable/ic_qs_tile_vpn"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
