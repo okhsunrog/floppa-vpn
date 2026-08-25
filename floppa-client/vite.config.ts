@@ -113,16 +113,7 @@ export default defineConfig({
   // Pre-bundle all deps upfront so Vite doesn't re-optimize mid-serve
   // (Tauri webview doesn't handle 504 "Outdated Optimize Dep" like a browser)
   optimizeDeps: {
-    include: [
-      'vue',
-      'vue-router',
-      'pinia',
-      'vue-i18n',
-      '@pinia/colada',
-      '@tauri-apps/api/webviewWindow',
-      '@tauri-apps/plugin-os',
-      '@tauri-apps/plugin-shell',
-    ],
+    include: ['vue', 'vue-router', 'pinia', 'vue-i18n', '@pinia/colada', '@tauri-apps/plugin-os'],
   },
 
   build: {
