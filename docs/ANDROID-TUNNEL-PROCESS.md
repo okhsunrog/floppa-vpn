@@ -129,8 +129,17 @@ pending request alive across it is arguing.
 - **1b — run it in `:vpn`.** The RPC grows the actor's command surface plus a long-polled
   `state_since(seq)`; the UI gets the remote handle. Kotlin gains bind-for-lifetime and
   establish-on-demand: the start intent no longer carries a TUN spec, because the actor derives it.
-- **1c — retire what the move makes dead.** Service generations, the TUN spec in the intent, the
-  separate autostart path, and adoption's cross-process rows.
+- **1c — retire what the move makes dead.** With one actor in the tunnel's own process, several
+  things exist only to describe a world that no longer occurs:
+  - `Started.autonomous` and `RunningTunnel.autonomous` are always false — every tunnel is started
+    by the actor, and a start the system issues reaches it as an intent like any other.
+  - Table row **2a** (adopt a tunnel the system started) is therefore unreachable, and so is the
+    `AdoptAutonomous` effect it emits. Row **2b** — a tunnel with no intent — can now only be
+    reached by a bug: the tunnel dies with the process that decides about it.
+  - Service *generations* still earn their keep (a descriptor arrives asynchronously and must name
+    what it answers), but they no longer need a reserved range or a persisted counter.
+  - `TunnelInfo`, `RunningInfo` and the `starting`/`tun_ready` fields the old RPC carried are gone
+    already; what remains is the `ServiceRegistry` that replaced them.
 
 ### The device matrix 1b must pass
 
