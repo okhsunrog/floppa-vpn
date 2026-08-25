@@ -1,9 +1,9 @@
 use crate::wg::{PeerStat, WgTool};
 use anyhow::{Result, anyhow};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use floppa_core::{Config, DbPool, Protocol};
 use sqlx::postgres::PgListener;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -152,12 +152,9 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
             let mut peer_user_map = load_peer_user_map(&ctx.pool).await.unwrap_or_default();
             loop {
                 tokio::time::sleep(interval).await;
-                if let Err(e) = periodic_sync(&ctx, &mut prev_wg_counters, &peer_user_map).await {
+                if let Err(e) = periodic_sync(&ctx, &mut prev_wg_counters, &mut peer_user_map).await
+                {
                     error!(error = %e, "Periodic sync failed");
-                }
-                // Refresh the map periodically (cheap query)
-                if let Ok(map) = load_peer_user_map(&ctx.pool).await {
-                    peer_user_map = map;
                 }
             }
         }
@@ -475,9 +472,16 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
 async fn periodic_sync(
     ctx: &SyncContext,
     prev_wg_counters: &mut HashMap<String, Counters>,
-    peer_user_map: &HashMap<String, (i64, i64)>,
+    peer_user_map: &mut HashMap<String, (i64, i64)>,
 ) -> Result<()> {
     sync_peers(ctx).await?;
+    // Refresh the label map BEFORE reading counters: a peer that just went active
+    // would otherwise have its first tick's traffic computed (and its prev value
+    // stored) while it is still missing from the map, losing that delta for good.
+    match load_peer_user_map(&ctx.pool).await {
+        Ok(map) => *peer_user_map = map,
+        Err(e) => warn!(error = %e, "Failed to refresh peer→user map; using previous"),
+    }
     update_traffic_stats(ctx, prev_wg_counters, peer_user_map).await?;
     check_expired_subscriptions(&ctx.pool).await?;
     Ok(())
@@ -564,14 +568,28 @@ async fn update_traffic_stats(
     // Collect stats from every protocol interface; public keys are unique across protocols,
     // so the prev-counter map and peer→user map stay keyed by public_key.
     let mut stats: Vec<PeerStat> = Vec::new();
+    let mut all_interfaces_read = true;
     for target in &ctx.targets {
         match crate::wg::get_peer_stats(target.tool, &target.interface) {
             Ok(mut s) => stats.append(&mut s),
             Err(e) => {
+                all_interfaces_read = false;
                 debug!(interface = %target.interface, error = %e, "Failed to read peer stats")
             }
         }
     }
+
+    // Peers removed from the interfaces (or with the interface gone) must not pile
+    // up in the cache. Only prune when every interface answered: after a transient
+    // read failure the next successful read would otherwise count all of a peer's
+    // lifetime bytes as fresh delta.
+    if all_interfaces_read {
+        let seen: HashSet<&str> = stats.iter().map(|s| s.public_key.as_str()).collect();
+        prev_wg_counters.retain(|k, _| seen.contains(k.as_str()));
+    }
+
+    let mut handshake_keys: Vec<String> = Vec::new();
+    let mut handshake_times: Vec<DateTime<Utc>> = Vec::new();
 
     for stat in &stats {
         let prev = prev_wg_counters
@@ -598,16 +616,29 @@ async fn update_traffic_stats(
                 .increment(delta_rx);
         }
 
-        // Update last_handshake regardless of traffic (traffic itself lives in VictoriaMetrics)
         if let Some(handshake) = stat.last_handshake {
-            sqlx::query!(
-                "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
-                handshake,
-                stat.public_key,
-            )
-            .execute(&ctx.pool)
-            .await?;
+            handshake_keys.push(stat.public_key.clone());
+            handshake_times.push(handshake);
         }
+    }
+
+    // One statement per tick instead of one per peer; rows whose handshake is
+    // unchanged are skipped by IS DISTINCT FROM (traffic itself lives in VictoriaMetrics).
+    if !handshake_keys.is_empty() {
+        sqlx::query!(
+            r#"
+            UPDATE peers p
+            SET last_handshake = v.last_handshake
+            FROM UNNEST($1::text[], $2::timestamptz[]) AS v(public_key, last_handshake)
+            WHERE p.public_key = v.public_key
+              AND p.sync_status = 'active'
+              AND p.last_handshake IS DISTINCT FROM v.last_handshake
+            "#,
+            &handshake_keys,
+            &handshake_times,
+        )
+        .execute(&ctx.pool)
+        .await?;
     }
 
     Ok(())

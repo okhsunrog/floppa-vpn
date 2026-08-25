@@ -405,29 +405,65 @@ pub fn get_peer_stats(tool: WgTool, interface: &str) -> Result<Vec<PeerStat>> {
         return Err(anyhow!("{tool} show dump failed"));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_wg_dump(&String::from_utf8_lossy(&output.stdout))?)
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum DumpParseError {
+    #[error("peer line {line} has {found} columns, expected at least {expected}")]
+    MissingColumns {
+        line: usize,
+        found: usize,
+        expected: usize,
+    },
+    #[error("peer line {line}: invalid {field} '{value}'")]
+    InvalidNumber {
+        line: usize,
+        field: &'static str,
+        value: String,
+    },
+}
+
+/// Parse `wg show <iface> dump` / `awg show <iface> dump` output.
+///
+/// The first line describes the interface (its column count differs between `wg`
+/// and `awg`) and is skipped. Every following line is one peer:
+/// `public-key psk endpoint allowed-ips latest-handshake transfer-rx transfer-tx keepalive`.
+pub fn parse_wg_dump(dump: &str) -> Result<Vec<PeerStat>, DumpParseError> {
+    const COLUMNS: usize = 8;
     let mut stats = Vec::new();
 
-    // Skip first line (interface info), parse peer lines
-    for line in stdout.lines().skip(1) {
+    for (idx, line) in dump.lines().enumerate().skip(1) {
+        let line_no = idx + 1;
         let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 7 {
-            let public_key = parts[0].to_string();
-            let last_handshake = parts[4]
-                .parse::<i64>()
-                .ok()
-                .filter(|&t| t > 0)
-                .and_then(|t| DateTime::from_timestamp(t, 0));
-            let rx_bytes = parts[5].parse().unwrap_or(0);
-            let tx_bytes = parts[6].parse().unwrap_or(0);
-
-            stats.push(PeerStat {
-                public_key,
-                rx_bytes,
-                tx_bytes,
-                last_handshake,
+        if parts.len() < COLUMNS {
+            return Err(DumpParseError::MissingColumns {
+                line: line_no,
+                found: parts.len(),
+                expected: COLUMNS,
             });
         }
+        let number = |field: &'static str, value: &str| {
+            value
+                .parse::<u64>()
+                .map_err(|_| DumpParseError::InvalidNumber {
+                    line: line_no,
+                    field,
+                    value: value.to_string(),
+                })
+        };
+
+        let handshake_secs = number("latest-handshake", parts[4])?;
+        let last_handshake = (handshake_secs > 0)
+            .then(|| DateTime::from_timestamp(handshake_secs as i64, 0))
+            .flatten();
+
+        stats.push(PeerStat {
+            public_key: parts[0].to_string(),
+            rx_bytes: number("transfer-rx", parts[5])?,
+            tx_bytes: number("transfer-tx", parts[6])?,
+            last_handshake,
+        });
     }
 
     Ok(stats)
@@ -464,6 +500,56 @@ mod tests {
         o.i1.clear();
         o.jc = 7;
         assert!(!awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+    }
+
+    /// Captured from `wg show wg-floppa dump` (keys shortened).
+    const DUMP: &str = "cHJpdmF0ZQ==\tc2VydmVy\t51820\toff\n\
+        cGVlcjE=\t(none)\t203.0.113.7:41641\t10.100.0.2/32\t1700000000\t12345\t67890\toff\n\
+        cGVlcjI=\t(none)\t(none)\t10.100.0.3/32\t0\t0\t0\toff\n";
+
+    #[test]
+    fn parses_dump_peer_lines() {
+        let stats = parse_wg_dump(DUMP).unwrap();
+        assert_eq!(stats.len(), 2);
+        assert_eq!(
+            stats[0],
+            PeerStat {
+                public_key: "cGVlcjE=".to_string(),
+                rx_bytes: 12345,
+                tx_bytes: 67890,
+                last_handshake: DateTime::from_timestamp(1_700_000_000, 0),
+            }
+        );
+        // No handshake yet → None, not the epoch
+        assert_eq!(stats[1].public_key, "cGVlcjI=");
+        assert_eq!(stats[1].last_handshake, None);
+        assert_eq!((stats[1].rx_bytes, stats[1].tx_bytes), (0, 0));
+    }
+
+    #[test]
+    fn dump_with_only_interface_line_has_no_peers() {
+        assert_eq!(parse_wg_dump("k\tk\t51820\toff\n").unwrap(), vec![]);
+        assert_eq!(parse_wg_dump("").unwrap(), vec![]);
+    }
+
+    #[test]
+    fn malformed_dump_lines_are_errors() {
+        assert!(matches!(
+            parse_wg_dump("iface\npk\t(none)\t(none)\n"),
+            Err(DumpParseError::MissingColumns {
+                line: 2,
+                found: 3,
+                ..
+            })
+        ));
+        assert!(matches!(
+            parse_wg_dump("iface\npk\t(none)\t(none)\t(none)\t0\tlots\t0\toff\n"),
+            Err(DumpParseError::InvalidNumber {
+                line: 2,
+                field: "transfer-rx",
+                ..
+            })
+        ));
     }
 
     #[test]

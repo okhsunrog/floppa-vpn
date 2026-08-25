@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE peers p\n            SET last_handshake = v.last_handshake\n            FROM UNNEST($1::text[], $2::timestamptz[]) AS v(public_key, last_handshake)\n            WHERE p.public_key = v.public_key\n              AND p.sync_status = 'active'\n              AND p.last_handshake IS DISTINCT FROM v.last_handshake\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "TimestamptzArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9988a9c675f6d0647609cc955f5b73ef8963d07059adb719c45936496b426bd5"
+}
