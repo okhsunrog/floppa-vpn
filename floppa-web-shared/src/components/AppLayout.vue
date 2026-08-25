@@ -91,9 +91,11 @@ const removeBeforeEach = router.beforeEach((to) => {
   }
 })
 
+// Navigation away from the protected page is done by installAuthGuard's logout redirect, the
+// same path the 401 interceptor takes — this keeps a single definition of "where logged-out
+// users go" per app.
 function logout() {
   auth.logout()
-  router.push('/login')
 }
 
 const { store: colorModeStore } = useColorMode()

@@ -1,3 +1,4 @@
+import { watch } from 'vue'
 import type { RouteRecordRaw, Router } from 'vue-router'
 import { useAuthStore } from '../stores'
 
@@ -119,11 +120,43 @@ export interface AuthGuardOptions {
   unauthenticatedRedirect?: string
 }
 
+/**
+ * Installs the auth guard and the logout redirect.
+ *
+ * The guard covers navigation; the redirect covers the session ending *without* one — the
+ * navbar Logout button, or the 401 interceptor in either app's `main.ts` wiping a dead token.
+ * Both only call `auth.logout()`; this is the single place that then moves the user off a
+ * protected page, so no view needs to know the app's logged-out landing route.
+ */
 export function installAuthGuard(router: Router, options: AuthGuardOptions = {}): void {
   const unauthenticatedRedirect = options.unauthenticatedRedirect ?? 'login'
 
+  // Inside a Telegram Mini App, always go through /login: LoginView auto-logs in via initData
+  // and forwards to the dashboard, so the user never sees the public landing. Outside Telegram,
+  // logged-out visitors land on the configured page.
+  const loggedOutRoute = () => ({
+    name: getTelegramInitData() !== null ? 'login' : unauthenticatedRedirect,
+  })
+
+  // The store is only usable once Pinia is installed, which is after the router module has
+  // been evaluated, so the watcher is attached on the first navigation rather than here.
+  let redirectInstalled = false
+  function installLogoutRedirect(auth: ReturnType<typeof useAuthStore>) {
+    if (redirectInstalled) return
+    redirectInstalled = true
+    watch(
+      () => auth.isAuthenticated,
+      (authenticated) => {
+        if (!authenticated && router.currentRoute.value.meta.requiresAuth) {
+          void router.push(loggedOutRoute())
+        }
+      },
+    )
+  }
+
   router.beforeEach((to) => {
     const auth = useAuthStore()
+    installLogoutRedirect(auth)
 
     // If in Mini App and a different Telegram account opened the app, force re-login
     const tgUserId = getTelegramUserIdFromInitData()
@@ -132,13 +165,7 @@ export function installAuthGuard(router: Router, options: AuthGuardOptions = {})
     }
 
     if (to.meta.requiresAuth && !auth.isAuthenticated) {
-      // Inside a Telegram Mini App, always go through /login: LoginView auto-logs in
-      // via initData and forwards to the dashboard, so the user never sees the public
-      // landing. Outside Telegram, logged-out visitors land on the configured page.
-      if (getTelegramInitData() !== null) {
-        return { name: 'login' }
-      }
-      return { name: unauthenticatedRedirect }
+      return loggedOutRoute()
     }
 
     if (to.meta.requiresAdmin && !auth.isAdmin) {
