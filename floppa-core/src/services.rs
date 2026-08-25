@@ -177,11 +177,7 @@ pub async fn create_credential_user(
     password: &str,
 ) -> Result<UpsertResult> {
     let (uid, display) = normalize_login(login)?;
-    if password.len() < 8 {
-        return Err(FloppaError::InvalidLogin(
-            "password must be at least 8 characters".into(),
-        ));
-    }
+    crate::password::validate_password(password)?;
     let secret_hash = crate::password::hash_password(password)?;
 
     let mut tx = pool.begin().await?;
@@ -285,11 +281,7 @@ pub async fn set_credential_for_user(
     password: &str,
 ) -> Result<()> {
     let (uid, _display) = normalize_login(login)?;
-    if password.len() < 8 {
-        return Err(FloppaError::InvalidLogin(
-            "password must be at least 8 characters".into(),
-        ));
-    }
+    crate::password::validate_password(password)?;
     let secret_hash = crate::password::hash_password(password)?;
 
     let res = sqlx::query!(
@@ -1161,7 +1153,7 @@ mod tests {
         let err = create_credential_user(&pool, "dave", "short")
             .await
             .unwrap_err();
-        assert!(matches!(err, FloppaError::InvalidLogin(_)));
+        assert!(matches!(err, FloppaError::InvalidPassword(_)));
     }
 
     // ── Telegram link + merge ──

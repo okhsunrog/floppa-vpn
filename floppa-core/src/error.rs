@@ -56,6 +56,9 @@ pub enum FloppaError {
     #[error("Invalid login: {0}")]
     InvalidLogin(String),
 
+    #[error("Invalid password: {0}")]
+    InvalidPassword(#[from] crate::password::PasswordError),
+
     #[error("Config error: {0}")]
     Config(#[from] crate::config::ConfigError),
 }

@@ -113,6 +113,11 @@ impl From<FloppaError> for ApiError {
                 message: msg,
                 status: StatusCode::BAD_REQUEST,
             },
+            FloppaError::InvalidPassword(reason) => Self {
+                error: "invalid_password".into(),
+                message: reason.to_string(),
+                status: StatusCode::BAD_REQUEST,
+            },
             FloppaError::Crypto(_)
             | FloppaError::Key(_)
             | FloppaError::PasswordHash(_)

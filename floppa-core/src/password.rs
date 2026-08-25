@@ -7,7 +7,36 @@ use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 
-use crate::error::Result;
+use crate::error::{FloppaError, Result};
+
+/// Minimum password length, counted in characters (not bytes — "пароль!!" is 8 characters).
+pub const MIN_PASSWORD_CHARS: usize = 8;
+/// Maximum password length in bytes. Bounds the Argon2 input and the hashing cost per request.
+pub const MAX_PASSWORD_BYTES: usize = 128;
+
+/// Why a password was rejected by [`validate_password`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum PasswordError {
+    #[error("password must be at least {min} characters")]
+    TooShort { min: usize },
+    #[error("password must be at most {max_bytes} bytes")]
+    TooLong { max_bytes: usize },
+}
+
+/// Check a plaintext password against the policy shared by registration and credential changes.
+pub fn validate_password(password: &str) -> Result<()> {
+    if password.chars().count() < MIN_PASSWORD_CHARS {
+        return Err(FloppaError::InvalidPassword(PasswordError::TooShort {
+            min: MIN_PASSWORD_CHARS,
+        }));
+    }
+    if password.len() > MAX_PASSWORD_BYTES {
+        return Err(FloppaError::InvalidPassword(PasswordError::TooLong {
+            max_bytes: MAX_PASSWORD_BYTES,
+        }));
+    }
+    Ok(())
+}
 
 /// Hash a plaintext password into a PHC string (Argon2id, random salt).
 pub fn hash_password(password: &str) -> Result<String> {
@@ -57,6 +86,26 @@ mod tests {
     fn wrong_password_fails() {
         let phc = hash_password("s3cret").unwrap();
         assert!(!verify_password("wrong", &phc));
+    }
+
+    #[test]
+    fn password_policy_counts_chars_and_caps_bytes() {
+        assert!(validate_password("hunter2hunter").is_ok());
+        // 8 Cyrillic characters = 16 bytes: long enough, because the minimum is in characters.
+        assert!(validate_password("пароль!!").is_ok());
+        assert!(matches!(
+            validate_password("short7!"),
+            Err(FloppaError::InvalidPassword(PasswordError::TooShort {
+                min: 8
+            }))
+        ));
+        assert!(validate_password(&"a".repeat(MAX_PASSWORD_BYTES)).is_ok());
+        assert!(matches!(
+            validate_password(&"a".repeat(MAX_PASSWORD_BYTES + 1)),
+            Err(FloppaError::InvalidPassword(PasswordError::TooLong {
+                max_bytes: MAX_PASSWORD_BYTES
+            }))
+        ));
     }
 
     #[test]
