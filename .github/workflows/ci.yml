@@ -57,7 +57,7 @@ jobs:
           path: floppa-face/dist
 
       - name: Clippy (workspace)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Prebuilt binary, so this costs seconds. One run at the root covers the workspace and the
       # two crates it excludes (floppa-client/src-tauri, tauri-plugin-vpn) — same as `just machete`.
@@ -197,10 +197,10 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
 
       - name: Clippy (client)
-        run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - name: Clippy (vpn plugin)
-        run: cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+        run: cargo clippy --manifest-path tauri-plugin-vpn/Cargo.toml --all-targets -- -D warnings
 
       # The root workspace excludes floppa-client/src-tauri and tauri-plugin-vpn,
       # so the `test` job's `cargo test` never reaches them.
@@ -238,7 +238,14 @@ jobs:
       - name: Clippy (client, Android)
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy -- -D warnings
+        run: cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --all-targets -- -D warnings
+
+      # The plugin is a path dependency of the client, not a workspace member, so the step above
+      # compiles its Android branch but applies no lints to it. This one does.
+      - name: Clippy (vpn plugin, Android)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: cargo ndk -t arm64-v8a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --all-targets -- -D warnings
 
   # The Windows platform layer is cfg-gated, so nothing on a Linux runner compiles it. Without
   # this job a Windows-only type error is not caught until release.yml runs on a tag.

@@ -111,8 +111,17 @@ client-check:
     cargo fmt --check --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --check --manifest-path tauri-plugin-vpn/Cargo.toml
     echo "clippy (client crates)..."
-    cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml -- -D warnings
-    cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml -- -D warnings
+    cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
+    cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml --all-targets -- -D warnings
+    # The Android branch of both crates is cfg-gated, so the host run above never compiles it.
+    # The plugin gets its own run: as a path dependency of the client it is compiled but not linted.
+    if command -v cargo-ndk >/dev/null; then
+        echo "clippy (client crates, Android)..."
+        cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --quiet --all-targets -- -D warnings
+        cargo ndk -t arm64-v8a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --quiet --all-targets -- -D warnings
+    else
+        echo "clippy (client crates, Android): skipped, cargo-ndk is not installed"
+    fi
     # The root workspace excludes these crates, so `just server-check`'s cargo test misses them.
     echo "tests (client crates)..."
     run cargo test --quiet --manifest-path floppa-client/src-tauri/Cargo.toml
@@ -138,7 +147,7 @@ server-check:
     echo "rustfmt (workspace)..."
     cargo fmt --check
     echo "clippy (workspace)..."
-    cargo clippy --quiet -- -D warnings
+    cargo clippy --quiet --workspace --all-targets -- -D warnings
     just machete
     echo "tests (workspace)..."
     output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
@@ -171,9 +180,11 @@ machete:
     command -v cargo-machete >/dev/null || { echo "cargo-machete is not installed: cargo install cargo-machete"; exit 1; }
     out=$(cargo machete 2>&1) || { echo "$out"; exit 1; }
 
-# Lint (without auto-fix)
+# Lint (without auto-fix): workspace + client crates + frontend
 lint:
-    @cargo clippy --quiet -- -D warnings
+    @cargo clippy --quiet --workspace --all-targets -- -D warnings
+    @cargo clippy --quiet --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
+    @cargo clippy --quiet --manifest-path tauri-plugin-vpn/Cargo.toml --all-targets -- -D warnings
     @vp check --no-fmt
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
