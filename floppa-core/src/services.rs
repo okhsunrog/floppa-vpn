@@ -713,11 +713,9 @@ pub async fn create_peer(
         });
     }
 
-    let (private_key, public_key) = crate::wg_keys::generate_keypair()
-        .map_err(|e| FloppaError::KeyGeneration(e.to_string()))?;
+    let (private_key, public_key) = crate::wg_keys::generate_keypair()?;
 
-    let encrypted_private_key = encrypt_private_key(private_key.as_base64(), ctx.encryption_key)
-        .map_err(|e| FloppaError::Encryption(e.to_string()))?;
+    let encrypted_private_key = encrypt_private_key(private_key.as_base64(), ctx.encryption_key)?;
 
     let assigned_ip = allocate_ip_tx(&mut tx, subnet, &[server_ip])
         .await?

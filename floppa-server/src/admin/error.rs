@@ -113,13 +113,14 @@ impl From<FloppaError> for ApiError {
                 message: msg,
                 status: StatusCode::BAD_REQUEST,
             },
-            FloppaError::Encryption(_) | FloppaError::KeyGeneration(_) | FloppaError::Config(_) => {
-                Self {
-                    error: "internal_error".into(),
-                    message: format!("{e}"),
-                    status: StatusCode::INTERNAL_SERVER_ERROR,
-                }
-            }
+            FloppaError::Crypto(_)
+            | FloppaError::Key(_)
+            | FloppaError::PasswordHash(_)
+            | FloppaError::Config(_) => Self {
+                error: "internal_error".into(),
+                message: format!("{e}"),
+                status: StatusCode::INTERNAL_SERVER_ERROR,
+            },
         }
     }
 }

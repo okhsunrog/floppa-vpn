@@ -7,15 +7,13 @@ use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 
-use crate::error::{FloppaError, Result};
+use crate::error::Result;
 
 /// Hash a plaintext password into a PHC string (Argon2id, random salt).
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
-        .map_err(|e| FloppaError::Encryption(format!("password hash failed: {e}")))
+    let hash = Argon2::default().hash_password(password.as_bytes(), &salt)?;
+    Ok(hash.to_string())
 }
 
 /// Verify a plaintext password against a stored PHC string.

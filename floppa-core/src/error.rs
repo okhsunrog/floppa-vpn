@@ -32,11 +32,14 @@ pub enum FloppaError {
     #[error("No available IPs in subnet")]
     NoAvailableIps,
 
-    #[error("Key generation failed: {0}")]
-    KeyGeneration(String),
+    #[error("WireGuard key error: {0}")]
+    Key(#[from] crate::wg_keys::KeyError),
 
     #[error("Encryption error: {0}")]
-    Encryption(String),
+    Crypto(#[from] crate::crypto::CryptoError),
+
+    #[error("Password hashing error: {0}")]
+    PasswordHash(#[from] argon2::password_hash::Error),
 
     #[error("VLESS not configured on this server")]
     VlessNotConfigured,

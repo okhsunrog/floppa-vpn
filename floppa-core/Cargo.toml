@@ -26,7 +26,7 @@ x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
 ipnetwork = { version = "0.21.1", features = ["serde"] }
 veil = "0.3.0"
 uuid = { version = "1.22.0", features = ["v4"] }
-argon2 = "0.5.3"
+argon2 = { version = "0.5.3", features = ["std"] }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["migrate"] }
