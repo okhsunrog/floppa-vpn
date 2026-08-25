@@ -1285,7 +1285,6 @@ dependencies = [
  "url",
  "utoipa",
  "utoipa-axum",
- "uuid",
 ]
 
 [[package]]
