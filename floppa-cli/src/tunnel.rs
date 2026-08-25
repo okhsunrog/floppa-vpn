@@ -234,10 +234,12 @@ impl WgConfig {
         }
     }
 
-    pub async fn peer_socket_addr(&self) -> Result<SocketAddr> {
-        tokio::net::lookup_host(&self.peer_endpoint)
-            .await?
-            .next()
+    /// Resolve the peer endpoint once; the same address feeds the tunnel and the host route.
+    pub async fn resolve_endpoint(&self) -> Result<SocketAddr> {
+        let addrs = tokio::net::lookup_host(&self.peer_endpoint)
+            .await
+            .map_err(|e| anyhow!("Failed to resolve endpoint '{}': {e}", self.peer_endpoint))?;
+        net::pick_endpoint(addrs)
             .ok_or_else(|| anyhow!("Endpoint '{}' resolved to no addresses", self.peer_endpoint))
     }
 
@@ -307,11 +309,14 @@ pub fn bring_up_interface(config: &WgConfig, interface: &str) -> Result<IpNetwor
     Ok(addr)
 }
 
-pub async fn create_tunnel(config: &WgConfig, interface: &str) -> Result<FloppaDevice> {
+pub async fn create_tunnel(
+    config: &WgConfig,
+    endpoint: SocketAddr,
+    interface: &str,
+) -> Result<FloppaDevice> {
     let private_key = config.private_key_bytes()?;
     let peer_public_key = config.peer_public_key_bytes()?;
     let preshared_key = config.peer_preshared_key_bytes()?;
-    let endpoint = config.peer_socket_addr().await?;
     let allowed_ips = config.allowed_ips_networks();
 
     let mut tun_config = tun::Configuration::default();

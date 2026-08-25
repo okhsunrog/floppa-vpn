@@ -216,18 +216,18 @@ impl Tunnel {
 
 async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
     let wg_config = tunnel::WgConfig::from_config_str(config_str)?;
+    let endpoint = wg_config.resolve_endpoint().await?;
     eprintln!("Creating WireGuard tunnel on {interface}...");
-    let device = tunnel::create_tunnel(&wg_config, interface).await?;
+    let device = tunnel::create_tunnel(&wg_config, endpoint, interface).await?;
     eprintln!("Configuring networking...");
     let addr = tunnel::bring_up_interface(&wg_config, interface)?;
-    let endpoint = wg_config.peer_socket_addr().await?;
     let mut rollback = rollback::Rollback::new(net::configure_routes(
         endpoint.ip(),
         &wg_config.allowed_ips_networks(),
         interface,
     )?);
     eprintln!("VPN IP: {}", addr.ip());
-    eprintln!("Endpoint: {}", wg_config.peer_endpoint);
+    eprintln!("Endpoint: {} ({endpoint})", wg_config.peer_endpoint);
 
     let dns_servers = wg_config.dns_servers();
     if !no_dns && !dns_servers.is_empty() {

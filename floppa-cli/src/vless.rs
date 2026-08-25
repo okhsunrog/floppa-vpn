@@ -41,10 +41,11 @@ pub async fn endpoint_ip(config: &VlessConfig) -> Result<IpAddr> {
     if let Ok(ip) = endpoint_host.parse::<IpAddr>() {
         return Ok(ip);
     }
-    Ok(tokio::net::lookup_host(&config.server_addr)
-        .await?
-        .next()
-        .ok_or_else(|| anyhow!("Cannot resolve {}", config.server_addr))?
+    let addrs = tokio::net::lookup_host(&config.server_addr)
+        .await
+        .map_err(|e| anyhow!("Failed to resolve {}: {e}", config.server_addr))?;
+    Ok(crate::net::pick_endpoint(addrs)
+        .ok_or_else(|| anyhow!("{} resolved to no addresses", config.server_addr))?
         .ip())
 }
 
