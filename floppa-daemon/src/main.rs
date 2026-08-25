@@ -32,8 +32,8 @@ async fn main() -> Result<()> {
         &config.wireguard.interface,
         &secrets.wg_private_key,
         config.wireguard.get_listen_port(),
-        &config.wireguard.get_server_ip(),
-        &config.wireguard.client_subnet,
+        &config.wireguard.get_server_ip().to_string(),
+        &config.wireguard.client_subnet.to_string(),
     )?;
     info!(
         interface = %config.wireguard.interface,

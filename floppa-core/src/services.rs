@@ -591,8 +591,11 @@ pub async fn create_peer(
     // Resolve everything protocol-specific up front, BEFORE any row is written: an AmneziaWG
     // peer must not be committed only to fail on a missing server key afterwards (the daemon
     // would then try to serve a peer nobody can connect to).
-    let (subnet, awg) = match protocol {
-        Protocol::WireGuard => (ctx.config.wireguard.client_subnet.clone(), None),
+    let (subnet, server_ip, awg) = match protocol {
+        Protocol::WireGuard => {
+            let wg = &ctx.config.wireguard;
+            (wg.client_subnet, wg.get_server_ip(), None)
+        }
         Protocol::AmneziaWg => {
             let awg = ctx
                 .config
@@ -602,7 +605,11 @@ pub async fn create_peer(
             let awg_public_key = ctx
                 .awg_public_key
                 .ok_or(FloppaError::AmneziaWgNotConfigured)?;
-            (awg.client_subnet.clone(), Some((awg, awg_public_key)))
+            (
+                awg.client_subnet,
+                awg.get_server_ip(),
+                Some((awg, awg_public_key)),
+            )
         }
     };
 
@@ -712,7 +719,9 @@ pub async fn create_peer(
     let encrypted_private_key = encrypt_private_key(private_key.as_base64(), ctx.encryption_key)
         .map_err(|e| FloppaError::Encryption(e.to_string()))?;
 
-    let assigned_ip = allocate_ip_tx(&mut tx, &subnet).await?;
+    let assigned_ip = allocate_ip_tx(&mut tx, subnet, &[server_ip])
+        .await?
+        .to_string();
 
     let peer_id = sqlx::query_scalar!(
         r#"
@@ -752,53 +761,62 @@ pub async fn create_peer(
     })
 }
 
-/// Allocate the next available IP address from the WireGuard subnet.
-pub async fn allocate_ip(pool: &DbPool, subnet: &str) -> Result<String> {
-    allocate_ip_inner(pool, subnet).await
+/// Allocate the next available client IP from `subnet` without the cross-transaction lock.
+/// Only safe when nothing else allocates concurrently; production goes through
+/// [`create_peer`], which takes the advisory lock.
+pub async fn allocate_ip(
+    pool: &DbPool,
+    subnet: Ipv4Network,
+    reserved: &[Ipv4Addr],
+) -> Result<Ipv4Addr> {
+    allocate_ip_inner(pool, subnet, reserved).await
 }
 
 /// Allocate IP within a transaction.
 async fn allocate_ip_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    subnet: &str,
-) -> Result<String> {
+    subnet: Ipv4Network,
+    reserved: &[Ipv4Addr],
+) -> Result<Ipv4Addr> {
     // IP selection is read-then-insert. Serialize allocators for the same subnet across all users
     // so two transactions cannot select the same address and make one fail on the unique index.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
-        .bind(subnet)
+    // The lock key is the (network address, prefix) pair, so "10.100.0.0/24" and "10.100.0.5/24"
+    // — the same network — contend on the same lock.
+    sqlx::query("SELECT pg_advisory_xact_lock($1::int, $2::int)")
+        .bind(u32::from(subnet.network()) as i32)
+        .bind(i32::from(subnet.prefix()))
         .execute(&mut **tx)
         .await?;
-    allocate_ip_inner(&mut **tx, subnet).await
+    allocate_ip_inner(&mut **tx, subnet, reserved).await
 }
 
+/// Pick the lowest host address of `subnet` that is neither `reserved` (the server's own
+/// address) nor held by a live peer. The network and broadcast addresses are never handed out.
 // Kept as runtime query because it uses a generic executor (pool or transaction)
-async fn allocate_ip_inner<'e, E>(executor: E, subnet: &str) -> Result<String>
+async fn allocate_ip_inner<'e, E>(
+    executor: E,
+    subnet: Ipv4Network,
+    reserved: &[Ipv4Addr],
+) -> Result<Ipv4Addr>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
-    let network: Ipv4Network = subnet.parse().map_err(|_| FloppaError::NoAvailableIps)?;
-
     let assigned: Vec<Option<String>> =
         sqlx::query_scalar("SELECT assigned_ip FROM peers WHERE sync_status != 'removed'")
             .fetch_all(executor)
             .await?;
 
-    let assigned_set: HashSet<Ipv4Addr> = assigned
+    let taken: HashSet<Ipv4Addr> = assigned
         .iter()
         .filter_map(|ip| ip.as_ref()?.parse().ok())
+        .chain(reserved.iter().copied())
         .collect();
 
-    // Skip network address and gateway (first two), exclude broadcast (last)
-    for ip in network.iter().skip(2) {
-        if ip == network.broadcast() {
-            break;
-        }
-        if !assigned_set.contains(&ip) {
-            return Ok(ip.to_string());
-        }
-    }
-
-    Err(FloppaError::NoAvailableIps)
+    subnet
+        .iter()
+        .filter(|ip| *ip != subnet.network() && *ip != subnet.broadcast())
+        .find(|ip| !taken.contains(ip))
+        .ok_or(FloppaError::NoAvailableIps)
 }
 
 /// Find an active peer by device_id + protocol for a given user (via app_installations JOIN).
@@ -960,7 +978,7 @@ mod tests {
                 interface: "wg-test".into(),
                 endpoint: "vpn.test.com:51820".into(),
                 listen_port: None,
-                client_subnet: "10.200.0.0/24".into(),
+                client_subnet: "10.200.0.0/24".parse().unwrap(),
                 server_ip: None,
                 dns: vec!["8.8.8.8".into()],
                 allowed_ips: "0.0.0.0/0, ::/0".into(),
@@ -1027,7 +1045,7 @@ mod tests {
             interface: "awg-test".into(),
             endpoint: "vpn.test.com:51821".into(),
             listen_port: None,
-            client_subnet: "10.101.0.0/24".into(),
+            client_subnet: "10.101.0.0/24".parse().unwrap(),
             server_ip: None,
             dns: vec!["1.1.1.1".into()],
             allowed_ips: "0.0.0.0/0, ::/0".into(),
@@ -1596,10 +1614,49 @@ mod tests {
 
     // ── allocate_ip ──
 
+    fn net(s: &str) -> Ipv4Network {
+        s.parse().unwrap()
+    }
+
+    fn ip(s: &str) -> Ipv4Addr {
+        s.parse().unwrap()
+    }
+
     #[sqlx::test(migrations = "../migrations")]
     async fn test_allocate_ip_first_ip(pool: DbPool) {
-        let ip = allocate_ip(&pool, "10.200.0.0/24").await.unwrap();
-        assert_eq!(ip, "10.200.0.2"); // skips .0 (network) and .1 (gateway)
+        let got = allocate_ip(&pool, net("10.200.0.0/24"), &[ip("10.200.0.1")])
+            .await
+            .unwrap();
+        assert_eq!(got, ip("10.200.0.2")); // skips .0 (network) and .1 (server)
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_allocate_ip_reserves_configured_server_ip(pool: DbPool) {
+        // Server sits on .1 by default, but an operator may put it elsewhere; the allocator must
+        // never hand the server's own address to a client.
+        let got = allocate_ip(&pool, net("10.200.0.0/24"), &[ip("10.200.0.2")])
+            .await
+            .unwrap();
+        assert_eq!(got, ip("10.200.0.1"));
+
+        // A subnet whose ip part is not the network address still allocates from the network.
+        let got = allocate_ip(&pool, net("10.200.0.7/24"), &[ip("10.200.0.1")])
+            .await
+            .unwrap();
+        assert_eq!(got, ip("10.200.0.2"));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_peer_skips_configured_server_ip(pool: DbPool) {
+        let mut config = test_config();
+        config.wireguard.server_ip = Some(ip("10.200.0.2"));
+        let ctx = test_ctx(&pool, &config);
+        let plan_id = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 11111).await;
+        seed_subscription(&pool, user_id, plan_id).await;
+
+        let result = create_peer(&ctx, user_id, None).await.unwrap();
+        assert_eq!(result.assigned_ip, "10.200.0.1");
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -1615,8 +1672,10 @@ mod tests {
         .await
         .unwrap();
 
-        let ip = allocate_ip(&pool, "10.200.0.0/24").await.unwrap();
-        assert_eq!(ip, "10.200.0.3");
+        let got = allocate_ip(&pool, net("10.200.0.0/24"), &[ip("10.200.0.1")])
+            .await
+            .unwrap();
+        assert_eq!(got, ip("10.200.0.3"));
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -1631,8 +1690,10 @@ mod tests {
         .await
         .unwrap();
 
-        let ip = allocate_ip(&pool, "10.200.0.0/24").await.unwrap();
-        assert_eq!(ip, "10.200.0.2"); // removed peer's IP is reusable
+        let got = allocate_ip(&pool, net("10.200.0.0/24"), &[ip("10.200.0.1")])
+            .await
+            .unwrap();
+        assert_eq!(got, ip("10.200.0.2")); // removed peer's IP is reusable
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -1648,13 +1709,7 @@ mod tests {
         .await
         .unwrap();
 
-        let result = allocate_ip(&pool, "10.200.0.0/30").await;
-        assert!(matches!(result, Err(FloppaError::NoAvailableIps)));
-    }
-
-    #[sqlx::test(migrations = "../migrations")]
-    async fn test_allocate_ip_invalid_subnet(pool: DbPool) {
-        let result = allocate_ip(&pool, "not-a-subnet").await;
+        let result = allocate_ip(&pool, net("10.200.0.0/30"), &[ip("10.200.0.1")]).await;
         assert!(matches!(result, Err(FloppaError::NoAvailableIps)));
     }
 
@@ -1741,7 +1796,7 @@ mod tests {
             interface: "awg-test".into(),
             endpoint: "vpn.test.com:51821".into(),
             listen_port: None,
-            client_subnet: "10.101.0.0/24".into(),
+            client_subnet: "10.101.0.0/24".parse().unwrap(),
             server_ip: None,
             dns: vec!["1.1.1.1".into()],
             allowed_ips: "0.0.0.0/0, ::/0".into(),
@@ -1925,7 +1980,7 @@ mod tests {
             interface: "awg-test".into(),
             endpoint: "vpn.test.com:51821".into(),
             listen_port: None,
-            client_subnet: "10.101.0.0/24".into(),
+            client_subnet: "10.101.0.0/24".parse().unwrap(),
             server_ip: None,
             dns: vec!["1.1.1.1".into()],
             allowed_ips: "0.0.0.0/0, ::/0".into(),

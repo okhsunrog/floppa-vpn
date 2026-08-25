@@ -4,7 +4,9 @@
 //! - `config.toml` (0644) - public settings
 //! - `secrets.toml` (0600) - sensitive data
 
+use ipnetwork::Ipv4Network;
 use serde::Deserialize;
+use std::net::Ipv4Addr;
 use std::path::Path;
 use veil::Redact;
 
@@ -48,10 +50,10 @@ pub struct WireGuardConfig {
     #[serde(default)]
     pub listen_port: Option<u16>,
     /// VPN subnet for client IPs (e.g., "10.100.0.0/24")
-    pub client_subnet: String,
-    /// Server IP within the subnet (e.g., "10.100.0.1")
+    pub client_subnet: Ipv4Network,
+    /// Server IP within the subnet (e.g., "10.100.0.1"). Reserved by the client IP allocator.
     #[serde(default)]
-    pub server_ip: Option<String>,
+    pub server_ip: Option<Ipv4Addr>,
     /// DNS servers for clients
     pub dns: Vec<String>,
     /// Allowed IPs for clients (typically "0.0.0.0/0, ::/0")
@@ -73,18 +75,16 @@ impl WireGuardConfig {
         })
     }
 
-    /// Get server IP (from config or derived from subnet as .1)
-    pub fn get_server_ip(&self) -> String {
-        self.server_ip.clone().unwrap_or_else(|| {
-            let base = self.client_subnet.split('/').next().unwrap_or("10.100.0.0");
-            let parts: Vec<&str> = base.split('.').collect();
-            if parts.len() == 4 {
-                format!("{}.{}.{}.1", parts[0], parts[1], parts[2])
-            } else {
-                "10.100.0.1".to_string()
-            }
-        })
+    /// Server IP: from config, or the first host address of `client_subnet` (the ".1").
+    pub fn get_server_ip(&self) -> Ipv4Addr {
+        self.server_ip
+            .unwrap_or_else(|| default_server_ip(self.client_subnet))
     }
+}
+
+/// First host address of the subnet (e.g. 10.100.0.1 for 10.100.0.0/24).
+fn default_server_ip(subnet: Ipv4Network) -> Ipv4Addr {
+    subnet.nth(1).unwrap_or_else(|| subnet.network())
 }
 
 /// AmneziaWG configuration. AmneziaWG is WireGuard plus interface-wide obfuscation
@@ -102,10 +102,10 @@ pub struct AmneziaWgConfig {
     #[serde(default)]
     pub listen_port: Option<u16>,
     /// VPN subnet for client IPs (e.g., "10.101.0.0/24") — must differ from the WireGuard subnet
-    pub client_subnet: String,
-    /// Server IP within the subnet (e.g., "10.101.0.1")
+    pub client_subnet: Ipv4Network,
+    /// Server IP within the subnet (e.g., "10.101.0.1"). Reserved by the client IP allocator.
     #[serde(default)]
-    pub server_ip: Option<String>,
+    pub server_ip: Option<Ipv4Addr>,
     /// DNS servers for clients
     pub dns: Vec<String>,
     /// Allowed IPs for clients (typically "0.0.0.0/0, ::/0")
@@ -137,17 +137,10 @@ impl AmneziaWgConfig {
         })
     }
 
-    /// Get server IP (from config or derived from subnet as .1)
-    pub fn get_server_ip(&self) -> String {
-        self.server_ip.clone().unwrap_or_else(|| {
-            let base = self.client_subnet.split('/').next().unwrap_or("10.101.0.0");
-            let parts: Vec<&str> = base.split('.').collect();
-            if parts.len() == 4 {
-                format!("{}.{}.{}.1", parts[0], parts[1], parts[2])
-            } else {
-                "10.101.0.1".to_string()
-            }
-        })
+    /// Server IP: from config, or the first host address of `client_subnet` (the ".1").
+    pub fn get_server_ip(&self) -> Ipv4Addr {
+        self.server_ip
+            .unwrap_or_else(|| default_server_ip(self.client_subnet))
     }
 }
 

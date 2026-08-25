@@ -143,8 +143,7 @@ pub fn ensure_awg_interface(awg: &AmneziaWgConfig, private_key: &str) -> Result<
         return Err(anyhow!("awg setconf failed"));
     }
 
-    let prefix = awg.client_subnet.split('/').nth(1).unwrap_or("24");
-    let address = format!("{}/{}", awg.get_server_ip(), prefix);
+    let address = format!("{}/{}", awg.get_server_ip(), awg.client_subnet.prefix());
     let status = Command::new("ip")
         .args(["address", "add", &address, "dev", interface])
         .status()
