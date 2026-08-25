@@ -10,9 +10,11 @@ import {
 } from '../../client/@pinia/colada.gen'
 import type { InstallationSummary } from '../../client/types.gen'
 import { describeError, formatDateTime } from '../../utils'
-import type { TableColumn, TableRow } from '@nuxt/ui'
-import { useClientPagination, useConfirmAction, useSearchFilter } from '../../composables/adminList'
+import type { TableColumn } from '@nuxt/ui'
+import { useAdminList, useConfirmAction } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
+import AdminListPage from '../../components/AdminListPage.vue'
+import ConfirmModal from '../../components/ConfirmModal.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -31,18 +33,13 @@ const {
   confirm: runDelete,
 } = useConfirmAction()
 
-const { search, filtered: filteredInstallations } = useSearchFilter(installations, (i) => [
-  i.username,
-  i.device_name,
-  i.device_id,
-  i.platform,
-])
-
 const {
+  search,
+  filtered: filteredInstallations,
   page,
   paginated: paginatedInstallations,
-  pageSize: PAGE_SIZE,
-} = useClientPagination(filteredInstallations, search)
+  pageSize,
+} = useAdminList(installations, (i) => [i.username, i.device_name, i.device_id, i.platform])
 
 function confirmDelete(id: number, deviceName: string | null | undefined) {
   requestDelete(id, t('adminInstallations.deleteConfirm', { device: deviceName || id }))
@@ -67,6 +64,10 @@ async function doDelete() {
   })
 }
 
+function openUser(inst: InstallationSummary) {
+  void router.push(`/admin/users/${inst.user_id}`)
+}
+
 const columns = computed<TableColumn<InstallationSummary>[]>(() => [
   { accessorKey: 'username', header: t('adminInstallations.user') },
   { accessorKey: 'device_name', header: t('adminInstallations.device') },
@@ -80,175 +81,120 @@ const columns = computed<TableColumn<InstallationSummary>[]>(() => [
 </script>
 
 <template>
-  <div class="max-w-6xl mx-auto">
-    <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
-      <h1 class="text-2xl font-bold">{{ t('adminInstallations.title') }}</h1>
-      <UInput
-        v-model="search"
-        :placeholder="t('adminInstallations.searchPlaceholder')"
-        icon="i-lucide-search"
-        class="w-full sm:w-64"
+  <AdminListPage
+    v-model:search="search"
+    v-model:page="page"
+    :title="t('adminInstallations.title')"
+    :status="status"
+    :error="error"
+    :columns="columns"
+    :rows="paginatedInstallations"
+    :total="filteredInstallations.length"
+    :page-size="pageSize"
+    :row-key="(inst) => inst.id"
+    :search-placeholder="t('adminInstallations.searchPlaceholder')"
+    :empty-text="t('adminInstallations.noInstallations')"
+    container-class="max-w-6xl"
+    @select="openUser"
+  >
+    <template #username-cell="{ row }">
+      {{ row.original.username || '-' }}
+    </template>
+    <template #device_name-cell="{ row }">
+      <span v-if="row.original.device_name" class="flex items-center gap-1.5">
+        <UIcon name="i-lucide-monitor-smartphone" class="size-4 text-[var(--ui-text-muted)]" />
+        {{ row.original.device_name }}
+      </span>
+      <span v-else class="text-[var(--ui-text-muted)]">-</span>
+    </template>
+    <template #platform-cell="{ row }">
+      <span v-if="row.original.platform" class="text-sm">{{ row.original.platform }}</span>
+      <span v-else class="text-[var(--ui-text-muted)]">-</span>
+    </template>
+    <template #app_version-cell="{ row }">
+      <span v-if="row.original.app_version" class="font-mono text-xs">{{
+        row.original.app_version
+      }}</span>
+      <span v-else class="text-[var(--ui-text-muted)]">-</span>
+    </template>
+    <template #last_seen_at-cell="{ row }">
+      {{ formatDateTime(row.original.last_seen_at) }}
+    </template>
+    <template #has_wg-cell="{ row }">
+      <UIcon
+        :name="row.original.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
+        :class="row.original.has_wg ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
+        class="size-4"
       />
-    </div>
+    </template>
+    <template #has_vless-cell="{ row }">
+      <UIcon
+        :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+        :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
+        class="size-4"
+      />
+    </template>
+    <template #actions-cell="{ row }">
+      <UButton
+        icon="i-lucide-trash-2"
+        color="error"
+        variant="ghost"
+        size="xs"
+        @click.stop="confirmDelete(row.original.id, row.original.device_name)"
+      />
+    </template>
 
-    <div v-if="status === 'pending'" class="flex justify-center py-12">
-      <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
-    </div>
-    <UAlert v-else-if="error" color="error" :title="error.message" />
-    <template v-else>
-      <!-- Desktop table -->
-      <div class="hidden md:block">
-        <UTable
-          :data="paginatedInstallations"
-          :columns="columns"
-          class="[&_tbody_tr]:cursor-pointer"
-          @select="
-            (_e: Event, row: TableRow<InstallationSummary>) =>
-              router.push(`/admin/users/${row.original.user_id}`)
-          "
-        >
-          <template #username-cell="{ row }">
-            {{ row.original.username || '-' }}
-          </template>
-          <template #device_name-cell="{ row }">
-            <span v-if="row.original.device_name" class="flex items-center gap-1.5">
-              <UIcon
-                name="i-lucide-monitor-smartphone"
-                class="size-4 text-[var(--ui-text-muted)]"
-              />
-              {{ row.original.device_name }}
-            </span>
-            <span v-else class="text-[var(--ui-text-muted)]">-</span>
-          </template>
-          <template #platform-cell="{ row }">
-            <span v-if="row.original.platform" class="text-sm">{{ row.original.platform }}</span>
-            <span v-else class="text-[var(--ui-text-muted)]">-</span>
-          </template>
-          <template #app_version-cell="{ row }">
-            <span v-if="row.original.app_version" class="font-mono text-xs">{{
-              row.original.app_version
-            }}</span>
-            <span v-else class="text-[var(--ui-text-muted)]">-</span>
-          </template>
-          <template #last_seen_at-cell="{ row }">
-            {{ formatDateTime(row.original.last_seen_at) }}
-          </template>
-          <template #has_wg-cell="{ row }">
-            <UIcon
-              :name="row.original.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
-              :class="row.original.has_wg ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
-              class="size-4"
-            />
-          </template>
-          <template #has_vless-cell="{ row }">
-            <UIcon
-              :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-              :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
-              class="size-4"
-            />
-          </template>
-          <template #actions-cell="{ row }">
-            <UButton
-              icon="i-lucide-trash-2"
-              color="error"
-              variant="ghost"
-              size="xs"
-              @click.stop="confirmDelete(row.original.id, row.original.device_name)"
-            />
-          </template>
-          <template #empty>
-            <div class="text-center py-8 text-[var(--ui-text-muted)]">
-              {{ t('adminInstallations.noInstallations') }}
-            </div>
-          </template>
-        </UTable>
-      </div>
-
-      <!-- Mobile cards -->
-      <div class="md:hidden flex flex-col gap-3">
-        <div
-          v-if="filteredInstallations.length === 0"
-          class="text-center py-8 text-[var(--ui-text-muted)]"
-        >
-          {{ t('adminInstallations.noInstallations') }}
+    <template #card="{ row: inst }">
+      <div class="flex justify-between items-start">
+        <div>
+          <span class="font-medium">{{ inst.username || '-' }}</span>
+          <span
+            v-if="inst.device_name"
+            class="flex items-center gap-1.5 text-sm text-[var(--ui-text-muted)] mt-0.5"
+          >
+            <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
+            {{ inst.device_name }}
+          </span>
         </div>
-        <UCard
-          v-for="inst in paginatedInstallations"
-          :key="inst.id"
-          class="cursor-pointer active:scale-[0.98] transition-transform"
-          @click="() => void router.push(`/admin/users/${inst.user_id}`)"
-        >
-          <div class="flex justify-between items-start">
-            <div>
-              <span class="font-medium">{{ inst.username || '-' }}</span>
-              <span
-                v-if="inst.device_name"
-                class="flex items-center gap-1.5 text-sm text-[var(--ui-text-muted)] mt-0.5"
-              >
-                <UIcon name="i-lucide-monitor-smartphone" class="size-4" />
-                {{ inst.device_name }}
-              </span>
-            </div>
-            <UButton
-              icon="i-lucide-trash-2"
-              color="error"
-              variant="ghost"
-              size="xs"
-              @click.stop="confirmDelete(inst.id, inst.device_name)"
-            />
-          </div>
-          <div class="flex gap-3 mt-2 text-xs text-[var(--ui-text-muted)] flex-wrap items-center">
-            <span v-if="inst.platform">{{ inst.platform }}</span>
-            <span v-if="inst.app_version" class="font-mono">v{{ inst.app_version }}</span>
-            <span class="flex items-center gap-1">
-              WG
-              <UIcon
-                :name="inst.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
-                :class="inst.has_wg ? 'text-green-500' : ''"
-                class="size-3.5"
-              />
-            </span>
-            <span class="flex items-center gap-1">
-              VLESS
-              <UIcon
-                :name="inst.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-                :class="inst.has_vless ? 'text-green-500' : ''"
-                class="size-3.5"
-              />
-            </span>
-            <span>{{ formatDateTime(inst.last_seen_at) }}</span>
-          </div>
-        </UCard>
-      </div>
-
-      <div v-if="filteredInstallations.length > PAGE_SIZE" class="flex justify-center mt-4">
-        <UPagination
-          v-model:page="page"
-          :total="filteredInstallations.length"
-          :items-per-page="PAGE_SIZE"
+        <UButton
+          icon="i-lucide-trash-2"
+          color="error"
+          variant="ghost"
+          size="xs"
+          @click.stop="confirmDelete(inst.id, inst.device_name)"
         />
+      </div>
+      <div class="flex gap-3 mt-2 text-xs text-[var(--ui-text-muted)] flex-wrap items-center">
+        <span v-if="inst.platform">{{ inst.platform }}</span>
+        <span v-if="inst.app_version" class="font-mono">v{{ inst.app_version }}</span>
+        <span class="flex items-center gap-1">
+          WG
+          <UIcon
+            :name="inst.has_wg ? 'i-lucide-check' : 'i-lucide-x'"
+            :class="inst.has_wg ? 'text-green-500' : ''"
+            class="size-3.5"
+          />
+        </span>
+        <span class="flex items-center gap-1">
+          VLESS
+          <UIcon
+            :name="inst.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+            :class="inst.has_vless ? 'text-green-500' : ''"
+            class="size-3.5"
+          />
+        </span>
+        <span>{{ formatDateTime(inst.last_seen_at) }}</span>
       </div>
     </template>
 
-    <!-- Confirm Delete Dialog -->
-    <UModal v-model:open="confirmOpen" :title="t('adminInstallations.deleteTitle')">
-      <template #body>
-        <p>{{ confirmMessage }}</p>
-      </template>
-      <template #footer>
-        <UButton
-          :label="t('common.cancel')"
-          color="neutral"
-          variant="outline"
-          @click="() => void (confirmOpen = false)"
-        />
-        <UButton
-          :label="t('common.delete')"
-          color="error"
-          :loading="deleteMut.asyncStatus.value === 'loading'"
-          @click="doDelete"
-        />
-      </template>
-    </UModal>
-  </div>
+    <ConfirmModal
+      v-model:open="confirmOpen"
+      :title="t('adminInstallations.deleteTitle')"
+      :message="confirmMessage"
+      :confirm-label="t('common.delete')"
+      confirm-color="error"
+      :loading="deleteMut.asyncStatus.value === 'loading'"
+      @confirm="doDelete"
+    />
+  </AdminListPage>
 </template>

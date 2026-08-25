@@ -11,10 +11,11 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getAvatarsBatch } from '../../client/sdk.gen'
 import type { UserSummary } from '../../client/types.gen'
-import type { TableColumn, TableRow } from '@nuxt/ui'
+import type { TableColumn } from '@nuxt/ui'
 import { describeError, formatDate, isApiError, toIntOrNull } from '../../utils'
-import { useClientPagination, useSearchFilter } from '../../composables/adminList'
+import { useAdminList } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
+import AdminListPage from '../../components/AdminListPage.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -23,18 +24,17 @@ const { data: users, status, error } = useQuery(listUsersQuery())
 const invalidate = useInvalidateQueries()
 const { data: plans } = useQuery(listPlansQuery())
 
-const { search, filtered: filteredUsers } = useSearchFilter(users, (u) => [
-  u.username,
-  u.first_name,
-  u.last_name,
-  u.telegram_id,
-])
-
 const {
+  search,
+  filtered: filteredUsers,
   page,
   paginated: paginatedUsers,
-  pageSize: PAGE_SIZE,
-} = useClientPagination(filteredUsers, search)
+  pageSize,
+} = useAdminList(users, (u) => [u.username, u.first_name, u.last_name, u.telegram_id])
+
+function openUser(user: UserSummary) {
+  void router.push(`/admin/users/${user.id}`)
+}
 
 function displayName(u: UserSummary): string {
   if (u.first_name) return u.last_name ? `${u.first_name} ${u.last_name}` : u.first_name
@@ -154,171 +154,133 @@ async function addUser() {
 </script>
 
 <template>
-  <div class="max-w-7xl mx-auto">
-    <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
-      <h1 class="text-2xl font-bold">{{ t('adminUsers.title') }}</h1>
-      <div class="flex items-center gap-2 w-full sm:w-auto">
-        <UInput
-          v-model="search"
-          :placeholder="t('adminUsers.searchPlaceholder')"
-          icon="i-lucide-search"
-          class="flex-1 sm:w-64"
-        />
-        <UButton
-          :label="t('adminUsers.addUser')"
-          icon="i-lucide-user-plus"
-          size="sm"
-          @click="openAddUserDialog"
-        />
-      </div>
-    </div>
+  <AdminListPage
+    v-model:search="search"
+    v-model:page="page"
+    :title="t('adminUsers.title')"
+    :status="status"
+    :error="error"
+    :columns="columns"
+    :rows="paginatedUsers"
+    :total="filteredUsers.length"
+    :page-size="pageSize"
+    :row-key="(user) => user.id"
+    :search-placeholder="t('adminUsers.searchPlaceholder')"
+    :empty-text="t('adminUsers.noUsers')"
+    @select="openUser"
+  >
+    <template #header-actions>
+      <UButton
+        :label="t('adminUsers.addUser')"
+        icon="i-lucide-user-plus"
+        size="sm"
+        @click="openAddUserDialog"
+      />
+    </template>
 
-    <div v-if="status === 'pending'" class="flex justify-center py-12">
-      <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
-    </div>
-    <UAlert v-else-if="error" color="error" :title="error.message" />
-    <template v-else>
-      <!-- Desktop table -->
-      <div class="hidden md:block">
-        <UTable
-          :data="paginatedUsers"
-          :columns="columns"
-          @select="
-            (_e: Event, row: TableRow<UserSummary>) =>
-              router.push(`/admin/users/${row.original.id}`)
-          "
-          class="[&_tbody_tr]:cursor-pointer"
-        >
-          <template #username-cell="{ row }">
-            <div class="flex items-center gap-2">
-              <UAvatar
-                :src="avatars[String(row.original.id)] ?? undefined"
-                :alt="displayName(row.original)"
-                icon="i-lucide-user"
-                size="2xs"
-              />
-              <div class="flex flex-col">
-                <span>{{ displayName(row.original) }}</span>
-                <span
-                  v-if="row.original.first_name && row.original.username"
-                  class="text-xs text-[var(--ui-text-muted)]"
-                  >@{{ row.original.username }}</span
-                >
-              </div>
-            </div>
-          </template>
-          <template #active_plan-cell="{ row }">
-            <UBadge
-              v-if="row.original.active_plan"
-              color="success"
-              :label="row.original.active_plan"
-              variant="subtle"
-            />
-            <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
-          </template>
-          <template #has_vless-cell="{ row }">
-            <UIcon
-              :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-              :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
-              class="size-4"
-            />
-          </template>
-          <template #client_version-cell="{ row }">
-            <span v-if="row.original.client_version" class="text-xs">{{
-              row.original.client_version
-            }}</span>
-            <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
-          </template>
-          <template #is_admin-cell="{ row }">
-            <UBadge
-              v-if="row.original.is_admin"
-              color="info"
-              :label="t('common.admin')"
-              variant="subtle"
-            />
-          </template>
-          <template #created_at-cell="{ row }">
-            {{ formatDate(row.original.created_at) }}
-          </template>
-          <template #empty>
-            <div class="text-center py-8 text-[var(--ui-text-muted)]">
-              {{ t('adminUsers.noUsers') }}
-            </div>
-          </template>
-        </UTable>
-      </div>
-
-      <!-- Mobile cards -->
-      <div class="md:hidden flex flex-col gap-3">
-        <div v-if="filteredUsers.length === 0" class="text-center py-8 text-[var(--ui-text-muted)]">
-          {{ t('adminUsers.noUsers') }}
+    <template #username-cell="{ row }">
+      <div class="flex items-center gap-2">
+        <UAvatar
+          :src="avatars[String(row.original.id)] ?? undefined"
+          :alt="displayName(row.original)"
+          icon="i-lucide-user"
+          size="2xs"
+        />
+        <div class="flex flex-col">
+          <span>{{ displayName(row.original) }}</span>
+          <span
+            v-if="row.original.first_name && row.original.username"
+            class="text-xs text-[var(--ui-text-muted)]"
+            >@{{ row.original.username }}</span
+          >
         </div>
-        <UCard
-          v-for="user in paginatedUsers"
-          :key="user.id"
-          class="cursor-pointer active:scale-[0.98] transition-transform"
-          @click="() => void router.push(`/admin/users/${user.id}`)"
-        >
-          <div class="flex justify-between items-start">
-            <div class="flex items-center gap-2">
-              <UAvatar
-                :src="avatars[String(user.id)] ?? undefined"
-                :alt="displayName(user)"
-                icon="i-lucide-user"
-                size="2xs"
-              />
-              <div>
-                <span class="font-medium">{{ displayName(user) }}</span>
-                <span
-                  v-if="user.first_name && user.username"
-                  class="block text-xs text-[var(--ui-text-muted)]"
-                  >@{{ user.username }}</span
-                >
-                <span class="block text-xs text-[var(--ui-text-muted)]">{{
-                  t('adminUsers.idAndTelegram', { id: user.id, tg: user.telegram_id ?? '—' })
-                }}</span>
-              </div>
-            </div>
-            <div class="flex gap-1">
-              <UBadge
-                v-if="user.is_admin"
-                color="info"
-                :label="t('common.admin')"
-                variant="subtle"
-                size="sm"
-              />
-              <UBadge
-                v-if="user.active_plan"
-                color="success"
-                :label="user.active_plan"
-                variant="subtle"
-                size="sm"
-              />
-              <span v-else class="text-xs text-[var(--ui-text-muted)]">&mdash;</span>
-            </div>
-          </div>
-          <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)] items-center">
-            <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
-            <span class="flex items-center gap-1">
-              VLESS
-              <UIcon
-                :name="user.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
-                :class="user.has_vless ? 'text-green-500' : ''"
-                class="size-3.5"
-              />
-            </span>
-            <span v-if="user.client_version">v{{ user.client_version }}</span>
-            <span>{{ formatDate(user.created_at) }}</span>
-          </div>
-        </UCard>
       </div>
+    </template>
+    <template #active_plan-cell="{ row }">
+      <UBadge
+        v-if="row.original.active_plan"
+        color="success"
+        :label="row.original.active_plan"
+        variant="subtle"
+      />
+      <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
+    </template>
+    <template #has_vless-cell="{ row }">
+      <UIcon
+        :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+        :class="row.original.has_vless ? 'text-green-500' : 'text-[var(--ui-text-muted)]'"
+        class="size-4"
+      />
+    </template>
+    <template #client_version-cell="{ row }">
+      <span v-if="row.original.client_version" class="text-xs">{{
+        row.original.client_version
+      }}</span>
+      <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
+    </template>
+    <template #is_admin-cell="{ row }">
+      <UBadge
+        v-if="row.original.is_admin"
+        color="info"
+        :label="t('common.admin')"
+        variant="subtle"
+      />
+    </template>
+    <template #created_at-cell="{ row }">
+      {{ formatDate(row.original.created_at) }}
+    </template>
 
-      <div v-if="filteredUsers.length > PAGE_SIZE" class="flex justify-center mt-4">
-        <UPagination
-          v-model:page="page"
-          :total="filteredUsers.length"
-          :items-per-page="PAGE_SIZE"
-        />
+    <template #card="{ row: user }">
+      <div class="flex justify-between items-start">
+        <div class="flex items-center gap-2">
+          <UAvatar
+            :src="avatars[String(user.id)] ?? undefined"
+            :alt="displayName(user)"
+            icon="i-lucide-user"
+            size="2xs"
+          />
+          <div>
+            <span class="font-medium">{{ displayName(user) }}</span>
+            <span
+              v-if="user.first_name && user.username"
+              class="block text-xs text-[var(--ui-text-muted)]"
+              >@{{ user.username }}</span
+            >
+            <span class="block text-xs text-[var(--ui-text-muted)]">{{
+              t('adminUsers.idAndTelegram', { id: user.id, tg: user.telegram_id ?? '—' })
+            }}</span>
+          </div>
+        </div>
+        <div class="flex gap-1">
+          <UBadge
+            v-if="user.is_admin"
+            color="info"
+            :label="t('common.admin')"
+            variant="subtle"
+            size="sm"
+          />
+          <UBadge
+            v-if="user.active_plan"
+            color="success"
+            :label="user.active_plan"
+            variant="subtle"
+            size="sm"
+          />
+          <span v-else class="text-xs text-[var(--ui-text-muted)]">&mdash;</span>
+        </div>
+      </div>
+      <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)] items-center">
+        <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
+        <span class="flex items-center gap-1">
+          VLESS
+          <UIcon
+            :name="user.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
+            :class="user.has_vless ? 'text-green-500' : ''"
+            class="size-3.5"
+          />
+        </span>
+        <span v-if="user.client_version">v{{ user.client_version }}</span>
+        <span>{{ formatDate(user.created_at) }}</span>
       </div>
     </template>
 
@@ -377,5 +339,5 @@ async function addUser() {
         />
       </template>
     </UModal>
-  </div>
+  </AdminListPage>
 </template>

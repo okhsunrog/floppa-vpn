@@ -74,3 +74,17 @@ export function useConfirmAction() {
 
   return { open, message, pendingId, request, confirm, reset }
 }
+
+/**
+ * Search plus client-side paging over a list query, as `AdminListPage` consumes it: the
+ * `search` and `page` models, the `filtered` total and the `paginated` page.
+ */
+export function useAdminList<T>(
+  items: Ref<readonly T[] | undefined>,
+  fields: (item: T) => readonly (string | number | null | undefined)[],
+  pageSize = ADMIN_PAGE_SIZE,
+) {
+  const { search, filtered } = useSearchFilter(items, fields)
+  const { page, paginated } = useClientPagination(filtered, search, pageSize)
+  return { search, filtered, page, paginated, pageSize }
+}

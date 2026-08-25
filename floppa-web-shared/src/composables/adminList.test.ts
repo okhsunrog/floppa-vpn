@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vite-plus/test'
 import { nextTick, ref } from 'vue'
 
-import { useClientPagination, useConfirmAction, useSearchFilter } from './adminList'
+import { useAdminList, useClientPagination, useConfirmAction, useSearchFilter } from './adminList'
 
 describe('useClientPagination', () => {
   test('slices the current page and resets to page 1 when the reset source changes', async () => {
@@ -72,5 +72,24 @@ describe('useConfirmAction', () => {
     reset()
     expect(open.value).toBe(false)
     expect(pendingId.value).toBeNull()
+  })
+})
+
+describe('useAdminList', () => {
+  test('pages the filtered list and returns to page 1 on a new search', async () => {
+    const rows = ref<{ name: string }[] | undefined>(
+      Array.from({ length: 5 }, (_, i) => ({ name: `row${i}` })),
+    )
+    const { search, filtered, page, paginated, pageSize } = useAdminList(rows, (r) => [r.name], 2)
+
+    expect(pageSize).toBe(2)
+    expect(filtered.value).toHaveLength(5)
+    page.value = 3
+    expect(paginated.value.map((r) => r.name)).toEqual(['row4'])
+
+    search.value = 'row1'
+    await nextTick()
+    expect(page.value).toBe(1)
+    expect(paginated.value.map((r) => r.name)).toEqual(['row1'])
   })
 })
