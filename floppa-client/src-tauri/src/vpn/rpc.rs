@@ -2,6 +2,18 @@
 //!
 //! The service trait is Android-only, because tarpc is an Android-only dependency. The payload type
 //! is not gated: it is plain data, and gating it would mean its tests compile on one target only.
+//!
+//! # Rule: every type on this wire has a bincode round-trip test
+//!
+//! The transport is bincode (`tokio_serde::formats::Bincode`), which is not self-describing. Any
+//! serde shape that needs the format to describe itself — `deserialize_with` that reads a
+//! different shape than `serialize_with` writes, `#[serde(untagged)]`, `#[serde(tag = …)]`
+//! (internally/adjacently tagged enums), `#[serde(flatten)]`, `deserialize_any` — encodes fine
+//! and fails to *decode* inside the framed transport, where it surfaces as "the connection to
+//! the server was already shutdown" rather than as a decode error anyone can catch. That shipped
+//! once (the AmneziaWG `I` slots). So: every argument and return type of every `VpnRpc` method,
+//! in every variant, round-trips through bincode in `tests::wire_coverage` below. Adding a
+//! method or a field means adding it there.
 
 use crate::vpn::actor::types::TunnelParams;
 use crate::vpn::protocol::Protocol;
@@ -217,6 +229,226 @@ AllowedIPs = 0.0.0.0/0
         match received {
             WireConfig::AmneziaWg(awg) => assert_eq!(awg.obfuscation, obfuscation),
             other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    /// Every argument and return type of every `VpnRpc` method, in every variant that can be
+    /// constructed, through bincode. Ordered by the trait: get_full_info, start_tunnel, stop,
+    /// ping, set_log_config, start_log_capture, stop_log_capture.
+    mod wire_coverage {
+        use super::*;
+        use crate::logging::{LogConfig, LogProfile};
+        use crate::vpn::actor::types::SplitMode;
+        use crate::vpn::state::{AwgConfig, VlessVpnConfig};
+        use floppa_tunnel_config::AwgObfuscation;
+
+        fn survives<T>(what: &str, value: &T) -> T
+        where
+            T: serde::Serialize + serde::de::DeserializeOwned,
+        {
+            roundtrip(value).unwrap_or_else(|e| panic!("{what} must survive bincode: {e}"))
+        }
+
+        /// Types without `PartialEq` are compared through their JSON form.
+        fn same_json<T: serde::Serialize>(a: &T, b: &T) -> bool {
+            serde_json::to_value(a).unwrap() == serde_json::to_value(b).unwrap()
+        }
+
+        fn params() -> [TunnelParams; 3] {
+            [
+                TunnelParams::default(),
+                TunnelParams::new(SplitMode::Exclude, vec!["org.example".into(), "a.b".into()]),
+                TunnelParams::new(SplitMode::Include, vec!["org.only".into()]),
+            ]
+        }
+
+        fn running(params: TunnelParams, autonomous: bool) -> RunningInfo {
+            RunningInfo {
+                protocol: Protocol::AmneziaWg,
+                endpoint: "203.0.113.7:51820".into(),
+                address: "10.0.0.2/32".into(),
+                connected_secs: Some(12),
+                params,
+                autonomous,
+            }
+        }
+
+        #[test]
+        fn get_full_info_every_shape() {
+            let shapes = [
+                // Bound, TUN not established yet (the state bind-before-establish introduced).
+                TunnelInfo {
+                    running: None,
+                    epoch: 3,
+                    starting: true,
+                    tun_ready: false,
+                    start_error: None,
+                    last_packet_received: None,
+                    tx_bytes: None,
+                    rx_bytes: None,
+                },
+                // Established, idle.
+                TunnelInfo {
+                    running: None,
+                    epoch: 3,
+                    starting: true,
+                    tun_ready: true,
+                    start_error: None,
+                    last_packet_received: None,
+                    tx_bytes: None,
+                    rx_bytes: None,
+                },
+                // Failed to start.
+                TunnelInfo {
+                    running: None,
+                    epoch: 3,
+                    starting: false,
+                    tun_ready: false,
+                    start_error: Some("VpnService.Builder.establish() returned null".into()),
+                    last_packet_received: None,
+                    tx_bytes: None,
+                    rx_bytes: None,
+                },
+                // Running, requested by the UI.
+                TunnelInfo {
+                    running: Some(running(params()[1].clone(), false)),
+                    epoch: 3,
+                    starting: false,
+                    tun_ready: true,
+                    start_error: None,
+                    last_packet_received: Some(1_700_000_000),
+                    tx_bytes: Some(1),
+                    rx_bytes: Some(2),
+                },
+                // Running, started autonomously (always-on).
+                TunnelInfo {
+                    running: Some(running(params()[2].clone(), true)),
+                    epoch: 1 << 62,
+                    starting: false,
+                    tun_ready: true,
+                    start_error: None,
+                    last_packet_received: Some(0),
+                    tx_bytes: Some(0),
+                    rx_bytes: Some(0),
+                },
+            ];
+            for (i, info) in shapes.iter().enumerate() {
+                assert_eq!(&survives(&format!("TunnelInfo #{i}"), info), info);
+            }
+        }
+
+        #[test]
+        fn start_tunnel_every_argument_and_result() {
+            // epoch
+            assert_eq!(survives("epoch", &(1u64 << 62)), 1u64 << 62);
+            // config: every protocol; AmneziaWG with the default preset, with custom slots, and
+            // with every slot unset (the shape that used to break).
+            let configs = [
+                WireConfig::WireGuard(wg()),
+                WireConfig::AmneziaWg(AwgConfig {
+                    wg: wg(),
+                    obfuscation: AwgObfuscation::default(),
+                }),
+                WireConfig::AmneziaWg(AwgConfig {
+                    wg: wg(),
+                    obfuscation: AwgObfuscation {
+                        i1: String::new(),
+                        i3: "<b 0xdeadbeef><r 8>".into(),
+                        ..AwgObfuscation::default()
+                    },
+                }),
+                WireConfig::AmneziaWg(AwgConfig {
+                    wg: wg(),
+                    obfuscation: AwgObfuscation {
+                        i1: String::new(),
+                        ..AwgObfuscation::default()
+                    },
+                }),
+                WireConfig::Vless(VlessVpnConfig {
+                    uri: "vless://uuid@203.0.113.7:443?security=reality".into(),
+                    uuid: "0b6f9e9a-1c2d-4e5f-8a9b-0c1d2e3f4a5b".into(),
+                    server_addr: "203.0.113.7:443".into(),
+                    server_name: "www.example.com".into(),
+                    reality_public_key: "pubkey".into(),
+                    reality_short_id: "1a3805da21c80ea1".into(),
+                    flow: Some("xtls-rprx-vision".into()),
+                    address: "10.0.0.2/32".into(),
+                    dns: Some("1.1.1.1".into()),
+                    mtu: Some(1500),
+                    allowed_ips: "0.0.0.0/0, ::/0".into(),
+                }),
+                WireConfig::Vless(VlessVpnConfig {
+                    uri: String::new(),
+                    uuid: String::new(),
+                    server_addr: "h:1".into(),
+                    server_name: String::new(),
+                    reality_public_key: String::new(),
+                    reality_short_id: String::new(),
+                    flow: None,
+                    address: "10.0.0.2/32".into(),
+                    dns: None,
+                    mtu: None,
+                    allowed_ips: String::new(),
+                }),
+            ];
+            for (i, config) in configs.iter().enumerate() {
+                let back = survives(&format!("WireConfig #{i}"), config);
+                assert!(
+                    same_json(&back, config),
+                    "WireConfig #{i} changed in transit"
+                );
+            }
+            // endpoint
+            assert_eq!(
+                survives("endpoint", &"[2001:db8::1]:51820".to_string()),
+                "[2001:db8::1]:51820"
+            );
+            // params
+            for p in params() {
+                assert_eq!(survives("TunnelParams", &p), p);
+            }
+            // result
+            let ok: Result<(), String> = Ok(());
+            let err: Result<(), String> = Err("the tunnel descriptor has already been used".into());
+            assert_eq!(survives("start_tunnel Ok", &ok), ok);
+            assert_eq!(survives("start_tunnel Err", &err), err);
+        }
+
+        #[test]
+        fn stop_and_ping_results() {
+            for r in [Ok(()), Err("engine: stopped twice".to_string())] {
+                assert_eq!(survives("Result<(), String>", &r), r);
+            }
+        }
+
+        #[test]
+        fn set_log_config_every_shape() {
+            let shapes = [
+                LogConfig::default(),
+                LogConfig {
+                    profile: LogProfile::Verbose,
+                    custom_filter: None,
+                    custom_filter_enabled: false,
+                },
+                LogConfig {
+                    profile: LogProfile::Normal,
+                    custom_filter: Some("floppa=trace,gotatun=debug".into()),
+                    custom_filter_enabled: true,
+                },
+            ];
+            for (i, c) in shapes.iter().enumerate() {
+                let back = survives(&format!("LogConfig #{i}"), c);
+                assert!(same_json(&back, c), "LogConfig #{i} changed in transit");
+            }
+        }
+
+        #[test]
+        fn log_capture_arguments() {
+            assert_eq!(
+                survives("capture_id", &"2026-08-25T12-00-00Z".to_string()),
+                "2026-08-25T12-00-00Z"
+            );
+            survives("unit", &());
         }
     }
 
