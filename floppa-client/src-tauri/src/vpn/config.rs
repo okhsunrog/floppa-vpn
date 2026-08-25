@@ -1,6 +1,5 @@
 use super::protocol::{Preference, Protocol};
 use super::state::{SavedVpnConfigs, WgConfig};
-#[cfg(not(target_os = "android"))]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -99,62 +98,205 @@ pub fn get_device_name() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Save all VPN configs to OS keyring (fallback to file on Android / keyring failure).
-pub fn save_configs(configs: &SavedVpnConfigs) {
-    let json = match serde_json::to_string(configs) {
-        Ok(j) => j,
+/// Where the configs live.
+///
+/// Desktop prefers the keyring; the file is the fallback for when the keyring is unavailable and
+/// the only storage on Android. The two must not silently coexist: a plaintext copy of the private
+/// keys left behind by a single keyring outage used to survive every later successful keyring save.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Storage {
+    #[cfg(not(target_os = "android"))]
+    Keyring,
+    File,
+}
+
+/// The envelope actually written to either storage.
+///
+/// `updated_at` decides which copy wins when both exist — the one written last, whichever storage
+/// it landed in. Older entries without the envelope parse through [`parse_stored_configs`] with
+/// `updated_at = 0`, so anything written since always beats them.
+#[derive(Serialize)]
+struct StoredConfigsRef<'a> {
+    updated_at: i64,
+    configs: &'a SavedVpnConfigs,
+}
+
+#[derive(Deserialize)]
+struct StoredConfigs {
+    updated_at: i64,
+    configs: SavedVpnConfigs,
+}
+
+/// A copy of the configs, from wherever it was read.
+struct Loaded {
+    /// Only compared on desktop, where there are two storages to choose between.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
+    updated_at: i64,
+    configs: SavedVpnConfigs,
+}
+
+fn envelope(configs: &SavedVpnConfigs) -> Option<String> {
+    let stored = StoredConfigsRef {
+        updated_at: chrono::Utc::now().timestamp(),
+        configs,
+    };
+    match serde_json::to_string(&stored) {
+        Ok(json) => Some(json),
         Err(e) => {
             warn!("Failed to serialize configs: {e}");
-            return;
+            None
         }
+    }
+}
+
+/// Save all VPN configs.
+///
+/// Desktop: to the OS keyring, and on success the plaintext fallback file is removed so a
+/// keyring outage in the past does not leave the keys on disk forever. Only when the keyring
+/// fails is the file written. Android: the file, always.
+pub fn save_configs(configs: &SavedVpnConfigs) {
+    let Some(json) = envelope(configs) else {
+        return;
     };
 
     #[cfg(not(target_os = "android"))]
     {
-        match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
-            Ok(entry) => match entry.set_password(&json) {
-                Ok(()) => {
-                    info!("VPN configs saved to OS keyring");
-                    return;
-                }
-                Err(e) => warn!("Keyring save failed, falling back to file: {e}"),
-            },
-            Err(e) => warn!("Keyring unavailable, falling back to file: {e}"),
+        if save_to_keyring(&json) {
+            remove_config_file();
+            return;
         }
     }
 
-    // File fallback (always used on Android, fallback on desktop)
     save_config_file(&json);
 }
 
-/// Load VPN configs from OS keyring (fallback to file).
+#[cfg(not(target_os = "android"))]
+fn save_to_keyring(json: &str) -> bool {
+    match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
+        Ok(entry) => match entry.set_password(json) {
+            Ok(()) => {
+                info!(storage = ?Storage::Keyring, "VPN configs saved");
+                true
+            }
+            Err(e) => {
+                warn!("Keyring save failed, falling back to file: {e}");
+                false
+            }
+        },
+        Err(e) => {
+            warn!("Keyring unavailable, falling back to file: {e}");
+            false
+        }
+    }
+}
+
+/// What the keyring had to say.
+#[cfg(not(target_os = "android"))]
+enum KeyringRead {
+    Found(Box<Loaded>),
+    Empty,
+    /// Could not be asked. Distinct from `Empty` so a file is not migrated into a keyring that is
+    /// known to be broken.
+    Unavailable,
+}
+
+#[cfg(not(target_os = "android"))]
+fn load_from_keyring() -> KeyringRead {
+    let entry = match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
+        Ok(entry) => entry,
+        Err(e) => {
+            warn!("Keyring unavailable, trying file fallback: {e}");
+            return KeyringRead::Unavailable;
+        }
+    };
+    match entry.get_password() {
+        Ok(stored) => match parse_stored(&stored) {
+            Some(loaded) => KeyringRead::Found(Box::new(loaded)),
+            None => KeyringRead::Empty,
+        },
+        Err(keyring::Error::NoEntry) => match load_legacy_keyring() {
+            Some(wg) => KeyringRead::Found(Box::new(Loaded {
+                updated_at: 0,
+                configs: SavedVpnConfigs {
+                    preferred_protocol: Preference(Some(Protocol::WireGuard)),
+                    wireguard: Some(wg),
+                    ..Default::default()
+                },
+            })),
+            None => KeyringRead::Empty,
+        },
+        Err(e) => {
+            warn!("Keyring load failed, trying file fallback: {e}");
+            KeyringRead::Unavailable
+        }
+    }
+}
+
+/// Load VPN configs.
+///
+/// Desktop: whichever of keyring and file was written last wins. A winning file is moved into the
+/// keyring (and deleted) when the keyring is usable; a losing file is a stale plaintext copy and is
+/// deleted. Android: the file.
 pub fn load_configs() -> Option<SavedVpnConfigs> {
+    let from_file = load_configs_file();
+
     #[cfg(not(target_os = "android"))]
     {
-        match keyring::Entry::new(KEYRING_SERVICE, KEYRING_ENTRY) {
-            Ok(entry) => match entry.get_password() {
-                Ok(stored) => {
-                    info!("VPN config loaded from OS keyring");
-                    return parse_stored_configs(&stored);
-                }
-                Err(keyring::Error::NoEntry) => {
-                    // Also check legacy keyring entry
-                    if let Some(wg) = load_legacy_keyring() {
-                        let configs = SavedVpnConfigs {
-                            preferred_protocol: Preference(Some(Protocol::WireGuard)),
-                            wireguard: Some(wg),
-                            ..Default::default()
-                        };
-                        return Some(configs);
-                    }
-                }
-                Err(e) => warn!("Keyring load failed, trying file fallback: {e}"),
-            },
-            Err(e) => warn!("Keyring unavailable, trying file fallback: {e}"),
+        let from_keyring = load_from_keyring();
+        match (from_keyring, from_file) {
+            (KeyringRead::Found(k), Some(f)) if f.updated_at > k.updated_at => {
+                info!(
+                    storage = ?Storage::File,
+                    "VPN configs loaded; the file is newer than the keyring, migrating"
+                );
+                migrate_file_to_keyring(&f.configs);
+                Some(f.configs)
+            }
+            (KeyringRead::Found(k), Some(_)) => {
+                info!(
+                    storage = ?Storage::Keyring,
+                    "VPN configs loaded; removing the stale plaintext copy"
+                );
+                remove_config_file();
+                Some(k.configs)
+            }
+            (KeyringRead::Found(k), None) => {
+                info!(storage = ?Storage::Keyring, "VPN configs loaded");
+                Some(k.configs)
+            }
+            (KeyringRead::Empty, Some(f)) => {
+                info!(
+                    storage = ?Storage::File,
+                    "VPN configs loaded; the keyring is empty, migrating"
+                );
+                migrate_file_to_keyring(&f.configs);
+                Some(f.configs)
+            }
+            (KeyringRead::Unavailable, Some(f)) => {
+                info!(storage = ?Storage::File, "VPN configs loaded; keyring unavailable");
+                Some(f.configs)
+            }
+            (KeyringRead::Empty | KeyringRead::Unavailable, None) => None,
         }
     }
 
-    load_configs_file()
+    #[cfg(target_os = "android")]
+    {
+        from_file.map(|f| {
+            info!(storage = ?Storage::File, "VPN configs loaded");
+            f.configs
+        })
+    }
+}
+
+/// Put a file-only copy into the keyring, and drop the file once it is safely there.
+#[cfg(not(target_os = "android"))]
+fn migrate_file_to_keyring(configs: &SavedVpnConfigs) {
+    if let Some(json) = envelope(configs)
+        && save_to_keyring(&json)
+    {
+        remove_config_file();
+    }
 }
 
 /// Delete saved VPN config from both keyring and file.
@@ -177,13 +319,39 @@ pub fn delete_configs() {
         }
     }
 
-    if let Ok(dir) = get_config_dir() {
-        let path = dir.join(CONFIG_FILENAME);
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-            info!("Config file deleted: {path:?}");
-        }
+    remove_config_file();
+}
+
+fn remove_config_file() {
+    let Ok(dir) = get_config_dir() else {
+        return;
+    };
+    let path = dir.join(CONFIG_FILENAME);
+    match std::fs::remove_file(&path) {
+        Ok(()) => info!("Config file deleted: {path:?}"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("Failed to delete config file {path:?}: {e}"),
     }
+}
+
+/// Parse whatever a storage held: the envelope first, then the older bare formats at
+/// `updated_at = 0`.
+fn parse_stored(stored: &str) -> Option<Loaded> {
+    if let Ok(StoredConfigs {
+        updated_at,
+        configs,
+    }) = serde_json::from_str::<StoredConfigs>(stored)
+        && configs.has_any()
+    {
+        return Some(Loaded {
+            updated_at,
+            configs,
+        });
+    }
+    parse_stored_configs(stored).map(|configs| Loaded {
+        updated_at: 0,
+        configs,
+    })
 }
 
 /// Parse stored configs — try new SavedVpnConfigs format first, fall back to old single ProtocolConfig, then legacy WG.
@@ -276,22 +444,55 @@ fn save_config_file(json: &str) {
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
 
-    info!("VPN config saved to file: {path:?}");
+    info!(storage = ?Storage::File, "VPN configs saved: {path:?}");
 }
 
-fn load_configs_file() -> Option<SavedVpnConfigs> {
+fn load_configs_file() -> Option<Loaded> {
     let path = get_config_dir().ok()?.join(CONFIG_FILENAME);
-    if !path.exists() {
-        return None;
-    }
     match std::fs::read_to_string(&path) {
-        Ok(json) => {
-            info!("VPN config loaded from file: {path:?}");
-            parse_stored_configs(&json)
-        }
+        Ok(json) => parse_stored(&json),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
-            warn!("Failed to read config file: {e}");
+            warn!("Failed to read config file {path:?}: {e}");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn configs() -> SavedVpnConfigs {
+        SavedVpnConfigs {
+            preferred_protocol: Preference(Some(Protocol::WireGuard)),
+            wireguard: Some(
+                WgConfig::from_config_str(
+                    "[Interface]\nPrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=\nAddress = 10.0.0.2/24\n[Peer]\nPublicKey = HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.com:51820\n",
+                )
+                .unwrap(),
+            ),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_envelope_round_trips_with_its_timestamp() {
+        let json = envelope(&configs()).unwrap();
+        let loaded = parse_stored(&json).unwrap();
+        assert!(loaded.updated_at > 0);
+        assert_eq!(
+            loaded.configs.preferred_protocol,
+            Preference(Some(Protocol::WireGuard))
+        );
+        assert!(loaded.configs.wireguard.is_some());
+    }
+
+    #[test]
+    fn a_bare_legacy_payload_reads_as_older_than_anything() {
+        let bare = serde_json::to_string(&configs()).unwrap();
+        let loaded = parse_stored(&bare).unwrap();
+        assert_eq!(loaded.updated_at, 0);
+        assert!(loaded.configs.wireguard.is_some());
     }
 }
