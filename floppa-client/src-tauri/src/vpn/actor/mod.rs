@@ -17,9 +17,15 @@
 
 pub mod attempt;
 pub mod handle;
+pub mod intent;
+pub mod outcome;
+pub mod policy;
 pub mod reconcile;
+pub mod snapshot;
+pub mod status;
 pub mod types;
 pub mod view;
+pub mod world;
 
 #[cfg(all(test, not(target_os = "android")))]
 #[path = "actor_tests.rs"]
