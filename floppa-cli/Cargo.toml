@@ -5,14 +5,14 @@ edition = "2024"
 description = "CLI client for Floppa VPN"
 
 [dependencies]
-gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-2026-08-25", features = ["device", "tun"] }
+gotatun.workspace = true
+floppa-tunnel-config = { workspace = true, features = ["gotatun"] }
 tun = { version = "0.8", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.13", features = ["json"] }
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.23"
 ipnetwork = "0.21"
 anyhow = "1"
 dirs = "6"

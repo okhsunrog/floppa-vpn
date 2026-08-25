@@ -5,8 +5,9 @@
 //! own business (gotatun's TUN is configured here by `tunnel`, shoes-lite configures its own).
 
 use anyhow::{Result, anyhow, bail};
+use floppa_tunnel_config::route::{self, Gateway};
 use ipnetwork::IpNetwork;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::process::Command;
 
 pub fn run_ip(args: &[&str]) -> Result<()> {
@@ -19,38 +20,14 @@ pub fn run_ip(args: &[&str]) -> Result<()> {
     }
 }
 
-/// A default route's next hop: the gateway address and the interface it is reached on. The
-/// interface matters for IPv6, where the gateway is almost always link-local (`fe80::…`) and a
-/// route `via` it is rejected without a `dev`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Gateway {
-    via: String,
-    dev: String,
-}
-
-impl Gateway {
-    /// The `via <gw> dev <dev>` tail of an `ip route` command.
-    fn args(&self) -> [&str; 4] {
-        ["via", &self.via, "dev", &self.dev]
-    }
-}
-
-/// The first route in `ip route show default` output that has both a `via` and a `dev`.
-fn parse_default_route(output: &str) -> Option<Gateway> {
-    output.lines().find_map(|line| {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        let after = |key: &str| {
-            words
-                .iter()
-                .position(|&w| w == key)
-                .and_then(|i| words.get(i + 1))
-                .map(|s| s.to_string())
-        };
-        Some(Gateway {
-            via: after("via")?,
-            dev: after("dev")?,
-        })
-    })
+/// The `via <gw> dev <dev>` tail of an `ip route` command.
+fn gateway_args(gateway: &Gateway) -> [String; 4] {
+    [
+        "via".into(),
+        gateway.via.to_string(),
+        "dev".into(),
+        gateway.dev.clone(),
+    ]
 }
 
 /// The default gateway of `endpoint`'s address family (the host route must use the same one).
@@ -59,16 +36,16 @@ fn default_gateway(endpoint: IpAddr) -> Result<Option<Gateway>> {
     let output = Command::new("ip")
         .args([family, "route", "show", "default"])
         .output()?;
-    Ok(parse_default_route(&String::from_utf8_lossy(
+    Ok(route::parse_default_route(&String::from_utf8_lossy(
         &output.stdout,
-    )))
+    ))?)
 }
 
 /// Host route that keeps the endpoint reachable through the physical gateway once the catch-all
 /// routes point at the tunnel. Deleted with the same `via`/`dev` it was added with, so a route
 /// the system installed after a roaming event is left alone.
 struct EndpointRoute {
-    destination: String,
+    destination: IpNetwork,
     gateway: Gateway,
 }
 
@@ -105,31 +82,16 @@ impl AppliedNetworking {
             }
         }
         if let Some(route) = self.endpoint_route.take() {
-            let mut args = vec!["route", "del", &route.destination];
-            args.extend(route.gateway.args());
+            let destination = route.destination.to_string();
+            let gateway = gateway_args(&route.gateway);
+            let mut args = vec!["route", "del", &destination];
+            args.extend(gateway.iter().map(String::as_str));
             if let Err(e) = run_ip(&args) {
                 errors.push(e);
             }
         }
         collect_errors(errors)
     }
-}
-
-/// Host route for `endpoint`: `/32` or `/128` by address family.
-fn endpoint_route(endpoint: IpAddr) -> String {
-    let prefix = if endpoint.is_ipv4() { 32 } else { 128 };
-    format!("{endpoint}/{prefix}")
-}
-
-/// Pick the address to use from a resolved endpoint, preferring IPv4 when both exist: the host
-/// route is easier to pin (every host has a v4 default route) and it matches the desktop client.
-pub fn pick_endpoint(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddr> {
-    let addrs: Vec<SocketAddr> = addrs.into_iter().collect();
-    addrs
-        .iter()
-        .find(|a| a.is_ipv4())
-        .or_else(|| addrs.first())
-        .copied()
 }
 
 /// Pin `endpoint` to the default gateway, then route `allowed_ips` through `interface`.
@@ -160,9 +122,11 @@ fn apply_routes(
     let Some(gateway) = default_gateway(endpoint)? else {
         bail!("No default gateway for {endpoint}; cannot pin the endpoint route");
     };
-    let destination = endpoint_route(endpoint);
-    let mut args = vec!["route", "replace", &destination];
-    args.extend(gateway.args());
+    let destination = route::endpoint_route(endpoint);
+    let destination_text = destination.to_string();
+    let gateway_text = gateway_args(&gateway);
+    let mut args = vec!["route", "replace", &destination_text];
+    args.extend(gateway_text.iter().map(String::as_str));
     run_ip(&args)?;
     eprintln!(
         "Endpoint route: {destination} via {} dev {}",
@@ -173,21 +137,22 @@ fn apply_routes(
         gateway,
     });
 
-    for network in allowed_ips {
-        if network.prefix() == 0 {
-            if network.is_ipv4() {
-                applied.add_route("0.0.0.0/1")?;
-                applied.add_route("128.0.0.0/1")?;
-            } else {
+    for &network in allowed_ips {
+        match route::catch_all_halves(network) {
+            Some(halves) if network.is_ipv4() => {
+                for half in halves {
+                    applied.add_route(&half.to_string())?;
+                }
+            }
+            Some(halves) => {
                 // IPv6 may be disabled on the host; the tunnel still works for IPv4.
-                for destination in ["::/1", "8000::/1"] {
-                    if let Err(e) = applied.add_route(destination) {
-                        eprintln!("Skipping IPv6 route {destination}: {e:#}");
+                for half in halves {
+                    if let Err(e) = applied.add_route(&half.to_string()) {
+                        eprintln!("Skipping IPv6 route {half}: {e:#}");
                     }
                 }
             }
-        } else {
-            applied.add_route(&network.to_string())?;
+            None => applied.add_route(&network.to_string())?,
         }
     }
     Ok(())
@@ -212,66 +177,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn endpoint_route_prefix_follows_address_family() {
-        assert_eq!(endpoint_route("1.2.3.4".parse().unwrap()), "1.2.3.4/32");
-        assert_eq!(
-            endpoint_route("2001:db8::1".parse().unwrap()),
-            "2001:db8::1/128"
-        );
-    }
-
-    #[test]
-    fn default_route_parses_gateway_and_device() {
-        // IPv4, with the trailing attributes `ip` prints
-        assert_eq!(
-            parse_default_route(
-                "default via 192.168.1.1 dev wlan0 proto dhcp src 192.168.1.7 metric 600 \n"
-            ),
-            Some(Gateway {
-                via: "192.168.1.1".into(),
-                dev: "wlan0".into(),
-            })
-        );
-        // IPv6: link-local gateway, only usable together with its device
-        assert_eq!(
-            parse_default_route(
-                "default via fe80::1 dev eth0 proto ra metric 1024 expires 1797sec hoplimit 64 pref medium\n"
-            ),
-            Some(Gateway {
-                via: "fe80::1".into(),
-                dev: "eth0".into(),
-            })
-        );
-        // Several default routes: the first complete one wins; an on-link route without `via`
-        // (a ppp/tun default) is skipped
-        assert_eq!(
-            parse_default_route(
-                "default dev ppp0 scope link\ndefault via 10.0.0.1 dev eth0 metric 100\n"
-            ),
-            Some(Gateway {
-                via: "10.0.0.1".into(),
-                dev: "eth0".into(),
-            })
-        );
-        assert_eq!(parse_default_route(""), None);
-        assert_eq!(parse_default_route("default dev ppp0 scope link\n"), None);
-    }
-
-    #[test]
     fn gateway_args_carry_the_device() {
         let gw = Gateway {
-            via: "fe80::1".into(),
+            via: "fe80::1".parse().unwrap(),
             dev: "eth0".into(),
         };
-        assert_eq!(gw.args(), ["via", "fe80::1", "dev", "eth0"]);
-    }
-
-    #[test]
-    fn pick_endpoint_prefers_ipv4() {
-        let v6: SocketAddr = "[2001:db8::1]:51820".parse().unwrap();
-        let v4: SocketAddr = "1.2.3.4:51820".parse().unwrap();
-        assert_eq!(pick_endpoint([v6, v4]), Some(v4));
-        assert_eq!(pick_endpoint([v6]), Some(v6));
-        assert_eq!(pick_endpoint([]), None);
+        assert_eq!(gateway_args(&gw), ["via", "fe80::1", "dev", "eth0"]);
     }
 }

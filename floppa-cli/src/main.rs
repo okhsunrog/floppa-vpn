@@ -8,6 +8,7 @@ mod vless;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use floppa_tunnel_config::TunnelConfig;
 
 const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
 
@@ -254,21 +255,30 @@ impl Tunnel {
 }
 
 async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
-    let wg_config = tunnel::WgConfig::from_config_str(config_str)?;
-    let endpoint = wg_config.resolve_endpoint().await?;
-    eprintln!("Creating WireGuard tunnel on {interface}...");
-    let device = tunnel::create_tunnel(&wg_config, endpoint, interface).await?;
+    let config = TunnelConfig::parse(config_str).context("Invalid WireGuard config")?;
+    let endpoint = tunnel::resolve_endpoint(&config).await?;
+    let name = if config.is_amneziawg() {
+        "AmneziaWG"
+    } else {
+        "WireGuard"
+    };
+    eprintln!("Creating {name} tunnel on {interface}...");
+    let device = tunnel::create_tunnel(&config, endpoint, interface).await?;
     eprintln!("Configuring networking...");
-    let addr = tunnel::bring_up_interface(&wg_config, interface)?;
+    let addr = tunnel::bring_up_interface(&config, interface)?;
     let mut rollback = rollback::Rollback::new(net::configure_routes(
         endpoint.ip(),
-        &wg_config.allowed_ips_networks()?,
+        &config.peer.allowed_ips,
         interface,
     )?);
     eprintln!("VPN IP: {}", addr.ip());
-    eprintln!("Endpoint: {} ({endpoint})", wg_config.peer_endpoint);
+    eprintln!("Endpoint: {} ({endpoint})", config.peer.endpoint);
 
-    let dns_servers = wg_config.dns_servers();
+    let dns_servers: Vec<String> = config
+        .dns_servers()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
     if !no_dns && !dns_servers.is_empty() {
         rollback.set_dns(dns::apply(interface, &dns_servers)?);
     }
