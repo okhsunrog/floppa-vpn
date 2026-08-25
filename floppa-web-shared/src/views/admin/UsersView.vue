@@ -11,9 +11,9 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getAvatarsBatch } from '../../client/sdk.gen'
 import type { UserSummary } from '../../client/types.gen'
-import type { TableColumn } from '@nuxt/ui'
+import type { TableColumn, TableRow } from '@nuxt/ui'
 import { describeError, formatDate, isApiError } from '../../utils'
-import { useClientPagination } from '../../composables/adminList'
+import { useClientPagination, useSearchFilter } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
@@ -22,20 +22,13 @@ const toast = useToast()
 const { data: users, status, error } = useQuery(listUsersQuery())
 const invalidate = useInvalidateQueries()
 const { data: plans } = useQuery(listPlansQuery())
-const search = ref('')
 
-const filteredUsers = computed(() => {
-  if (!users.value) return []
-  if (!search.value) return users.value
-  const q = search.value.toLowerCase()
-  return users.value.filter(
-    (u) =>
-      u.username?.toLowerCase().includes(q) ||
-      u.first_name?.toLowerCase().includes(q) ||
-      u.last_name?.toLowerCase().includes(q) ||
-      u.telegram_id?.toString().includes(q),
-  )
-})
+const { search, filtered: filteredUsers } = useSearchFilter(users, (u) => [
+  u.username,
+  u.first_name,
+  u.last_name,
+  u.telegram_id,
+])
 
 const {
   page,
@@ -182,7 +175,10 @@ async function addUser() {
         <UTable
           :data="paginatedUsers"
           :columns="columns"
-          @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.id}`)"
+          @select="
+            (_e: Event, row: TableRow<UserSummary>) =>
+              router.push(`/admin/users/${row.original.id}`)
+          "
           class="[&_tbody_tr]:cursor-pointer"
         >
           <template #username-cell="{ row }">

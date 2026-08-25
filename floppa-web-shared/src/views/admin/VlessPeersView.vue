@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -10,8 +10,8 @@ import {
 } from '../../client/@pinia/colada.gen'
 import type { VlessPeerSummary } from '../../client/types.gen'
 import { describeError, formatBytes } from '../../utils'
-import type { TableColumn } from '@nuxt/ui'
-import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import type { TableColumn, TableRow } from '@nuxt/ui'
+import { useClientPagination, useConfirmAction, useSearchFilter } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
@@ -23,7 +23,6 @@ const regenerateMut = useMutation({
   ...regenerateAdminVlessConfigMutation(),
   onSettled: () => invalidate(listVlessPeersQueryKey()),
 })
-const search = ref('')
 
 const {
   open: confirmOpen,
@@ -32,17 +31,11 @@ const {
   confirm: runRegenerate,
 } = useConfirmAction()
 
-const filteredPeers = computed(() => {
-  if (!peers.value) return []
-  if (!search.value) return peers.value
-  const q = search.value.toLowerCase()
-  return peers.value.filter(
-    (p) =>
-      p.username?.toLowerCase().includes(q) ||
-      p.device_name?.toLowerCase().includes(q) ||
-      p.plan_name?.toLowerCase().includes(q),
-  )
-})
+const { search, filtered: filteredPeers } = useSearchFilter(peers, (p) => [
+  p.username,
+  p.device_name,
+  p.plan_name,
+])
 
 const {
   page,
@@ -108,7 +101,10 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
           :data="paginatedPeers"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
-          @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
+          @select="
+            (_e: Event, row: TableRow<VlessPeerSummary>) =>
+              router.push(`/admin/users/${row.original.user_id}`)
+          "
         >
           <template #username-cell="{ row }">
             {{ row.original.username || '-' }}

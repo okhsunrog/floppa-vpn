@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -10,8 +10,8 @@ import {
 } from '../../client/@pinia/colada.gen'
 import type { InstallationSummary } from '../../client/types.gen'
 import { describeError, formatDateTime } from '../../utils'
-import type { TableColumn } from '@nuxt/ui'
-import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import type { TableColumn, TableRow } from '@nuxt/ui'
+import { useClientPagination, useConfirmAction, useSearchFilter } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
@@ -23,7 +23,6 @@ const deleteMut = useMutation({
   ...deleteInstallationMutation(),
   onSettled: () => invalidate(listInstallationsQueryKey()),
 })
-const search = ref('')
 
 const {
   open: confirmOpen,
@@ -32,18 +31,12 @@ const {
   confirm: runDelete,
 } = useConfirmAction()
 
-const filteredInstallations = computed(() => {
-  if (!installations.value) return []
-  if (!search.value) return installations.value
-  const q = search.value.toLowerCase()
-  return installations.value.filter(
-    (i) =>
-      i.username?.toLowerCase().includes(q) ||
-      i.device_name?.toLowerCase().includes(q) ||
-      i.device_id.toLowerCase().includes(q) ||
-      i.platform?.toLowerCase().includes(q),
-  )
-})
+const { search, filtered: filteredInstallations } = useSearchFilter(installations, (i) => [
+  i.username,
+  i.device_name,
+  i.device_id,
+  i.platform,
+])
 
 const {
   page,
@@ -109,7 +102,10 @@ const columns = computed<TableColumn<InstallationSummary>[]>(() => [
           :data="paginatedInstallations"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
-          @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
+          @select="
+            (_e: Event, row: TableRow<InstallationSummary>) =>
+              router.push(`/admin/users/${row.original.user_id}`)
+          "
         >
           <template #username-cell="{ row }">
             {{ row.original.username || '-' }}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -10,8 +10,8 @@ import {
 } from '../../client/@pinia/colada.gen'
 import type { PeerSummary } from '../../client/types.gen'
 import { describeError, formatBytes, formatDateTime } from '../../utils'
-import type { TableColumn } from '@nuxt/ui'
-import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import type { TableColumn, TableRow } from '@nuxt/ui'
+import { useClientPagination, useConfirmAction, useSearchFilter } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
@@ -23,7 +23,6 @@ const deleteMut = useMutation({
   ...deleteAdminPeerMutation(),
   onSettled: () => invalidate(listPeersQueryKey()),
 })
-const search = ref('')
 
 const {
   open: confirmOpen,
@@ -32,18 +31,12 @@ const {
   confirm: runDeletePeer,
 } = useConfirmAction()
 
-const filteredPeers = computed(() => {
-  if (!peers.value) return []
-  if (!search.value) return peers.value
-  const q = search.value.toLowerCase()
-  return peers.value.filter(
-    (p) =>
-      p.assigned_ip.includes(q) ||
-      p.username?.toLowerCase().includes(q) ||
-      p.device_name?.toLowerCase().includes(q) ||
-      p.device_id?.toLowerCase().includes(q),
-  )
-})
+const { search, filtered: filteredPeers } = useSearchFilter(peers, (p) => [
+  p.assigned_ip,
+  p.username,
+  p.device_name,
+  p.device_id,
+])
 
 const {
   page,
@@ -112,7 +105,10 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
           :data="paginatedPeers"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
-          @select="(_e: Event, row: any) => router.push(`/admin/users/${row.original.user_id}`)"
+          @select="
+            (_e: Event, row: TableRow<PeerSummary>) =>
+              router.push(`/admin/users/${row.original.user_id}`)
+          "
         >
           <template #assigned_ip-cell="{ row }">
             <span class="font-mono font-medium">{{ row.original.assigned_ip }}</span>

@@ -4,6 +4,27 @@ import { ref, computed, watch, type ComputedRef, type Ref } from 'vue'
 export const ADMIN_PAGE_SIZE = 100
 
 /**
+ * Case-insensitive substring search over a list. `fields` picks the searchable text of one row
+ * (nullable entries are skipped); an empty query returns the whole list. Returns the `search`
+ * model for the input and the `filtered` list, which is what `useClientPagination` consumes.
+ */
+export function useSearchFilter<T>(
+  items: Ref<readonly T[] | undefined>,
+  fields: (item: T) => readonly (string | number | null | undefined)[],
+) {
+  const search = ref('')
+  const filtered = computed<T[]>(() => {
+    const list = items.value ?? []
+    const q = search.value.trim().toLowerCase()
+    if (!q) return [...list]
+    return list.filter((item) =>
+      fields(item).some((f) => f != null && String(f).toLowerCase().includes(q)),
+    )
+  })
+  return { search, filtered }
+}
+
+/**
  * Client-side pagination over an already-filtered list. Resets to page 1 whenever `resetOn`
  * changes (typically the search query). Returns the current `page`, the `paginated` slice, and
  * the `pageSize` in use.
