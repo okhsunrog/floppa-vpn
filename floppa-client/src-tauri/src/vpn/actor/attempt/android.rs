@@ -113,7 +113,7 @@ pub(super) async fn ladder(
     // 5. Verify -----------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Verifying).await;
-    verify(ctx).await?;
+    verify(ctx, endpoint).await?;
 
     Ok(UpStatus {
         epoch: ctx.epoch,

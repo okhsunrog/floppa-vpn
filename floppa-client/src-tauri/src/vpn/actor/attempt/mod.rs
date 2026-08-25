@@ -166,7 +166,16 @@ use android::ladder;
 ///
 /// This is the step that decides whether a tunnel that *started* is actually carrying traffic —
 /// the difference between "the interface exists" and "the peer answered".
-pub(super) async fn verify(ctx: &AttemptCtx) -> Result<(), AttemptError> {
+///
+/// `endpoint` is the address the ladder resolved before it built anything, and VLESS needs it for
+/// the same reason the tunnel does: by now this device's DNS points into a tunnel that is not
+/// carrying traffic yet, so resolving the server's name here fails — on Android it failed every
+/// time, six seconds into a DNS query the tunnel under test was supposed to answer. The check
+/// dials the literal, exactly as the running tunnel does.
+pub(super) async fn verify(
+    ctx: &AttemptCtx,
+    endpoint: std::net::SocketAddr,
+) -> Result<(), AttemptError> {
     match &ctx.config {
         ProtocolConfig::WireGuard(_) | ProtocolConfig::AmneziaWg(_) => {
             info!("tunnel up, waiting for a handshake");
@@ -174,7 +183,9 @@ pub(super) async fn verify(ctx: &AttemptCtx) -> Result<(), AttemptError> {
         }
         ProtocolConfig::Vless(vless) => {
             info!("tunnel up, checking VLESS connectivity");
-            match vless
+            let mut dialled = vless.clone();
+            dialled.server_addr = endpoint.to_string();
+            match dialled
                 .to_shoes_config()
                 .check_connectivity(ctx.policy.verify_vless)
                 .await
