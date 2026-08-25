@@ -160,6 +160,20 @@ fn unwinding(cycle: Option<Cycle>, reason: UnwindReason) -> Status {
 /// world it had not touched, published Disconnected while the tunnel was still carrying traffic,
 /// and left the tunnel to be noticed and killed by row 2 a second later. On a logout that second
 /// was enough for the configs and the autostart bundle to be wiped under a live tunnel.
+/// Does a running tunnel route what this intent asked for?
+///
+/// An intent with no params is asking for "whatever is there" and is satisfied by anything; one
+/// that named its split rules is satisfied only by a tunnel whose owner reports exactly those.
+/// A tunnel whose rules are unknown can never be proven to match, and silently keeping one with
+/// the wrong rules is a data-leak-shaped bug.
+fn same_rules(want: &Option<TunnelParams>, have: &Option<TunnelParams>) -> bool {
+    match (want, have) {
+        (None, _) => true,
+        (Some(want), Some(have)) => want == have,
+        (Some(_), None) => false,
+    }
+}
+
 fn undo_for(u: &UpStatus) -> Option<ExtraUndo> {
     u.adopted.then_some(ExtraUndo::StopBackend)
 }
@@ -260,12 +274,7 @@ pub fn reconcile(
                 // 5c: a caller-issued intent adopts too, but only a tunnel whose owner reports
                 // exactly the rules it asked for. An intent that wants the tunnel that is
                 // already there has nothing to rebuild.
-                let same_rules = match (&up.params, &rt.params) {
-                    (None, _) => true,
-                    (Some(want), Some(have)) => want == have,
-                    (Some(_), None) => false,
-                };
-                if up.accepts(rt.protocol) && same_rules {
+                if up.accepts(rt.protocol) && same_rules(&up.params, &rt.params) {
                     adopt(up, rt, rt.params.clone(), now_unix)
                 } else {
                     // 5b, 6: a tunnel whose split rules are unknown, or known to differ, cannot
@@ -363,8 +372,14 @@ pub fn reconcile(
             (Rel::Same(_), World::Running(rt)) if rt.protocol == u.protocol => {
                 let mut next = u.clone();
                 next.dark_since = None;
-                next.server_endpoint = rt.endpoint.clone();
-                next.assigned_ip = rt.address.clone();
+                // Only for a tunnel somebody else described to us. For one we built, the ladder
+                // already recorded what it asked for, and overwriting it here replaced the
+                // configured `host:port` with the address it resolved to about a second after
+                // Connected — so the server line in the UI changed under the user.
+                if u.adopted {
+                    next.server_endpoint = rt.endpoint.clone();
+                    next.assigned_ip = rt.address.clone();
+                }
                 let resolve = !next.resolved;
                 next.resolved = true;
                 let decision = Decision::to(Status::Up(next));
@@ -429,15 +444,37 @@ pub fn reconcile(
                 epoch: cycle.epoch,
                 outcome: CycleOutcome::Cancelled,
             }),
-            // 25
-            (Rel::Newer(up), _) => start_or_idle(up, now, policy).with(Effect::Resolve {
+            // 25: a newer intent while waiting to retry. If a tunnel is up in the meantime it
+            // is in the way — the same reasoning as rows 5b/6 and 16, which is what this row
+            // used to contradict by starting an attempt on top of it.
+            (Rel::Newer(up), World::Running(_)) => Decision::to(unwinding(
+                Cycle::start(up, policy),
+                UnwindReason::IntentChanged,
+            ))
+            .with(Effect::Unwind {
+                extra: Some(ExtraUndo::StopBackend),
+            })
+            .with(Effect::Resolve {
                 epoch: cycle.epoch,
                 outcome: CycleOutcome::Cancelled,
             }),
+            (Rel::Newer(up), World::Clear | World::Dark) => {
+                start_or_idle(up, now, policy).with(Effect::Resolve {
+                    epoch: cycle.epoch,
+                    outcome: CycleOutcome::Cancelled,
+                })
+            }
             // 26: a tunnel appeared while we were waiting to retry. Its params are what its
             // owner reports, and nothing else: a service generation is not an intent epoch, so
             // there is no way to recognise a late tunnel of our own by its identity alone.
-            (Rel::Same(up), World::Running(rt)) if cycle.order.contains(&rt.protocol) => {
+            //
+            // And it is adopted on the same terms as row 5c — the protocol must be wanted *and*
+            // the rules must be the ones asked for. This row used to check only the protocol,
+            // which is the asymmetry row 5c calls a data-leak-shaped bug: a tunnel routing
+            // something else would have been kept, and row 17 would then have held it.
+            (Rel::Same(up), World::Running(rt))
+                if cycle.order.contains(&rt.protocol) && same_rules(&up.params, &rt.params) =>
+            {
                 adopt(up, rt, rt.params.clone(), now_unix)
             }
             // 27
@@ -656,17 +693,23 @@ pub fn on_unwind_done(
     // through, lands in Retrying or Idle, and re-observes.
 
     match relate(status, intent) {
-        // U1
+        // U1: the Down reached Down, whatever the teardown had originally been for. It used to
+        // report `Cancelled` unless the unwind's own reason was IntentDown, so a Disconnect that
+        // arrived during a reconnect teardown told its caller its request had been superseded —
+        // by itself. `Cancelled` belongs to the cycle this Down displaced, and that is now
+        // resolved separately, the way U2 and rows 24 and 25 already did.
         Rel::Down => {
-            let outcome = if matches!(reason, UnwindReason::IntentDown) {
-                CycleOutcome::Down
-            } else {
-                CycleOutcome::Cancelled
-            };
-            Decision::to(Status::Idle).with(Effect::Resolve {
+            let decision = Decision::to(Status::Idle).with(Effect::Resolve {
                 epoch: intent.epoch(),
-                outcome,
-            })
+                outcome: CycleOutcome::Down,
+            });
+            match cycle {
+                Some(c) if c.epoch != intent.epoch() => decision.with(Effect::Resolve {
+                    epoch: c.epoch,
+                    outcome: CycleOutcome::Cancelled,
+                }),
+                _ => decision,
+            }
         }
         // U2
         Rel::Newer(up) => {

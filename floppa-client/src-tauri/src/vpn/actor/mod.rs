@@ -295,6 +295,14 @@ impl TunnelActor {
                 // does not wait for an event that has been and gone.
                 if let Some((_, outcome)) = self.recent_outcomes.iter().find(|(e, _)| *e == epoch) {
                     let _ = reply.send(outcome.clone());
+                } else if epoch < self.intent.epoch() {
+                    // Superseded before anyone asked about it. `accept_intent` releases the
+                    // waiters that exist at the time, and a caller sends its intent and its wait
+                    // as two calls with a state read in between — so an intent accepted in that
+                    // gap left this one waiting for a cycle that had already been abandoned, and
+                    // the button spun until the next intent.
+                    debug!(%epoch, "answering a wait for an epoch that was already superseded");
+                    let _ = reply.send(CycleOutcome::Cancelled);
                 } else {
                     self.cycle_waiters.push((epoch, reply));
                 }
@@ -757,17 +765,15 @@ impl TunnelActor {
                 let platform = self.platform.clone();
                 let backend = self.backend.clone();
                 let retries = self.policy.undo_retries;
-                let tx = self.cmd_tx.clone();
-                self.unwind = Some(tokio::spawn(async move {
-                    let report = unwind(
+                self.unwind = Some(self.spawn_unwind(async move {
+                    unwind(
                         &mut stack,
                         extra,
                         platform.as_ref(),
                         backend.as_ref(),
                         retries,
                     )
-                    .await;
-                    let _ = tx.send(Command::UnwindDone(Box::new(report))).await;
+                    .await
                 }));
             }
 
@@ -840,6 +846,44 @@ impl TunnelActor {
                     .await;
             }
         });
+    }
+
+    /// Run an unwind task and make sure it reports even if it does not return.
+    ///
+    /// The same guarantee `spawn_attempt` gives, and for a stronger reason: `Unwinding` has no
+    /// deadline and absorbs every intent, so an unwind task that panicked left the actor with
+    /// `self.unwind` set forever — every later `Effect::Unwind` returned silently, Connect and
+    /// Disconnect did nothing, and a wipe could only time out. Whatever the task was holding is
+    /// gone with it, so the synthesised report says the stack is not empty: the durable steps are
+    /// in the journal, and the next start recovers them from there.
+    fn spawn_unwind(
+        &self,
+        task: impl std::future::Future<Output = UnwindReport> + Send + 'static,
+    ) -> JoinHandle<()> {
+        let tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            let join = tokio::spawn(task);
+            let report = match join.await {
+                Ok(report) => report,
+                Err(e) => {
+                    let detail = if e.is_panic() {
+                        "panicked".to_string()
+                    } else {
+                        e.to_string()
+                    };
+                    tracing::error!(%detail, "the unwind task crashed");
+                    UnwindReport {
+                        finished_at: Instant::now(),
+                        stack_empty: false,
+                        residual: vec![(
+                            crate::vpn::rollback::StepKind::StartBackend,
+                            format!("the unwind task did not finish: {detail}"),
+                        )],
+                    }
+                }
+            };
+            let _ = tx.send(Command::UnwindDone(Box::new(report))).await;
+        })
     }
 
     fn publish_outcome(&mut self, epoch: IntentEpoch, outcome: CycleOutcome) {

@@ -63,6 +63,17 @@ fn running(protocol: Protocol) -> World {
     })
 }
 
+/// A tunnel whose owner reports the rules it was built with, as the Android service does.
+fn running_with(protocol: Protocol, params: TunnelParams) -> World {
+    match running(protocol) {
+        World::Running(rt) => World::Running(RunningTunnel {
+            params: Some(params),
+            ..rt
+        }),
+        other => other,
+    }
+}
+
 /// A tunnel the Android service brought up by itself from the autostart bundle: it reports the
 /// rules it was built with and a generation no UI process can have minted.
 fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
@@ -935,42 +946,45 @@ fn a_retry_waits_until_its_backoff_elapses() {
 
 #[test]
 fn a_tunnel_that_comes_back_on_its_own_ends_the_retry() {
+    // Adopted on the same terms as row 5c: the protocol must be one we want, and the rules must
+    // be the ones we asked for.
     let now = t0();
     let d = go(
         &retrying(now, &[AWG]),
         &up_intent(1, &[AWG], params()),
-        &running(AWG),
+        &running_with(AWG, TunnelParams::default()),
         now,
     );
     match &d.next {
-        Status::Up(u) => assert!(
-            u.params.is_none(),
-            "a tunnel we did not start has unknown split rules"
-        ),
+        Status::Up(u) => assert_eq!(u.params.as_ref(), Some(&TunnelParams::default())),
         other => panic!("expected adoption, got {other:?}"),
     }
     assert!(has_remember(&d));
 }
 
 #[test]
-fn a_tunnel_found_while_retrying_is_adopted_with_only_the_rules_its_owner_reports() {
-    // A service generation is not an intent epoch, so a tunnel that appeared late cannot be
-    // recognised as ours by its identity: what it routes is known only when its owner says so.
+fn a_tunnel_whose_rules_are_unknown_or_different_is_not_adopted_while_retrying() {
+    // The asymmetry row 5c calls a data-leak-shaped bug: this row used to check only the
+    // protocol, so a tunnel routing something else — or one whose owner says nothing about what
+    // it routes — was kept, and row 17 then held it for as long as it lived. A service
+    // generation is not an intent epoch, so there is no identity to recognise it by either.
     let now = t0();
-    let mut rt = match running(AWG) {
-        World::Running(rt) => rt,
-        _ => unreachable!(),
-    };
-    rt.generation = Some(9_999);
-    let d = go(
-        &retrying(now, &[AWG]),
-        &up_intent(1, &[AWG], params()),
-        &World::Running(rt),
-        now,
-    );
-    match &d.next {
-        Status::Up(u) => assert_eq!(u.params, None, "unknown rules stay unknown"),
-        other => panic!("expected adoption, got {other:?}"),
+    let intent = up_intent(1, &[AWG], params());
+    let elsewhere = TunnelParams::new(SplitMode::Include, vec!["org.example".into()]);
+    for world in [running(AWG), running_with(AWG, elsewhere)] {
+        let d = go(&retrying(now, &[AWG]), &intent, &world, now);
+        assert!(
+            matches!(
+                d.next,
+                Status::Unwinding {
+                    reason: UnwindReason::WrongProtocol,
+                    ..
+                }
+            ),
+            "expected a rebuild, got {:?}",
+            d.next
+        );
+        assert!(has_stop_foreign(&d));
     }
 }
 
