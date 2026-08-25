@@ -9,6 +9,9 @@ pub mod platform;
 pub mod protocol;
 pub mod rollback;
 pub mod rpc;
+/// Unix-only rather than Android-only, so the accept loop's lifetime rule is tested on the host.
+#[cfg(unix)]
+pub mod rpc_listener;
 #[cfg(target_os = "android")]
 pub mod rpc_server;
 pub mod state;

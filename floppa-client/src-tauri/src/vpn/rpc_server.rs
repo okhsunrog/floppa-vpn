@@ -4,50 +4,15 @@
 //! and delegates RPC calls to the local TunnelManager.
 
 use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
+pub use super::rpc_listener::RpcServerHandle;
 use super::state::ProtocolConfig;
 use super::tunnel::TunnelManager;
 use futures::StreamExt;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tarpc::context::Context;
 use tarpc::server::Channel;
-use tokio::net::UnixListener;
-use tokio::sync::watch;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, error, info, warn};
-
-/// Handle to a running RPC server. Drop or call `shutdown()` to stop it.
-pub struct RpcServerHandle {
-    shutdown_tx: watch::Sender<bool>,
-    socket_path: PathBuf,
-}
-
-impl RpcServerHandle {
-    /// Stop accepting connections. The socket file is left in place.
-    ///
-    /// Deliberately: the path is shared between service generations, and by the time the previous
-    /// generation is shut down the next one has usually already bound the same path (see
-    /// `SERVER_EPOCH` in `jni_entry.rs`). Unlinking here would remove *its* socket.
-    pub fn shutdown(&self) {
-        let _ = self.shutdown_tx.send(true);
-    }
-
-    /// Stop accepting connections and unlink the socket file.
-    ///
-    /// Only for the generation that owns the path — i.e. a `nativeStop` whose epoch matched — and
-    /// never from a handle that has been superseded.
-    pub fn shutdown_and_unlink(self) {
-        self.shutdown();
-        match std::fs::remove_file(&self.socket_path) {
-            Ok(()) => debug!("removed socket {}", self.socket_path.display()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!(
-                "failed to remove socket {}: {e}",
-                self.socket_path.display()
-            ),
-        }
-    }
-}
 
 /// What the service is holding before any tunnel exists.
 ///
@@ -225,76 +190,33 @@ impl VpnRpc for VpnRpcServer {
 
 /// Start the tarpc server on a Unix domain socket.
 ///
-/// Returns a handle that can be used to shut down the server.
-/// The server runs in a background tokio task.
+/// Returns a handle that stops the server when shut down or dropped. The accept loop runs in a
+/// background tokio task (see [`super::rpc_listener`]); each connection gets a tarpc channel here.
 pub fn start_server(
     socket_path: &str,
     tunnel_manager: Arc<TunnelManager>,
     service: Arc<ServiceState>,
 ) -> Result<RpcServerHandle, String> {
-    // Remove stale socket file if it exists
-    match std::fs::remove_file(socket_path) {
-        Ok(()) => debug!("Removed stale socket: {socket_path}"),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => warn!("Failed to remove stale socket {socket_path}: {e}"),
-    }
-
-    let listener = UnixListener::bind(socket_path)
-        .map_err(|e| format!("Failed to bind Unix socket at {socket_path}: {e}"))?;
-
-    info!("tarpc server listening on {socket_path}");
-
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
     let server = VpnRpcServer {
         tunnel_manager,
         service,
     };
-    tokio::spawn(async move {
-        let mut shutdown_rx = shutdown_rx;
-        loop {
-            tokio::select! {
-                result = listener.accept() => {
-                    match result {
-                        Ok((stream, _addr)) => {
-                            debug!("UI process connected to RPC server");
-                            let framed = LengthDelimitedCodec::builder().new_framed(stream);
-                            let transport = tarpc::serde_transport::new(
-                                framed,
-                                tokio_serde::formats::Bincode::default(),
-                            );
-                            let channel = tarpc::server::BaseChannel::with_defaults(transport);
-                            let server = server.clone();
-                            tokio::spawn(async move {
-                                channel.execute(server.serve())
-                                    .for_each(|resp| async { tokio::spawn(resp); })
-                                    .await;
-                                debug!("UI process disconnected from RPC server");
-                            });
-                        }
-                        Err(e) => {
-                            error!("Failed to accept connection: {e}");
-                        }
-                    }
-                }
-                _ = shutdown_rx.changed() => {
-                    if *shutdown_rx.borrow() {
-                        info!("tarpc server shutting down");
-                        break;
-                    }
-                }
-            }
-        }
-        // The socket file is *not* unlinked here. This task exits asynchronously after
-        // `shutdown()`, and `shutdown()` is what `nativeStartServer` calls on the previous
-        // generation right after binding the new one to the same path. An unlink from here raced
-        // that bind and won often enough to remove the new generation's socket, leaving the UI
-        // with `NotFound` until it gave up. Unlinking is done only before a bind (above) and by
-        // the owning generation's `nativeStop` via [`RpcServerHandle::shutdown_and_unlink`].
-    });
-
-    Ok(RpcServerHandle {
-        shutdown_tx,
-        socket_path: PathBuf::from(socket_path),
+    super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream| {
+        debug!("UI process connected to RPC server");
+        let framed = LengthDelimitedCodec::builder().new_framed(stream);
+        let transport =
+            tarpc::serde_transport::new(framed, tokio_serde::formats::Bincode::default());
+        let channel = tarpc::server::BaseChannel::with_defaults(transport);
+        let server = server.clone();
+        tokio::spawn(async move {
+            channel
+                .execute(server.serve())
+                .for_each(|resp| async {
+                    tokio::spawn(resp);
+                })
+                .await;
+            debug!("UI process disconnected from RPC server");
+        });
     })
+    .map_err(|e| format!("Failed to bind Unix socket at {socket_path}: {e}"))
 }

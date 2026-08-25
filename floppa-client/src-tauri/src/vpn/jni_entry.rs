@@ -284,6 +284,11 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
         let tunnel_manager = get_tunnel_manager();
         let service = Arc::new(rpc_server::ServiceState::new(epoch, tun_fd as RawFd));
 
+        // Everything that can fail and does not need the bind comes before it, so that once the
+        // socket is bound the only way out is the success path. (Should one of the locks below
+        // still fail, the handle's `Drop` ends the accept loop rather than leaving it spinning.)
+        let global_ref = env.new_global_ref(this)?;
+
         // Bind first. Nothing global is touched until the bind has succeeded, so a failed start
         // leaves the previous generation (if any) exactly as it was.
         let _enter = runtime.enter();
@@ -291,7 +296,6 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
             .map_err(EntryError::ServerStart)?;
 
         // Store/update the VpnService reference for protect() and shutdown calls.
-        let global_ref = env.new_global_ref(this)?;
         *VPN_SERVICE_REF.lock().map_err(|_| EntryError::Poisoned)? = Some(global_ref);
 
         // Supersede the previous generation. Its socket file is ours now (see
