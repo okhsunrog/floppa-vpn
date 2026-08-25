@@ -1,9 +1,11 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use floppa_core::AmneziaWgConfig;
+use floppa_core::config::AwgObfuscation;
+use std::collections::HashMap;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Peer statistics: (public_key, tx_bytes, rx_bytes, last_handshake)
 pub type PeerStats = Vec<(String, u64, u64, Option<DateTime<Utc>>)>;
@@ -197,15 +199,10 @@ fn build_awg_setconf(awg: &AmneziaWgConfig, private_key: &str) -> String {
     s
 }
 
-/// Re-apply AmneziaWG obfuscation params to an existing interface via device-level `awg set`.
-/// Unlike `awg setconf`, this leaves peers, private key, and listen port untouched, so it can
-/// reconcile config changes on a live interface without dropping connections.
-fn reconcile_awg_obfuscation(
-    interface: &str,
-    o: &floppa_core::config::AwgObfuscation,
-) -> Result<()> {
-    let mut args: Vec<String> = vec!["set".into(), interface.into()];
-    for (k, v) in [
+/// Desired obfuscation params as `(key, value)` pairs in `awg set` / lowercase `showconf` form.
+/// Empty I-packet slots are omitted: they are initiator-only and left as-is on the interface.
+fn awg_obfuscation_params(o: &AwgObfuscation) -> Vec<(&'static str, String)> {
+    let mut params = vec![
         ("jc", o.jc.to_string()),
         ("jmin", o.jmin.to_string()),
         ("jmax", o.jmax.to_string()),
@@ -217,17 +214,110 @@ fn reconcile_awg_obfuscation(
         ("h2", o.h2.clone()),
         ("h3", o.h3.clone()),
         ("h4", o.h4.clone()),
+    ];
+    for (k, val) in [
+        ("i1", &o.i1),
+        ("i2", &o.i2),
+        ("i3", &o.i3),
+        ("i4", &o.i4),
+        ("i5", &o.i5),
     ] {
+        if !val.is_empty() {
+            params.push((k, val.clone()));
+        }
+    }
+    params
+}
+
+/// Parse the `[Interface]` section of `wg/awg showconf` into lowercase `key → value`.
+/// Peer sections are ignored. The map contains `privatekey`; never log it.
+fn parse_showconf_interface(output: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let mut in_interface = false;
+    for line in output.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_interface = line.eq_ignore_ascii_case("[Interface]");
+            continue;
+        }
+        if !in_interface {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            map.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+        }
+    }
+    map
+}
+
+/// Read the live `[Interface]` config of an interface.
+fn read_interface_conf(tool: &str, interface: &str) -> Result<HashMap<String, String>> {
+    let output = Command::new(tool)
+        .args(["showconf", interface])
+        .output()
+        .with_context(|| format!("Failed to run {tool} showconf"))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "{tool} showconf {interface} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(parse_showconf_interface(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+/// Canonical form of a header value: `awg` prints a degenerate range as `N-N` in some
+/// versions and `N` in others, and config may spell it either way.
+fn normalize_range(value: &str) -> String {
+    match value.split_once('-') {
+        Some((lo, hi)) if lo.trim() == hi.trim() => lo.trim().to_string(),
+        _ => value.trim().to_string(),
+    }
+}
+
+/// Whether every desired param already has that value on the interface.
+fn awg_params_in_sync(current: &HashMap<String, String>, desired: &[(&str, String)]) -> bool {
+    desired.iter().all(|(k, v)| {
+        current
+            .get(*k)
+            .is_some_and(|cur| normalize_range(cur) == normalize_range(v))
+    })
+}
+
+/// Re-apply AmneziaWG obfuscation params to an existing interface via device-level `awg set`,
+/// but only when they differ from what the interface already has.
+///
+/// Every `awg set` on a live interface re-runs `jp_spec_setup` in the kernel module, and on
+/// module builds before ac946a9 (2026-03-25) that races the handshake-send path when an
+/// I-packet is configured — a use-after-free that has taken the whole VPS down. A daemon
+/// restart must therefore not touch a correctly configured interface at all; the diff makes
+/// the reconcile a pure read in the steady state.
+fn reconcile_awg_obfuscation(interface: &str, o: &AwgObfuscation) -> Result<()> {
+    let desired = awg_obfuscation_params(o);
+
+    match read_interface_conf("awg", interface) {
+        Ok(current) if awg_params_in_sync(&current, &desired) => {
+            debug!(
+                interface,
+                "AmneziaWG obfuscation params already match config; skipping awg set"
+            );
+            return Ok(());
+        }
+        Ok(_) => info!(
+            interface,
+            "AmneziaWG obfuscation params differ from config; applying"
+        ),
+        Err(e) => warn!(
+            interface,
+            error = %e,
+            "Could not read AmneziaWG interface config; applying obfuscation params blindly"
+        ),
+    }
+
+    let mut args: Vec<String> = vec!["set".into(), interface.into()];
+    for (k, v) in desired {
         args.push(k.into());
         args.push(v);
-    }
-    // I-packets are initiator-only; the responder (server) doesn't send them, but set any that
-    // are configured for completeness. (Empty slots are left as-is.)
-    for (n, val) in [(1, &o.i1), (2, &o.i2), (3, &o.i3), (4, &o.i4), (5, &o.i5)] {
-        if !val.is_empty() {
-            args.push(format!("i{n}"));
-            args.push(val.clone());
-        }
     }
 
     let status = Command::new("awg")
@@ -304,4 +394,45 @@ pub fn get_peer_stats(tool: &str, interface: &str) -> Result<PeerStats> {
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SHOWCONF: &str = "[Interface]\nListenPort = 51821\nPrivateKey = cHJpdmF0ZQ==\nJc = 6\nJmin = 55\nJmax = 205\nS1 = 72\nS2 = 56\nS3 = 32\nS4 = 16\nH1 = 234567-345678\nH2 = 3456789-4567890\nH3 = 56789012-67890123\nH4 = 456789012-567890123\n\n[Peer]\nPublicKey = cGVlcg==\nAllowedIPs = 10.101.0.2/32\n";
+
+    #[test]
+    fn parses_interface_section_only() {
+        let conf = parse_showconf_interface(SHOWCONF);
+        assert_eq!(conf["listenport"], "51821");
+        assert_eq!(conf["privatekey"], "cHJpdmF0ZQ==");
+        assert_eq!(conf["h1"], "234567-345678");
+        assert!(!conf.contains_key("publickey"));
+        assert!(!conf.contains_key("allowedips"));
+    }
+
+    #[test]
+    fn default_obfuscation_matches_its_own_showconf() {
+        let conf = parse_showconf_interface(SHOWCONF);
+        let mut o = AwgObfuscation::default();
+        o.i1.clear();
+        assert!(awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+
+        // A configured I1 that the interface lacks is a diff.
+        o.i1 = "<b 0x01>".to_string();
+        assert!(!awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+
+        // And so is any changed scalar.
+        o.i1.clear();
+        o.jc = 7;
+        assert!(!awg_params_in_sync(&conf, &awg_obfuscation_params(&o)));
+    }
+
+    #[test]
+    fn degenerate_ranges_compare_equal() {
+        assert_eq!(normalize_range("5-5"), "5");
+        assert_eq!(normalize_range("5"), "5");
+        assert_eq!(normalize_range("5-9"), "5-9");
+    }
 }
