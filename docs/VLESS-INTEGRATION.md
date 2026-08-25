@@ -1,83 +1,53 @@
-# VLESS+REALITY Integration Status
+# VLESS+REALITY
 
-## What's Done
+How the third protocol fits into the system. For deployment (hosts, files, permissions) see
+[DEPLOYMENT.md](DEPLOYMENT.md); for client-side URI handling see [VLESS-CLIENTS.md](VLESS-CLIENTS.md).
 
-### Phase A: Backend + DB
-- [x] DB migration: `protocol`, `vless_uuid` columns, nullable `public_key`/`assigned_ip`
-- [x] `floppa-core/models.rs`: Peer struct updated with protocol + vless_uuid fields
-- [x] `floppa-core/config.rs`: `VlessConfig`, `VlessSecrets` structs
-- [x] `floppa-core/services.rs`: `create_peer()` handles both WireGuard and VLESS, `generate_vless_uri()`, `CreatePeerContext` struct
-- [x] `floppa-server` API: protocol in request/response for create, list, get-config, send-config, by-device endpoints
-- [x] `floppa-daemon/sync.rs`: all queries filtered with `AND protocol = 'wireguard'` so daemon ignores VLESS peers
+## Data model
 
-### Phase B: floppa-vless Server Binary
-- [x] `floppa-vless/` crate with its own config (runs on Moscow behind HAProxy)
-- [x] Multi-user UUID auth: `VlessAuthenticator` trait in shoes-lite, `MultiUserAuthenticator` with DashMap + constant-time comparison
-- [x] REALITY+Vision server handler chain using shoes-lite
-- [x] UUID registry with PostgreSQL LISTEN/NOTIFY (real-time sync on `peer_changed` / `subscription_changed`)
-- [x] Periodic full sync as safety net (configurable interval)
-- [x] Exponential backoff on listener disconnection with catch-up sync
-- [x] Traffic stats module (flush to DB periodically)
-- [x] Graceful shutdown (SIGINT handler, final stats flush)
+VLESS has no peers. A user has at most one VLESS identity, `users.vless_uuid`, created on demand
+(get-or-create; `floppa_core::services::ensure_vless_uuid` is the helper for it) the first time
+the bot (`/vless`) or the API (`get_my_vless_config`) hands out a `vless://` URI. The `peers`
+table is WireGuard/AmneziaWG only (`peers.protocol` is constrained to those two values since
+migration 0014), so the daemon never sees VLESS at all and needs no protocol filter.
 
-### shoes-lite Changes
-- [x] `VlessAuthenticator` trait + `SingleUserAuthenticator` for backwards compat
-- [x] `VisionVlessConfig` uses `Arc<dyn VlessAuthenticator>` instead of single `user_id`
-- [x] Internal modules made public for external server usage
+The URI is built by `services::generate_vless_uri` from `[vless]` in `config.toml` (endpoint,
+SNI, short ID, flow) and `reality_public_key` in `secrets.toml`. Those values must match what
+the proxy is configured with (below), or the REALITY handshake fails.
 
-## What Remains
+## The proxy (`floppa-vless`)
 
-### Phase B (incremental improvements)
-- [ ] Per-connection traffic recording: wrap streams in a byte-counting adapter so `tx_bytes`/`rx_bytes` are updated in the DB
-- [ ] Per-user rate limiting via `async-speed-limit`: throttle bandwidth based on subscription plan's `speed_limit_mbps`
+A separate binary built on [shoes-lite](https://github.com/okhsunrog/shoes-lite)
+(VLESS+REALITY with Vision flow control). It runs on the Moscow VPS on `127.0.0.1:8444`; HAProxy
+on `:443` sends every TLS connection whose SNI is not a known web host there, so the proxy is
+never reachable by name.
 
-### Phase C: Client Updates
-- [ ] Regenerate OpenAPI spec + `types.gen.ts` with protocol fields
-- [ ] Protocol selection UI in VpnCard.vue (switch between WireGuard and VLESS)
-- [ ] Update `doServerSync()` to use server-provided protocol field instead of auto-detecting by string prefix
-- [ ] Protocol switch flow: delete old peer, create new with selected protocol
+- **Auth** — `auth.rs`: a `MultiUserAuthenticator` over an in-memory map keyed by UUID with
+  constant-time comparison. It implements shoes-lite's `VlessAuthenticator` trait.
+- **Registry** — `registry.rs`: loads every user with a `vless_uuid` and an active subscription
+  (joined with the plan's `default_speed_limit_mbps`), then keeps the map current with
+  `pg LISTEN` on `vless_user_changed` (UUID set or regenerated) and `subscription_changed`,
+  a full re-sync every `traffic.sync_interval_secs` as a safety net, and exponential backoff with
+  a catch-up sync when the listener connection drops.
+- **Rate limits** — per-user token-bucket throttling from the plan's speed limit; there is no
+  `tc` involved, the limit is applied inside the proxy.
+- **Traffic** — `stats.rs`: per-user byte counters exported as Prometheus metrics on `:9103`
+  every `traffic.flush_interval_secs`; VictoriaMetrics scrapes them and the server queries VM
+  for the admin panel. Nothing is written back to PostgreSQL.
+- **Egress** — the proxy's outbound traffic is policy-routed by service UID over the
+  site-to-site tunnel to the Europe VPS and NATed there, like WireGuard and AmneziaWG.
 
-### Phase D: Deployment
-- [x] Generate REALITY x25519 keypair and add it to the Ansible vault
-- [x] Deploy `floppa-vless`, config, secrets, and systemd service on Moscow
-- [x] Route non-web TLS from Moscow HAProxy :443 to `127.0.0.1:8444`
-- [x] Route `floppa-vless` outbound traffic through the Moscow–Europe tunnel by service UID
-- [x] NAT VLESS egress on Europe with the other VPN traffic
-- [x] Run `cargo sqlx prepare --workspace` to maintain the offline query cache
+## Config files
 
-## Architecture
+`/etc/floppa-vless/config.toml` (`FLOPPA_VLESS_CONFIG`):
 
-```
-Client (Android/Desktop)
-  └─ vless:// URI
-      └─ VLESS+REALITY+Vision connection
-          └─ Moscow HAProxy :443
-              └─ local floppa-vless (127.0.0.1:8444)
-                  ├─ REALITY handshake (camouflage: max.ru)
-                  ├─ VLESS UUID auth (multi-user, from PostgreSQL)
-                  ├─ Vision flow control (zero-copy TLS-in-TLS)
-                  └─ Proxy via wg1 → Europe NAT → internet
-
-Moscow VPS (floppa-server + floppa-daemon + floppa-vless)
-  ├─ API: creates VLESS peers, generates vless:// URIs
-  ├─ PostgreSQL: stores peers, subscriptions, plans
-  └─ WireGuard: existing WG peers (unaffected)
-
-DB sync: local PostgreSQL on Moscow
-  ├─ LISTEN/NOTIFY: real-time peer/subscription changes
-  └─ Periodic full sync: safety net every 5 min
-```
-
-## Config Files
-
-### Moscow VPS: `/etc/floppa-vless/config.toml`
 ```toml
 [server]
 listen_addr = "127.0.0.1:8444"
 
 [reality]
 sni = "max.ru"
-short_ids = ["<configured short ID>"]
+short_ids = ["<hex short id>"]   # [0] must equal `[vless].short_id` in floppa-vpn config.toml
 dest = "max.ru:443"
 
 [traffic]
@@ -85,8 +55,12 @@ flush_interval_secs = 60
 sync_interval_secs = 300
 ```
 
-### Moscow VPS: `/etc/floppa-vless/secrets.toml`
+`/etc/floppa-vless/secrets.toml` (`FLOPPA_VLESS_SECRETS`):
+
 ```toml
 database_url = "postgres://floppa:<password>@localhost/floppa_vpn"
 reality_private_key = "<base64url x25519 private key>"
 ```
+
+Both are rendered by the `floppa_vless` role in cloud-forge from `floppa_vless.*` in
+`group_vars/moscow/vars.yml` and `vault_floppa_vless_reality_private_key`.

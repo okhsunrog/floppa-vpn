@@ -52,25 +52,44 @@ Mapping: `console.log` → `trace()`, `console.debug` → `debug()`, `console.in
 
 ## Filter Levels
 
-### Debug builds (`cfg(debug_assertions)`)
+The filter is built at runtime from `LogConfig` (`logging.rs`), not from the build profile. A
+`LogConfig` is persisted as `log-config.json` in the log directory (`logging::get_log_dir()`),
+loaded by `init_tracing` and swapped at runtime through a `tracing_subscriber::reload` handle
+(`apply_log_config`; in the `:vpn` process the UI pushes it over RPC). It holds:
 
-| Directive | Effect |
-|-----------|--------|
-| `floppa_client_lib=trace` | All our Rust logs |
-| `webview=trace` | WebView console interception (if any) |
-| `tauri=info` | Tauri framework logs |
-| default: `debug` | Everything else at DEBUG+ |
+- `profile: LogProfile` — `Normal` (default) or `Verbose`
+- `custom_filter: Option<String>` + `custom_filter_enabled: bool` — a raw `RUST_LOG`-style
+  directive string that, when enabled and valid, replaces the profile entirely
 
-### Release builds
+Both profiles start from `EnvFilter::from_default_env()` with a `warn` base level and add:
 
-| Directive | Effect |
-|-----------|--------|
-| `floppa_client_lib=debug` | Our Rust logs at DEBUG+ |
-| `webview=info` | WebView interception at INFO+ |
-| `log=info` | Frontend + log-crate at INFO+ |
-| `gotatun=info` | WireGuard tunnel at INFO+ |
-| `tarpc=warn` | Android IPC at WARN+ |
-| default: `warn` | Everything else at WARN+ |
+| Target | `Normal` | `Verbose` |
+|--------|----------|-----------|
+| `floppa_client_lib` (our Rust code) | `info` | `trace` |
+| `gotatun` (WireGuard/AmneziaWG tunnel) | `info` | `trace` |
+| `shoes_lite` (VLESS tunnel) | `info` | `trace` |
+| `webview` (Tauri console interception) | `warn` | `debug` |
+| `log` (frontend + `log`-crate bridge) | `warn` | `debug` |
+| `tarpc` (Android IPC) | `warn` | `trace` |
+| everything else | `warn` | `warn` |
+
+## Processes and Diagnostic Captures
+
+`init_tracing(log_dir, LogProcess)` is called once per process. `LogProcess` is `Ui` (the Tauri
+process) or `Vpn` (the Android `:vpn` service process); both build the same subscriber, and the
+enum decides only two things: the name of the capture file (`ui.log` / `vpn.log`) and what to
+do with a leftover `active-capture` marker.
+
+A diagnostic capture copies log events into `<log_dir>/captures/<capture_id>/<process>.log`
+while it is active; logcat/stdout output continues regardless. The UI owns the
+`active-capture` marker file: it writes it when a capture starts and removes it when the
+capture stops. The `:vpn` process reads the marker at startup, so a service restart mid-capture
+resumes writing to the same capture. A marker found by a starting UI means the previous UI died
+mid-capture, so the UI removes it instead of resuming.
+
+Each process's capture file is capped at 64 MiB (`MAX_CAPTURE_BYTES`). Writes past the cap are
+dropped rather than rotated — a capture is meant to be minutes long, and its beginning is the
+useful part — so a forgotten capture cannot fill the disk.
 
 ## Platform Differences
 
