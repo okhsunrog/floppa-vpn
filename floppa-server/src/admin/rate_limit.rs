@@ -29,6 +29,19 @@ pub enum RateLimitScope {
     ExchangeCode,
 }
 
+impl RateLimitScope {
+    /// Stable label for metrics.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Register => "register",
+            Self::LoginIp => "login_ip",
+            Self::LoginName => "login_name",
+            Self::TelegramStart => "telegram_start",
+            Self::ExchangeCode => "exchange_code",
+        }
+    }
+}
+
 /// A request was rejected because its bucket is over its limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RateLimited;
@@ -85,6 +98,7 @@ impl RateLimiter {
         });
         bucket.count += 1;
         if bucket.count > max {
+            crate::metrics::rate_limited(scope.as_str());
             return Err(RateLimited);
         }
         Ok(())

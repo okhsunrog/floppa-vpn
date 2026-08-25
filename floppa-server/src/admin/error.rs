@@ -144,6 +144,7 @@ impl ApiError {
         detail: impl Display,
     ) -> Self {
         error!(status = status.as_u16(), error, "{detail}");
+        crate::metrics::server_error(error);
         Self {
             error: error.into(),
             message: message.into(),

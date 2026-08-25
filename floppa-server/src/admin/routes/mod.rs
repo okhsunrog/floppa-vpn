@@ -265,6 +265,7 @@ async fn version_check_middleware(
         && let Ok(client_ver) = semver::Version::parse(client_str)
         && client_ver < *min_ver
     {
+        crate::metrics::upgrade_required();
         return (
             StatusCode::UPGRADE_REQUIRED,
             Json(serde_json::json!({
@@ -332,6 +333,7 @@ async fn token_refresh_middleware(
     ) && let Ok(value) = axum::http::HeaderValue::from_str(&fresh)
     {
         response.headers_mut().insert(REFRESHED_TOKEN_HEADER, value);
+        crate::metrics::token_refreshed();
     }
     response
 }
@@ -406,6 +408,8 @@ pub fn create_router(state: AppState) -> axum::Router {
             state,
             token_refresh_middleware,
         ))
+        // Outermost, so the 426 and refresh layers' own responses are counted too.
+        .layer(middleware::from_fn(crate::metrics::http_metrics))
 }
 
 // Public endpoints

@@ -103,6 +103,9 @@ fn report_errors(inner: UpdateHandler<BotError>) -> UpdateHandler<BotError> {
             let inner = inner.clone();
             async move {
                 let flow = inner.execute(deps.clone(), cont).await;
+                if let ControlFlow::Break(Ok(())) = &flow {
+                    crate::metrics::bot_update(crate::metrics::BotOutcome::Ok);
+                }
                 if let ControlFlow::Break(Err(err)) = &flow {
                     let bot: Arc<Bot> = deps.get();
                     let update: Arc<Update> = deps.get();
@@ -768,6 +771,7 @@ async fn handle_successful_payment(
     // The Stars are already charged: a fulfilment failure is kept on record and an admin is
     // woken up, instead of letting the only trace of it scroll away in a log.
     let unfulfilled = async |reason: String| {
+        crate::metrics::bot_payment(crate::metrics::PaymentOutcome::Unfulfilled);
         error!("Charge {charge_id} from user {user_id} could not be fulfilled: {reason}");
         let recorded = billing::record_failed_payment(
             &pool,
@@ -825,6 +829,7 @@ async fn handle_successful_payment(
     .await;
     match completed {
         Ok(outcome) => {
+            crate::metrics::bot_payment(crate::metrics::PaymentOutcome::Fulfilled);
             let message = i18n::format_buy_success(
                 msgs,
                 &plan.display_name,
@@ -834,6 +839,7 @@ async fn handle_successful_payment(
         }
         // Telegram re-delivered the update; the first delivery already did the work.
         Err(billing::PurchaseError::AlreadyProcessed { .. }) => {
+            crate::metrics::bot_payment(crate::metrics::PaymentOutcome::Duplicate);
             bot.send_message(msg.chat.id, msgs.buy_success).await?;
         }
         Err(e) => {

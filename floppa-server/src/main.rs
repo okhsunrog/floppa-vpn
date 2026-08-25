@@ -1,5 +1,6 @@
 mod admin;
 mod bot;
+mod metrics;
 
 use anyhow::Result;
 use axum::Router;
@@ -35,12 +36,13 @@ async fn main() -> Result<()> {
         VERSION, GIT_HASH, BUILD_TIME
     );
 
-    // Start Prometheus metrics exporter
-    metrics_exporter_prometheus::PrometheusBuilder::new()
-        .with_http_listener(([127, 0, 0, 1], 9102))
-        .install()
+    metrics::install_exporter()
         .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
-    info!("Metrics exporter listening on 127.0.0.1:9102");
+    info!(
+        "Metrics exporter listening on {}:{}",
+        metrics::LISTEN.0,
+        metrics::LISTEN.1
+    );
 
     let config = Config::from_env()?;
     let secrets = Secrets::from_env()?;
@@ -145,6 +147,7 @@ async fn main() -> Result<()> {
         .dependencies(dptree::deps![pool, config, secrets, wg_public_key])
         .error_handler(std::sync::Arc::new(
             |err: bot::handlers::BotError| async move {
+                metrics::bot_update(metrics::BotOutcome::Error);
                 error!("Bot handler failed: {err}");
             },
         ))

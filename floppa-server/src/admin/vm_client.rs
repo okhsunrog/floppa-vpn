@@ -49,6 +49,7 @@ pub struct Traffic {
 pub fn logged<T>(what: &'static str, result: Result<T>) -> Option<T> {
     result
         .inspect_err(|e| {
+            crate::metrics::vm_query_failed(what);
             warn!(
                 query = what,
                 error = format!("{e:#}"),

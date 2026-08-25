@@ -16,7 +16,13 @@ role internals live in cloud-forge.
   one interface per protocol), applies per-peer HFSC rate limits, exports traffic counters on
   `:9101` for VictoriaMetrics, and runs the embedded database migrations on startup.
 - **floppa-server** — Telegram bot + Axum REST API + the embedded Vue admin panel on `:3000`
-  (nginx reverse-proxies the public domain to it).
+  (nginx reverse-proxies the public domain to it). Exports API and bot metrics on `:9102`:
+  `http_requests_total{method,route,status}` / `http_request_duration_seconds` (route is the
+  matched template, e.g. `/api/me/peers/{id}`), `http_requests_in_flight`,
+  `auth_rate_limited_total{scope}`, `client_upgrade_required_total`, `auth_tokens_refreshed_total`,
+  `api_server_errors_total{error}`, `vm_query_failures_total{query}`, `bot_updates_total{outcome}`,
+  `bot_payments_total{outcome}`. VictoriaMetrics scrapes all three exporters (cloud-forge
+  `promscrape.yml`).
 - **floppa-vless** — VLESS+REALITY proxy. HAProxy on `:443` routes known web SNIs to nginx and
   everything else to `127.0.0.1:8444`, where `floppa-vless` listens. It shares the local
   PostgreSQL with the server and daemon and keeps its user registry in sync via
@@ -212,7 +218,8 @@ ssh user@your-server "journalctl -u floppa-vless -f"
 - Message the bot on Telegram — it should answer `/start`.
 - Open `https://your-domain.example.com` and log in with Telegram.
 - `ip link show wg-floppa` (and `awg-floppa` if configured), `wg show`, `awg show`.
-- `curl -s 127.0.0.1:9101/metrics | head` on the server for the daemon's counters.
+- `curl -s 127.0.0.1:9101/metrics | head` on the server for the daemon's counters, and
+  `curl -s 127.0.0.1:9102/metrics | grep http_requests_total` for the API's.
 
 ## Troubleshooting
 
