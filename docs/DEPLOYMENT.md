@@ -132,7 +132,9 @@ The units shipped in `systemd/` and installed from the archive:
 - `floppa-daemon.service` — `Requires=postgresql.service`, root, `Restart=always`
 - `floppa-server.service` — `User=floppa`, `Restart=on-failure`
 - `floppa-vless.service` — `User=floppa`, `Restart=always` (cloud-forge renders its own copy of
-  this unit from a template rather than using the archived one)
+  this unit from a template rather than using the archived one). That template,
+  `roles/floppa_vless/templates/floppa-vless.service.j2`, still says `Restart=on-failure`, so
+  the unit in this repo is not what runs for vless and the template must be updated separately.
 
 All have `StartLimitIntervalSec=60` / `StartLimitBurst=5`, so a crash loop stops after five
 restarts in a minute — `systemctl reset-failed <unit>` after fixing the cause.
