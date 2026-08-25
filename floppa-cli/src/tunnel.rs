@@ -50,6 +50,13 @@ pub struct WgConfig {
     pub obfuscation: Option<AwgObfuscation>,
 }
 
+/// Parse a numeric `.conf` value; a typo is an error, not a silent zero or default.
+fn parse_num<T: FromStr>(key: &str, value: &str) -> Result<T> {
+    value
+        .parse()
+        .map_err(|_| anyhow!("Invalid {key} = {value}"))
+}
+
 impl WgConfig {
     pub fn from_config_str(config: &str) -> Result<Self> {
         let mut private_key = None;
@@ -91,34 +98,34 @@ impl WgConfig {
                         "privatekey" => private_key = Some(value),
                         "address" => address = Some(value),
                         "dns" => dns = Some(value),
-                        "mtu" => mtu = value.parse().ok(),
+                        "mtu" => mtu = Some(parse_num("MTU", &value)?),
                         // AmneziaWG obfuscation params
                         "jc" => {
-                            obf.jc = value.parse().unwrap_or(0);
+                            obf.jc = parse_num("Jc", &value)?;
                             has_awg = true;
                         }
                         "jmin" => {
-                            obf.jmin = value.parse().unwrap_or(0);
+                            obf.jmin = parse_num("Jmin", &value)?;
                             has_awg = true;
                         }
                         "jmax" => {
-                            obf.jmax = value.parse().unwrap_or(0);
+                            obf.jmax = parse_num("Jmax", &value)?;
                             has_awg = true;
                         }
                         "s1" => {
-                            obf.s1 = value.parse().unwrap_or(0);
+                            obf.s1 = parse_num("S1", &value)?;
                             has_awg = true;
                         }
                         "s2" => {
-                            obf.s2 = value.parse().unwrap_or(0);
+                            obf.s2 = parse_num("S2", &value)?;
                             has_awg = true;
                         }
                         "s3" => {
-                            obf.s3 = value.parse().unwrap_or(0);
+                            obf.s3 = parse_num("S3", &value)?;
                             has_awg = true;
                         }
                         "s4" => {
-                            obf.s4 = value.parse().unwrap_or(0);
+                            obf.s4 = parse_num("S4", &value)?;
                             has_awg = true;
                         }
                         "h1" => {
@@ -165,7 +172,9 @@ impl WgConfig {
                         "presharedkey" => peer_preshared_key = Some(value),
                         "endpoint" => peer_endpoint = Some(value),
                         "allowedips" => allowed_ips = Some(value),
-                        "persistentkeepalive" => persistent_keepalive = value.parse().ok(),
+                        "persistentkeepalive" => {
+                            persistent_keepalive = Some(parse_num("PersistentKeepalive", &value)?)
+                        }
                         _ => {}
                     }
                 }
@@ -247,10 +256,14 @@ impl WgConfig {
         Ok(IpNetwork::from_str(&self.address)?)
     }
 
-    pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
+    pub fn allowed_ips_networks(&self) -> Result<Vec<IpNetwork>> {
         self.allowed_ips
             .split(',')
-            .filter_map(|s| s.trim().parse().ok())
+            .map(|s| {
+                let s = s.trim();
+                s.parse()
+                    .map_err(|_| anyhow!("Invalid AllowedIPs entry '{s}'"))
+            })
             .collect()
     }
 
@@ -317,7 +330,7 @@ pub async fn create_tunnel(
     let private_key = config.private_key_bytes()?;
     let peer_public_key = config.peer_public_key_bytes()?;
     let preshared_key = config.peer_preshared_key_bytes()?;
-    let allowed_ips = config.allowed_ips_networks();
+    let allowed_ips = config.allowed_ips_networks()?;
 
     let mut tun_config = tun::Configuration::default();
     tun_config.tun_name(interface).mtu(config.mtu());
@@ -349,4 +362,60 @@ pub async fn create_tunnel(
     let device = builder.build().await?;
 
     Ok(device)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal config with `extra` appended to the `[Interface]` section.
+    fn config_with(extra: &str) -> String {
+        format!(
+            "[Interface]
+PrivateKey = cGxhY2Vob2xkZXIgcHJpdmF0ZSBrZXkgMzJieXRlcw==
+Address = 10.0.0.2/24
+{extra}
+[Peer]
+PublicKey = cGxhY2Vob2xkZXIgcHVibGljIGtleSAzMmJ5dGVzIQ==
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0, nope
+PersistentKeepalive = 15
+"
+        )
+    }
+
+    /// The error text, or None if parsing succeeded (WgConfig has no Debug: it holds a key).
+    fn parse_error(extra: &str) -> Option<String> {
+        WgConfig::from_config_str(&config_with(extra))
+            .err()
+            .map(|e| e.to_string())
+    }
+
+    #[test]
+    fn parses_numeric_params() {
+        let cfg = WgConfig::from_config_str(&config_with("MTU = 1280\nJc = 4")).unwrap();
+        assert_eq!(cfg.mtu, Some(1280));
+        assert_eq!(cfg.persistent_keepalive, Some(15));
+        assert_eq!(cfg.obfuscation.as_ref().map(|o| o.jc), Some(4));
+    }
+
+    #[test]
+    fn rejects_bad_numeric_params() {
+        assert_eq!(
+            parse_error("Jc = four").as_deref(),
+            Some("Invalid Jc = four")
+        );
+        assert_eq!(
+            parse_error("MTU = big").as_deref(),
+            Some("Invalid MTU = big")
+        );
+        assert_eq!(parse_error("MTU = 1280"), None);
+    }
+
+    #[test]
+    fn rejects_bad_allowed_ips() {
+        let cfg = WgConfig::from_config_str(&config_with("")).unwrap();
+        let err = cfg.allowed_ips_networks().err().map(|e| e.to_string());
+        assert_eq!(err.as_deref(), Some("Invalid AllowedIPs entry 'nope'"));
+    }
 }

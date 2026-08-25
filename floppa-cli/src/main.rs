@@ -232,7 +232,7 @@ async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> R
     let addr = tunnel::bring_up_interface(&wg_config, interface)?;
     let mut rollback = rollback::Rollback::new(net::configure_routes(
         endpoint.ip(),
-        &wg_config.allowed_ips_networks(),
+        &wg_config.allowed_ips_networks()?,
         interface,
     )?);
     eprintln!("VPN IP: {}", addr.ip());
@@ -259,7 +259,7 @@ async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Resul
     let endpoint = vless::endpoint_ip(&config).await?;
     let mut rollback = rollback::Rollback::new(net::configure_routes(
         endpoint,
-        &vless::allowed_ips_networks(&config),
+        &vless::allowed_ips_networks(&config)?,
         interface,
     )?);
     eprintln!("VPN IP: {}", config.address.as_deref().unwrap_or("unknown"));

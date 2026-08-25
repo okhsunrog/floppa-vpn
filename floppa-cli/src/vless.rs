@@ -49,12 +49,16 @@ pub async fn endpoint_ip(config: &VlessConfig) -> Result<IpAddr> {
         .ip())
 }
 
-pub fn allowed_ips_networks(config: &VlessConfig) -> Vec<IpNetwork> {
+pub fn allowed_ips_networks(config: &VlessConfig) -> Result<Vec<IpNetwork>> {
     config
         .allowed_ips
         .as_deref()
         .unwrap_or("0.0.0.0/0, ::/0")
         .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+        .map(|s| {
+            let s = s.trim();
+            s.parse()
+                .map_err(|_| anyhow!("Invalid allowed IPs entry '{s}'"))
+        })
         .collect()
 }
