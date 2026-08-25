@@ -11,9 +11,10 @@
 
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
+use crate::vpn::autostart::{self, AutostartBundle, TunSpec};
 use crate::vpn::rollback::{RollbackStack, Step};
 use tauri_plugin_vpn::VpnExt;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 macro_rules! bail_if_cancelled {
     ($ctx:expr) => {
@@ -68,7 +69,7 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Starting).await;
 
-    let vpn_config = build_config(ctx);
+    let vpn_config = TunSpec::derive(&ctx.config, &ctx.params).with_epoch(ctx.epoch.0);
     stack.push(Step::AndroidService { epoch: ctx.epoch.0 });
 
     ctx.app
@@ -98,6 +99,11 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Verifying).await;
     verify(ctx).await?;
+
+    // 6. Remember it for the service's own starts ------------------------------------------
+    // Only a tunnel that verified is worth rebuilding without anyone watching. Best-effort: a
+    // bundle that could not be written costs the next always-on start, never this connect.
+    write_autostart_bundle(ctx, endpoint).await;
 
     Ok(UpStatus {
         epoch: ctx.epoch,
@@ -158,36 +164,27 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
     }
 }
 
-fn build_config(ctx: &AttemptCtx) -> tauri_plugin_vpn::VpnConfig {
-    use crate::vpn::actor::types::SplitMode;
-
-    // Resolvers only: `VpnService.Builder.addDnsServer` takes addresses, and a search domain on
-    // the DNS line would just be logged as an invalid server on the Kotlin side.
-    let dns_servers = ctx.config.dns_servers();
-    let dns =
-        (!dns_servers.is_empty()).then(|| floppa_tunnel_config::conf::comma_list(dns_servers));
-
-    let mut config = tauri_plugin_vpn::VpnConfig {
-        ipv4_addr: ctx.config.address(),
-        ipv6_addr: None,
-        routes: floppa_tunnel_config::route::CATCH_ALL
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
-        dns,
-        mtu: ctx.config.get_mtu() as u32,
-        disallowed_apps: vec![],
-        allowed_apps: vec![],
-        epoch: ctx.epoch.0,
-    };
-
-    let apps = ctx.params.apps.clone();
-    if !apps.is_empty() {
-        match ctx.params.split_mode {
-            SplitMode::Exclude => config.disallowed_apps = apps,
-            SplitMode::Include => config.allowed_apps = apps,
-            SplitMode::All => {}
+/// Write the last-good bundle the `:vpn` process rebuilds from when the system starts it without
+/// the UI (always-on, boot, lockdown). Runs on a blocking thread: the file is small, but this task
+/// shares its runtime with the actor's observer.
+async fn write_autostart_bundle(ctx: &AttemptCtx, endpoint: std::net::SocketAddr) {
+    let dir = match crate::vpn::config::config_dir() {
+        Ok(dir) => dir,
+        Err(e) => {
+            warn!("not writing the autostart bundle: {e}");
+            return;
         }
+    };
+    let bundle = AutostartBundle::new(
+        ctx.config.clone(),
+        endpoint,
+        ctx.params.clone(),
+        chrono::Utc::now().timestamp(),
+    );
+    let written = tokio::task::spawn_blocking(move || autostart::save(&dir, &bundle)).await;
+    match written {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!("failed to write the autostart bundle: {e}"),
+        Err(e) => warn!("the autostart bundle writer did not finish: {e}"),
     }
-    config
 }

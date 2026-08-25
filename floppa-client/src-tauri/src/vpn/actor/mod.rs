@@ -846,6 +846,12 @@ impl TunnelActor {
         if !self.pending_clear.is_empty() {
             let persisted = self.edit_configs(|c| c.clear());
             info!("configs cleared once the tunnel was down; answering once the store is wiped");
+            // The last-good bundle holds the same keys, and an always-on start that found it
+            // after a Forget would bring back a tunnel the user just asked to be rid of.
+            #[cfg(target_os = "android")]
+            if let Ok(dir) = crate::vpn::config::config_dir() {
+                tokio::task::spawn_blocking(move || crate::vpn::autostart::remove(&dir));
+            }
             // Answered only once the delete has actually run, from a task of its own: "forgotten"
             // used to be said as soon as the in-memory copy was empty, while the keys were still
             // in the keyring — and an app quit right then kept them there.
