@@ -81,7 +81,7 @@ fn running_with(protocol: Protocol, params: TunnelParams) -> World {
 fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
     World::Running(RunningTunnel {
         protocol,
-        generation: Some(crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 1),
+        generation: Some(7),
         endpoint: "203.0.113.7:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),

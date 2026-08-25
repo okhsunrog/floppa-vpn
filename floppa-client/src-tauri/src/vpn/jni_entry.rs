@@ -1,92 +1,88 @@
-//! JNI entry points for the `:vpn` process.
+//! JNI entry points for the `:vpn` process — the process that owns the tunnel *and* the actor.
 //!
-//! These functions are called by `FloppaVpnService` (Kotlin) in the separate
-//! VPN process. They initialize the Rust runtime, start/stop the WireGuard
-//! or VLESS tunnel, and run the tarpc RPC server.
+//! Everything about a tunnel is decided here now: the intent, the status, the ladder, the reconnect
+//! budget, the config store. The UI process holds a socket to this one and nothing else. That is
+//! the whole point of the move: Android freezes the UI process in the background, so an actor
+//! living there could not reconnect a tunnel that died while the phone was in a pocket, and could
+//! not even watch one.
 //!
-//! Two of them exist for the service to bring a tunnel up with no UI process at all — the
-//! always-on, boot and lockdown starts the system issues with an empty intent:
-//! `nativeLoadAutostart` reads the bundle the last successful connect wrote and says what TUN to
-//! build, and `nativeStartTunnelFromBundle` starts the tunnel on it through the same path the RPC
-//! `start_tunnel` uses.
+//! What is left for Kotlin is what only Kotlin can do — say whether the app holds VPN consent, turn
+//! a TUN spec into a file descriptor, and own the foreground notification — and each of those is
+//! one call in one direction:
+//!
+//! ```text
+//!   Kotlin  →  nativeInit            the process is up; boot the actor
+//!           →  nativeSetTunFd        establish() succeeded, here is the descriptor
+//!           →  nativeReportStartError establish() failed, here is why
+//!           →  nativeNetworkChanged  the default network moved under a running tunnel
+//!           →  nativeSystemStart     the system wants a tunnel (always-on, boot, lockdown)
+//!           →  nativeServiceGone     this service instance is being destroyed
+//!   Rust    →  hasConsent()          may we run a VPN at all?
+//!           →  startGeneration()     establish a TUN for this generation
+//!           →  setConnected()        what the notification should say
+//!           →  shutdownService()     drop the notification and stop
+//!           →  protectSocket()       keep the tunnel's own socket out of the tunnel
+//! ```
 
-use super::autostart::{self, AutostartBundle};
-use super::rpc_server::{self, RpcServerHandle, ServiceState, Started};
+use super::service_state::ServiceRegistry;
 use super::tunnel::{self, TunnelManager};
-use crate::vpn::actor::types::TunnelParams;
-use crate::vpn::state::ProtocolConfig;
+use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
+use crate::vpn::actor::types::Phase;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM};
-use std::net::SocketAddr;
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
 use tracing::{debug, error, info, warn};
 
 /// What a JNI entry point can fail with.
 ///
-/// `nativeStartServer` resolves these into a `java.lang.RuntimeException`, so Kotlin sees a start
-/// that failed as a thrown exception rather than as a call that returned normally.
+/// `nativeInit` resolves these into a `java.lang.RuntimeException`, so Kotlin sees a boot that
+/// failed as a thrown exception rather than as a call that returned normally.
 #[derive(Debug, thiserror::Error)]
 enum EntryError {
     #[error(transparent)]
     Jni(#[from] jni::errors::Error),
     #[error("a global lock in the :vpn process is poisoned")]
     Poisoned,
-    #[error("failed to start the RPC server: {0}")]
+    #[error("failed to start the actor's socket: {0}")]
     ServerStart(String),
-    #[error("the autostart bundle cannot be encoded for the service: {0}")]
-    Encode(#[from] serde_json::Error),
-    #[error("no autostart plan is prepared for generation {generation}")]
-    NoPlan { generation: u64 },
-    #[error("no service generation is serving yet")]
-    NoService,
-    #[error("generation {generation} is not serving (this process serves {current})")]
-    WrongGeneration { generation: u64, current: u64 },
+    #[error("the :vpn process has not been initialised")]
+    NotBooted,
+    #[error("generation {0} is not the one being served")]
+    WrongGeneration(u64),
 }
 
-/// Global state for the VPN process
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
-/// VpnService reference — Mutex so it can be updated when Android restarts the service
+/// The live `VpnService` instance. A `Mutex` rather than a `OnceLock`: the process outlives the
+/// service instances inside it, and each new one replaces the reference.
 static VPN_SERVICE_REF: Mutex<Option<jni::objects::Global<JObject<'static>>>> = Mutex::new(None);
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-static TUNNEL_MANAGER: OnceLock<Arc<TunnelManager>> = OnceLock::new();
-static RPC_HANDLE: Mutex<Option<RpcServerHandle>> = Mutex::new(None);
-/// The generation behind [`RPC_HANDLE`], for a start that comes from inside this process rather
-/// than over the socket.
-static SERVICE_STATE: Mutex<Option<Arc<ServiceState>>> = Mutex::new(None);
 
-/// What `nativeLoadAutostart` decided, held for the `nativeStartTunnelFromBundle` that follows
-/// it — so the tunnel is built from exactly what the service was told to build a TUN for, with
-/// no second read of the file in between.
-struct PreparedAutostart {
-    generation: u64,
-    config: ProtocolConfig,
-    endpoint: SocketAddr,
-    params: TunnelParams,
+/// Everything the boot builds, kept together so that "the process is up" is one check rather than
+/// four that can disagree.
+struct Booted {
+    actor: TunnelHandle,
+    services: Arc<ServiceRegistry>,
+    tunnel_manager: Arc<TunnelManager>,
 }
 
-static AUTOSTART: Mutex<Option<PreparedAutostart>> = Mutex::new(None);
+static BOOTED: OnceLock<Booted> = OnceLock::new();
+static RPC_HANDLE: Mutex<Option<crate::vpn::rpc_server::RpcServerHandle>> = Mutex::new(None);
 
-/// How long an autonomous start waits for the resolver before dialling the stored literal. Under
-/// lockdown nothing is allowed on the network yet, so this is mostly the time it takes to fail.
-const AUTOSTART_RESOLVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+fn booted() -> Result<&'static Booted, EntryError> {
+    BOOTED.get().ok_or(EntryError::NotBooted)
+}
 
-/// Generation of the service instance that owns [`RPC_HANDLE`], or [`NO_GENERATION`] when none
-/// does.
-///
-/// The `:vpn` process outlives the individual service instances inside it, so this global is
-/// shared between them. Stopping is asynchronous: a previous instance's `onDestroy` can arrive
-/// *after* the next one has already bound its socket, and without this it would tear down a server
-/// it does not own. It is reset to the sentinel on every teardown, so a `nativeStop` that arrives
-/// after its generation has gone matches nothing rather than matching whatever came next.
-static SERVER_GENERATION: Mutex<u64> = Mutex::new(NO_GENERATION);
-
-/// "Nothing is being served". No generation is ever minted as this — a UI one comes from
-/// [`ServiceGenerations`](crate::vpn::autostart::ServiceGenerations) and counts up from a random
-/// base, an autonomous one from the reserved range — so it can never be matched by mistake.
-const NO_GENERATION: u64 = 0;
+fn runtime() -> &'static tokio::runtime::Runtime {
+    TOKIO_RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("the :vpn process cannot run without a runtime")
+    })
+}
 
 /// Log whatever a JNI entry point that returns nothing to Java ended with.
 ///
@@ -107,179 +103,122 @@ fn log_outcome<T>(entry: &str, outcome: jni::Outcome<T, EntryError>) {
     }
 }
 
-fn get_runtime() -> &'static tokio::runtime::Runtime {
-    TOKIO_RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime")
-    })
+// ------------------------------------------------------------------ calls into the service
+
+/// Run `call` against the live service instance.
+fn with_service<T>(
+    what: &str,
+    call: impl FnOnce(&mut Env<'_>, &JObject<'static>) -> Result<T, jni::errors::Error>,
+) -> Result<T, String> {
+    let vm = JAVA_VM.get().ok_or("the JavaVM is not set")?;
+    let guard = VPN_SERVICE_REF
+        .lock()
+        .map_err(|_| "the service reference is poisoned".to_string())?;
+    let service = guard
+        .as_ref()
+        .ok_or_else(|| format!("{what}: there is no VPN service to ask"))?;
+    let service = service.as_ref();
+    vm.attach_current_thread(|env| call(env, service))
+        .map_err(|e| format!("{what}: {e}"))
 }
 
-fn get_tunnel_manager() -> Arc<TunnelManager> {
-    TUNNEL_MANAGER.get_or_init(TunnelManager::new).clone()
-}
-
-/// Protect a socket fd using VpnService.protect() via JNI.
+/// Protect a socket with `VpnService.protect()`, so the tunnel's own traffic bypasses the tunnel.
 ///
-/// Called from `AndroidUdpSocketFactory` when creating UDP sockets.
+/// Called from the UDP factory on every bind — including the rebind a network change triggers.
 fn protect_socket_jni(fd: RawFd) -> bool {
-    let vm = match JAVA_VM.get() {
-        Some(vm) => vm,
-        None => {
-            error!("JavaVM not initialized");
-            return false;
-        }
-    };
-    let guard = match VPN_SERVICE_REF.lock() {
-        Ok(g) => g,
-        Err(_) => {
-            error!("VPN_SERVICE_REF lock poisoned");
-            return false;
-        }
-    };
-    let service_ref = match guard.as_ref() {
-        Some(r) => r,
-        None => {
-            error!("VpnService reference not set");
-            return false;
-        }
-    };
-
-    let result: Result<bool, jni::errors::Error> = vm.attach_current_thread(|env| {
-        let result = env.call_method(
-            service_ref.as_ref(),
+    let protected = with_service("protectSocket", |env, service| {
+        env.call_method(
+            service,
             jni::jni_str!("protectSocket"),
             jni::jni_sig!("(I)Z"),
             &[fd.into()],
-        )?;
-        result.z()
+        )?
+        .z()
     });
-
-    match result {
-        Ok(protected) => {
-            if protected {
-                debug!("Protected socket fd {fd}");
-            } else {
-                warn!("Failed to protect socket fd {fd}");
-            }
-            protected
+    match protected {
+        Ok(true) => {
+            debug!("protected socket fd {fd}");
+            true
+        }
+        Ok(false) => {
+            warn!("VpnService.protect() refused fd {fd}");
+            false
         }
         Err(e) => {
-            error!("JNI call to protectSocket failed: {e}");
+            error!("could not protect fd {fd}: {e}");
             false
         }
     }
 }
 
-/// Stop the Android VPN service via JNI.
+/// Whether the app already holds VPN consent.
 ///
-/// Calls `FloppaVpnService.shutdownService()` which handles stopForeground,
-/// TUN close, and stopSelf. Called from the RPC `stop` handler after the
-/// tunnel and RPC server are already stopped.
-pub fn stop_vpn_service() {
-    let vm = match JAVA_VM.get() {
-        Some(vm) => vm,
-        None => {
-            warn!("stop_vpn_service: JavaVM not initialized");
-            return;
-        }
-    };
-    let guard = match VPN_SERVICE_REF.lock() {
-        Ok(g) => g,
-        Err(_) => {
-            error!("stop_vpn_service: VPN_SERVICE_REF lock poisoned");
-            return;
-        }
-    };
-    let service_ref = match guard.as_ref() {
-        Some(r) => r,
-        None => {
-            warn!("stop_vpn_service: VpnService reference not set");
-            return;
-        }
-    };
-
-    let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+/// A question, not a dialog: only an activity can show one, and this process has none.
+pub fn has_vpn_consent() -> Result<bool, String> {
+    with_service("hasConsent", |env, service| {
         env.call_method(
-            service_ref.as_ref(),
+            service,
+            jni::jni_str!("hasConsent"),
+            jni::jni_sig!("()Z"),
+            &[],
+        )?
+        .z()
+    })
+}
+
+/// Ask the service to establish a TUN for `generation`.
+///
+/// Returns as soon as the request is placed. The descriptor comes back asynchronously through
+/// `nativeSetTunFd`, and a failure through `nativeReportStartError` — which is what lets the ladder
+/// tell "still coming up" from "failed, and here is why" instead of waiting out a timeout.
+pub fn start_generation(plan: &str, generation: u64) -> Result<(), String> {
+    let plan = plan.to_string();
+    with_service("startGeneration", |env, service| {
+        let plan = env.new_string(&plan)?;
+        env.call_method(
+            service,
+            jni::jni_str!("startGeneration"),
+            jni::jni_sig!("(Ljava/lang/String;J)V"),
+            &[(&plan).into(), (generation as jlong).into()],
+        )?;
+        Ok(())
+    })
+}
+
+/// Stop the service: notification, descriptor and started lifecycle all go together.
+pub fn stop_vpn_service() {
+    match with_service("shutdownService", |env, service| {
+        env.call_method(
+            service,
             jni::jni_str!("shutdownService"),
             jni::jni_sig!("()V"),
             &[],
         )?;
         Ok(())
-    });
-
-    match result {
-        Ok(()) => info!("VPN service shutdownService() called via JNI"),
-        Err(e) => error!("Failed to call VPN service shutdownService(): {e}"),
+    }) {
+        Ok(()) => info!("asked the VPN service to shut down"),
+        Err(e) => warn!("could not ask the VPN service to shut down: {e}"),
     }
 }
 
-/// Tell the service its tunnel is up, so the notification stops claiming it before it is.
+/// Tell the service what its notification should say.
 ///
 /// Best-effort: a failure here costs a stale notification line, never the tunnel.
 pub fn set_service_connected(connected: bool) {
-    let Some(vm) = JAVA_VM.get() else {
-        return;
-    };
-    let Ok(guard) = VPN_SERVICE_REF.lock() else {
-        return;
-    };
-    let Some(service_ref) = guard.as_ref() else {
-        return;
-    };
-
-    let result: Result<(), jni::errors::Error> = vm.attach_current_thread(|env| {
+    if let Err(e) = with_service("setConnected", |env, service| {
         env.call_method(
-            service_ref.as_ref(),
+            service,
             jni::jni_str!("setConnected"),
             jni::jni_sig!("(Z)V"),
             &[connected.into()],
         )?;
         Ok(())
-    });
-
-    if let Err(e) = result {
-        warn!("failed to update the VPN notification: {e}");
+    }) {
+        debug!("could not update the VPN notification: {e}");
     }
 }
 
-/// Called once in `FloppaVpnService.onCreate()`.
-///
-/// Initializes the Rust runtime, logging, and stores the JavaVM reference.
-#[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'local>(
-    mut env: EnvUnowned<'local>,
-    _class: JClass<'local>,
-    log_dir: JString<'local>,
-) {
-    let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
-        // Store JavaVM for later JNI calls
-        if JAVA_VM.get().is_none() {
-            let vm = env.get_java_vm()?;
-            let _ = JAVA_VM.set(vm);
-        }
-
-        // Initialize logging with file layer
-        let log_dir_str: String = log_dir.mutf8_chars(env)?.to_string();
-        crate::logging::init_tracing(
-            std::path::Path::new(&log_dir_str),
-            crate::logging::LogProcess::Vpn,
-        );
-
-        // Set a panic hook to ensure panics are logged to logcat
-        std::panic::set_hook(Box::new(|info| {
-            error!("{info}");
-        }));
-
-        info!("nativeInit: Rust runtime initialized in :vpn process");
-        Ok(())
-    });
-    log_outcome("nativeInit", outcome.into_outcome());
-}
-
-/// Bridges shoes-lite's SocketProtector trait to the JNI VpnService.protect() callback.
+/// Bridges shoes-lite's SocketProtector trait to `VpnService.protect()`.
 struct ShoesSocketProtector;
 
 impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
@@ -292,96 +231,117 @@ impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
     }
 }
 
-/// Called in `FloppaVpnService.onStartCommand()` after TUN interface creation.
+// ------------------------------------------------------------------------ entry points
+
+/// Called from `FloppaVpnService.onCreate()`, for every service instance.
 ///
-/// Binds the RPC server and stops there. The tunnel itself is started by a later
-/// [`start_tunnel`](crate::vpn::rpc::VpnRpc) call carrying a typed config.
+/// The first call boots the process: logging, the tunnel manager, the actor, and the socket the UI
+/// reaches it through. Later calls only refresh the service reference — the process outlives its
+/// service instances, and the actor outlives both.
 ///
-/// That ordering is the point. Previously the tunnel was started first and the socket bound
-/// afterwards, so a failed start left nothing listening — indistinguishable from a service that
-/// had not come up yet. The only recourse was a blind timeout, and the reason for the failure was
-/// logged here and never reached the caller. Binding first makes "up and idle", "failed, and here
-/// is why" and "not up at all" three different observations.
-///
-/// A failure to bind is thrown to Kotlin as a `RuntimeException`. It used to be logged and
-/// swallowed, and the service — already foreground and holding an established TUN with a default
-/// route into it — carried on as if it had started, with nothing listening on the socket and no
-/// in-band way to stop it.
+/// `data_dir` is where the config store, the journal and the socket live. It is passed in because
+/// this process has no Tauri to resolve it, and it is the same directory the UI process uses.
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartServer<'local>(
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'local>(
     mut env: EnvUnowned<'local>,
     this: JObject<'local>,
-    socket_path: JString<'local>,
-    generation: jlong,
+    log_dir: JString<'local>,
+    data_dir: JString<'local>,
 ) {
     env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
-        let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
-        let generation = generation as u64;
-        info!("nativeStartServer: socket={socket_path_str}, generation={generation}");
+        if JAVA_VM.get().is_none() {
+            let vm = env.get_java_vm()?;
+            let _ = JAVA_VM.set(vm);
+        }
+        // Refreshed on every instance: a reference to a destroyed service protects no sockets and
+        // shows no notifications.
+        let global_ref = env.new_global_ref(this)?;
+        *VPN_SERVICE_REF.lock().map_err(|_| EntryError::Poisoned)? = Some(global_ref);
 
-        // Socket protection for gotatun (WireGuard) and shoes-lite (VLESS).
+        if BOOTED.get().is_some() {
+            debug!("nativeInit: a new service instance in an already-running :vpn process");
+            return Ok(());
+        }
+
+        let log_dir: String = log_dir.mutf8_chars(env)?.to_string();
+        let data_dir: String = data_dir.mutf8_chars(env)?.to_string();
+        crate::logging::init_tracing(
+            std::path::Path::new(&log_dir),
+            crate::logging::LogProcess::Vpn,
+        );
+        std::panic::set_hook(Box::new(|info| error!("{info}")));
+
+        // Everything the actor persists — configs, the rollback journal — goes here, which is the
+        // same directory the UI process reads.
+        let dir = std::path::PathBuf::from(&data_dir);
+        crate::vpn::config::init_config_dir(dir.clone());
+
         tunnel::set_socket_protect_callback(protect_socket_jni);
         shoes_lite::api::set_socket_protector(Arc::new(ShoesSocketProtector));
 
-        let runtime = get_runtime();
-        let tunnel_manager = get_tunnel_manager();
-        // No descriptor yet: the socket is bound before `establish()` runs, so that a TUN that
-        // cannot be established is reported over it (`nativeReportStartError`) instead of
-        // leaving the UI to time out on a socket nobody bound.
-        let service = Arc::new(rpc_server::ServiceState::new(generation));
-
-        // Everything that can fail and does not need the bind comes before it, so that once the
-        // socket is bound the only way out is the success path. (Should one of the locks below
-        // still fail, the handle's `Drop` ends the accept loop rather than leaving it spinning.)
-        let global_ref = env.new_global_ref(this)?;
-
-        // Bind first. Nothing global is touched until the bind has succeeded, so a failed start
-        // leaves the previous generation (if any) exactly as it was.
+        let runtime = runtime();
         let _enter = runtime.enter();
-        let handle = rpc_server::start_server(&socket_path_str, tunnel_manager, service.clone())
-            .map_err(EntryError::ServerStart)?;
 
-        // Store/update the VpnService reference for protect() and shutdown calls.
-        *VPN_SERVICE_REF.lock().map_err(|_| EntryError::Poisoned)? = Some(global_ref);
-        *SERVICE_STATE.lock().map_err(|_| EntryError::Poisoned)? = Some(service);
+        let tunnel_manager = TunnelManager::new();
+        let services = Arc::new(ServiceRegistry::default());
+        let backend: Arc<dyn crate::vpn::backend::VpnBackend> =
+            Arc::new(crate::vpn::backend::AndroidServiceBackend::new(
+                tunnel_manager.clone(),
+                services.clone(),
+            ));
+        let platform = Arc::new(crate::vpn::platform::PlatformImpl::new());
+        let journal = Some(crate::vpn::rollback::Journal::new(
+            crate::vpn::rollback::Journal::default_path(&dir),
+        ));
+        let host = Arc::new(crate::vpn::host::service::JniServiceHost::new(
+            services.clone(),
+        ));
+        let spawn: crate::vpn::actor::Spawn = {
+            let handle = runtime.handle().clone();
+            Arc::new(move |task| {
+                handle.spawn(task);
+            })
+        };
 
-        // Supersede the previous generation. Its socket file is ours now (see
-        // `RpcServerHandle::shutdown`), so only the accept loop is stopped.
-        let mut guard = RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)?;
-        if let Some(old) = guard.take() {
-            old.shutdown();
+        let actor =
+            crate::vpn::actor::TunnelActor::spawn(backend, platform, journal, spawn, host.clone());
+
+        // The notification is the only UI a tunnel has while the app is closed, so it follows the
+        // actor's own phase rather than being set by whatever last touched the tunnel.
+        {
+            let mut states = actor.states();
+            runtime.spawn(async move {
+                let mut said = None;
+                while states.changed().await.is_ok() {
+                    let connected = states.borrow().phase == Phase::Connected;
+                    if said != Some(connected) {
+                        said = Some(connected);
+                        set_service_connected(connected);
+                    }
+                }
+            });
         }
-        *guard = Some(handle);
-        *SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)? = generation;
 
-        info!("tarpc RPC server started, waiting for the TUN and a tunnel request");
+        let socket = dir.join(crate::vpn::rpc::SOCKET_NAME);
+        let handle = crate::vpn::rpc_server::serve(&socket.to_string_lossy(), actor.clone())
+            .map_err(EntryError::ServerStart)?;
+        *RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)? = Some(handle);
+
+        let _ = BOOTED.set(Booted {
+            actor,
+            services,
+            tunnel_manager,
+        });
+        info!("nativeInit: the :vpn process is up and the actor is serving");
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-/// The generation currently serving, if it is `generation`.
-fn serving(generation: u64) -> Result<Arc<ServiceState>, EntryError> {
-    let current = *SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)?;
-    if current == NO_GENERATION || current != generation {
-        return Err(EntryError::WrongGeneration {
-            generation,
-            current,
-        });
-    }
-    SERVICE_STATE
-        .lock()
-        .map_err(|_| EntryError::Poisoned)?
-        .clone()
-        .ok_or(EntryError::NoService)
-}
-
-/// Called right after `VpnService.Builder.establish()` succeeded: hand the descriptor to the
-/// generation `nativeStartServer` bound. From this moment the observation says `tun_ready` and
-/// a `start_tunnel` request has something to run on.
+/// `VpnService.Builder.establish()` succeeded: hand the descriptor to the generation that asked.
 ///
-/// Throws when `generation` is not the one serving, so a descriptor from a start that has
-/// since been superseded is never adopted by the newer generation.
+/// Throws when that generation is not the one being served, so a descriptor from a start that has
+/// since been superseded is never adopted by the one that replaced it.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTunFd<'local>(
     mut env: EnvUnowned<'local>,
@@ -391,51 +351,19 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTun
 ) {
     env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
         let generation = generation as u64;
-        serving(generation)?.set_fd(tun_fd as RawFd);
+        let service = booted()?
+            .services
+            .serving(generation)
+            .ok_or(EntryError::WrongGeneration(generation))?;
+        service.set_fd(tun_fd as RawFd);
         info!("nativeSetTunFd: generation {generation} holds fd {tun_fd}");
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-/// Called when the phone's default network changed under a running tunnel.
-///
-/// The one recovery that belongs *here* rather than in the actor: the tunnel, its descriptor and
-/// its routes are all still right, and only the socket underneath is bound to a network that no
-/// longer exists. Rebinding it in place is what a roam between Wi-Fi and mobile data needs, and
-/// doing it here means it happens whether or not a UI process is alive to notice.
-///
-/// It never changes what is running, so it cannot fight the actor over the tunnel's identity: the
-/// actor's own recovery starts a whole cycle and takes minutes to reach, this takes a round trip.
-/// Best-effort and generation-guarded: a change reported for an instance that has been superseded
-/// belongs to a tunnel that is already gone.
-#[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetworkChanged<'local>(
-    mut env: EnvUnowned<'local>,
-    _class: JClass<'local>,
-    generation: jlong,
-) {
-    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let generation = generation as u64;
-        serving(generation)?;
-        info!("nativeNetworkChanged: rebinding the tunnel of generation {generation}");
-        let manager = get_tunnel_manager();
-        get_runtime().spawn(async move {
-            match manager.network_changed().await {
-                Ok(()) => info!("the tunnel was rebound onto the new network"),
-                Err(e) => warn!("could not rebind the tunnel after the network changed: {e}"),
-            }
-        });
-        Ok(())
-    });
-    log_outcome("nativeNetworkChanged", outcome.into_outcome());
-}
-
-/// Called when `establish()` (or anything else between the bind and the descriptor) failed:
-/// record the reason on the generation so the UI's next poll returns it as `start_error`.
-///
-/// This is the one failure the Rust side cannot see for itself. Best-effort: a generation that
-/// is no longer serving has nobody left to tell, and the reason is already in the log.
+/// `establish()` — or anything between the request and the descriptor — failed. Record why, so the
+/// ladder gets a reason on its next look instead of waiting out its budget.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReportStartError<
     'local,
@@ -448,198 +376,149 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReport
     let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let message: String = message.mutf8_chars(env)?.to_string();
         let generation = generation as u64;
-        error!("nativeReportStartError: generation {generation} could not start: {message}");
-        serving(generation)?.set_error(message);
+        error!("generation {generation} could not establish a TUN: {message}");
+        booted()?
+            .services
+            .serving(generation)
+            .ok_or(EntryError::WrongGeneration(generation))?
+            .set_error(message);
         Ok(())
     });
     log_outcome("nativeReportStartError", outcome.into_outcome());
 }
 
-/// Called in `FloppaVpnService.onDestroy()` / `onRevoke()`.
+/// The phone's default network changed under a running tunnel: rebind its socket in place.
 ///
-/// Stops the tunnel and tarpc server, and releases the service reference. Runs inside `with_env`
-/// so a panic is caught and logged rather than unwinding into the JVM, which aborts the process.
+/// The one recovery that belongs here rather than in the actor. The tunnel, its descriptor and its
+/// routes are all still right, and only the socket underneath is bound to a network that no longer
+/// exists — so this is a reflex, not a decision, and it cannot fight the actor over what should be
+/// running. The actor's own recovery starts a whole cycle and is minutes away; this is a round trip.
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'local>(
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetworkChanged<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     generation: jlong,
 ) {
     let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
         let generation = generation as u64;
-
-        // Only tear down our own generation.
-        //
-        // Service instances share this process, and stopping one is asynchronous: the previous
-        // instance's onDestroy routinely arrives after the next instance has already bound its
-        // socket. Without this check it killed the new server roughly 150ms after it came up, and
-        // the connect that was about to use it failed with "the connection was already shutdown"
-        // — every time. What is compared is a *service generation*, minted once per start: an
-        // intent epoch is shared by every pass of a cycle and restarts at 1 in every UI process,
-        // so this check used to pass for exactly the instances it was written to reject.
-        let mut serving = SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)?;
-        if *serving == NO_GENERATION || *serving != generation {
-            info!(
-                "nativeStop: ignoring a stop for generation {generation}; this process now serves {}",
-                *serving
-            );
-            return Ok(());
+        let booted = booted()?;
+        if booted.services.serving(generation).is_none() {
+            return Err(EntryError::WrongGeneration(generation));
         }
-        // Cleared before anything is torn down, so a later stop for a generation that has already
-        // gone — a linger timer racing onDestroy — matches nothing instead of matching its
-        // successor.
-        *serving = NO_GENERATION;
-        drop(serving);
-
-        info!("nativeStop: stopping tunnel and RPC server (generation {generation})");
-
-        // Shutdown RPC server. This generation owns the socket path (it matched above and
-        // `nativeStartServer` runs on the same main thread), so unlinking is safe here and only
-        // here.
-        if let Some(handle) = RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)?.take() {
-            handle.shutdown_and_unlink();
-        }
-
-        // Stop tunnel
-        let runtime = get_runtime();
-        let tunnel_manager = get_tunnel_manager();
-        runtime.block_on(async {
-            if let Err(e) = tunnel_manager.stop().await {
-                error!("Failed to stop tunnel: {e}");
+        info!("the network moved under generation {generation}; rebinding");
+        let manager = booted.tunnel_manager.clone();
+        runtime().spawn(async move {
+            match manager.network_changed().await {
+                Ok(()) => info!("the tunnel was rebound onto the new network"),
+                Err(e) => warn!("could not rebind the tunnel after the network changed: {e}"),
             }
         });
-
-        // The service instance is going away; a global reference kept past this point pinned a
-        // destroyed service in the JVM for the life of the process.
-        VPN_SERVICE_REF
-            .lock()
-            .map_err(|_| EntryError::Poisoned)?
-            .take();
-        SERVICE_STATE
-            .lock()
-            .map_err(|_| EntryError::Poisoned)?
-            .take();
-
-        info!("nativeStop: cleanup complete");
         Ok(())
     });
-    log_outcome("nativeStop", outcome.into_outcome());
+    log_outcome("nativeNetworkChanged", outcome.into_outcome());
 }
 
-/// Called in `FloppaVpnService.onStartCommand()` for a start the system issued with no
-/// configuration — always-on VPN, boot, a lockdown restore — before anything else happens.
+/// The system asked for a tunnel with nobody watching: always-on, boot, or a lockdown restore.
 ///
-/// Reads the bundle the last successful connect wrote. Returns the TUN the service should build,
-/// as the JSON form of the plugin's start payload (the same field names Kotlin reads out of a
-/// start intent), with a fresh generation from the reserved autonomous range; or `null` when there is
-/// nothing to restore, in which case the service stops and the reason is in the log.
+/// The second principal. The user's intent lives in the actor and persists across restarts, but
+/// the system can want a tunnel when that intent says Down — the always-on toggle is the system's
+/// decision, not the app's, and an app that fights it produces a restart loop. So a start the
+/// system issued raises the intent to Up, from the order and rules the last connect recorded.
 ///
-/// This is the one moment an autonomous start can still resolve a name: no TUN exists yet. Under
-/// lockdown it cannot, and the literal the last connect resolved to is what gets dialled.
-///
-/// `data_dir` is passed in because the `:vpn` process never initialises the UI's config-dir
-/// resolver; it is the same directory (`applicationInfo.dataDir`) the UI writes into.
+/// A wipe is what beats it: `Forget` clears the configs, and an actor with nothing to build from
+/// stops rather than trying.
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAutostart<'local>(
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSystemStart<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    data_dir: JString<'local>,
-) -> JString<'local> {
-    env.with_env(
-        |env: &mut Env<'local>| -> Result<JString<'local>, EntryError> {
-            let dir: String = data_dir.mutf8_chars(env)?.to_string();
-            let dir = std::path::Path::new(&dir);
-
-            let Some(bundle) = autostart::load(dir) else {
-                info!("autonomous start: no usable autostart bundle, nothing to restore");
-                return Ok(JString::default());
-            };
-
-            let generation = autostart::next_autonomous_epoch(dir);
-            let endpoint = get_runtime().block_on(autostart::resolve_endpoint(
-                &bundle,
-                AUTOSTART_RESOLVE_BUDGET,
-            ));
-            info!(
-                protocol = %bundle.protocol(),
-                %endpoint,
-                generation,
-                saved_at = bundle.saved_at,
-                "autonomous start: rebuilding the last-good tunnel"
-            );
-
-            let AutostartBundle {
-                tun,
-                config,
-                params,
-                ..
-            } = bundle;
-            let plan = serde_json::to_string(&tun.with_generation(generation))?;
-            *AUTOSTART.lock().map_err(|_| EntryError::Poisoned)? = Some(PreparedAutostart {
-                generation,
-                config,
-                endpoint,
-                params,
-            });
-            Ok(env.new_string(plan)?)
-        },
-    )
-    .resolve::<ThrowRuntimeExAndDefault>()
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let actor = booted()?.actor.clone();
+        let Some(request) = crate::vpn::autostart::last_intent() else {
+            info!("the system asked for a tunnel, but nothing has been connected yet");
+            stop_vpn_service();
+            return Ok(());
+        };
+        info!("the system asked for a tunnel; raising the intent");
+        runtime().spawn(async move {
+            match actor.set_intent(request).await {
+                Ok(accepted) => info!(epoch = %accepted.epoch, "the system's request was accepted"),
+                Err(e) => {
+                    error!("the system's request was refused: {e}");
+                    stop_vpn_service();
+                }
+            }
+        });
+        Ok(())
+    });
+    log_outcome("nativeSystemStart", outcome.into_outcome());
 }
 
-/// Called after `nativeStartServer` on an autonomous start: bring the tunnel up on the descriptor
-/// the service just bound its socket for, from what `nativeLoadAutostart` prepared.
+/// This service instance is being destroyed — `onDestroy` or `onRevoke`.
 ///
-/// The start itself runs on the runtime rather than on the service's main thread. Its outcome is
-/// handled the way the RPC path's is — `start_error` recorded for whoever observes next, the
-/// notification promoted on success — plus one thing the RPC path leaves to its caller: with no
-/// UI process to react, a failed autonomous start stops the service itself, so it never sits
-/// foreground holding a descriptor with a default route into nothing.
+/// Only its own generation is ended: service instances share this process and their teardown is
+/// asynchronous, so a dying instance's callback routinely arrives after the next one has started.
+/// Ending the wrong one killed the tunnel that had just replaced it.
 ///
-/// Throws when there is nothing to start from — no prepared plan for this generation, or no service
-/// generation — so Kotlin cleans up the TUN it has already established.
+/// The tunnel goes with the descriptor, because the descriptor goes with the service. What the
+/// actor does about that is the actor's business: it observes a tunnel that is no longer running
+/// and decides, exactly as it would for a tunnel that died any other way.
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartTunnelFromBundle<
-    'local,
->(
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeServiceGone<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     generation: jlong,
 ) {
-    env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
         let generation = generation as u64;
-        let plan = AUTOSTART
-            .lock()
-            .map_err(|_| EntryError::Poisoned)?
-            .take_if(|p| p.generation == generation)
-            .ok_or(EntryError::NoPlan { generation })?;
-        let service = SERVICE_STATE
-            .lock()
-            .map_err(|_| EntryError::Poisoned)?
-            .clone()
-            .filter(|s| s.generation == generation)
-            .ok_or(EntryError::NoService)?;
-        let tunnel_manager = get_tunnel_manager();
-
-        get_runtime().spawn(async move {
-            let started = Started {
-                params: plan.params,
-                autonomous: true,
-            };
-            let result = rpc_server::bring_up(
-                &service,
-                &tunnel_manager,
-                plan.config,
-                plan.endpoint,
-                started,
-            )
-            .await;
-            if let Err(e) = result {
-                error!("autonomous start failed: {e}; stopping the service");
-                stop_vpn_service();
+        let booted = booted()?;
+        if !booted.services.end(generation) {
+            info!("nativeServiceGone: generation {generation} is not the one being served");
+            return Ok(());
+        }
+        info!("nativeServiceGone: generation {generation} is gone; stopping its tunnel");
+        let manager = booted.tunnel_manager.clone();
+        runtime().spawn(async move {
+            if let Err(e) = manager.stop().await {
+                warn!("could not stop the tunnel of a service that went away: {e}");
             }
         });
         Ok(())
-    })
-    .resolve::<ThrowRuntimeExAndDefault>();
+    });
+    log_outcome("nativeServiceGone", outcome.into_outcome());
+}
+
+/// Called from `FloppaVpnService.onDestroy()` when the *process* is going away rather than one
+/// service instance: release the service reference so a destroyed service is not pinned in the JVM.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReleaseService<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        VPN_SERVICE_REF
+            .lock()
+            .map_err(|_| EntryError::Poisoned)?
+            .take();
+        Ok(())
+    });
+    log_outcome("nativeReleaseService", outcome.into_outcome());
+}
+
+/// Ask the actor to go down and stay down, from Kotlin's stop action.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeRequestStop<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let actor = booted()?.actor.clone();
+        runtime().spawn(async move {
+            if let Err(e) = actor.set_intent(IntentRequest::Down).await {
+                warn!("the stop request was refused: {e}");
+            }
+        });
+        Ok(())
+    });
+    log_outcome("nativeRequestStop", outcome.into_outcome());
 }

@@ -1,23 +1,22 @@
-//! The last-good bundle: everything the `:vpn` process needs to bring a tunnel up on its own.
+//! What a start with nobody watching rebuilds from, and what a TUN is built from.
 //!
-//! Android starts the VPN service without the UI process for always-on VPN, at boot, and to
-//! restore a lockdown ("block connections without VPN") session. The intent it sends carries no
-//! configuration, so the service can only honour it from something written down earlier. That is
-//! this file: after every successful connect the UI process writes `autostart.json`, and a system
-//! start reads it back and rebuilds exactly that tunnel — the same protocol, the same split rules,
-//! the same resolved endpoint.
+//! Android starts the VPN service without any UI for always-on VPN, at boot, and to restore a
+//! lockdown ("block connections without VPN") session. The intent it sends carries no
+//! configuration, so the actor can only honour it from something written down earlier. That is
+//! [`LastIntent`]: the order and split rules of the last connect that actually worked. The configs
+//! themselves are not here — the actor owns the store, in the same process — which is what shrank
+//! this file from a whole rebuilt tunnel to a single request.
 //!
-//! The bundle is rewritten on every successful connect (the last used protocol wins), removed
-//! when the configs are forgotten, and *kept* on an explicit Disconnect: always-on means the OS
-//! restarts the service, and whether that should happen is the system toggle's decision, not ours.
+//! It is rewritten on every successful connect (winner first), removed when the configs are
+//! forgotten, and *kept* on an explicit Disconnect: always-on means the OS restarts the service,
+//! and whether that should happen is the system toggle's decision, not ours.
 //!
-//! Protection at rest is the same as `vpn-config.json`, which already holds the same private key:
-//! a `0600` file in the app's private data directory, written atomically (see
-//! [`private_file`](super::private_file)) — a bundle caught half-written is one that does not
-//! parse, and the reader's only recourse is to stop, which under lockdown is a device with no
-//! network until somebody opens the app. Only the calls that read and write the file are
-//! Android-specific; the types and the derivations are plain data, so their tests run on the
-//! host.
+//! Protection at rest matches `vpn-config.json`: a `0600` file in the app's private data
+//! directory, written atomically (see [`private_file`](super::private_file)) — a file caught
+//! half-written is one that does not parse, and the reader's only recourse is to stop, which under
+//! lockdown is a device with no network until somebody opens the app. Only the calls that touch
+//! the filesystem are Android-specific; the types and the derivations are plain data, so their
+//! tests run on the host.
 
 use super::actor::types::{SplitMode, TunnelParams};
 use super::private_file::write_private;
@@ -27,25 +26,18 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
-/// Bumped whenever the on-disk shape changes incompatibly. A bundle of another version is not
-/// migrated, it is ignored: the next connect writes a fresh one, and an autonomous start that
-/// finds nothing usable stops rather than guessing.
-pub const BUNDLE_VERSION: u32 = 1;
+/// Bumped whenever the on-disk shape changes incompatibly. A file of another version is not
+/// migrated, it is ignored: the next connect writes a fresh one, and a system start that finds
+/// nothing usable stops rather than guessing.
+pub const BUNDLE_VERSION: u32 = 2;
 
 pub const BUNDLE_FILENAME: &str = "autostart.json";
 
-/// The persisted counter behind [`next_autonomous_epoch`].
-const EPOCH_FILENAME: &str = "autostart.epoch";
-
-/// Where autonomous epochs live. See [`next_autonomous_epoch`].
-pub const AUTONOMOUS_EPOCH_BASE: u64 = 1 << 62;
-
 /// What `VpnService.Builder` needs, derived from the config and the split rules once, at connect
-/// time — so the service never parses a protocol config to build a TUN.
+/// time — so nothing downstream ever parses a protocol config to build a TUN.
 ///
-/// This is [`tauri_plugin_vpn::VpnConfig`] without the epoch, which is per start rather than per
-/// bundle. The field names match it (camelCase), and the Kotlin side reads the same names out of
-/// the JSON that it reads out of the start intent's extras.
+/// The field names are what the Kotlin side reads (camelCase); it is handed this as JSON when the
+/// ladder asks for a descriptor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TunSpec {
@@ -94,58 +86,62 @@ impl TunSpec {
         spec
     }
 
-    /// The plugin's start payload for one particular generation.
-    pub fn with_generation(self, generation: u64) -> tauri_plugin_vpn::VpnConfig {
-        tauri_plugin_vpn::VpnConfig {
-            ipv4_addr: self.ipv4_addr,
-            ipv6_addr: self.ipv6_addr,
-            routes: self.routes,
-            dns: self.dns,
-            mtu: self.mtu,
-            disallowed_apps: self.disallowed_apps,
-            allowed_apps: self.allowed_apps,
+    /// What the service is asked to establish, for one particular request.
+    pub fn with_generation(self, generation: u64) -> TunPlan {
+        TunPlan {
             generation,
+            tun: self,
         }
     }
 }
 
-/// What an autonomous start rebuilds.
+/// A [`TunSpec`] with the identity of the request it belongs to.
 ///
-/// `config` is the persisted [`ProtocolConfig`] shape, adjacently tagged: the tag that names the
-/// protocol is what makes the file self-describing, and it is now the shape the RPC carries too.
-/// `endpoint` is the literal the connect resolved to, so a start under
-/// lockdown, where nothing can be resolved because nothing is allowed on the network yet, still has
-/// an address to dial.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutostartBundle {
-    pub version: u32,
+/// The generation travels *with* the spec because the answer comes back separately — as a
+/// descriptor or as a reason — and has to name what it is answering. Serialized flat, so the
+/// Kotlin side reads one object with the field names it already knows.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunPlan {
+    pub generation: u64,
+    #[serde(flatten)]
     pub tun: TunSpec,
-    pub config: ProtocolConfig,
-    pub endpoint: SocketAddr,
+}
+
+/// The last thing that was successfully connected: what to rebuild when the system asks for a
+/// tunnel with nobody watching.
+///
+/// Only the *request* is persisted, not the tunnel. The actor has the configs — it owns the store
+/// — so what it is missing when the system starts it cold is which protocols to try and what split
+/// rules to build with, and that is all this is. The previous shape held a whole rebuilt tunnel
+/// (a config, a TUN spec, a resolved endpoint) because the process reading it had no actor in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastIntent {
+    pub version: u32,
+    /// The order the last successful connect used, winner first.
+    pub order: Vec<super::protocol::Protocol>,
     pub params: TunnelParams,
     /// Unix seconds; informational.
     pub saved_at: i64,
 }
 
-impl AutostartBundle {
-    pub fn new(
-        config: ProtocolConfig,
-        endpoint: SocketAddr,
-        params: TunnelParams,
-        saved_at: i64,
-    ) -> Self {
+impl LastIntent {
+    pub fn new(order: Vec<super::protocol::Protocol>, params: TunnelParams, saved_at: i64) -> Self {
         Self {
             version: BUNDLE_VERSION,
-            tun: TunSpec::derive(&config, &params),
-            config,
-            endpoint,
+            order,
             params,
             saved_at,
         }
     }
 
-    pub fn protocol(&self) -> super::protocol::Protocol {
-        self.config.protocol()
+    /// The request to raise when the system asks. An empty order is not one — the actor would
+    /// refuse it, and stopping outright says so more clearly than a refusal in a log.
+    pub fn request(self) -> Option<crate::vpn::actor::handle::IntentRequest> {
+        (!self.order.is_empty()).then_some(crate::vpn::actor::handle::IntentRequest::Up {
+            order: self.order,
+            params: self.params,
+        })
     }
 }
 
@@ -153,118 +149,103 @@ fn bundle_path(dir: &Path) -> PathBuf {
     dir.join(BUNDLE_FILENAME)
 }
 
-/// Write the bundle, `0600`, replacing whatever was there.
-pub fn save(dir: &Path, bundle: &AutostartBundle) -> Result<(), String> {
-    let json = serde_json::to_string(bundle).map_err(|e| format!("serialize: {e}"))?;
+/// Write the last-good intent, `0600`, replacing whatever was there.
+///
+/// The same protection as `vpn-config.json` even though this holds no key: it names which servers
+/// this device connects to, and the directory it lives in is private anyway.
+pub fn save(dir: &Path, intent: &LastIntent) -> Result<(), String> {
+    let json = serde_json::to_string(intent).map_err(|e| format!("serialize: {e}"))?;
     let path = bundle_path(dir);
     write_private(&path, json.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
-    info!(
-        protocol = %bundle.protocol(),
-        endpoint = %bundle.endpoint,
-        "autostart bundle written to {}",
-        path.display()
-    );
+    debug!(order = ?intent.order, "the last-good intent was written to {}", path.display());
     Ok(())
 }
 
-/// Read the bundle, if there is one this build can use.
+/// Read the last-good intent, if there is one this build can use.
 ///
 /// Every reason for `None` is logged, because the caller's next step is to stop and the log line
 /// is the only account of why.
-pub fn load(dir: &Path) -> Option<AutostartBundle> {
+pub fn load(dir: &Path) -> Option<LastIntent> {
     let path = bundle_path(dir);
     let json = match std::fs::read_to_string(&path) {
         Ok(json) => json,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            debug!("no autostart bundle at {}", path.display());
+            debug!("no last-good intent at {}", path.display());
             return None;
         }
         Err(e) => {
             warn!(
-                "failed to read the autostart bundle {}: {e}",
+                "failed to read the last-good intent {}: {e}",
                 path.display()
             );
             return None;
         }
     };
-    let bundle: AutostartBundle = match serde_json::from_str(&json) {
-        Ok(bundle) => bundle,
+    let intent: LastIntent = match serde_json::from_str(&json) {
+        Ok(intent) => intent,
         Err(e) => {
             warn!(
-                "the autostart bundle {} does not parse: {e}",
+                "the last-good intent {} does not parse: {e}",
                 path.display()
             );
             return None;
         }
     };
-    if bundle.version != BUNDLE_VERSION {
+    if intent.version != BUNDLE_VERSION {
         warn!(
-            found = bundle.version,
+            found = intent.version,
             expected = BUNDLE_VERSION,
-            "the autostart bundle is of another version; ignoring it"
+            "the last-good intent is of another version; ignoring it"
         );
         return None;
     }
-    Some(bundle)
+    Some(intent)
 }
 
-/// Delete the bundle. A missing file is not an error.
+/// The request a system-issued start should raise, if anything has ever connected.
+pub fn last_intent() -> Option<crate::vpn::actor::handle::IntentRequest> {
+    let dir = super::config::config_dir().ok()?;
+    load(&dir)?.request()
+}
+
+/// Record what just connected, so the system can ask for it again with nobody watching.
+///
+/// Best-effort: an intent that could not be written costs the next always-on start, never this
+/// connect.
+pub fn remember(order: Vec<super::protocol::Protocol>, params: TunnelParams, saved_at: i64) {
+    let Ok(dir) = super::config::config_dir() else {
+        return;
+    };
+    if let Err(e) = save(&dir, &LastIntent::new(order, params, saved_at)) {
+        warn!("failed to record the last-good intent: {e}");
+    }
+}
+
+/// Delete it. A missing file is not an error.
 pub fn remove(dir: &Path) {
     let path = bundle_path(dir);
     match std::fs::remove_file(&path) {
-        Ok(()) => info!("autostart bundle removed: {}", path.display()),
+        Ok(()) => info!("the last-good intent was removed: {}", path.display()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => warn!(
-            "failed to remove the autostart bundle {}: {e}",
+            "failed to remove the last-good intent {}: {e}",
             path.display()
         ),
     }
 }
 
-/// Mint the epoch for an autonomous start.
-///
-/// The UI process mints its epochs from a counter that starts at 1 in every process, so an epoch
-/// the service invents for itself must come from a range no UI intent can ever reach: everything
-/// at or above [`AUTONOMOUS_EPOCH_BASE`]. Within that range a counter persisted next to the bundle
-/// keeps consecutive autonomous starts distinct, which is what `nativeStop`'s generation check
-/// needs when the system restarts the service several times inside one `:vpn` process. A counter
-/// that cannot be persisted still moves forward for the life of the process.
-pub fn next_autonomous_epoch(dir: &Path) -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static FLOOR: AtomicU64 = AtomicU64::new(0);
-
-    let path = dir.join(EPOCH_FILENAME);
-    let stored = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(0);
-    let counter = stored.max(FLOOR.load(Ordering::SeqCst)) + 1;
-    FLOOR.store(counter, Ordering::SeqCst);
-    if let Err(e) = write_private(&path, counter.to_string().as_bytes()) {
-        warn!("failed to persist the autostart epoch counter: {e}");
-    }
-    AUTONOMOUS_EPOCH_BASE + counter
-}
-
-/// Whether an epoch was minted by [`next_autonomous_epoch`] rather than by a UI intent.
-pub const fn is_autonomous_epoch(epoch: u64) -> bool {
-    epoch >= AUTONOMOUS_EPOCH_BASE
-}
-
 /// The identity of one Android service start, minted by the UI process.
 ///
 /// Deliberately **not** the cycle's `IntentEpoch`. An intent's epoch is shared by every protocol
-/// and every pass of one cycle, and it restarts at 1 in each UI process while the `:vpn` process
-/// outlives the UI — so every "is this our generation?" check (`wait_for_service`,
-/// `start_tunnel`, `nativeStop`, `closeGeneration`) could pass for a service instance we had
+/// and every pass of one cycle, so every "is this our generation?" check — the descriptor arriving,
+/// the start failing, the instance being destroyed — could pass for a service instance we had
 /// already moved on from. A generation is minted per *service start* instead: one value per
-/// `vpn().start()`, never reused, and never equal to one another process minted.
+/// request for a TUN, never reused.
 ///
-/// Uniqueness across processes comes from a random 32-bit base rather than a persisted counter:
-/// the value only ever has to be compared for equality, so a counter's ordering would buy
-/// nothing, and a file read on the actor's task would buy a blocking call per attempt. Every
-/// value is at most `(2^32 - 1) << 20 + n`, comfortably below [`AUTONOMOUS_EPOCH_BASE`], so a
-/// UI generation can never be mistaken for a start the service made on its own.
+/// The base is random rather than a persisted counter: the value is only ever compared for
+/// equality, so ordering would buy nothing, and a file read on the actor's task would buy a
+/// blocking call per attempt. Zero is never minted, which is what makes it usable as "nothing is
+/// being served".
 #[derive(Debug)]
 pub struct ServiceGenerations(u64);
 
@@ -280,10 +261,9 @@ impl ServiceGenerations {
         Self(u64::from(seed as u32) << 20)
     }
 
-    /// The next generation. Monotonic within the process.
+    /// The next generation. Monotonic within the process, and never zero.
     pub fn mint(&mut self) -> u64 {
         self.0 += 1;
-        debug_assert!(!is_autonomous_epoch(self.0));
         self.0
     }
 }
@@ -294,34 +274,51 @@ impl Default for ServiceGenerations {
     }
 }
 
-/// The address to dial for an autonomous start.
+/// Where `host` resolved to the last time anyone managed to resolve it.
 ///
-/// The service is started before any TUN exists, so this is the one moment it can still resolve
-/// a name — and under lockdown it cannot, because nothing is allowed on the network until the VPN
-/// is up. The literal the last connect resolved to is the fallback, bounded so a start is never
-/// held up by a resolver that is not going to answer.
-pub async fn resolve_endpoint(bundle: &AutostartBundle, budget: std::time::Duration) -> SocketAddr {
-    let host = bundle.config.endpoint_str();
-    let lookup = tokio::time::timeout(budget, tokio::net::lookup_host(&host)).await;
-    match lookup {
-        Ok(Ok(mut addrs)) => match addrs.next() {
-            Some(addr) => {
-                if addr != bundle.endpoint {
-                    info!(%host, was = %bundle.endpoint, now = %addr, "the endpoint moved since the bundle was written");
-                }
-                addr
-            }
-            None => bundle.endpoint,
-        },
-        Ok(Err(e)) => {
-            info!(%host, fallback = %bundle.endpoint, "could not resolve the endpoint ({e}); using the stored literal");
-            bundle.endpoint
-        }
-        Err(_) => {
-            info!(%host, fallback = %bundle.endpoint, "resolving the endpoint timed out; using the stored literal");
-            bundle.endpoint
-        }
+/// The one thing a start under lockdown cannot do for itself. "Block connections without VPN"
+/// means nothing reaches the network until the tunnel is up, so the resolver has nothing to answer
+/// with — and the tunnel cannot come up without an address. A literal from the last successful
+/// connect breaks that circle, and is the difference between a device that recovers on its own and
+/// one that has no network until somebody opens the app.
+const ENDPOINTS_FILENAME: &str = "last-endpoints.json";
+
+fn endpoints_path(dir: &Path) -> PathBuf {
+    dir.join(ENDPOINTS_FILENAME)
+}
+
+fn read_endpoints(dir: &Path) -> std::collections::BTreeMap<String, SocketAddr> {
+    std::fs::read_to_string(endpoints_path(dir))
+        .ok()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Remember where a host resolved to. Best-effort in both directions: a failure to write costs a
+/// future lockdown start, never this one.
+pub fn remember_endpoint(host: &str, addr: SocketAddr) {
+    let Ok(dir) = super::config::config_dir() else {
+        return;
+    };
+    let mut known = read_endpoints(&dir);
+    if known.get(host) == Some(&addr) {
+        return;
     }
+    known.insert(host.to_string(), addr);
+    match serde_json::to_string(&known) {
+        Ok(json) => {
+            if let Err(e) = write_private(&endpoints_path(&dir), json.as_bytes()) {
+                debug!("could not record where {host} resolves: {e}");
+            }
+        }
+        Err(e) => debug!("could not encode the endpoint cache: {e}"),
+    }
+}
+
+/// The last known address for `host`, for a start that cannot resolve one.
+pub fn known_endpoint(host: &str) -> Option<SocketAddr> {
+    let dir = super::config::config_dir().ok()?;
+    read_endpoints(&dir).get(host).copied()
 }
 
 #[cfg(test)]
@@ -346,12 +343,12 @@ AllowedIPs = 0.0.0.0/0
         ProtocolConfig::WireGuard(WgConfig::from_config_str(WG_CONFIG).expect("fixture parses"))
     }
 
-    fn endpoint() -> SocketAddr {
-        "203.0.113.7:51820".parse().unwrap()
-    }
-
-    fn bundle(params: TunnelParams) -> AutostartBundle {
-        AutostartBundle::new(config(), endpoint(), params, 1_700_000_000)
+    fn intent(params: TunnelParams) -> LastIntent {
+        LastIntent::new(
+            vec![Protocol::AmneziaWg, Protocol::WireGuard],
+            params,
+            1_700_000_000,
+        )
     }
 
     #[test]
@@ -382,67 +379,93 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
-    fn the_plugin_payload_uses_the_same_field_names_as_the_bundle() {
-        // Kotlin reads one set of names out of the intent extras and out of the bundle's JSON.
-        let spec = bundle(TunnelParams::new(SplitMode::Exclude, vec!["a".into()])).tun;
-        let from_bundle = serde_json::to_value(&spec).unwrap();
-        let mut from_plugin = serde_json::to_value(spec.with_generation(7)).unwrap();
-        assert_eq!(from_plugin["generation"], 7);
-        from_plugin.as_object_mut().unwrap().remove("generation");
-        assert_eq!(from_bundle, from_plugin);
+    fn the_tun_spec_uses_the_names_kotlin_reads() {
+        let spec = TunSpec::derive(
+            &config(),
+            &TunnelParams::new(SplitMode::Exclude, vec!["a".into()]),
+        );
+        let json = serde_json::to_value(&spec).unwrap();
         assert!(
-            from_bundle.get("ipv4Addr").is_some(),
+            json.get("ipv4Addr").is_some(),
             "camelCase, as the Kotlin side reads it"
         );
-        assert!(from_bundle.get("disallowedApps").is_some());
+        assert!(json.get("disallowedApps").is_some());
+        // The plugin payload is the same thing with a generation on it.
+        let mut with_generation = serde_json::to_value(spec.with_generation(7)).unwrap();
+        assert_eq!(with_generation["generation"], 7);
+        with_generation
+            .as_object_mut()
+            .unwrap()
+            .remove("generation");
+        assert_eq!(json, with_generation);
     }
 
     #[test]
-    fn a_bundle_round_trips_through_the_file() {
+    fn the_last_good_intent_round_trips_through_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let params = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]);
-        save(dir.path(), &bundle(params.clone())).unwrap();
+        save(dir.path(), &intent(params.clone())).unwrap();
 
-        let loaded = load(dir.path()).expect("the bundle is readable");
+        let loaded = load(dir.path()).expect("it is readable");
         assert_eq!(loaded.version, BUNDLE_VERSION);
-        assert_eq!(loaded.protocol(), Protocol::WireGuard);
-        assert_eq!(loaded.endpoint, endpoint());
+        assert_eq!(loaded.order, vec![Protocol::AmneziaWg, Protocol::WireGuard]);
         assert_eq!(loaded.params, params);
-        assert_eq!(loaded.tun.disallowed_apps, vec!["org.example"]);
-        assert_eq!(loaded.config.endpoint_str(), "vpn.example.com:51820");
         assert_eq!(loaded.saved_at, 1_700_000_000);
+
+        // And it becomes exactly the request a system-issued start raises.
+        match loaded.request().expect("an order means a request") {
+            crate::vpn::actor::handle::IntentRequest::Up {
+                order,
+                params: rules,
+            } => {
+                assert_eq!(order, vec![Protocol::AmneziaWg, Protocol::WireGuard]);
+                assert_eq!(rules, params);
+            }
+            other => panic!("expected an Up, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_empty_order_is_not_a_request() {
+        // The actor would refuse it, and a service that stops says so more clearly than a
+        // refusal buried in a log.
+        assert!(
+            LastIntent::new(vec![], TunnelParams::default(), 0)
+                .request()
+                .is_none()
+        );
     }
 
     #[cfg(unix)]
     #[test]
-    fn the_bundle_is_private_to_the_app() {
+    fn what_is_written_is_private_to_the_app() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = bundle_path(dir.path());
         // Written twice: the second write must not widen a file that already exists either.
-        save(dir.path(), &bundle(TunnelParams::default())).unwrap();
+        save(dir.path(), &intent(TunnelParams::default())).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        save(dir.path(), &bundle(TunnelParams::default())).unwrap();
+        save(dir.path(), &intent(TunnelParams::default())).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
 
     #[test]
-    fn a_missing_bundle_and_a_removed_one_both_load_as_none() {
+    fn a_missing_file_and_a_removed_one_both_load_as_none() {
         let dir = tempfile::tempdir().unwrap();
         assert!(load(dir.path()).is_none());
         remove(dir.path()); // nothing there is not an error
 
-        save(dir.path(), &bundle(TunnelParams::default())).unwrap();
+        save(dir.path(), &intent(TunnelParams::default())).unwrap();
         assert!(load(dir.path()).is_some());
         remove(dir.path());
         assert!(load(dir.path()).is_none());
     }
 
     #[test]
-    fn a_bundle_of_another_version_is_ignored_not_migrated() {
+    fn a_file_of_another_version_is_ignored_not_migrated() {
         let dir = tempfile::tempdir().unwrap();
-        let mut json = serde_json::to_value(bundle(TunnelParams::default())).unwrap();
+        let mut json = serde_json::to_value(intent(TunnelParams::default())).unwrap();
         json["version"] = serde_json::Value::from(BUNDLE_VERSION + 1);
         std::fs::write(bundle_path(dir.path()), json.to_string()).unwrap();
         assert!(load(dir.path()).is_none());
@@ -452,30 +475,12 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
-    fn autonomous_epochs_are_out_of_the_ui_range_and_never_repeat() {
-        let dir = tempfile::tempdir().unwrap();
-        let first = next_autonomous_epoch(dir.path());
-        let second = next_autonomous_epoch(dir.path());
-        assert!(is_autonomous_epoch(first));
-        assert!(second > first, "the persisted counter moves forward");
-        // Every epoch a UI process can mint starts at 1 and counts up; none of them is in the
-        // reserved range.
-        assert!(!is_autonomous_epoch(1));
-        assert!(!is_autonomous_epoch(u32::MAX as u64));
-        // The value survives as a Kotlin Long: bit 63 is never set.
-        assert!(i64::try_from(second).is_ok());
-    }
-
-    #[test]
-    fn service_generations_are_unique_per_process_and_out_of_the_autonomous_range() {
+    fn service_generations_are_unique_per_process_and_never_zero() {
         let mut generations = ServiceGenerations::new();
         let first = generations.mint();
         let second = generations.mint();
         assert!(second > first, "monotonic within the process");
-        assert!(
-            !is_autonomous_epoch(second),
-            "never mistakable for a bundle start"
-        );
+        assert_ne!(first, 0, "zero means 'nothing is being served'");
         assert!(i64::try_from(second).is_ok(), "survives as a Kotlin Long");
         // The base is a multiple of 2^20 and the low bits are the per-process counter, so two
         // processes only collide when their random bases do.
@@ -484,54 +489,24 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
-    fn the_epoch_counter_is_persisted_across_processes() {
-        // Simulated by a fresh directory whose counter file says a higher number than this
-        // process has handed out.
+    fn the_endpoint_cache_answers_for_a_host_it_has_seen() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(EPOCH_FILENAME), "41").unwrap();
-        let epoch = next_autonomous_epoch(dir.path());
-        assert!(epoch >= AUTONOMOUS_EPOCH_BASE + 42);
-        let stored: u64 = std::fs::read_to_string(dir.path().join(EPOCH_FILENAME))
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        assert_eq!(AUTONOMOUS_EPOCH_BASE + stored, epoch);
-    }
+        let addr: SocketAddr = "203.0.113.7:51820".parse().unwrap();
+        let mut known = std::collections::BTreeMap::new();
+        known.insert("vpn.example.com:51820".to_string(), addr);
+        std::fs::write(
+            endpoints_path(dir.path()),
+            serde_json::to_string(&known).unwrap(),
+        )
+        .unwrap();
 
-    #[tokio::test]
-    async fn a_literal_endpoint_needs_no_resolver() {
-        let literal = "\
-[Interface]
-PrivateKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
-Address = 10.0.0.2/32
-
-[Peer]
-PublicKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
-Endpoint = 198.51.100.9:51820
-AllowedIPs = 0.0.0.0/0
-";
-        let config = ProtocolConfig::WireGuard(WgConfig::from_config_str(literal).unwrap());
-        let bundle = AutostartBundle::new(config, endpoint(), TunnelParams::default(), 0);
-        let resolved = resolve_endpoint(&bundle, std::time::Duration::from_secs(2)).await;
-        assert_eq!(resolved, "198.51.100.9:51820".parse().unwrap());
-    }
-
-    #[tokio::test]
-    async fn an_unresolvable_name_falls_back_to_the_stored_literal() {
-        let unresolvable = "\
-[Interface]
-PrivateKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
-Address = 10.0.0.2/32
-
-[Peer]
-PublicKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
-Endpoint = floppa.invalid:51820
-AllowedIPs = 0.0.0.0/0
-";
-        let config = ProtocolConfig::WireGuard(WgConfig::from_config_str(unresolvable).unwrap());
-        let bundle = AutostartBundle::new(config, endpoint(), TunnelParams::default(), 0);
-        let resolved = resolve_endpoint(&bundle, std::time::Duration::from_millis(1500)).await;
-        assert_eq!(resolved, endpoint());
+        assert_eq!(
+            read_endpoints(dir.path()).get("vpn.example.com:51820"),
+            Some(&addr)
+        );
+        assert!(!read_endpoints(dir.path()).contains_key("other:51820"));
+        // A cache that does not parse is simply not a cache; nothing depends on it existing.
+        std::fs::write(endpoints_path(dir.path()), "{not json").unwrap();
+        assert!(read_endpoints(dir.path()).is_empty());
     }
 }

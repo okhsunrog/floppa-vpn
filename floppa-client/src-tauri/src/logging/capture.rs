@@ -11,7 +11,6 @@
 //! taken once to look and again, after the side effects, to record.
 
 use super::{FileCaptureError, LogConfig, LogProcess, LogProfile};
-use crate::vpn::backend::VpnBackend;
 use serde::Serialize;
 use specta::Type;
 use std::io;
@@ -81,10 +80,40 @@ struct CaptureState {
     latest_capture_id: Option<String>,
 }
 
+/// Whoever can reach the process that writes the tunnel's log.
+///
+/// On desktop that is this process and the relay is a direct call; on Android it is `:vpn`, and the
+/// relay is the socket the actor is on. A capture is only complete when both processes are in it,
+/// which is the whole reason this is not just a local function.
+#[async_trait::async_trait]
+pub trait LogRelay: Send + Sync {
+    async fn set_log_config(&self, config: &LogConfig);
+    async fn start_log_capture(&self, capture_id: &str);
+    async fn stop_log_capture(&self);
+}
+
+/// The desktop relay: the tunnel is in this process, so "relaying" is telling the backend.
+#[cfg(not(target_os = "android"))]
+pub struct BackendRelay(pub Arc<dyn crate::vpn::backend::VpnBackend>);
+
+#[cfg(not(target_os = "android"))]
+#[async_trait::async_trait]
+impl LogRelay for BackendRelay {
+    async fn set_log_config(&self, config: &LogConfig) {
+        self.0.set_log_config(config).await;
+    }
+    async fn start_log_capture(&self, capture_id: &str) {
+        self.0.start_log_capture(capture_id).await;
+    }
+    async fn stop_log_capture(&self) {
+        self.0.stop_log_capture().await;
+    }
+}
+
 /// The one owner of diagnostic captures in the UI process.
 pub struct CaptureSession {
     log_dir: PathBuf,
-    backend: Arc<dyn VpnBackend>,
+    relay: Arc<dyn LogRelay>,
     state: Mutex<CaptureState>,
 }
 
@@ -92,10 +121,10 @@ impl CaptureSession {
     /// `log_dir` is the directory [`super::init_tracing`] was given: the marker and the captures
     /// live under it. Taken explicitly rather than read from the global, so a session is usable
     /// wherever tracing was initialised — including a test that never initialises it.
-    pub fn new(log_dir: PathBuf, backend: Arc<dyn VpnBackend>) -> Self {
+    pub fn new(log_dir: PathBuf, relay: Arc<dyn LogRelay>) -> Self {
         Self {
             log_dir,
-            backend,
+            relay,
             state: Mutex::new(CaptureState::default()),
         }
     }
@@ -137,7 +166,7 @@ impl CaptureSession {
             self.apply(&previous_config).await;
             return Err(e.into());
         }
-        self.backend.start_log_capture(&capture_id).await;
+        self.relay.start_log_capture(&capture_id).await;
 
         info!(capture_id, "Diagnostic log capture started");
 
@@ -164,7 +193,7 @@ impl CaptureSession {
         };
 
         info!(capture_id = active.id, "Diagnostic log capture stopping");
-        self.backend.stop_log_capture().await;
+        self.relay.stop_log_capture().await;
         let _ = super::stop_file_capture();
         clear_active_capture_id(&self.log_dir);
         self.apply(&active.previous_config).await;
@@ -196,7 +225,7 @@ impl CaptureSession {
     /// Apply a runtime profile in this process and in the tunnel process.
     async fn apply(&self, config: &LogConfig) {
         super::apply_log_config(config);
-        self.backend.set_log_config(config).await;
+        self.relay.set_log_config(config).await;
     }
 }
 
@@ -361,53 +390,21 @@ fn build_log_archive(capture_dir: &Path) -> Result<Vec<u8>, CaptureError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vpn::actor::types::Observation;
-    use crate::vpn::backend::BackendError;
-    use crate::vpn::platform::TunParams;
-    use crate::vpn::state::ProtocolConfig;
     use async_trait::async_trait;
     use std::io::Read;
-    use std::net::SocketAddr;
     use std::sync::Mutex as StdMutex;
     use std::sync::atomic::{AtomicU32, Ordering};
-    use std::time::Instant;
 
-    /// Records what the tunnel process would have been told.
+    /// Records what the tunnel's process would have been told.
     #[derive(Default)]
-    struct RecordingBackend {
+    struct RecordingRelay {
         profiles: StdMutex<Vec<LogProfile>>,
         started: StdMutex<Vec<String>>,
         stops: AtomicU32,
     }
 
     #[async_trait]
-    impl VpnBackend for RecordingBackend {
-        async fn start(
-            &self,
-            _: &ProtocolConfig,
-            _: &str,
-            _: &TunParams,
-            _: SocketAddr,
-        ) -> Result<(), BackendError> {
-            unreachable!("a capture never starts a tunnel")
-        }
-
-        async fn stop(&self) -> Result<(), BackendError> {
-            unreachable!("a capture never stops a tunnel")
-        }
-
-        async fn observe(&self) -> Observation {
-            Observation::unknown(Instant::now())
-        }
-
-        async fn probe(&self) -> Result<(), BackendError> {
-            Ok(())
-        }
-
-        async fn ping(&self) -> Result<(), BackendError> {
-            Ok(())
-        }
-
+    impl LogRelay for RecordingRelay {
         async fn set_log_config(&self, config: &LogConfig) {
             self.profiles.lock().unwrap().push(config.profile.clone());
         }
@@ -448,10 +445,10 @@ mod tests {
         }
     }
 
-    fn session(dir: &TempLogDir) -> (CaptureSession, Arc<RecordingBackend>) {
-        let backend = Arc::new(RecordingBackend::default());
-        let session = CaptureSession::new(dir.path().to_path_buf(), backend.clone());
-        (session, backend)
+    fn session(dir: &TempLogDir) -> (CaptureSession, Arc<RecordingRelay>) {
+        let relay = Arc::new(RecordingRelay::default());
+        let session = CaptureSession::new(dir.path().to_path_buf(), relay.clone());
+        (session, relay)
     }
 
     fn fake_capture(log_dir: &Path, id: &str) -> PathBuf {
@@ -481,7 +478,7 @@ mod tests {
     #[tokio::test]
     async fn start_is_idempotent_and_stop_writes_the_manifest() {
         let dir = TempLogDir::new();
-        let (session, backend) = session(&dir);
+        let (session, relay) = session(&dir);
 
         let started = session.start().await.unwrap();
         assert!(started.active);
@@ -490,17 +487,17 @@ mod tests {
             .clone()
             .expect("a started capture has an id");
         assert_eq!(active_capture_id(dir.path()).as_deref(), Some(id.as_str()));
-        assert_eq!(*backend.started.lock().unwrap(), vec![id.clone()]);
+        assert_eq!(*relay.started.lock().unwrap(), vec![id.clone()]);
 
         let again = session.start().await.unwrap();
         assert_eq!(again.capture_id, started.capture_id, "no second capture");
-        assert_eq!(backend.started.lock().unwrap().len(), 1);
+        assert_eq!(relay.started.lock().unwrap().len(), 1);
 
         let stopped = session.stop().await.unwrap();
         assert!(!stopped.active);
         assert_eq!(stopped.capture_id.as_deref(), Some(id.as_str()));
         assert_eq!(active_capture_id(dir.path()), None, "marker removed");
-        assert_eq!(backend.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(relay.stops.load(Ordering::SeqCst), 1);
 
         let capture_dir = captures_dir(dir.path()).join(&id);
         let manifest: serde_json::Value =
@@ -522,13 +519,13 @@ mod tests {
     #[tokio::test]
     async fn the_tunnel_process_is_switched_to_verbose_and_back() {
         let dir = TempLogDir::new();
-        let (session, backend) = session(&dir);
+        let (session, relay) = session(&dir);
 
         session.start().await.unwrap();
         session.stop().await.unwrap();
 
         // Whatever profile the user runs, the capture forces Verbose and then puts it back.
-        let profiles = backend.profiles.lock().unwrap();
+        let profiles = relay.profiles.lock().unwrap();
         assert_eq!(profiles.len(), 2);
         assert_eq!(profiles[0], LogProfile::Verbose);
         assert_eq!(profiles[1], super::super::get_log_config().profile);
@@ -537,11 +534,11 @@ mod tests {
     #[tokio::test]
     async fn stop_without_a_capture_is_a_status_read() {
         let dir = TempLogDir::new();
-        let (session, backend) = session(&dir);
+        let (session, relay) = session(&dir);
 
         let status = session.stop().await.unwrap();
         assert!(!status.active);
-        assert_eq!(backend.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(relay.stops.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

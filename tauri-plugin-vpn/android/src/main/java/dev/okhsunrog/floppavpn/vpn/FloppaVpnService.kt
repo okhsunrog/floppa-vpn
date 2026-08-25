@@ -11,6 +11,7 @@ import android.net.Network
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -20,20 +21,19 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * What `VpnService.Builder` is given, from whichever of the two sources started this instance: the
- * plugin's start intent, or the autostart bundle Rust hands back for a start the system issued.
+ * What `VpnService.Builder` is given, as the actor derived it.
  *
- * The address, routes and MTU are required. The plugin always sends them, the bundle always holds
- * them, and a TUN built from a made-up default would carry a default route into a tunnel nobody
- * configured — so anything missing is an error, not a fallback.
+ * It arrives as JSON from Rust, in this process, at the moment the ladder needs a descriptor —
+ * never in an intent any more. The address, routes and MTU are required: a TUN built from a made-up
+ * default would carry a default route into a tunnel nobody configured, so anything missing is an
+ * error rather than a fallback.
  */
 data class TunSpec(
     /**
-     * Generation this instance serves; echoed over the RPC and matched on teardown.
+     * Generation this descriptor belongs to; quoted back when it arrives and matched on teardown.
      *
-     * Minted per service start by the UI process (or, for an autonomous start, by Rust from the
-     * reserved range) and never reused — deliberately not the intent's epoch, which every protocol
-     * and pass of one connect cycle shares and which restarts at 1 in every UI process.
+     * Minted per request for a TUN, never reused — deliberately not the intent's epoch, which every
+     * protocol and pass of one connect cycle shares.
      */
     val generation: Long,
     val ipv4Addr: String,
@@ -49,38 +49,7 @@ data class TunSpec(
     }
 
     companion object {
-        fun fromIntent(intent: Intent): TunSpec {
-            if (!intent.hasExtra(FloppaVpnService.EXTRA_MTU)) {
-                throw IllegalArgumentException("start intent has no ${FloppaVpnService.EXTRA_MTU}")
-            }
-            return TunSpec(
-                generation = intent.getLongExtra(FloppaVpnService.EXTRA_GENERATION, 0L),
-                ipv4Addr =
-                    intent.getStringExtra(FloppaVpnService.EXTRA_IPV4_ADDR)
-                        ?: throw IllegalArgumentException(
-                            "start intent has no ${FloppaVpnService.EXTRA_IPV4_ADDR}"
-                        ),
-                ipv6Addr = intent.getStringExtra(FloppaVpnService.EXTRA_IPV6_ADDR),
-                routes =
-                    intent.getStringArrayExtra(FloppaVpnService.EXTRA_ROUTES)?.toList()
-                        ?: throw IllegalArgumentException(
-                            "start intent has no ${FloppaVpnService.EXTRA_ROUTES}"
-                        ),
-                dns = intent.getStringExtra(FloppaVpnService.EXTRA_DNS),
-                mtu = intent.getIntExtra(FloppaVpnService.EXTRA_MTU, 0),
-                disallowedApps =
-                    intent.getStringArrayExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS)?.toList()
-                        ?: emptyList(),
-                allowedApps =
-                    intent.getStringArrayExtra(FloppaVpnService.EXTRA_ALLOWED_APPS)?.toList()
-                        ?: emptyList(),
-            )
-        }
-
-        /**
-         * The JSON `nativeLoadAutostart` returns: the plugin's start payload, with the same field
-         * names the intent extras use (`TunSpec::with_generation` in `vpn/autostart.rs`).
-         */
+        /** The JSON `startGeneration` is called with — `TunSpec` in `vpn/autostart.rs`. */
         fun fromJson(json: String): TunSpec {
             val o = JSONObject(json)
             return TunSpec(
@@ -104,16 +73,20 @@ data class TunSpec(
 }
 
 /**
- * Android VpnService implementation for Floppa VPN.
+ * The `:vpn` process: the tunnel, and everything that decides about it.
  *
- * Runs in a separate `:vpn` process (android:process=":vpn" in manifest). Creates a TUN interface
- * and delegates tunnel management (WireGuard or VLESS) to Rust via JNI. The Rust code runs a tarpc
- * RPC server for the UI process to query status, stats, and request disconnect.
+ * Runs in its own process (`android:process=":vpn"` in the manifest) and hosts the Rust actor — the
+ * intent, the connect ladder, the reconnect budget, the config store. This class is what only
+ * Android can provide: consent, a TUN descriptor, a foreground notification, and the network
+ * callbacks. The UI process reaches the actor over a Unix socket and holds no tunnel state at all.
  *
- * Two ways in. The plugin starts it with a configuration in the intent and then asks for the tunnel
- * over the RPC. The system starts it with no configuration — for always-on VPN, at boot, or to
- * restore a lockdown session — and then the service rebuilds the tunnel the last successful connect
- * wrote down (`autostart.json`, see `vpn/autostart.rs`) with no UI process involved.
+ * Three ways it comes to exist, and they differ only in who asked:
+ * - **bound** by the UI, which is what makes the process (and the actor, and the store) exist while
+ *   the app is open. No notification: nothing is running yet.
+ * - **started** by the UI before a connect, so the service outlives the app being swiped away.
+ * - **started by the system** for always-on VPN, at boot, or to restore a lockdown session — with
+ *   no UI process anywhere. Then [nativeSystemStart] raises the intent from what the last
+ *   successful connect recorded, and the actor does the rest.
  */
 class FloppaVpnService : VpnService() {
 
@@ -122,34 +95,21 @@ class FloppaVpnService : VpnService() {
         private const val NOTIFICATION_CHANNEL_ID = "vpn_service"
         private const val NOTIFICATION_ID = 1
 
-        /** Action to stop the VPN service from another process (UI → :vpn) */
+        /** Stop the tunnel, from the UI process or from the notification. */
         const val ACTION_STOP = "dev.okhsunrog.floppavpn.STOP_VPN"
 
-        // Intent extras
-        const val EXTRA_IPV4_ADDR = "ipv4_addr"
-        const val EXTRA_IPV6_ADDR = "ipv6_addr"
-        const val EXTRA_ROUTES = "routes"
-        const val EXTRA_DNS = "dns"
-        const val EXTRA_MTU = "mtu"
-        const val EXTRA_DISALLOWED_APPS = "disallowed_apps"
-        const val EXTRA_ALLOWED_APPS = "allowed_apps"
         /**
-         * Generation of the request that started this service.
+         * "Be started, not merely bound."
          *
-         * Echoed back over the RPC so a reply from an instance that has since been superseded is
-         * rejectable by value, rather than by guessing from timing.
+         * Sent by the UI before it asks for a tunnel. A bound-only service dies with its last
+         * client, and the whole point of the tunnel living here is that it survives the app going
+         * away.
          */
-        const val EXTRA_GENERATION = "generation"
+        const val ACTION_KEEP_ALIVE = "dev.okhsunrog.floppavpn.KEEP_ALIVE"
 
         /**
-         * How long a generation whose TUN could not be established keeps answering the RPC, so the
-         * UI (polling every 200 ms) reads `start_error` before the socket goes away.
-         */
-        private const val START_ERROR_LINGER_MS = 3_000L
-
-        /**
-         * "This instance is serving nothing". No start ever mints it, so a teardown that arrives
-         * after the generation it belonged to has gone matches nothing.
+         * "This instance is serving nothing". No generation is ever minted as this, so a teardown
+         * that arrives after the one it belonged to has gone matches nothing.
          */
         private const val NO_GENERATION = 0L
 
@@ -158,53 +118,26 @@ class FloppaVpnService : VpnService() {
         }
     }
 
-    // Native methods implemented in Rust (vpn/jni_entry.rs)
-    private external fun nativeInit(logDir: String)
-
-    /** Binds the RPC socket for [generation]. Throws [RuntimeException] when it cannot. */
-    private external fun nativeStartServer(socketPath: String, generation: Long)
+    // Native methods implemented in Rust (vpn/jni_entry.rs).
 
     /**
-     * Hands the descriptor `establish()` produced to the generation [nativeStartServer] bound.
-     * Throws [RuntimeException] when [generation] is no longer the one serving.
+     * Boot the process: logging, the config store, the tunnel actor and the socket the UI reaches
+     * it through. Idempotent — later service instances only refresh the reference Rust calls back
+     * on. Throws [RuntimeException] when the actor cannot be served, which is unrecoverable.
+     */
+    private external fun nativeInit(logDir: String, dataDir: String)
+
+    /**
+     * Hands the descriptor `establish()` produced to the generation that asked for it. Throws
+     * [RuntimeException] when that generation has since been superseded.
      */
     private external fun nativeSetTunFd(generation: Long, tunFd: Int)
 
     /**
-     * Records why this generation could not establish its TUN, so the UI process reads the reason
-     * on its next poll instead of waiting for a service that never becomes ready.
+     * Records why a TUN could not be established, so the ladder gets a reason on its next look
+     * instead of waiting out its budget.
      */
     private external fun nativeReportStartError(generation: Long, message: String)
-
-    /**
-     * For a start the system issued: the TUN to build from the autostart bundle, as the JSON
-     * [TunSpec.fromJson] reads, with a fresh generation — or null when there is nothing to restore.
-     */
-    private external fun nativeLoadAutostart(dataDir: String): String?
-
-    /**
-     * After [nativeStartServer] on an autonomous start: bring the tunnel up from what
-     * [nativeLoadAutostart] prepared. Throws [RuntimeException] when there is nothing to start
-     * from; a start that fails later stops the service from the Rust side.
-     */
-    private external fun nativeStartTunnelFromBundle(generation: Long)
-
-    /**
-     * Generation this instance is currently serving.
-     *
-     * Passed back on teardown so a late onDestroy from a previous instance cannot stop the server
-     * belonging to the one that replaced it — these instances share a process, and stopService is
-     * asynchronous. [NO_GENERATION] once nothing is being served, so a teardown that arrives after
-     * one matches nothing.
-     */
-    private var generation: Long = NO_GENERATION
-
-    /**
-     * The most recent `startId`. `stopSelf(startId)` refuses to stop the service when a newer start
-     * has arrived since, which a bare `stopSelf()` cannot see — and a linger timer or a late
-     * teardown from a superseded generation used to stop the instance that replaced it.
-     */
-    private var lastStartId: Int = 0
 
     /**
      * The phone's default network changed under a running tunnel: rebind its socket in place. The
@@ -213,12 +146,41 @@ class FloppaVpnService : VpnService() {
      */
     private external fun nativeNetworkChanged(generation: Long)
 
-    private external fun nativeStop(generation: Long)
+    /**
+     * The system asked for a tunnel with nobody watching — always-on, boot, lockdown. Raises the
+     * intent from what the last successful connect recorded, or stops the service when there is
+     * nothing to raise.
+     */
+    private external fun nativeSystemStart()
+
+    /** Ask the actor to go down. The tunnel, the notification and this service go with it. */
+    private external fun nativeRequestStop()
+
+    /** This service instance is being destroyed; end its generation and the tunnel on it. */
+    private external fun nativeServiceGone(generation: Long)
+
+    /** The process is going away: release the reference Rust calls back on. */
+    private external fun nativeReleaseService()
+
+    /**
+     * Generation of the descriptor this instance is holding.
+     *
+     * Quoted back on teardown so a late `onDestroy` from an instance that has been replaced cannot
+     * end the generation belonging to the one that replaced it — these instances share a process,
+     * and stopping one is asynchronous.
+     */
+    private var generation: Long = NO_GENERATION
+
+    /**
+     * The most recent `startId`. `stopSelf(startId)` refuses to stop the service when a newer start
+     * has arrived since, which a bare `stopSelf()` cannot see.
+     */
+    private var lastStartId: Int = 0
 
     private var tunInterface: ParcelFileDescriptor? = null
 
-    /** Whether this generation was started by the system rather than by the plugin. */
-    private var autonomous = false
+    /** Whether the foreground notification is up, so a stop with nothing running is a no-op. */
+    private var foreground = false
 
     /**
      * Watches which network the tunnel is riding on, for as long as one is up.
@@ -247,237 +209,160 @@ class FloppaVpnService : VpnService() {
         createNotificationChannel()
         val logDir = File(applicationInfo.dataDir, "logs")
         logDir.mkdirs()
-        nativeInit(logDir.absolutePath)
-        Log.i(TAG, "VPN service created (separate :vpn process)")
+        // Boots the actor on the first instance; refreshes the callback reference on every one.
+        nativeInit(logDir.absolutePath, applicationInfo.dataDir)
+        Log.i(TAG, "the VPN process is up")
     }
+
+    /**
+     * The UI binds this service to keep the process — and so the actor and the config store — alive
+     * while the app is open. There is no Binder API: everything goes over the socket, and a null
+     * binding holds the process just as well.
+     *
+     * The system's own VPN binding is a different action and still goes to `VpnService`.
+     */
+    override fun onBind(intent: Intent?): IBinder? =
+        if (intent?.action == SERVICE_INTERFACE) super.onBind(intent) else null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand: action=${intent?.action}, startId=$startId")
         lastStartId = startId
 
-        if (intent == null) {
-            Log.w(TAG, "Null intent, stopping service")
-            stopSelf()
-            return START_NOT_STICKY
-        }
-
-        // Handle stop request from UI process
-        if (intent.action == ACTION_STOP) {
-            Log.i(TAG, "Received STOP action, shutting down")
-            closeGeneration(generation)
-            return START_NOT_STICKY
-        }
-
-        // The system starts this service with `Intent(action = android.net.VpnService)` and no
-        // extras — for always-on VPN, at boot, or to restore a lockdown ("block connections
-        // without VPN") session. Nothing about the tunnel travels in that intent, so it is
-        // rebuilt from the bundle the last successful connect wrote. Without one there is nothing
-        // to restore: refuse before startForeground so no notification is shown for it.
-        //
-        // The service is a singleton per process, so such an intent can also land on an instance
-        // that is carrying a live tunnel. That tunnel is left exactly as it is: stopSelf() here
-        // would run onDestroy, whose nativeStop(generation) matches this generation and tears it
-        // down. Only an instance with nothing to keep alive acts on the intent.
-        if (intent.action == SERVICE_INTERFACE || !intent.hasExtra(EXTRA_GENERATION)) {
-            if (tunInterface != null) {
-                Log.w(
-                    TAG,
-                    "Start intent is not from the plugin (action=${intent.action}); a tunnel is up, ignoring",
-                )
-                return START_NOT_STICKY
+        when (intent?.action) {
+            // The user asked to stop, from the app or from the notification. The actor decides
+            // what that means for the tunnel; this service goes away when it says so.
+            ACTION_STOP -> {
+                Log.i(TAG, "stop requested")
+                nativeRequestStop()
             }
-            return startFromBundle()
-        }
 
-        // A second start while a TUN is still established. The plugin's stopService() before a
-        // start is asynchronous, and a start that arrives first is delivered to this same
-        // instance. Tear the previous generation down before its descriptor is overwritten —
-        // otherwise the old fd leaked with the old tunnel still reading from it.
-        if (tunInterface != null) {
-            Log.w(TAG, "Start while a tunnel is established; stopping the previous one first")
-            nativeStop(generation)
-            generation = NO_GENERATION
-            cleanupAndroid()
-        }
+            // The UI is about to ask for a tunnel and wants this service to outlive it. Foreground
+            // immediately: `startForegroundService` gives us seconds, not minutes, and what the
+            // notification says at this point is "connecting", which is true.
+            ACTION_KEEP_ALIVE -> startVpnForeground(connected = false)
 
-        val spec =
-            try {
-                TunSpec.fromIntent(intent)
-            } catch (e: IllegalArgumentException) {
-                // Nothing is foreground or established yet, so there is nothing to undo.
-                Log.e(TAG, "Refusing a start intent without a usable configuration", e)
-                stopSelf()
-                return START_NOT_STICKY
+            // A start the system issued: always-on, boot, or a lockdown restore. Same requirement
+            // — foreground at once — and then the actor is told to want a tunnel.
+            else -> {
+                startVpnForeground(connected = false)
+                nativeSystemStart()
             }
-        // Bind the RPC server and stop there. The tunnel is started by a separate typed request
-        // over that socket, so a failed start is reportable instead of looking like a service
-        // that never came up.
-        return startGeneration(spec, autonomous = false) {}
-    }
-
-    /**
-     * A start the system issued: rebuild the last-good tunnel with no UI process.
-     *
-     * Rust reads the bundle and says what TUN to build; the tunnel is then brought up in this
-     * process, on the same path the RPC start uses, under a generation from a range no UI process
-     * can mint. A UI process that opens later finds it over the RPC — with its protocol and split
-     * rules reported by this side — and adopts it.
-     */
-    private fun startFromBundle(): Int {
-        val plan =
-            try {
-                nativeLoadAutostart(applicationInfo.dataDir)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to read the autostart bundle", e)
-                null
-            }
-        if (plan == null) {
-            Log.w(TAG, "System start with nothing to restore (no autostart bundle); stopping")
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        val spec =
-            try {
-                TunSpec.fromJson(plan)
-            } catch (e: Exception) {
-                Log.e(TAG, "The autostart bundle does not describe a usable TUN", e)
-                stopSelf()
-                return START_NOT_STICKY
-            }
-        Log.i(TAG, "System start: rebuilding the last-good tunnel (generation=${spec.generation})")
-        return startGeneration(spec, autonomous = true) {
-            nativeStartTunnelFromBundle(spec.generation)
-        }
-    }
-
-    /**
-     * Go foreground, bind the RPC, establish the TUN, then run [afterReady] — the one step that
-     * differs between a plugin start (nothing: the tunnel is requested over the socket) and an
-     * autonomous one (start the tunnel from the bundle).
-     *
-     * The bind comes *before* `establish()` on purpose. `establish()` fails for reasons outside
-     * this app — the user revoked the VPN consent, another VPN holds a lockdown, every app selected
-     * for the tunnel was uninstalled — and with the socket already bound that failure is reported
-     * over it: the UI's next poll gets the reason instead of waiting out a service that never comes
-     * up. A failed bind, on the other hand, leaves nothing to report through, so the service simply
-     * stops.
-     */
-    private fun startGeneration(spec: TunSpec, autonomous: Boolean, afterReady: () -> Unit): Int {
-        // Before anything that can fail or tear down: onDestroy stops by this value, and reading
-        // it later meant a start that threw left the previous instance's generation in the field.
-        val generation = spec.generation
-        this.generation = generation
-        this.autonomous = autonomous
-
-        // Foreground before the TUN exists, because Android requires it — so the notification says
-        // what is true at this point, not what we hope for. `setConnected` promotes it once the
-        // tunnel is actually carrying traffic.
-        startVpnForeground(connected = false)
-
-        try {
-            // Keep in sync with SOCKET_NAME in rpc.rs.
-            nativeStartServer(applicationInfo.dataDir + "/vpn.sock", generation)
-        } catch (e: Exception) {
-            // Nothing is listening, so nothing can be told; the service must not stay foreground
-            // as if it had started.
-            Log.e(TAG, "Failed to bind the RPC socket", e)
-            closeGeneration(generation)
-            return START_NOT_STICKY
         }
 
-        try {
-            tunInterface = createTunInterface(spec)
-            val fd = tunInterface?.fd ?: throw IllegalStateException("Failed to get TUN fd")
-            Log.i(TAG, "TUN interface created with fd: $fd")
-            nativeSetTunFd(generation, fd)
-            watchNetwork(generation)
-            afterReady()
-        } catch (e: Exception) {
-            // The socket is bound, so this is reportable. Leave the generation answering for a
-            // moment so the UI's next poll reads the reason, then wind it down — the UI's own
-            // teardown usually gets there first, and closeGeneration is idempotent.
-            Log.e(TAG, "Failed to establish the TUN", e)
-            try {
-                nativeReportStartError(generation, e.message ?: e.toString())
-            } catch (report: Exception) {
-                Log.w(TAG, "Could not record the start error", report)
-            }
-            // The generation is captured in a local: reading the field when the timer fires meant
-            // the guard in closeGeneration compared a value against itself and always passed, so
-            // this timer tore down whichever generation happened to be serving three seconds
-            // later — usually the one that replaced this failed start.
-            mainHandler.postDelayed({ closeGeneration(generation) }, START_ERROR_LINGER_MS)
-            return START_NOT_STICKY
-        }
-
-        // Not sticky: a restart arrives with a null intent, and the null branch above can only
-        // stop again. For always-on VPN it is the system that restarts the service, with the
-        // VpnService action, and that start rebuilds from the bundle.
+        // Not sticky. A restart would arrive with a null intent and nothing to do; when the system
+        // wants this service back it starts it itself, with the VpnService action.
         return START_NOT_STICKY
     }
 
     /**
-     * Tear down [target] and stop, unless a newer start has since taken over this instance — then
-     * that generation is already gone and the newer one must be left alone. Idempotent: the field
-     * is cleared, so a second call for the same generation finds nothing to do.
+     * Establish a TUN for [generation] and hand its descriptor to the actor. Called from Rust.
+     *
+     * Asynchronous by nature: `establish()` must run on the main thread, so this posts and answers
+     * by calling back — [nativeSetTunFd] on success, [nativeReportStartError] on failure. The
+     * ladder waits by *observing*, which is what makes "still coming up", "failed, and here is why"
+     * and "gone" three different answers instead of one timeout.
      */
-    private fun closeGeneration(target: Long) {
-        if (target == NO_GENERATION || generation != target) {
-            Log.i(TAG, "closeGeneration($target): superseded by $generation, nothing to do")
-            return
+    fun startGeneration(planJson: String, generation: Long) {
+        mainHandler.post {
+            // A descriptor left over from a previous generation goes now: the old tunnel has
+            // already been stopped, and leaving its fd open leaks it.
+            closeTun()
+
+            val spec =
+                try {
+                    TunSpec.fromJson(planJson)
+                } catch (e: Exception) {
+                    Log.e(TAG, "the TUN spec does not describe a usable interface", e)
+                    reportStartError(generation, e)
+                    return@post
+                }
+
+            this.generation = generation
+            startVpnForeground(connected = false)
+            try {
+                val tun = createTunInterface(spec)
+                tunInterface = tun
+                Log.i(TAG, "TUN established with fd ${tun.fd} for generation $generation")
+                nativeSetTunFd(generation, tun.fd)
+                watchNetwork(generation)
+            } catch (e: Exception) {
+                // Every reason `establish()` fails is outside this app — consent revoked, another
+                // VPN holding lockdown, every selected app uninstalled — so the reason is worth
+                // more than the failure.
+                Log.e(TAG, "failed to establish the TUN", e)
+                closeTun()
+                reportStartError(generation, e)
+            }
         }
-        nativeStop(target)
-        generation = NO_GENERATION
-        cleanupAndroid()
-        // By startId, so a start that arrived after this teardown was scheduled keeps the service
-        // alive; a bare stopSelf() stopped it regardless of what had happened since.
-        stopSelf(lastStartId)
+    }
+
+    private fun reportStartError(generation: Long, e: Exception) {
+        try {
+            nativeReportStartError(generation, e.message ?: e.toString())
+        } catch (report: Exception) {
+            Log.w(TAG, "could not record the start error", report)
+        }
     }
 
     override fun onDestroy() {
-        Log.i(TAG, "VPN service destroying")
-        // onDestroy is called by Android when the service is being torn down
-        // (e.g., system kill). Stop Rust side and clean up.
-        nativeStop(generation)
-        generation = NO_GENERATION
-        cleanupAndroid()
+        Log.i(TAG, "the VPN service is being destroyed")
+        endGeneration()
+        // The instance is going away; a global reference kept past this point pins a destroyed
+        // service in the JVM for the life of the process.
+        nativeReleaseService()
         super.onDestroy()
     }
 
+    /**
+     * The user revoked VPN consent, or another VPN took over.
+     *
+     * The descriptor is already dead by the time this runs. Ending the generation stops the tunnel
+     * on it, and the actor sees a tunnel that is no longer running — what it does about that is its
+     * decision, exactly as for a tunnel that died any other way.
+     */
     override fun onRevoke() {
-        Log.i(TAG, "VPN permission revoked")
-        nativeStop(generation)
-        generation = NO_GENERATION
-        cleanupAndroid()
+        Log.i(TAG, "VPN consent was revoked")
+        endGeneration()
         super.onRevoke()
     }
 
+    private fun endGeneration() {
+        val target = generation
+        generation = NO_GENERATION
+        stopWatchingNetwork()
+        closeTun()
+        if (target != NO_GENERATION) {
+            nativeServiceGone(target)
+        }
+    }
+
     /**
-     * Clean up Android-side resources (TUN, foreground notification) and stop the service.
+     * Drop the notification and stop, from Rust: the actor has nothing running any more.
      *
-     * Called from Rust via JNI, on a tokio thread, from the RPC `stop` handler after the tunnel is
-     * already stopped. onDestroy then runs nativeStop for this generation, which releases the RPC
-     * server and the service reference.
+     * A no-op when this service is not foreground — the actor reports Disconnected as soon as it
+     * starts, before anyone has asked for anything, and that must not stop a service the UI has
+     * only bound.
      */
     fun shutdownService() {
-        Log.i(TAG, "shutdownService() called")
         mainHandler.post {
-            generation = NO_GENERATION
-            cleanupAndroid()
+            if (!foreground) return@post
+            Log.i(TAG, "nothing is running; the service is standing down")
+            stopWatchingNetwork()
+            closeTun()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foreground = false
+            // By startId, so a start that arrived after this was scheduled keeps the service alive.
             stopSelf(lastStartId)
         }
     }
 
-    private fun cleanupAndroid() {
-        stopWatchingNetwork()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-
+    private fun closeTun() {
         tunInterface?.let { tun ->
-            Log.i(TAG, "Closing TUN interface")
+            Log.i(TAG, "closing the TUN interface")
             try {
                 tun.close()
             } catch (e: Exception) {
-                Log.w(TAG, "Error closing TUN interface", e)
+                Log.w(TAG, "error closing the TUN interface", e)
             }
             tunInterface = null
         }
@@ -567,7 +452,7 @@ class FloppaVpnService : VpnService() {
     private fun buildNotification(connected: Boolean): Notification {
         val state = if (connected) "Connected" else "Connecting\u2026"
         return NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle(if (autonomous) "Floppa VPN (always-on)" else "Floppa VPN")
+            .setContentTitle("Floppa VPN")
             .setContentText(state)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
@@ -575,6 +460,7 @@ class FloppaVpnService : VpnService() {
             .build()
     }
 
+    /** Idempotent: `startForeground` on a service that already is one only replaces the notice. */
     private fun startVpnForeground(connected: Boolean) {
         val notification = buildNotification(connected)
 
@@ -587,18 +473,19 @@ class FloppaVpnService : VpnService() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        foreground = true
     }
 
     /**
-     * Promote the notification once a tunnel is actually up.
+     * What the notification says, following the actor's own phase. Called from Rust.
      *
-     * Called from Rust after `start_tunnel` succeeds. Until then the service is foreground and
-     * holding a descriptor, which is not the same thing as being connected — and the notification
-     * used to claim it was from the moment the service started, including for the whole of a start
-     * that went on to fail.
+     * The notification is the only UI a tunnel has while the app is closed, so it is written from
+     * the one place that knows what is true — not by whatever last touched the tunnel, which is how
+     * it used to claim "connected" for the whole of a start that went on to fail.
      */
     fun setConnected(connected: Boolean) {
         mainHandler.post {
+            if (!foreground) return@post
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(NOTIFICATION_ID, buildNotification(connected))
         }

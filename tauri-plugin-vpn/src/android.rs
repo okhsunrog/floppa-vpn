@@ -39,16 +39,18 @@ impl<R: Runtime> Vpn<R> {
             .map(|r| r.granted)
     }
 
-    /// Start the VPN service with the given configuration.
+    /// Make sure the `:vpn` process is running and *started*, not merely bound.
     ///
-    /// The descriptor is handed to the `:vpn` process directly; nothing comes back here.
-    pub async fn start(&self, config: VpnConfig) -> Result<()> {
-        self.call::<()>("startVpn", config).await
-    }
-
-    /// Stop the VPN service out of band (by intent rather than over the RPC).
-    pub async fn stop(&self) -> Result<()> {
-        self.call::<()>("stopVpn", ()).await
+    /// Binding keeps the process alive while this app is open, which is enough to talk to the
+    /// actor. It is not enough to survive the app going away — a bound-only service dies with its
+    /// last client — so before asking for a tunnel the service is also started, which is the
+    /// lifecycle that outlives the UI.
+    ///
+    /// The call carries no tunnel configuration. It used to carry a whole TUN spec, because the
+    /// process on the other end had no idea what to build; it has the actor now, and asks for the
+    /// descriptor itself when it needs one.
+    pub async fn start_service(&self) -> Result<()> {
+        self.call::<()>("startVpnService", ()).await
     }
 
     /// Get list of installed apps for split tunneling.

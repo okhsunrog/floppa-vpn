@@ -3,7 +3,10 @@ package dev.okhsunrog.floppavpn.vpn
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -12,6 +15,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.net.Uri
 import android.net.VpnService
 import android.os.Build
+import android.os.IBinder
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Base64
@@ -38,23 +42,6 @@ import app.tauri.plugin.Plugin
 import java.io.ByteArrayOutputStream
 
 @InvokeArg
-class VpnConfigArgs {
-    /** Required; the service refuses a start intent without it rather than inventing one. */
-    var ipv4Addr: String? = null
-    var ipv6Addr: String? = null
-    var routes: Array<String> = emptyArray()
-    var dns: String? = null
-    var mtu: Int = 1280
-    var disallowedApps: Array<String> = emptyArray()
-    var allowedApps: Array<String> = emptyArray()
-    /**
-     * Identity of this service start, echoed back so a superseded instance is rejectable by value.
-     * Minted per start by the UI process, never the intent's epoch.
-     */
-    var generation: Long = 0
-}
-
-@InvokeArg
 class StatusBarStyleArgs {
     var isDark: Boolean = false
 }
@@ -69,9 +56,42 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         private const val NOTIFICATION_ALIAS = "postNotification"
     }
 
+    /**
+     * Keeps the `:vpn` process alive for as long as this app is open.
+     *
+     * Nothing is called through it — the socket does the talking, and `onBind` returns null for
+     * this action — but binding is what makes the process exist. That is now a requirement rather
+     * than a nicety: the actor lives over there, and with it the config store, so a UI that cannot
+     * reach it cannot show what protocols exist, let alone connect. Binding costs no notification;
+     * the service goes foreground only when a tunnel does.
+     */
+    private val connection =
+        object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+                Log.i("VpnPlugin", "bound to the VPN process")
+            }
+
+            override fun onNullBinding(name: ComponentName?) {
+                // Expected: there is no Binder API, and this still holds the process.
+                Log.i("VpnPlugin", "bound to the VPN process (no binder)")
+            }
+
+            override fun onServiceDisconnected(name: ComponentName?) {
+                Log.w("VpnPlugin", "the VPN process went away")
+            }
+        }
+
     override fun load(webView: WebView) {
-        // In the two-process architecture, FloppaVpnService runs in :vpn process.
-        // No eventCallback setup needed — the UI process communicates via tarpc.
+        // The actor and the tunnel live in `:vpn`; this process only talks to them.
+        try {
+            activity.bindService(
+                Intent(activity, FloppaVpnService::class.java),
+                connection,
+                Context.BIND_AUTO_CREATE,
+            )
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "could not bind the VPN process", e)
+        }
     }
 
     /**
@@ -110,89 +130,39 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         invoke.resolve(ret)
     }
 
+    /**
+     * Put the VPN service into the *started* lifecycle, so it outlives this app.
+     *
+     * Binding alone is not enough for that: a bound-only service dies with its last client, and the
+     * whole point of the tunnel living in another process is that it survives the UI being swiped
+     * away. So before asking for a tunnel, the service is started as well — which it answers by
+     * going foreground immediately, because `startForegroundService` requires it within seconds.
+     *
+     * No configuration travels here. It used to carry a whole TUN spec, because the process on the
+     * other end had no idea what to build; it holds the actor now, and asks for a descriptor itself
+     * when its ladder gets that far.
+     */
     @Command
-    fun startVpn(invoke: Invoke) {
+    fun startVpnService(invoke: Invoke) {
         try {
-            Log.d("VpnPlugin", "startVpn called")
-            val args = invoke.parseArgs(VpnConfigArgs::class.java)
-            Log.d(
-                "VpnPlugin",
-                "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}",
-            )
-
-            val ipv4Addr = args.ipv4Addr
-            if (ipv4Addr.isNullOrEmpty()) {
-                invoke.reject("ipv4Addr is required")
-                return
-            }
-
-            // Check if VPN is prepared
-            val prepareIntent = VpnService.prepare(activity)
-            if (prepareIntent != null) {
+            if (VpnService.prepare(activity) != null) {
                 invoke.reject("VPN permission not granted. Call prepareVpn first.")
                 return
             }
-
-            // Stop any existing VPN service
-            activity.stopService(Intent(activity, FloppaVpnService::class.java))
-
-            // Start the VPN service in :vpn process
             val intent =
                 Intent(activity, FloppaVpnService::class.java).apply {
-                    putExtra(FloppaVpnService.EXTRA_IPV4_ADDR, ipv4Addr)
-                    putExtra(FloppaVpnService.EXTRA_IPV6_ADDR, args.ipv6Addr)
-                    putExtra(FloppaVpnService.EXTRA_ROUTES, args.routes)
-                    putExtra(FloppaVpnService.EXTRA_DNS, args.dns)
-                    putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
-                    putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
-                    putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
-                    putExtra(FloppaVpnService.EXTRA_GENERATION, args.generation)
+                    action = FloppaVpnService.ACTION_KEEP_ALIVE
                 }
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 activity.startForegroundService(intent)
             } else {
                 activity.startService(intent)
             }
-            Log.d("VpnPlugin", "VPN service started in :vpn process")
+            Log.i("VpnPlugin", "the VPN service was started")
             invoke.resolve()
         } catch (e: Exception) {
-            Log.e("VpnPlugin", "startVpn error", e)
-            invoke.reject("Failed to start VPN: ${e.message}")
-        }
-    }
-
-    /**
-     * Stop the service out of band.
-     *
-     * The normal stop is the RPC `stop`, after which the service stops itself. This path exists for
-     * the instance the RPC cannot reach: a bind that failed, a socket file that went missing.
-     * ACTION_STOP is delivered to onStartCommand of whichever instance is alive and runs the same
-     * shutdown sequence there (nativeStop, cleanup, stopSelf). `startService` is refused while the
-     * app is in the background (API 26+), so `stopService` — the plain API, and what `startVpn`
-     * uses to clear a previous instance — is the fallback. Rejects only if both are refused.
-     */
-    @Command
-    fun stopVpn(invoke: Invoke) {
-        val stopIntent =
-            Intent(activity, FloppaVpnService::class.java).apply {
-                action = FloppaVpnService.ACTION_STOP
-            }
-        try {
-            activity.startService(stopIntent)
-            Log.i("VpnPlugin", "stopVpn: sent ACTION_STOP intent")
-            invoke.resolve()
-            return
-        } catch (e: Exception) {
-            Log.w("VpnPlugin", "stopVpn: ACTION_STOP refused, falling back to stopService", e)
-        }
-        try {
-            val wasRunning = activity.stopService(Intent(activity, FloppaVpnService::class.java))
-            Log.i("VpnPlugin", "stopVpn: stopService called (was running: $wasRunning)")
-            invoke.resolve()
-        } catch (e: Exception) {
-            Log.e("VpnPlugin", "stopVpn: stopService failed", e)
-            invoke.reject("Failed to stop VPN service: ${e.message}")
+            Log.e("VpnPlugin", "could not start the VPN service", e)
+            invoke.reject("Failed to start the VPN service: ${e.message}")
         }
     }
 

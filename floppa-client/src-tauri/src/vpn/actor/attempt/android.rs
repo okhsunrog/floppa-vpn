@@ -12,7 +12,7 @@
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
 use crate::vpn::actor::world::ServiceReadiness;
-use crate::vpn::autostart::{self, AutostartBundle, TunSpec};
+use crate::vpn::autostart::{self, TunSpec};
 use crate::vpn::host::HostError;
 use crate::vpn::rollback::{RollbackStack, Step};
 use tracing::{debug, error, info, warn};
@@ -74,17 +74,7 @@ pub(super) async fn ladder(
     // The resolved address is handed over with the config, so the service never needs DNS at all.
     bail_if_cancelled!(ctx);
     let host = ctx.config.endpoint_str();
-    let endpoint = tokio::net::lookup_host(&host)
-        .await
-        .map_err(|e| AttemptError::ResolveFailed {
-            host: host.clone(),
-            detail: e.to_string(),
-        })?
-        .next()
-        .ok_or_else(|| AttemptError::ResolveFailed {
-            host: host.clone(),
-            detail: "resolved to no addresses".into(),
-        })?;
+    let endpoint = resolve(&host).await?;
     info!(%host, %endpoint, "resolved the endpoint before establishing the tunnel");
 
     // 3. Service --------------------------------------------------------------------------
@@ -95,11 +85,6 @@ pub(super) async fn ladder(
     stack.push(Step::AndroidService {
         generation: ctx.generation,
     });
-
-    // From here on, only this generation's answers count. Anything else is the instance being
-    // replaced still holding the cached connection, and the backend drops it so the next look
-    // reconnects — otherwise the poll below spends the whole budget reading a dying service.
-    ctx.backend.expect_generation(ctx.generation);
 
     ctx.host
         .start(spec, ctx.generation)
@@ -129,11 +114,6 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Verifying).await;
     verify(ctx).await?;
-
-    // 6. Remember it for the service's own starts ------------------------------------------
-    // Only a tunnel that verified is worth rebuilding without anyone watching. Best-effort: a
-    // bundle that could not be written costs the next always-on start, never this connect.
-    write_autostart_bundle(ctx, endpoint).await;
 
     Ok(UpStatus {
         epoch: ctx.epoch,
@@ -203,27 +183,37 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
     }
 }
 
-/// Write the last-good bundle the `:vpn` process rebuilds from when the system starts it without
-/// the UI (always-on, boot, lockdown). Runs on a blocking thread: the file is small, but this task
-/// shares its runtime with the actor's observer.
-async fn write_autostart_bundle(ctx: &AttemptCtx, endpoint: std::net::SocketAddr) {
-    let dir = match crate::vpn::config::config_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            warn!("not writing the autostart bundle: {e}");
-            return;
+/// Resolve the endpoint, falling back to where it resolved last time.
+///
+/// The fallback exists for exactly one situation, and it is the situation where a VPN matters
+/// most: a start under lockdown. "Block connections without VPN" means nothing reaches the network
+/// until the tunnel is up, so the resolver has nothing to answer with — and without an address the
+/// tunnel cannot come up. A literal from the last successful connect breaks that circle. Outside
+/// lockdown the cache is simply never reached, because DNS answers.
+async fn resolve(host: &str) -> Result<std::net::SocketAddr, AttemptError> {
+    let failed = |detail: String| {
+        if let Some(known) = autostart::known_endpoint(host) {
+            warn!(%host, %known, "could not resolve the endpoint ({detail}); using the last known address");
+            Ok(known)
+        } else {
+            Err(AttemptError::ResolveFailed {
+                host: host.to_string(),
+                detail,
+            })
         }
     };
-    let bundle = AutostartBundle::new(
-        ctx.config.clone(),
-        endpoint,
-        ctx.params.clone(),
-        chrono::Utc::now().timestamp(),
-    );
-    let written = tokio::task::spawn_blocking(move || autostart::save(&dir, &bundle)).await;
-    match written {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => warn!("failed to write the autostart bundle: {e}"),
-        Err(e) => warn!("the autostart bundle writer did not finish: {e}"),
+
+    match tokio::net::lookup_host(host).await {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => {
+                // Recorded on every success, so the cache is as fresh as the last connect. Cheap
+                // and best-effort: it costs a small write only when the address actually changed.
+                let (host, addr) = (host.to_string(), addr);
+                tokio::task::spawn_blocking(move || autostart::remember_endpoint(&host, addr));
+                Ok(addr)
+            }
+            None => failed("resolved to no addresses".into()),
+        },
+        Err(e) => failed(e.to_string()),
     }
 }

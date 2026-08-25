@@ -835,6 +835,22 @@ impl TunnelActor {
             // last *failed* protocol recorded as the preferred one.
             Effect::RememberWinner(protocol) => {
                 self.edit_configs(|c| c.set_preferred(Some(protocol)));
+                // What a start with nobody watching rebuilds from: always-on, boot, a lockdown
+                // restore. Only the *request* is recorded — the configs are already in the store,
+                // in this process — and the winner leads the order so the protocol that actually
+                // worked is tried first. Written on success only: an order that has never carried
+                // a tunnel is not worth bringing a device up for.
+                #[cfg(target_os = "android")]
+                if let Intent::Up(up) = &self.intent
+                    && let Some(params) = up.params.clone()
+                {
+                    let mut order = vec![protocol];
+                    order.extend(up.order.iter().copied().filter(|p| *p != protocol));
+                    let at = chrono::Utc::now().timestamp();
+                    tokio::task::spawn_blocking(move || {
+                        crate::vpn::autostart::remember(order, params, at)
+                    });
+                }
             }
 
             Effect::DemoteIntent => {
@@ -972,8 +988,8 @@ impl TunnelActor {
         if !self.pending_clear.is_empty() {
             let persisted = self.edit_configs(|c| c.clear());
             info!("configs cleared once the tunnel was down; answering once the store is wiped");
-            // The last-good bundle holds the same keys, and an always-on start that found it
-            // after a Forget would bring back a tunnel the user just asked to be rid of.
+            // The last-good intent goes too: an always-on start that found it after a Forget
+            // would ask for a tunnel the user has just asked to be rid of.
             #[cfg(target_os = "android")]
             if let Ok(dir) = crate::vpn::config::config_dir() {
                 tokio::task::spawn_blocking(move || crate::vpn::autostart::remove(&dir));

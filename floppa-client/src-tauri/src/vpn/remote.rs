@@ -269,8 +269,9 @@ impl TunnelControl for RemoteActor {
 /// Separate from [`TunnelControl`] because they answer a different question — "what is that
 /// process writing to its log" — and because the capture session that needs them exists on
 /// platforms where there is no second process at all.
-impl RemoteActor {
-    pub async fn set_log_config(&self, config: &crate::logging::LogConfig) {
+#[async_trait::async_trait]
+impl crate::logging::capture::LogRelay for RemoteActor {
+    async fn set_log_config(&self, config: &crate::logging::LogConfig) {
         let config = config.clone();
         let _ = self
             .call("set_log_config", |client| async move {
@@ -281,7 +282,7 @@ impl RemoteActor {
             .await;
     }
 
-    pub async fn start_log_capture(&self, capture_id: &str) {
+    async fn start_log_capture(&self, capture_id: &str) {
         let capture_id = capture_id.to_string();
         let _ = self
             .call("start_log_capture", |client| async move {
@@ -292,7 +293,7 @@ impl RemoteActor {
             .await;
     }
 
-    pub async fn stop_log_capture(&self) {
+    async fn stop_log_capture(&self) {
         let _ = self
             .call("stop_log_capture", |client| async move {
                 client

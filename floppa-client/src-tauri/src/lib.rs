@@ -186,62 +186,53 @@ pub fn run() {
                 info!("Deep-link event received in Rust runtime: {urls:?}");
             });
 
-            // On Android, create the tarpc IPC backend now that we have the real data dir
+            // `setup` runs outside a Tokio runtime, so everything started here has to go through
+            // Tauri's handle. It is passed in rather than assumed, because the same code also runs
+            // in the `:vpn` process, which owns its runtime.
+            let spawn: vpn::actor::Spawn = Arc::new(|task| {
+                tauri::async_runtime::spawn(task);
+            });
+
+            // Where the tunnel is decided.
+            //
+            // On desktop: here. On Android: in `:vpn`, and this process holds a socket to it —
+            // because Android freezes this one in the background, and an actor that cannot run
+            // cannot reconnect a tunnel that died while the phone was in a pocket.
             #[cfg(target_os = "android")]
-            {
-                let data_dir = app
+            let handle = {
+                let dir = app
                     .path()
                     .app_data_dir()
                     .expect("Failed to get app data dir");
-                let socket_path = data_dir
-                    .join(vpn::rpc::SOCKET_NAME)
-                    .to_string_lossy()
-                    .to_string();
-                info!("Android tarpc socket path: {socket_path}");
-                let backend = vpn::create_backend(socket_path, app.handle().clone());
-                app.manage(backend);
-            }
-
-            // Diagnostic captures have one owner, so start, stop and export run under one lock.
-            // Created here rather than with the builder because on Android the backend it
-            // relays to exists only from this point.
-            {
-                let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
+                let process = Arc::new(vpn::process::ServiceProcess::new(app.handle().clone()));
+                let remote = vpn::remote::RemoteActor::new(&dir, process, &spawn);
+                // The capture session relays the log calls to the process that writes the tunnel's
+                // logs, which is the same one holding the actor.
                 app.manage(logging::capture::CaptureSession::new(
                     log_dir.clone(),
-                    backend,
+                    remote.clone(),
                 ));
-            }
+                vpn::actor::handle::TunnelHandle::remote(remote)
+            };
 
-            // Spawn the tunnel actor. From here on it is the only thing that touches the tunnel:
-            // every command is a message to it, and the published state is the only thing the UI
-            // reads. Crash recovery and adoption of a surviving tunnel happen in its bootstrap.
-            {
+            #[cfg(not(target_os = "android"))]
+            let handle = {
                 let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
                 let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
                 let journal = vpn::config::config_dir().ok().map(|dir| {
                     vpn::rollback::Journal::new(vpn::rollback::Journal::default_path(&dir))
                 });
+                app.manage(logging::capture::CaptureSession::new(
+                    log_dir.clone(),
+                    Arc::new(logging::capture::BackendRelay(backend.clone())),
+                ));
+                vpn::actor::TunnelActor::spawn(backend, platform, journal, spawn.clone())
+            };
 
-                // `setup` runs outside a Tokio runtime, so everything the actor starts has to go
-                // through Tauri's handle. The actor is told how to spawn rather than assuming it,
-                // because the same actor also runs in the `:vpn` process, which owns its runtime.
-                let spawn: vpn::actor::Spawn = Arc::new(|task| {
-                    tauri::async_runtime::spawn(task);
-                });
-
-                let handle = vpn::actor::TunnelActor::spawn(
-                    backend,
-                    platform,
-                    journal,
-                    spawn,
-                    #[cfg(target_os = "android")]
-                    Arc::new(vpn::host::plugin::PluginHost::new(app.handle().clone())),
-                );
-
-                // The bridge from the actor's state to the UI. It is here rather than inside the
-                // actor because emitting a Tauri event is something only this process can do —
-                // the actor merely publishes, and whoever hosts it decides who hears.
+            // The bridge from the actor's state to the UI. It is here rather than inside the actor
+            // because emitting a Tauri event is something only this process can do — the actor
+            // publishes, and whoever hosts it decides who hears.
+            {
                 let mut states = handle.states();
                 tauri::async_runtime::spawn({
                     let app = app.handle().clone();
@@ -257,9 +248,9 @@ pub fn run() {
                         }
                     }
                 });
-
-                app.manage(handle);
             }
+
+            app.manage(handle);
 
             Ok(())
         })

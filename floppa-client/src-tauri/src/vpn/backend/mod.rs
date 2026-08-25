@@ -1,8 +1,11 @@
-//! VPN backend abstraction layer.
+//! What the actor does tunnels through.
 //!
-//! Provides a unified interface for tunnel management across platforms:
-//! - **Desktop** (Linux/Windows/macOS): in-process tunnel via gotatun
-//! - **Android**: IPC to separate `:vpn` process via tarpc over Unix socket
+//! Both implementations are in-process, because the actor is always in the same process as the
+//! tunnel now: `in_process` on desktop, and `android_service` inside `:vpn`, where the only thing
+//! that still crosses a boundary is the descriptor — Kotlin makes it, Rust runs on it. There used
+//! to be a third, an IPC backend for a UI process that owned the decisions but not the tunnel; the
+//! move made it unnecessary, and with it the whole notion of an observation that could fail to
+//! arrive.
 //!
 //! iOS is not implemented. It had a stub here that returned `Err` from every method, was never
 //! constructed, and compiled everywhere — so every change to the trait below had to be mirrored
@@ -12,7 +15,10 @@
 mod in_process;
 
 #[cfg(target_os = "android")]
-mod android_ipc;
+mod android_service;
+
+#[cfg(target_os = "android")]
+pub use android_service::AndroidServiceBackend;
 
 use super::platform::TunParams;
 use super::state::ProtocolConfig;
@@ -21,6 +27,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::net::SocketAddr;
+#[cfg(not(target_os = "android"))]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -103,30 +110,21 @@ pub trait VpnBackend: Send + Sync {
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), BackendError>;
 
-    /// "The next answer should come from this service generation."
-    ///
-    /// Set once, right after a service start is asked for. Until that generation answers, a reply
-    /// from any other one means the cached connection still points at the instance being replaced,
-    /// and it is dropped so the next look reconnects. Without it a cached connection to a dying
-    /// instance kept answering `OtherGeneration` for the whole attempt budget, and the protocol
-    /// was reported as failed to start.
-    ///
-    /// Meaningless for an in-process backend, which has no service and no connection.
-    fn expect_generation(&self, _generation: u64) {}
-
     /// Look at the world.
     ///
     /// The single way to learn anything about the tunnel, and the reason there is no longer an
     /// `Option`-returning variant beside it: this one never collapses "there is no tunnel" and "I
     /// could not reach the thing that would know" into the same value. The first is authoritative,
     /// the second is not, and treating them alike is what let a transient IPC gap read as a
-    /// dropped tunnel.
+    /// dropped tunnel. Every backend is now in the tunnel's own process and so always answers, but
+    /// the distinction stays in the type: it is what stopped that bug from being writable.
     async fn observe(&self) -> Observation;
 
     /// How long this backend may be unreachable before its tunnel is presumed lost.
     ///
-    /// Zero for an in-process backend, which cannot fail to answer. Non-zero only where the tunnel
-    /// lives in another process that can be restarted underneath us.
+    /// Zero everywhere now: the actor and the tunnel are in one process, so an answer cannot fail
+    /// to arrive. It is still a knob rather than a constant because the darkness clock it feeds is
+    /// what a second process would need again.
     fn liveness_grace(&self) -> Duration {
         Duration::ZERO
     }
@@ -154,15 +152,8 @@ pub trait VpnBackend: Send + Sync {
     async fn stop_log_capture(&self) {}
 }
 
-/// Create the appropriate VPN backend for the current platform.
-///
-/// On Android, pass the socket path for tarpc IPC and the app handle for the plugin's intent path.
-#[cfg(target_os = "android")]
-pub fn create_backend(socket_path: String, app: tauri::AppHandle) -> Arc<dyn VpnBackend> {
-    Arc::new(android_ipc::AndroidIpcBackend::new(socket_path, app))
-}
-
-/// Create the appropriate VPN backend for the current platform.
+/// The desktop backend. Android builds its own inside `:vpn`, where the service registry it needs
+/// lives — see [`crate::vpn::jni_entry`].
 #[cfg(not(target_os = "android"))]
 pub fn create_backend() -> Arc<dyn VpnBackend> {
     Arc::new(in_process::InProcessBackend::new())

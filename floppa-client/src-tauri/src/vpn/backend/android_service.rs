@@ -142,11 +142,12 @@ impl VpnBackend for AndroidServiceBackend {
     ) -> Result<(), BackendError> {
         // A request naming a generation this process has moved past is not ours to obey — the
         // descriptor it means belongs to an instance that is already gone.
-        let service = self.services.serving(generation).ok_or_else(|| {
-            BackendError::ServiceRefused {
-                detail: format!("generation {generation} is no longer being served"),
-            }
-        })?;
+        let service =
+            self.services
+                .serving(generation)
+                .ok_or_else(|| BackendError::ServiceRefused {
+                    detail: format!("generation {generation} is no longer being served"),
+                })?;
         bring_up(
             &service,
             &self.tunnel_manager,

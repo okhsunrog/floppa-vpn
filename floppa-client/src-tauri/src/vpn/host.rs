@@ -1,19 +1,18 @@
 //! What the tunnel needs from the thing hosting it — everything the actor cannot do itself.
 //!
-//! On Android that is the `VpnService`: only it can ask for consent, and only it can turn a
-//! [`TunSpec`] into a file descriptor with `Builder.establish()`. Until now the actor reached
-//! those through `tauri::AppHandle` and the plugin, which pinned it to the UI process — the one
-//! process Android freezes in the background, and the one the tunnel is *not* in.
+//! On Android that is the `VpnService`: only it can say whether the app holds consent, and only it
+//! can turn a [`TunSpec`] into a file descriptor with `Builder.establish()`. The actor used to
+//! reach those through `tauri::AppHandle` and the plugin, which pinned it to the UI process — the
+//! one process Android freezes in the background, and the one the tunnel is *not* in.
 //!
-//! Naming the dependency instead of the process is what lets the same actor run in either. The UI
-//! process implements this over the plugin's intent path ([`plugin`]); the `:vpn` process
-//! implements it with JNI calls to the service it already lives inside.
+//! Naming the dependency instead of the process is what let the actor move. There is one
+//! implementation, [`service`], which calls the service object in its own process; a desktop split
+//! would add a second one for a privileged helper, and change nothing above this line.
 //!
-//! Desktop has no such host: its ladder configures the machine itself, step by step, through
-//! [`Platform`](super::platform::Platform).
+//! Desktop as it stands has no host: its ladder configures the machine itself, step by step,
+//! through [`Platform`](super::platform::Platform).
 
-#[cfg(target_os = "android")]
-pub mod plugin;
+pub mod service;
 
 use super::autostart::TunSpec;
 use async_trait::async_trait;
