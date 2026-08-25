@@ -152,6 +152,7 @@ mod tests {
             assigned_ip: "10.0.0.2/32".into(),
             connected_at: 0,
             dark_since: None,
+            probing_since: None,
             resolved: true,
         }
     }

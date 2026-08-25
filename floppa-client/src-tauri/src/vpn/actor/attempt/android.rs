@@ -146,6 +146,7 @@ pub(super) async fn ladder(
         assigned_ip: ctx.config.address(),
         connected_at: chrono::Utc::now().timestamp(),
         dark_since: None,
+        probing_since: None,
         resolved: false,
     })
 }

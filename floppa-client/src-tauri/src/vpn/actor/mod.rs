@@ -797,6 +797,21 @@ impl TunnelActor {
                 }));
             }
 
+            // Fire-and-forget by design. The probe's own answer is not the verdict — a forced
+            // rehandshake can fail on a socket that is merely wedged, and a VLESS ping can succeed
+            // against a server that has forgotten the account — so the only thing that ends the
+            // suspicion is a later observation reporting the silence broken. Spawned rather than
+            // awaited because the loop must keep handling intents while a round trip is out.
+            Effect::Probe => {
+                let backend = self.backend.clone();
+                tokio::spawn(async move {
+                    match backend.probe().await {
+                        Ok(()) => debug!("probed the far side; the next look decides"),
+                        Err(e) => debug!(%e, "the probe itself failed; the next look decides"),
+                    }
+                });
+            }
+
             Effect::TakeStack(stack) => self.held_stack = stack,
             Effect::ResetSpeed => {
                 self.speed.reset();
@@ -1013,7 +1028,15 @@ impl TunnelActor {
         let status_deadline = match &self.status {
             Status::Connecting { deadline, .. } => Some(*deadline),
             Status::Retrying { resume_at, .. } => Some(*resume_at),
-            Status::Up(u) => u.dark_since.map(|since| since + self.policy.dark_grace),
+            // Both clocks a running tunnel can be on: the owner not answering us, and the far
+            // side not answering it.
+            Status::Up(u) => [
+                u.dark_since.map(|since| since + self.policy.dark_grace),
+                u.probing_since.map(|since| since + self.policy.probe_grace),
+            ]
+            .into_iter()
+            .flatten()
+            .min(),
             Status::Idle | Status::Unwinding { .. } => None,
         };
         let clear_deadline = self.pending_clear.iter().map(|(_, at)| *at).min();

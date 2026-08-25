@@ -70,6 +70,12 @@ pub enum Effect {
     /// the deliberate exception — it carries no params, so it rests in Idle without being
     /// demoted, and adopts a tunnel that appears later (row 5a).
     DemoteIntent,
+    /// Ask the far side to prove it is there — a forced rehandshake, or a ping for VLESS.
+    ///
+    /// Fire-and-forget: the probe's own return value is not the verdict, the next observation is.
+    /// A probe that fails outright and one that succeeds against a peer that no longer exists must
+    /// end the same way, and only the tunnel's silence says which happened.
+    Probe,
     /// Resolve waiters for an epoch. Always explicit: the actor executes effects after it has
     /// already written the next status, so "the current epoch" would be read off the wrong state.
     Resolve {
@@ -215,6 +221,7 @@ fn adopt(
         assigned_ip: rt.address.clone(),
         connected_at,
         dark_since: None,
+        probing_since: None,
         resolved: true,
     }))
     .with(Effect::ResetSpeed)
@@ -226,6 +233,76 @@ fn adopt(
             adopted: true,
         },
     })
+}
+
+/// Rows 17a–17c: what a running tunnel's silence means.
+///
+/// The caller applies the verdict on top of the ordinary alive path, which is why this reports
+/// what it found rather than rewriting the status itself.
+///
+/// The order is deliberate and is the whole reason this is not a single threshold:
+///
+/// - **17a** silence past the bound, nothing asked yet: ask. A probe is one round trip and it is
+///   the only thing that distinguishes a dead peer from a link that has simply had no reason to
+///   rekey — a phone that spent the last hour asleep looks identical to one whose peer was
+///   deleted, and tearing the first one down on wake is a bug, not a recovery.
+/// - **17b** asked, still within the grace: wait. The answer arrives as a *fresh observation*,
+///   never as the probe's return value: a probe can fail on a wedged socket while the tunnel is
+///   fine, and can succeed against a peer that has been deleted.
+/// - **17c** asked, grace spent, still silent: the peer is gone. This is a reconnect, not a stop —
+///   the same cycle a tunnel that died outright gets, so the ladder can fall to another protocol
+///   and the UI is told which one carried it.
+///
+/// Silence that ends at any point clears the clock, and the caller's alive path takes over.
+fn judge_silence(
+    u: &UpStatus,
+    up: &UpIntent,
+    rt: &RunningTunnel,
+    now: Instant,
+    policy: &Policy,
+) -> Silence {
+    // An owner that cannot say is not evidence of silence, and neither is silence inside the
+    // bound. Both mean the peer is answering as far as anyone here can tell.
+    let Some(secs) = rt.silent_secs else {
+        return Silence::Answering;
+    };
+    if std::time::Duration::from_secs(secs.max(0) as u64) <= policy.silent_after {
+        return Silence::Answering;
+    }
+    match u.probing_since {
+        // 17a
+        None => Silence::Decided(
+            Decision::to(Status::Up(UpStatus {
+                probing_since: Some(now),
+                dark_since: None,
+                ..u.clone()
+            }))
+            .with(Effect::Probe),
+        ),
+        // 17b
+        Some(since) if now.saturating_duration_since(since) <= policy.probe_grace => {
+            Silence::Awaiting
+        }
+        // 17c
+        Some(_) => Silence::Decided(
+            Decision::to(unwinding(
+                Cycle::reconnect(up, policy),
+                UnwindReason::PeerSilent,
+            ))
+            .with(Effect::Unwind { extra: undo_for(u) }),
+        ),
+    }
+}
+
+/// What [`judge_silence`] found.
+enum Silence {
+    /// The far side is answering, or has not been quiet long enough to doubt. Any probe clock is
+    /// stale and gets cleared.
+    Answering,
+    /// A probe is out and its grace has not run out. The clock stands.
+    Awaiting,
+    /// Silence has changed the status.
+    Decided(Decision),
 }
 
 /// The main table.
@@ -368,10 +445,21 @@ pub fn reconcile(
                 UnwindReason::IntentChanged,
             ))
             .with(Effect::Unwind { extra: undo_for(u) }),
-            // 17: confirmed alive. This is also what resets the darkness clock.
-            (Rel::Same(_), World::Running(rt)) if rt.protocol == u.protocol => {
+            // 17: the owner answered about our own tunnel. It is running — but "running" is a
+            // statement about the device, not about the peer at the other end, and those come
+            // apart exactly when a peer is deleted on the server: the device keeps running, this
+            // row keeps saying Up, and no traffic passes. So the peer's silence is judged here
+            // too, in the order silence → probe → verdict (rows 17a–17c below).
+            (Rel::Same(up), World::Running(rt)) if rt.protocol == u.protocol => {
+                let silence = judge_silence(u, up, rt, now, policy);
+                if let Silence::Decided(decision) = silence {
+                    return decision;
+                }
                 let mut next = u.clone();
                 next.dark_since = None;
+                if matches!(silence, Silence::Answering) {
+                    next.probing_since = None;
+                }
                 // Only for a tunnel somebody else described to us. For one we built, the ladder
                 // already recorded what it asked for, and overwriting it here replaced the
                 // configured `host:port` with the address it resolved to about a second after
@@ -771,7 +859,10 @@ pub fn on_unwind_done(
                 // U7, U8: a tunnel that was up and died gets the reconnect budget, not the cold
                 // one — which is what keeps a user-initiated connect failing fast while a dropped
                 // tunnel keeps trying.
-                UnwindReason::TunnelDied | UnwindReason::PeerLost | UnwindReason::Usurped => {
+                UnwindReason::TunnelDied
+                | UnwindReason::PeerLost
+                | UnwindReason::PeerSilent
+                | UnwindReason::Usurped => {
                     let mut cycle = cycle;
                     if cycle.has_budget() {
                         // The pass is *not* burnt here: this cycle has not tried anything yet,

@@ -81,6 +81,11 @@ impl VpnBackend for InProcessBackend {
                 // keeps the params itself; a tunnel found here after a restart cannot exist.
                 params: None,
                 autonomous: false,
+                silent_secs: self
+                    .tunnel_manager
+                    .silence()
+                    .await
+                    .map(|d| d.as_secs() as i64),
             }),
             None => None,
         };
@@ -97,11 +102,6 @@ impl VpnBackend for InProcessBackend {
                 start_error: None,
                 raw_stats: stats,
                 last_packet_secs: self.tunnel_manager.get_last_packet_received().await,
-                silent_secs: self
-                    .tunnel_manager
-                    .silence()
-                    .await
-                    .map(|d| d.as_secs() as i64),
             }),
         }
     }

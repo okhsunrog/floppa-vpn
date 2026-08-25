@@ -30,6 +30,18 @@ pub struct Policy {
     /// call simply never returns, and without this the attempt sat there until the actor
     /// cancelled it.
     pub consent_budget: Duration,
+    /// How long the far side may be silent before it is asked to prove it is there.
+    ///
+    /// Past one rekey cycle: `PersistentKeepalive` makes a healthy tunnel hand-shake about every
+    /// two minutes even when nobody is using it, and a session is rejected outright at three. So
+    /// silence beyond this is either a dead peer or a link that has not been given the chance to
+    /// rekey — which is what the probe distinguishes.
+    pub silent_after: Duration,
+    /// How long a probed tunnel has to break its silence before it is declared lost.
+    ///
+    /// A forced rehandshake is one round trip; this is generous enough for a bad mobile link and
+    /// short enough that a reconnect is not left waiting on a peer that will never answer.
+    pub probe_grace: Duration,
     pub verify_wg: Duration,
     pub verify_vless: Duration,
     /// Passes over the order for a cold, user-initiated connect. One means fail fast.
@@ -55,6 +67,8 @@ impl Default for Policy {
             dark_grace: Duration::ZERO,
             attempt_budget: Duration::from_secs(25),
             consent_budget: Duration::from_secs(20),
+            silent_after: Duration::from_secs(180),
+            probe_grace: Duration::from_secs(20),
             verify_wg: Duration::from_secs(5),
             verify_vless: Duration::from_secs(10),
             cold_passes: 1,

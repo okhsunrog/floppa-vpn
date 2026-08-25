@@ -217,6 +217,7 @@ pub(super) async fn ladder(
         assigned_ip: ctx.config.address(),
         connected_at: chrono::Utc::now().timestamp(),
         dark_since: None,
+        probing_since: None,
         // Set by the actor when it accepts the result; an attempt cannot resolve its own waiter.
         resolved: false,
     })

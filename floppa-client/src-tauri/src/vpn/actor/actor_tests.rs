@@ -57,12 +57,35 @@ struct FakeBackend {
 }
 
 impl FakeBackend {
+    /// What an observation would report: the tunnel as started, carrying however long the far
+    /// side has been quiet at this instant.
     fn running(&self) -> Option<RunningTunnel> {
-        self.running.lock().unwrap().clone()
+        let silent_secs = *self.silent_secs.lock().unwrap();
+        self.running
+            .lock()
+            .unwrap()
+            .clone()
+            .map(|rt| RunningTunnel { silent_secs, ..rt })
     }
 
     fn stops(&self) -> usize {
         self.stops.load(Ordering::SeqCst)
+    }
+
+    fn probes(&self) -> usize {
+        self.probes.load(Ordering::SeqCst)
+    }
+
+    /// The far side stops answering: what a peer deleted on the server looks like from inside the
+    /// process that owns the tunnel.
+    fn goes_silent(&self, secs: i64) {
+        *self.silent_secs.lock().unwrap() = Some(secs);
+    }
+
+    /// Whether a probe finds anyone there. A probe that is answered also ends the silence, the way
+    /// a real rehandshake does.
+    fn answers_probes(&self, answers: bool) {
+        self.probe_answers.store(answers, Ordering::SeqCst);
     }
 }
 
@@ -89,6 +112,7 @@ impl VpnBackend for FakeBackend {
             connected_secs: Some(0),
             params: None,
             autonomous: false,
+            silent_secs: Some(0),
         });
         Ok(())
     }
@@ -111,7 +135,6 @@ impl VpnBackend for FakeBackend {
                 raw_stats: Some(RawStats::default()),
                 // A handshake straight away, so verification passes without waiting.
                 last_packet_secs: Some(0),
-                silent_secs: *self.silent_secs.lock().unwrap(),
             }),
         }
     }
@@ -449,6 +472,7 @@ fn established(epoch: IntentEpoch) -> AttemptResult {
             assigned_ip: "10.0.0.2/32".into(),
             connected_at: 0,
             dark_since: None,
+            probing_since: None,
             resolved: false,
         },
         stack: RollbackStack::default(),
@@ -475,6 +499,47 @@ async fn a_connect_goes_up_through_the_ladder_and_a_down_tears_it_down() {
         "the teardown stopped the tunnel"
     );
     assert_eq!(h.backend.stops(), 1, "one teardown, one stop");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_goes_quiet_is_probed_and_kept_when_it_answers() {
+    // Silence is a question, never a verdict: a phone that has been asleep comes back looking
+    // exactly like a tunnel whose peer is gone, and tearing that one down on wake is a bug.
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+    h.backend.answers_probes(true);
+
+    h.backend.goes_silent(600);
+    let backend = h.backend.clone();
+    h.wait_for("the probe to be sent", |_| backend.probes() > 0)
+        .await;
+
+    // It answered, so nothing else happens: still connected, still one probe.
+    tokio::time::sleep(policy().probe_grace * 2).await;
+    assert_eq!(h.states.borrow().phase, Phase::Connected);
+    assert_eq!(h.backend.probes(), 1, "one question per silence");
+    assert!(h.backend.running().is_some());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_peer_that_stays_quiet_after_the_probe_is_reconnected() {
+    // The device incident this comes from: the owner's peer was deleted on the server, the
+    // tunnel device kept running, and the app said "connected" with no traffic for twenty
+    // minutes. Nothing was watching the far side at all.
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+    h.backend.answers_probes(false);
+    let starts_before = h.backend.starts.load(Ordering::SeqCst);
+
+    h.backend.goes_silent(600);
+
+    // Reconnect, not stop: the ladder runs again and the tunnel comes back.
+    let backend = h.backend.clone();
+    h.wait_for("the tunnel to be rebuilt", |_| {
+        backend.starts.load(Ordering::SeqCst) > starts_before
+    })
+    .await;
+    assert!(h.backend.probes() >= 1, "it was asked before being judged");
 }
 
 #[tokio::test(start_paused = true)]
@@ -618,6 +683,7 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
         connected_secs: Some(1),
         params: None,
         autonomous: false,
+        silent_secs: Some(0),
     });
     // Let the observer see it.
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -774,6 +840,7 @@ async fn disconnecting_an_adopted_tunnel_stops_it_before_down_is_resolved() {
             connected_secs: Some(42),
             params: None,
             autonomous: false,
+            silent_secs: Some(0),
         },
     );
 
@@ -844,6 +911,7 @@ async fn rebuilding_an_adopted_tunnel_stops_it_before_building_the_new_one() {
             connected_secs: Some(9),
             params: None,
             autonomous: false,
+            silent_secs: Some(0),
         },
     );
     let adopted = h.wait_for_phase(Phase::Connected).await;

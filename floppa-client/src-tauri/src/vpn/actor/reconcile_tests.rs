@@ -60,6 +60,8 @@ fn running(protocol: Protocol) -> World {
         connected_secs: Some(30),
         params: None,
         autonomous: false,
+        // Answering. Silence is a separate axis, exercised by its own tests.
+        silent_secs: Some(0),
     })
 }
 
@@ -85,6 +87,7 @@ fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
         connected_secs: Some(30),
         params: Some(params),
         autonomous: true,
+        silent_secs: Some(0),
     })
 }
 
@@ -98,6 +101,7 @@ fn up_status(epoch: u64, protocol: Protocol, params: Option<TunnelParams>) -> Up
         assigned_ip: "10.0.0.2/32".into(),
         connected_at: 1_000,
         dark_since: None,
+        probing_since: None,
         resolved: true,
     }
 }
@@ -885,6 +889,135 @@ fn a_dying_tunnel_gets_the_reconnect_budget_not_the_cold_one() {
         }
         other => panic!("expected a reconnect cycle, got {other:?}"),
     }
+}
+
+// ------------------------------------------------------------------------- a silent peer (17a-c)
+
+/// A running tunnel whose far side has been quiet for `secs`.
+fn quiet(protocol: Protocol, secs: i64) -> World {
+    match running(protocol) {
+        World::Running(rt) => World::Running(RunningTunnel {
+            silent_secs: Some(secs),
+            ..rt
+        }),
+        other => other,
+    }
+}
+
+fn has_probe(d: &Decision) -> bool {
+    d.effects.iter().any(|e| matches!(e, Effect::Probe))
+}
+
+#[test]
+fn a_tunnel_whose_peer_stops_answering_is_probed_before_it_is_judged() {
+    // The defect this exists for: a peer deleted on the server leaves the device running and the
+    // observation saying Running, so the status stayed Up — the app said "connected" for as long
+    // as anyone left it, with no traffic passing.
+    //
+    // But silence is not proof. A phone that spent an hour asleep looks exactly like this, and so
+    // does a config with no keepalive that nobody has used. So the first thing silence buys is a
+    // question, not a verdict.
+    let now = t0();
+    let d = go(
+        &Status::Up(up_status(1, AWG, params())),
+        &up_intent(1, &[AWG], params()),
+        &quiet(AWG, policy().silent_after.as_secs() as i64 + 1),
+        now,
+    );
+    match &d.next {
+        Status::Up(u) => assert_eq!(u.probing_since, Some(now), "the clock starts here"),
+        other => panic!("expected to stay Up while probing, got {other:?}"),
+    }
+    assert!(has_probe(&d));
+    assert!(!has_unwind(&d), "nothing is torn down on suspicion alone");
+}
+
+#[test]
+fn a_probe_that_is_still_out_changes_nothing() {
+    let now = t0();
+    let mut status = up_status(1, AWG, params());
+    status.probing_since = Some(now);
+    let d = go(
+        &Status::Up(status),
+        &up_intent(1, &[AWG], params()),
+        &quiet(AWG, 600),
+        now + policy().probe_grace,
+    );
+    match &d.next {
+        Status::Up(u) => assert_eq!(u.probing_since, Some(now), "the clock is not restarted"),
+        other => panic!("expected to stay Up, got {other:?}"),
+    }
+    // One question per silence: re-asking every second would be a rehandshake per second.
+    assert!(!has_probe(&d));
+}
+
+#[test]
+fn a_peer_that_stays_silent_after_being_asked_is_lost_and_reconnected() {
+    let now = t0();
+    let mut status = up_status(1, AWG, params());
+    status.probing_since = Some(now);
+    let d = go(
+        &Status::Up(status),
+        &up_intent(1, &[AWG], params()),
+        &quiet(AWG, 600),
+        now + policy().probe_grace + Duration::from_secs(1),
+    );
+    match &d.next {
+        // A reconnect, not a stop: the ladder may still find another protocol that works, which
+        // is the whole point of ending here rather than in Idle.
+        Status::Unwinding {
+            reason: UnwindReason::PeerSilent,
+            cycle: Some(c),
+            ..
+        } => assert_eq!(c.passes_allowed, policy().reconnect_passes),
+        other => panic!("expected a reconnect after the probe went unanswered, got {other:?}"),
+    }
+    assert!(has_unwind(&d));
+}
+
+#[test]
+fn a_peer_that_answers_the_probe_clears_the_suspicion() {
+    let now = t0();
+    let mut status = up_status(1, AWG, params());
+    status.probing_since = Some(now);
+    let d = go(
+        &Status::Up(status),
+        &up_intent(1, &[AWG], params()),
+        // The rehandshake landed: the owner now reports a fresh one.
+        &quiet(AWG, 0),
+        now + policy().probe_grace + Duration::from_secs(1),
+    );
+    match &d.next {
+        Status::Up(u) => assert_eq!(
+            u.probing_since, None,
+            "the clock is cleared, not left armed"
+        ),
+        other => panic!("expected to stay Up, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_owner_that_cannot_say_how_quiet_it_is_never_costs_the_tunnel() {
+    // `None` is "I have no such signal", which every desktop tunnel of an older build and every
+    // protocol without a handshake reports. Reading it as silence would tear down healthy tunnels
+    // on a missing field.
+    let now = t0();
+    let world = match running(AWG) {
+        World::Running(rt) => World::Running(RunningTunnel {
+            silent_secs: None,
+            ..rt
+        }),
+        other => other,
+    };
+    let d = go(
+        &Status::Up(up_status(1, AWG, params())),
+        &up_intent(1, &[AWG], params()),
+        &world,
+        now,
+    );
+    assert!(matches!(&d.next, Status::Up(u) if u.probing_since.is_none()));
+    assert!(!has_probe(&d));
+    assert!(!has_unwind(&d));
 }
 
 // ------------------------------------------------------------------------------------- Unwinding

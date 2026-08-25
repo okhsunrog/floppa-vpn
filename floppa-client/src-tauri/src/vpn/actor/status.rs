@@ -140,6 +140,15 @@ pub struct UpStatus {
     /// This replaces the `unreachable_polls` counter. It is a clock, not a tally, so it cannot be
     /// distorted by how many pollers happen to be running — and there are now none.
     pub dark_since: Option<Instant>,
+    /// When the far side was last asked to prove it is there, after going silent for longer than
+    /// the policy allows. `None` while it is answering.
+    ///
+    /// Separate from [`Self::dark_since`] because they are different failures: dark is "the
+    /// process that owns the tunnel is not answering *us*", silent is "the tunnel is fine and the
+    /// peer at the other end has stopped answering *it*". The second one is invisible from
+    /// outside the tunnel — it is why a peer deleted on the server used to read as Connected
+    /// forever.
+    pub probing_since: Option<Instant>,
     /// Whether this epoch's waiter has already been resolved `Connected`. An epoch can enter Up on
     /// a `Dark` observation during adoption hand-over, which is never authoritative enough to
     /// announce success from.
@@ -158,6 +167,9 @@ pub enum UnwindReason {
     TunnelDied,
     /// Dark for longer than the grace period.
     PeerLost,
+    /// The tunnel is up and the far side stopped answering it: silent past the policy's bound,
+    /// and still silent after being asked to prove otherwise.
+    PeerSilent,
     /// Something is running a different protocol than the one we started.
     Usurped,
     /// A tunnel exists but no Up intent does.

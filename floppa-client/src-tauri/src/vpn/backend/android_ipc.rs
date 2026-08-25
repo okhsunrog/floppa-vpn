@@ -325,6 +325,7 @@ impl VpnBackend for AndroidIpcBackend {
                             connected_secs: r.connected_secs,
                             params: Some(r.params),
                             autonomous: r.autonomous,
+                            silent_secs: info.silent_secs,
                         }),
                         starting: info.starting,
                         tun_ready: info.tun_ready,
@@ -336,7 +337,6 @@ impl VpnBackend for AndroidIpcBackend {
                             _ => None,
                         },
                         last_packet_secs: info.last_packet_received,
-                        silent_secs: info.silent_secs,
                     }),
                 }
             }
