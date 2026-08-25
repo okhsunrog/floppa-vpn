@@ -1,7 +1,7 @@
 # Moving the tunnel actor into the `:vpn` process
 
-Status: **design agreed, stage 0 landed, stages 1a–1c in progress** (branch
-`feat/vpn-process-actor`).
+Status: **stage 0 and stages 1a–1b landed; not yet device-tested** (branch
+`feat/vpn-process-actor`). Stage 1c — retiring what the move made dead — is still open.
 
 ## Why
 
