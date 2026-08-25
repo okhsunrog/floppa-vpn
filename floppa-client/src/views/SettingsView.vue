@@ -114,7 +114,11 @@ async function toggleCapture() {
       ? await commands.stopLogCapture()
       : await commands.startLogCapture()
     if (result.status === 'error') {
-      toast.add({ title: result.error, color: 'error' })
+      toast.add({
+        title: t('settings.logCaptureFailed'),
+        description: result.error,
+        color: 'error',
+      })
       return
     }
     captureStatus.value = result.data
@@ -175,8 +179,19 @@ onMounted(async () => {
     settings.loadApps()
   }
 
-  await loadLogConfig()
-  await loadCaptureStatus()
+  // Both commands are infallible on the Rust side, so only a broken IPC gets here — still
+  // worth a toast rather than an unhandled rejection with the diagnostics card left blank.
+  try {
+    await loadLogConfig()
+    await loadCaptureStatus()
+  } catch (e) {
+    console.error('Failed to load the log settings:', e)
+    toast.add({
+      title: t('settings.logConfigLoadFailed'),
+      description: e instanceof Error ? e.message : String(e),
+      color: 'error',
+    })
+  }
 })
 
 const filteredApps = computed(() => {

@@ -397,6 +397,8 @@ export default {
     customFilterActive: 'Custom filter is active',
     apply: 'Apply',
     logConfigSaveFailed: 'Failed to save log configuration',
+    logConfigLoadFailed: 'Failed to load log configuration',
+    logCaptureFailed: 'Failed to switch diagnostic capture',
     logCapture: 'Diagnostic capture',
     logCaptureDescription: 'Temporarily enables verbose logs and writes them to capture files.',
     logCaptureActive: 'Capture {id} is recording.',

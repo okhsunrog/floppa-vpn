@@ -398,6 +398,8 @@ export default {
     customFilterActive: 'Пользовательский фильтр активен',
     apply: 'Применить',
     logConfigSaveFailed: 'Не удалось сохранить настройки логирования',
+    logConfigLoadFailed: 'Не удалось загрузить настройки логирования',
+    logCaptureFailed: 'Не удалось переключить диагностический capture',
     logCapture: 'Диагностический capture',
     logCaptureDescription: 'Временно включает verbose-логи и записывает их в файлы capture.',
     logCaptureActive: 'Capture {id} записывается.',
