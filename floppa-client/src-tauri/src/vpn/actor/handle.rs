@@ -63,6 +63,10 @@ pub enum Command {
     AwaitQuiescent {
         reply: oneshot::Sender<()>,
     },
+    /// Used on app exit, after quiescence: resolves once every queued config write has landed.
+    FlushConfigs {
+        reply: oneshot::Sender<()>,
+    },
 
     // --------------------------------------------------------- internal, from spawned tasks
     /// Cosmetic sub-phase of the in-flight attempt. Never a reconcile input.
@@ -156,6 +160,15 @@ impl TunnelHandle {
             .await
             .is_ok()
         {
+            let _ = rx.await;
+        }
+    }
+
+    /// Resolves once every config write queued so far has landed. Used on exit, after
+    /// [`await_quiescent`](Self::await_quiescent).
+    pub async fn flush_configs(&self) {
+        let (reply, rx) = oneshot::channel();
+        if self.tx.send(Command::FlushConfigs { reply }).await.is_ok() {
             let _ = rx.await;
         }
     }

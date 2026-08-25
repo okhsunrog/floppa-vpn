@@ -325,6 +325,17 @@ impl TunnelActor {
                 Reconcile::No
             }
 
+            Command::FlushConfigs { reply } => {
+                // Answered from a task of its own: the store writes on a blocking thread, and this
+                // loop never waits on one.
+                let flushed = self.configs.flush();
+                tokio::spawn(async move {
+                    flushed.wait().await;
+                    let _ = reply.send(());
+                });
+                Reconcile::No
+            }
+
             Command::AttemptProgress {
                 epoch,
                 index,
@@ -827,11 +838,18 @@ impl TunnelActor {
             let _ = reply.send(());
         }
         if !self.pending_clear.is_empty() {
-            self.edit_configs(|c| c.clear());
-            info!("configs cleared once the tunnel was down");
-            for (reply, _) in std::mem::take(&mut self.pending_clear) {
-                let _ = reply.send(Ok(()));
-            }
+            let persisted = self.edit_configs(|c| c.clear());
+            info!("configs cleared once the tunnel was down; answering once the store is wiped");
+            // Answered only once the delete has actually run, from a task of its own: "forgotten"
+            // used to be said as soon as the in-memory copy was empty, while the keys were still
+            // in the keyring — and an app quit right then kept them there.
+            let waiters = std::mem::take(&mut self.pending_clear);
+            tokio::spawn(async move {
+                persisted.wait().await;
+                for (reply, _) in waiters {
+                    let _ = reply.send(Ok(()));
+                }
+            });
         }
     }
 

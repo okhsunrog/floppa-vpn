@@ -277,6 +277,10 @@ struct Harness {
 
 impl Harness {
     fn spawn(policy: Policy) -> Self {
+        Self::spawn_with_store(policy, ConfigStore::in_memory(configs()))
+    }
+
+    fn spawn_with_store(policy: Policy, store: ConfigStore) -> Self {
         let backend = Arc::new(FakeBackend::default());
         let platform = Arc::new(FakePlatform::new());
         let (cmd_tx, cmd_rx) = mpsc::channel(super::CHANNEL_DEPTH);
@@ -286,7 +290,7 @@ impl Harness {
             platform.clone(),
             None,
             policy.clone(),
-            ConfigStore::in_memory(configs()),
+            store,
             cmd_tx.clone(),
             state_tx,
         );
@@ -606,6 +610,48 @@ async fn every_caller_asking_for_a_wipe_is_answered_once_the_tunnel_is_down() {
         h.backend.running().is_none(),
         "after the tunnel was torn down"
     );
+}
+
+/// Real clock, not paused: the persister blocks a blocking-pool thread at the gate, and the
+/// paused clock does not auto-advance while a blocking task is in flight — so the "still not
+/// answered" timeout below would never elapse.
+#[tokio::test]
+async fn a_wipe_is_acknowledged_only_once_the_store_has_actually_been_wiped() {
+    // The persister runs on a blocking thread; "forgotten" used to be answered as soon as the
+    // in-memory copy was empty, while the delete was still queued behind it.
+    use crate::vpn::store::testing::{Gate, gated_persister};
+
+    let gate = Gate::closed();
+    let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let store =
+        ConfigStore::with_persister(configs(), gated_persister(gate.clone(), writes.clone()));
+    let mut h = Harness::spawn_with_store(policy(), store);
+    h.connect().await;
+
+    let handle = h.handle.clone();
+    let mut cleared = std::pin::pin!(handle.clear_configs());
+    // Polling is what sends the command; a second of real time is plenty for the teardown.
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), &mut cleared)
+            .await
+            .is_err(),
+        "not answered while the delete has not run"
+    );
+    let state = h.wait_for_phase(Phase::Disconnected).await;
+    assert!(state.configs.available.is_empty(), "gone from memory");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), &mut cleared)
+            .await
+            .is_err(),
+        "still not answered once down: the delete is what is being waited for"
+    );
+
+    gate.open();
+    let answer = tokio::time::timeout(Duration::from_secs(120), cleared)
+        .await
+        .expect("answered once the delete ran");
+    assert_eq!(answer, Ok(()));
+    assert_eq!(writes.lock().unwrap().last(), Some(&"delete"));
 }
 
 #[tokio::test(start_paused = true)]

@@ -17,7 +17,8 @@ use crate::vpn::actor::types::{ConfigSummary, ConfigsView};
 use crate::vpn::config as vpn_config;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
@@ -32,12 +33,40 @@ pub enum ConfigError {
     ActorGone,
 }
 
-/// What the persistence task is asked to do. Only the newest request matters: a later save
-/// supersedes an earlier one, and a delete supersedes any save before it.
+/// What the persistence task is asked to write. Only the newest matters: a later save supersedes
+/// an earlier one, and a delete supersedes any save before it.
 #[derive(Debug)]
-enum PersistOp {
+pub(crate) enum Write {
     Save(Box<SavedVpnConfigs>),
     Delete,
+}
+
+/// One request to the persistence task: what to write, if anything, and whom to tell once it —
+/// and everything queued before it — has been written. A request with nothing to write is a
+/// flush: it is answered when the queue ahead of it has drained.
+#[derive(Debug)]
+struct PersistOp {
+    write: Option<Write>,
+    done: Option<oneshot::Sender<()>>,
+}
+
+/// A write on its way to the keyring or the file. Await it to know it has arrived.
+///
+/// The actor answers "the configs are forgotten" through this rather than as soon as its in-memory
+/// copy is empty: the previous, synchronous `clear()` meant "deleted" when it returned, and the
+/// asynchronous one silently stopped meaning that — an app quit right after Forget left the keys
+/// on disk.
+#[derive(Debug)]
+pub struct Persisted(Option<oneshot::Receiver<()>>);
+
+impl Persisted {
+    /// Resolves once the write is done — or once nothing more will happen to it, which is the
+    /// same thing to a waiter: a persistence task that is gone has already been reported.
+    pub async fn wait(self) {
+        if let Some(rx) = self.0 {
+            let _ = rx.await;
+        }
+    }
 }
 
 /// Writes configs to the OS keyring or the fallback file from a task of their own.
@@ -46,7 +75,8 @@ enum PersistOp {
 /// dialog. Doing that on the actor task stalled every command and observation behind it — and a
 /// stall longer than the staleness window read as the tunnel going dark. The actor keeps the
 /// in-memory copy as the source of truth and only *sends* here; each write runs on a blocking
-/// thread, and a burst of writes collapses to the last one.
+/// thread, and a burst of writes collapses to the last one. A sender that needs to know when its
+/// write has landed gets a [`Persisted`] to wait on.
 #[derive(Debug, Clone)]
 pub struct Persister {
     /// `None` keeps everything in memory, for tests.
@@ -56,33 +86,82 @@ pub struct Persister {
 impl Persister {
     /// Start the persistence task. Must be called from within a Tokio runtime.
     pub fn spawn() -> Self {
+        Self::spawn_with(|write| match write {
+            Write::Save(configs) => vpn_config::save_configs(&configs),
+            Write::Delete => vpn_config::delete_configs(),
+        })
+    }
+
+    /// Start the persistence task with `writer` doing the actual writes, on a blocking thread.
+    pub(crate) fn spawn_with(writer: impl Fn(Write) + Send + Sync + 'static) -> Self {
+        let writer = Arc::new(writer);
         let (tx, mut rx) = mpsc::unbounded_channel::<PersistOp>();
         tokio::spawn(async move {
-            while let Some(mut op) = rx.recv().await {
+            while let Some(first) = rx.recv().await {
+                let mut write = first.write;
+                let mut waiting: Vec<oneshot::Sender<()>> = first.done.into_iter().collect();
                 // Coalesce whatever queued up behind a slow write: only the newest state is
-                // worth writing.
+                // worth writing, and everyone who asked is answered once it is — the state they
+                // asked about has been superseded by what is written, never lost.
                 while let Ok(next) = rx.try_recv() {
-                    op = next;
+                    if next.write.is_some() {
+                        write = next.write;
+                    }
+                    waiting.extend(next.done);
                 }
-                let written = tokio::task::spawn_blocking(move || match op {
-                    PersistOp::Save(configs) => vpn_config::save_configs(&configs),
-                    PersistOp::Delete => vpn_config::delete_configs(),
-                })
-                .await;
-                if let Err(e) = written {
-                    warn!("config persistence task failed: {e}");
+                if let Some(write) = write {
+                    let writer = writer.clone();
+                    let written = tokio::task::spawn_blocking(move || writer(write)).await;
+                    if let Err(e) = written {
+                        warn!("config persistence task failed: {e}");
+                    }
+                }
+                for done in waiting {
+                    let _ = done.send(());
                 }
             }
         });
         Self { tx: Some(tx) }
     }
 
-    fn send(&self, op: PersistOp) {
-        if let Some(tx) = &self.tx
-            && tx.send(op).is_err()
-        {
+    /// Queue a write and forget about it.
+    fn send(&self, write: Write) {
+        self.enqueue(PersistOp {
+            write: Some(write),
+            done: None,
+        });
+    }
+
+    /// Queue a write and get a [`Persisted`] that resolves once it has been written.
+    fn send_acknowledged(&self, write: Write) -> Persisted {
+        self.request(Some(write))
+    }
+
+    /// Resolves once everything queued so far has been written. With no persistence task (the
+    /// in-memory store used by tests) it resolves at once.
+    pub fn flush(&self) -> Persisted {
+        self.request(None)
+    }
+
+    fn request(&self, write: Option<Write>) -> Persisted {
+        let (done, rx) = oneshot::channel();
+        let sent = self.enqueue(PersistOp {
+            write,
+            done: Some(done),
+        });
+        Persisted(sent.then_some(rx))
+    }
+
+    /// Whether the request reached the persistence task.
+    fn enqueue(&self, op: PersistOp) -> bool {
+        let Some(tx) = &self.tx else {
+            return false;
+        };
+        if tx.send(op).is_err() {
             warn!("config persistence task is gone; the change stays in memory only");
+            return false;
         }
+        true
     }
 }
 
@@ -112,10 +191,13 @@ impl ConfigStore {
     /// A store that never touches the keyring or the filesystem.
     #[cfg(test)]
     pub(crate) fn in_memory(configs: SavedVpnConfigs) -> Self {
-        Self {
-            configs,
-            persister: Persister { tx: None },
-        }
+        Self::with_persister(configs, Persister { tx: None })
+    }
+
+    /// A store writing through the given persister, for tests that fake the writes.
+    #[cfg(test)]
+    pub(crate) fn with_persister(configs: SavedVpnConfigs, persister: Persister) -> Self {
+        Self { configs, persister }
     }
 
     /// Parse a config string and store it under its own protocol key.
@@ -202,14 +284,23 @@ impl ConfigStore {
         }
     }
 
-    pub fn clear(&mut self) {
+    /// Forget everything. The in-memory copy is empty on return; the returned [`Persisted`]
+    /// resolves once the keyring or file is, too.
+    #[must_use = "the wipe is only on disk once this resolves"]
+    pub fn clear(&mut self) -> Persisted {
         self.configs = SavedVpnConfigs::default();
-        self.persister.send(PersistOp::Delete);
+        self.persister.send_acknowledged(Write::Delete)
+    }
+
+    /// Resolves once every write queued so far has landed. Used on exit, so a Forget or an import
+    /// issued just before quitting is not lost with the process.
+    pub fn flush(&self) -> Persisted {
+        self.persister.flush()
     }
 
     fn save(&self) {
         self.persister
-            .send(PersistOp::Save(Box::new(self.configs.clone())));
+            .send(Write::Save(Box::new(self.configs.clone())));
     }
 }
 
@@ -232,10 +323,59 @@ fn summarize(protocol: Protocol, config: &ProtocolConfig) -> ConfigSummary {
     }
 }
 
+/// A fake persistence backend: every write blocks on a gate the test opens, and is recorded.
+#[cfg(test)]
+pub(crate) mod testing {
+    use super::{Persister, Write};
+    use std::sync::{Arc, Condvar, Mutex};
+
+    #[derive(Default)]
+    pub(crate) struct Gate {
+        open: Mutex<bool>,
+        opened: Condvar,
+    }
+
+    impl Gate {
+        pub(crate) fn closed() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+
+        pub(crate) fn open(&self) {
+            *self.open.lock().unwrap() = true;
+            self.opened.notify_all();
+        }
+
+        /// Block the calling (blocking-pool) thread until the gate is open.
+        fn wait(&self) {
+            let mut open = self.open.lock().unwrap();
+            while !*open {
+                open = self.opened.wait(open).unwrap();
+            }
+        }
+    }
+
+    /// A persister whose writes wait at `gate` and are then appended to `writes`.
+    pub(crate) fn gated_persister(
+        gate: Arc<Gate>,
+        writes: Arc<Mutex<Vec<&'static str>>>,
+    ) -> Persister {
+        Persister::spawn_with(move |write| {
+            gate.wait();
+            writes.lock().unwrap().push(match write {
+                Write::Save(_) => "save",
+                Write::Delete => "delete",
+            });
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::testing::{Gate, gated_persister};
     use super::*;
     use crate::vpn::state::{AwgConfig, VlessVpnConfig, WgConfig};
+    use std::sync::Mutex;
+    use std::time::Duration;
 
     const WG_CONFIG: &str = "\
 [Interface]
@@ -376,5 +516,78 @@ AllowedIPs = 0.0.0.0/0
         assert_eq!(view.preferred, Some(Protocol::WireGuard));
         assert_eq!(view.summaries.len(), 1);
         assert_eq!(view.summaries[0].server_endpoint, "vpn.example.com:51820");
+    }
+
+    #[tokio::test]
+    async fn a_clear_is_acknowledged_only_once_the_delete_has_run() {
+        let gate = Gate::closed();
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let mut store = ConfigStore::with_persister(
+            SavedVpnConfigs {
+                wireguard: Some(wg()),
+                ..Default::default()
+            },
+            gated_persister(gate.clone(), writes.clone()),
+        );
+
+        let mut cleared = std::pin::pin!(store.clear().wait());
+        assert!(
+            store.view().available.is_empty(),
+            "gone from memory at once"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut cleared)
+                .await
+                .is_err(),
+            "not acknowledged while the delete is still blocked"
+        );
+        assert!(writes.lock().unwrap().is_empty());
+
+        gate.open();
+        tokio::time::timeout(Duration::from_secs(5), cleared)
+            .await
+            .expect("acknowledged once the delete ran");
+        assert_eq!(*writes.lock().unwrap(), vec!["delete"]);
+    }
+
+    #[tokio::test]
+    async fn a_flush_resolves_once_everything_queued_before_it_is_written() {
+        let gate = Gate::closed();
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let mut store = ConfigStore::with_persister(
+            SavedVpnConfigs::default(),
+            gated_persister(gate.clone(), writes.clone()),
+        );
+
+        store.import(WG_CONFIG).expect("fixture must parse");
+        store.set_preferred(Some(Protocol::WireGuard));
+        let _ = store.clear();
+        let mut flushed = std::pin::pin!(store.flush().wait());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut flushed)
+                .await
+                .is_err(),
+            "nothing has been written yet"
+        );
+
+        gate.open();
+        tokio::time::timeout(Duration::from_secs(5), flushed)
+            .await
+            .expect("the queue drained");
+        // A burst collapses to its newest state, and the delete is what was newest.
+        let writes = writes.lock().unwrap();
+        assert_eq!(writes.last(), Some(&"delete"));
+        assert!(writes.len() <= 3);
+    }
+
+    #[tokio::test]
+    async fn the_in_memory_store_acknowledges_at_once() {
+        let mut store = store_with(SavedVpnConfigs::default());
+        tokio::time::timeout(Duration::from_secs(1), store.clear().wait())
+            .await
+            .expect("nothing to wait for");
+        tokio::time::timeout(Duration::from_secs(1), store.flush().wait())
+            .await
+            .expect("nothing to wait for");
     }
 }

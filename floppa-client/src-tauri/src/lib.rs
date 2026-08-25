@@ -253,6 +253,18 @@ pub fn run() {
                         Ok(()) => info!("VPN cleanup complete"),
                         Err(_) => warn!("timed out waiting for the tunnel to settle on exit"),
                     }
+                    // The store writes from a task of its own, so a Forget or an import issued
+                    // just before quitting may still be in its queue. Bounded, because a keyring
+                    // write can block on an unlock dialog nobody is left to answer.
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        handle.flush_configs(),
+                    )
+                    .await
+                    {
+                        Ok(()) => info!("config store flushed"),
+                        Err(_) => warn!("timed out waiting for the config store to flush on exit"),
+                    }
                 });
             }
         },
