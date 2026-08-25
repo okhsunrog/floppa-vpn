@@ -659,7 +659,7 @@ function selectMode(mode: SplitMode) {
           icon="i-lucide-sparkles"
           variant="soft"
           size="sm"
-          @click="updateStore.openChangelogForCurrent()"
+          @click="updateStore.showBundledChangelog()"
         />
       </div>
     </UCard>

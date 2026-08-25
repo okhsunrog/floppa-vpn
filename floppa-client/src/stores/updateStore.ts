@@ -42,6 +42,50 @@ export interface ChangelogData extends ChangelogEntry {
   history?: ChangelogEntry[]
 }
 
+const CHANGELOG_SECTION_TYPES: ReadonlySet<string> = new Set<ChangelogSection['type']>([
+  'added',
+  'fixed',
+  'changed',
+  'notes',
+])
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function isChangelogItem(value: unknown): value is ChangelogItem {
+  return isRecord(value) && typeof value.en === 'string' && typeof value.ru === 'string'
+}
+
+function isChangelogSection(value: unknown): value is ChangelogSection {
+  return (
+    isRecord(value) &&
+    typeof value.type === 'string' &&
+    CHANGELOG_SECTION_TYPES.has(value.type) &&
+    Array.isArray(value.items) &&
+    value.items.every(isChangelogItem)
+  )
+}
+
+function isChangelogEntry(value: unknown): value is ChangelogEntry {
+  return (
+    isRecord(value) &&
+    typeof value.version === 'string' &&
+    Array.isArray(value.sections) &&
+    value.sections.every(isChangelogSection)
+  )
+}
+
+/**
+ * Whether a JSON document is a changelog we can render. The fetched one comes off the network
+ * and the bundled one is hand-edited, so neither is trusted by assertion alone.
+ */
+export function isChangelogData(value: unknown): value is ChangelogData {
+  if (!isRecord(value) || !isChangelogEntry(value)) return false
+  const { history } = value
+  return history === undefined || (Array.isArray(history) && history.every(isChangelogEntry))
+}
+
 // Shape of /downloads/latest.json, written by the mirror-release workflow.
 interface LatestJson {
   version: string
@@ -71,7 +115,12 @@ async function fetchLatestChangelog(): Promise<ChangelogData | null> {
   try {
     const res = await fetch(`${DOWNLOADS_BASE}/changelog.json`, { cache: 'no-cache' })
     if (!res.ok) return null
-    changelogCache = (await res.json()) as ChangelogData
+    const body: unknown = await res.json()
+    if (!isChangelogData(body)) {
+      console.warn('[updateStore] the mirrored changelog.json is not in the expected shape')
+      return null
+    }
+    changelogCache = body
     return changelogCache
   } catch {
     return null
@@ -159,9 +208,14 @@ export const useUpdateStore = defineStore('update', () => {
     }
   }
 
-  function openChangelogForCurrent() {
+  /** Open the modal on the changelog shipped inside this build. */
+  function showBundledChangelog() {
+    if (!isChangelogData(bundledChangelog)) {
+      console.error('[updateStore] the bundled changelog.json is not in the expected shape')
+      return
+    }
     changelogMode.value = 'current'
-    loadChangelogData(bundledChangelog as ChangelogData)
+    loadChangelogData(bundledChangelog)
     changelogModalOpen.value = true
   }
 
@@ -173,9 +227,7 @@ export const useUpdateStore = defineStore('update', () => {
     // Show changelog either way so users see what's new.
     if (!lastSeen) {
       localStorage.setItem(LAST_SEEN_VERSION_KEY, current)
-      loadChangelogData(bundledChangelog as ChangelogData)
-      changelogMode.value = 'current'
-      changelogModalOpen.value = true
+      showBundledChangelog()
       return
     }
 
@@ -183,11 +235,8 @@ export const useUpdateStore = defineStore('update', () => {
     const bumped = compareSemver(current, lastSeen)
     if (bumped === null || bumped <= 0) return
 
-    // Version bumped — show bundled changelog
     localStorage.setItem(LAST_SEEN_VERSION_KEY, current)
-    loadChangelogData(bundledChangelog as ChangelogData)
-    changelogMode.value = 'current'
-    changelogModalOpen.value = true
+    showBundledChangelog()
   }
 
   function setForceUpdate(info: ForceUpdateInfo) {
@@ -210,7 +259,7 @@ export const useUpdateStore = defineStore('update', () => {
     hasOlderChangelog,
     checkForUpdates,
     openChangelogForUpdate,
-    openChangelogForCurrent,
+    showBundledChangelog,
     checkPostUpdateChangelog,
     changelogNewer,
     changelogOlder,

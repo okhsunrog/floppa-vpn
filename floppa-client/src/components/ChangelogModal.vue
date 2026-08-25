@@ -4,12 +4,13 @@ import { useI18n } from 'vue-i18n'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
 import { renderLinks } from 'floppa-web-shared'
-import { useUpdateStore, type ChangelogItem } from '../stores/updateStore'
+import { useUpdateStore, type ChangelogItem, type ChangelogSection } from '../stores/updateStore'
 
 const { t, locale } = useI18n()
 const updateStore = useUpdateStore()
 
-const sectionIcons: Record<string, string> = {
+// Keyed on the section type, so a type added to the changelog schema cannot render without an icon.
+const sectionIcons: Record<ChangelogSection['type'], string> = {
   added: 'i-lucide-plus-circle',
   fixed: 'i-lucide-wrench',
   changed: 'i-lucide-refresh-cw',
