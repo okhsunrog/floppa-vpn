@@ -243,6 +243,21 @@ pub async fn resolve_subscription_expires(
         .ok_or(SubscriptionTermError::DurationOutOfRange)
 }
 
+/// Whether `user_id` has a subscription that is current right now (permanent or not yet
+/// expired). The one definition of "active" the API and the bot gate paid features on.
+pub async fn has_active_subscription(executor: impl PgExecutor<'_>, user_id: i64) -> Result<bool> {
+    let active = sqlx::query_scalar!(
+        r#"SELECT EXISTS(
+               SELECT 1 FROM subscriptions
+               WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
+           ) AS "exists!""#,
+        user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(active)
+}
+
 /// Admin grant: supersede whatever the user has with `plan_id` until `expires_at`
 /// (see [`replace_active_subscription`]). Returns the new subscription's id.
 pub async fn grant_subscription(
@@ -1536,6 +1551,29 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn has_active_subscription_follows_expiry(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 4242).await;
+        assert!(!has_active_subscription(&pool, user_id).await.unwrap());
+
+        // Expired: does not count.
+        sqlx::query!(
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at)
+             VALUES ($1, $2, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')",
+            user_id,
+            basic,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(!has_active_subscription(&pool, user_id).await.unwrap());
+
+        // Permanent (NULL expiry): counts.
+        seed_subscription(&pool, user_id, basic).await;
+        assert!(has_active_subscription(&pool, user_id).await.unwrap());
     }
 
     // ── generate_wg_config (pure, no DB) ──

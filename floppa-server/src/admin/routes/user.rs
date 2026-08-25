@@ -74,15 +74,7 @@ fn require_vless(state: &AppState) -> Result<&str, ApiError> {
 
 /// 402 unless the user currently has an active subscription.
 async fn require_active_subscription(state: &AppState, user_id: i64) -> Result<(), ApiError> {
-    let has_sub = sqlx::query_scalar!(
-        r#"SELECT EXISTS(SELECT 1 FROM subscriptions
-                         WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW()))
-           AS "exists!""#,
-        user_id
-    )
-    .fetch_one(&state.pool)
-    .await?;
-    if has_sub {
+    if services::has_active_subscription(&state.pool, user_id).await? {
         Ok(())
     } else {
         Err(FloppaError::NoActiveSubscription.into())

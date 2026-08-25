@@ -440,18 +440,7 @@ async fn vless(
     };
     let user_id = user.id;
 
-    // Check active subscription
-    let has_sub = sqlx::query_scalar!(
-        r#"SELECT EXISTS(
-            SELECT 1 FROM subscriptions
-            WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
-        ) as "exists!""#,
-        user_id,
-    )
-    .fetch_one(&pool)
-    .await?;
-
-    if !has_sub {
+    if !services::has_active_subscription(&pool, user_id).await? {
         bot.send_message(msg.chat.id, msgs.no_subscription_short)
             .await?;
         return Ok(());
