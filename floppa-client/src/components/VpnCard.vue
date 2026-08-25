@@ -17,12 +17,12 @@ import { platform } from '@tauri-apps/plugin-os'
 import { useVpnStore } from '../stores/vpnStore'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
-import { useAndroidPermissions } from '../composables/useAndroidPermissions'
+import { usePermissionsStore } from '../stores/permissionsStore'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
-const permissions = useAndroidPermissions()
+const permissions = usePermissionsStore()
 const setupErrorKey = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
@@ -45,10 +45,19 @@ watch(
  * True while we are talking to the server about re-provisioning a peer.
  *
  * Owned here rather than in the store because it is not a tunnel state: the tunnel is genuinely
- * idle during it. It still has to make the button look busy, which is exactly why it feeds the
- * same computed as the phase rather than a second, independent flag.
+ * idle during it.
  */
 const reprovisioning = ref(false)
+
+/**
+ * The one thing the button reads.
+ *
+ * `reprovisioning` used to reach only the label, so the button read "Connecting" with no spinner
+ * and stayed clickable — the same split between label and spinner this whole design exists to
+ * remove, just the other way round. Anything that should make the button look busy has to arrive
+ * through here.
+ */
+const busy = computed(() => vpn.isBusy || reprovisioning.value)
 
 const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
 const createPeerMut = useMutation(createMyPeerMutation())
@@ -128,7 +137,7 @@ async function doServerSync(): Promise<SyncResult> {
         body: {
           device_id: vpn.deviceId!,
           device_name: vpn.deviceName ?? undefined,
-          platform: await platform(),
+          platform: platform(),
           app_version: __APP_VERSION__,
         },
       })
@@ -324,9 +333,9 @@ watch(
 )
 
 /**
- * The button's label and its spinner both come from `vpn.isBusy`/`vpn.phase`, which arrive in the
- * same snapshot. They cannot disagree — which is what used to produce a spinner sitting next to
- * the word "Connect", because the spinner read one source and the label another.
+ * The label. Its spinner comes from `busy`, which is derived from the same two values this reads,
+ * so the two cannot describe different situations — which is what used to produce a spinner
+ * sitting next to the word "Connect".
  */
 const buttonLabel = computed(() => {
   if (reprovisioning.value) return t('vpn.connecting')
@@ -467,10 +476,7 @@ const healthDotClass = computed(() => {
         {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.state.protocol}`) }) }}
       </UBadge>
 
-      <div
-        v-if="vpn.isConnected && vpn.state"
-        class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]"
-      >
+      <div v-if="vpn.isConnected" class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]">
         <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
         <span v-if="vpn.state.server_endpoint">
           {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
@@ -491,9 +497,14 @@ const healthDotClass = computed(() => {
         class="mt-2 w-full max-w-sm"
       />
 
-      <!-- During an auto-select probe the button cancels the cycle -->
+      <!--
+        Whether the button cancels is decided by one value, the same one `handleConnect` branches
+        on. Keying this off `vpn.attempt` instead meant a backing-off retry — cancellable, but with
+        no attempt in flight — fell through to the main button, which then said "Connecting" while
+        actually cancelling.
+      -->
       <UButton
-        v-if="vpn.attempt"
+        v-if="vpn.isCancellable"
         :label="t('vpn.cancel')"
         icon="i-lucide-x"
         color="neutral"
@@ -507,8 +518,8 @@ const healthDotClass = computed(() => {
         :label="buttonLabel"
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
-        :loading="vpn.isBusy"
-        :disabled="!vpn.hasConfig || vpn.phase === 'unknown'"
+        :loading="busy"
+        :disabled="!vpn.hasConfig || vpn.phase === 'unknown' || reprovisioning"
         size="lg"
         class="w-full max-w-[200px] mt-2"
         @click="handleConnect"
@@ -521,7 +532,7 @@ const healthDotClass = computed(() => {
           <button
             v-for="proto in vpn.availableProtocols"
             :key="proto"
-            :disabled="vpn.isConnected || vpn.isBusy"
+            :disabled="vpn.isConnected || busy"
             class="px-4 py-1.5 text-sm rounded-md transition-all"
             :class="
               vpn.activeProtocol === proto
@@ -538,7 +549,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Notification Prompt -->
-  <UCard v-if="permissions.showNotificationPrompt.value" class="mb-4">
+  <UCard v-if="permissions.showNotificationPrompt" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-bell-off" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
@@ -563,7 +574,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Battery Optimization Prompt -->
-  <UCard v-if="permissions.showBatteryPrompt.value" class="mb-4">
+  <UCard v-if="permissions.showBatteryPrompt" class="mb-4">
     <div class="flex flex-col gap-3">
       <div class="flex items-start gap-3">
         <UIcon name="i-lucide-battery-warning" class="text-2xl text-yellow-500 shrink-0 mt-0.5" />
@@ -588,7 +599,7 @@ const healthDotClass = computed(() => {
   </UCard>
 
   <!-- Traffic Stats -->
-  <UCard v-if="vpn.isConnected && vpn.state" class="mb-4">
+  <UCard v-if="vpn.isConnected" class="mb-4">
     <template #header>
       <span class="font-semibold">{{ t('vpn.traffic') }}</span>
     </template>

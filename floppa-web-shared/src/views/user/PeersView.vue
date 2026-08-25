@@ -204,14 +204,14 @@ async function downloadConfig() {
     try {
       if (navigator.userAgent.includes('Android')) {
         // Android: save to Download/FloppaVPN/ via MediaStore
-        const { AndroidFs, AndroidPublicGeneralPurposeDir } =
+        const { createNewPublicFile, writeTextFile, PublicGeneralPurposeDir } =
           await import('tauri-plugin-android-fs-api')
-        const uri = await AndroidFs.createNewPublicFile(
-          AndroidPublicGeneralPurposeDir.Download,
+        const uri = await createNewPublicFile(
+          PublicGeneralPurposeDir.Download,
           `FloppaVPN/${filename}`,
           'text/plain',
         )
-        await AndroidFs.writeTextFile(uri, config)
+        await writeTextFile(uri, config)
         toast.add({
           title: t('userPeers.configSaved', { path: `Download/FloppaVPN/${filename}` }),
           color: 'success',
@@ -479,8 +479,7 @@ async function doRegenerateVless() {
           </p>
           <pre
             class="bg-[var(--ui-bg-inverted)] text-[var(--ui-text-inverted)] p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap break-all"
-            >{{ currentConfig.config }}</pre
-          >
+            >{{ currentConfig.config }}</pre>
         </div>
       </template>
       <template #footer>
@@ -506,8 +505,7 @@ async function doRegenerateVless() {
         <div v-if="vlessUri" class="flex flex-col gap-4">
           <pre
             class="bg-[var(--ui-bg-inverted)] text-[var(--ui-text-inverted)] p-4 rounded-lg overflow-x-auto text-sm whitespace-pre-wrap break-all"
-            >{{ vlessUri }}</pre
-          >
+            >{{ vlessUri }}</pre>
         </div>
       </template>
       <template #footer>

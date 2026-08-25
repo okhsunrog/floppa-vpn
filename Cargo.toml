@@ -26,7 +26,7 @@ serde_json = "1"
 thiserror = "2"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
-base64 = "0.22"
+base64 = "0.23"
 rand = "0.10"
 
 # Auth (JWT + Telegram verification)

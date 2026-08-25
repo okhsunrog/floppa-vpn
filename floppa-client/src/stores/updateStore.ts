@@ -48,11 +48,26 @@ interface LatestJson {
   files: Partial<Record<string, string>>
 }
 
-function compareSemver(a: string, b: string): number {
-  const pa = a.split('.').map(Number)
-  const pb = b.split('.').map(Number)
+/** The release triple, ignoring any prerelease or build suffix. `null` if there isn't one. */
+function parseSemver(version: string): [number, number, number] | null {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(version)
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+
+/**
+ * Compare two versions, or `null` when either cannot be read as one.
+ *
+ * The previous version did `split('.').map(Number)`, so anything non-numeric produced `NaN`,
+ * every comparison against `NaN` was false, and both callers read that as "the remote one is
+ * newer" — a permanent update banner and the changelog on every launch. `latest.json` comes off
+ * the network, so its shape is not ours to assume.
+ */
+function compareSemver(a: string, b: string): number | null {
+  const pa = parseSemver(a)
+  const pb = parseSemver(b)
+  if (!pa || !pb) return null
   for (let i = 0; i < 3; i++) {
-    const diff = (pa[i] ?? 0) - (pb[i] ?? 0)
+    const diff = pa[i]! - pb[i]!
     if (diff !== 0) return diff
   }
   return 0
@@ -130,7 +145,10 @@ export const useUpdateStore = defineStore('update', () => {
       const remoteVersion = latest.version
       const currentVersion = __APP_VERSION__
 
-      if (compareSemver(remoteVersion, currentVersion) <= 0) return
+      // An unreadable version is not an update. Offering one we cannot compare would leave a
+      // banner the user can never satisfy.
+      const newer = compareSemver(remoteVersion, currentVersion)
+      if (newer === null || newer <= 0) return
 
       const key = platformFileKey()
       const file = key ? latest.files?.[key] : undefined
@@ -185,8 +203,9 @@ export const useUpdateStore = defineStore('update', () => {
       return
     }
 
-    // No version change
-    if (compareSemver(current, lastSeen) <= 0) return
+    // No version change — or a marker we cannot read, which is not grounds to show anything.
+    const bumped = compareSemver(current, lastSeen)
+    if (bumped === null || bumped <= 0) return
 
     // Version bumped — show bundled changelog
     localStorage.setItem(LAST_SEEN_VERSION_KEY, current)

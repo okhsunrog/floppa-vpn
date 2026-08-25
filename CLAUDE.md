@@ -12,6 +12,7 @@ just client-check   # Client half only (tauri crates + floppa-web-shared/floppa-
 just server-check   # Server half only (workspace crates + floppa-face) — needs a live DB for sqlx
 just fmt            # Format all (Rust + frontend)
 just openapi        # Regenerate OpenAPI TS client (no running backend needed)
+just bindings       # Regenerate tauri-specta bindings (no running app needed)
 just build-android  # Release APK (aarch64)
 just package        # build-frontend → cargo build → deployment archive
 just test-integration  # E2E VPN tests (Docker + tests/integration/.env + .secrets/*.conf)
@@ -81,23 +82,26 @@ Two TOML files (see `*.example.toml`):
 - `floppa-client` — Tauri 2 client (Linux, Windows, Android). Overrides dashboard (adds VpnCard via `#vpn-widget` slot) and login (deep-link auth) routes
 - `floppa-web-shared` — ALL views, components, router (`createAppRoutes`, `installAuthGuard`), Pinia auth store, OpenAPI client, Pinia Colada queries, i18n (en/ru), format utils
 
-**Toolchain — [Vite+](https://viteplus.dev/) (`vp`):** unified frontend toolchain (dev/build/lint/format), wraps bun. Detected via `bun.lock` + root `packageManager` field. ESLint **and** Prettier were removed in favor of `vp`'s built-in oxlint + oxfmt — config lives in the **root `vite.config.ts`** (`lint` + `fmt` blocks, globs resolved from root); per-package `vite.config.ts` files hold only Vite/framework config and import `defineConfig` from `'vite-plus'`. The `vite`/`vite-plus`/`vitest` versions are pinned via the bun `catalog:` in the root `package.json`.
+**Toolchain — [Vite+](https://viteplus.dev/) (`vp`):** unified frontend toolchain (dev/build/lint/format), wraps bun. Detected via `bun.lock` + root `packageManager` field. ESLint **and** Prettier were removed in favor of `vp`'s built-in oxlint + oxfmt — config lives in the **root `vite.config.ts`** (`lint` + `fmt` blocks, globs resolved from root); per-package `vite.config.ts` files hold only Vite/framework config and import `defineConfig` from `'vite-plus'`. The `vite`/`vite-plus`/`typescript` versions are pinned via the bun `catalog:` in the root `package.json`, and the bun version via `packageManager` — CI reads both, so those two fields are the single place a toolchain version is chosen.
 
 ```bash
 vp dev                    # dev server (run inside floppa-face / floppa-client)
 vp build                  # production build (Rolldown-based)
-vp lint                   # oxlint, type-aware — run at root to cover the whole workspace
-vp fmt src/               # oxfmt format (vp fmt --check to verify)
-vp check                  # format + lint + type checks together
+vp check                  # format + lint + type checks in one pass over the workspace
+vp check --fix            # ...and apply what can be fixed
+vp test --run             # all workspace tests (they live beside the code they cover)
 ```
 
-The `just client-check` / `just server-check` / `just fmt` recipes and CI delegate to these via the package.json `lint`/`format`/`build` scripts; `vue-tsc --build` is still used for full type-checking. The `*.vue` import shim is intentionally absent — vue-tsc resolves SFCs natively, and a generic shim would mask prop-type errors.
+`build`, `test` and `typecheck` are Vite+ built-in tasks, not package.json scripts — the packages
+define only what Vite+ has no built-in for (`dev`, `preview`, `openapi-ts`, `sync-version`). The
+`just` recipes and CI both go through `vp check`; `vue-tsc --build` still runs separately as the
+`typecheck` task, because `vp check`'s type pass does not resolve `.vue` SFCs. The `*.vue` import shim is intentionally absent — vue-tsc resolves SFCs natively, and a generic shim would mask prop-type errors.
 
 **UI:** Nuxt UI v4 via `@nuxt/ui/vite` + `@nuxt/ui/vue-plugin` (no Nuxt framework). Components auto-imported. `useToast()` auto-imported.
 
 **Auto-generated — NEVER edit manually:**
 - `floppa-web-shared/src/client/` — OpenAPI TS client. Regenerate: `just openapi`
-- `floppa-client/src/bindings.ts` — tauri-specta bindings. Regenerate: `cd floppa-client && bun tauri dev` (exports at app startup, not compile time). Commands registered in `lib.rs` via `tauri_specta::Builder`
+- `floppa-client/src/bindings.ts` — tauri-specta bindings. Regenerate: `just bindings` (~1s; runs the `export_bindings` binary, no app start needed). `bun tauri dev` also refreshes them on startup. Commands registered in `lib.rs` via `tauri_specta::Builder`
 
 **Data fetching:** Pinia Colada — `useQuery(getStatsQuery())`, `useMutation(createPlanMutation())` from `@pinia/colada.gen`. Auth interceptors in each app's `main.ts`.
 

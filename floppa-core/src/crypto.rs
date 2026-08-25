@@ -49,11 +49,17 @@ pub fn decrypt_private_key(
     }
 
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_SIZE);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    // `Nonce::from_slice` is deprecated in the generic-array version chacha20poly1305 0.10 pins.
+    // The length check above plus `split_at` already guarantee 12 bytes, so this conversion
+    // cannot fail — it is written as an error rather than an unwrap so the guarantee stays local.
+    let nonce_bytes: [u8; NONCE_SIZE] = nonce_bytes
+        .try_into()
+        .map_err(|_| CryptoError::InvalidFormat)?;
+    let nonce = Nonce::from(nonce_bytes);
 
     let cipher = ChaCha20Poly1305::new(encryption_key.into());
     let plaintext = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     String::from_utf8(plaintext).map_err(|_| CryptoError::InvalidFormat)
@@ -103,6 +109,25 @@ mod tests {
         let encrypted = encrypt_private_key(private_key, &key1).unwrap();
         let result = decrypt_private_key(&encrypted, &key2);
         assert!(result.is_err());
+    }
+
+    /// Decrypts a ciphertext produced by an earlier build.
+    ///
+    /// The round-trip test above proves this module is symmetric with itself, which is exactly
+    /// what a change to the stored format would keep true — encrypt and decrypt would move
+    /// together and every private key already in the database would quietly stop decrypting.
+    /// Only a constant can catch that, so this one was captured under chacha20poly1305 0.10 and
+    /// must keep decrypting whatever the crate version becomes.
+    #[test]
+    fn ciphertext_written_by_an_older_build_still_decrypts() {
+        const KEY: [u8; 32] = [0x42u8; 32];
+        const CIPHERTEXT: &str =
+            "J2Wil9jf4NkR2M9kmVUjiJBSTVNbWYky6cPhzndUa8SqnLA4mHriScBxEXoQOyR2D82sR2SMqXY=";
+
+        assert_eq!(
+            decrypt_private_key(CIPHERTEXT, &KEY).unwrap(),
+            "cGxhaW50ZXh0IHByaXZhdGUga2V5"
+        );
     }
 
     #[test]

@@ -61,42 +61,38 @@ where
 #[cfg(target_os = "android")]
 pub struct AndroidUdpSocketFactory;
 
+/// Binds through the standard factory, then hands the descriptor to `VpnService.protect()` so the
+/// tunnel's own UDP traffic bypasses the tunnel.
+///
+/// gotatun 0.9 replaced the separate IPv4 and IPv6 sockets with one dual-stack socket, which is
+/// why there is a single descriptor to protect here rather than two. That removes a state this
+/// used to be able to reach: one family protected and the other not, which would have routed half
+/// the handshake traffic back into the tunnel it was trying to establish.
 #[cfg(target_os = "android")]
 impl UdpTransportFactory for AndroidUdpSocketFactory {
-    type SendV4 = <UdpSocketFactory as UdpTransportFactory>::SendV4;
-    type SendV6 = <UdpSocketFactory as UdpTransportFactory>::SendV6;
-    type RecvV4 = <UdpSocketFactory as UdpTransportFactory>::RecvV4;
-    type RecvV6 = <UdpSocketFactory as UdpTransportFactory>::RecvV6;
+    type Send = <UdpSocketFactory as UdpTransportFactory>::Send;
+    type Recv = <UdpSocketFactory as UdpTransportFactory>::Recv;
 
     async fn bind(
         &mut self,
         params: &UdpTransportFactoryParams,
-    ) -> std::io::Result<((Self::SendV4, Self::RecvV4), (Self::SendV6, Self::RecvV6))> {
-        // First, create sockets using the standard factory.
-        // (UdpSocketFactory gained buffer-size fields in the gotatun amnezia branch, so it's no
-        // longer a unit struct — construct via ::default().)
-        let ((udp_v4_tx, udp_v4_rx), (udp_v6_tx, udp_v6_rx)) =
-            UdpSocketFactory::default().bind(params).await?;
+    ) -> std::io::Result<(Self::Send, Self::Recv)> {
+        // UdpSocketFactory carries buffer-size fields, so it is constructed via ::default()
+        // rather than as a unit struct.
+        let (udp_tx, udp_rx) = UdpSocketFactory::default().bind(params).await?;
 
-        // Protect sockets from VPN routing (prevents routing loop)
         if let Some(callback) = SOCKET_PROTECT_CALLBACK.get() {
             use std::os::fd::AsFd;
             use std::os::fd::AsRawFd;
 
-            // Protect IPv4 socket
-            if !callback(udp_v4_tx.as_fd().as_raw_fd()) {
-                warn!("Failed to protect IPv4 UDP socket");
-            }
-
-            // Protect IPv6 socket
-            if !callback(udp_v6_tx.as_fd().as_raw_fd()) {
-                warn!("Failed to protect IPv6 UDP socket");
+            if !callback(udp_tx.as_fd().as_raw_fd()) {
+                warn!("Failed to protect the UDP socket");
             }
         } else {
             error!("Socket protect callback not set! VPN may not work correctly.");
         }
 
-        Ok(((udp_v4_tx, udp_v4_rx), (udp_v6_tx, udp_v6_rx)))
+        Ok((udp_tx, udp_rx))
     }
 }
 

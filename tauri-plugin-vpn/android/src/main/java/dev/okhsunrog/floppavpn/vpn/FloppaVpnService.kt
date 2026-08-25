@@ -100,9 +100,14 @@ class FloppaVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        // Start as foreground service immediately (before TUN creation)
-        // to satisfy Android's foreground service requirements
-        startVpnForeground()
+        // Before anything that can fail or tear down: onDestroy stops by this value, and reading
+        // it later meant a start that threw left the previous instance's generation in the field.
+        epoch = intent.getLongExtra(EXTRA_EPOCH, 0L)
+
+        // Foreground before the TUN exists, because Android requires it — so the notification says
+        // what is true at this point, not what we hope for. `setConnected` promotes it once the
+        // tunnel is actually carrying traffic.
+        startVpnForeground(connected = false)
 
         try {
             tunInterface = createTunInterface(intent)
@@ -115,7 +120,6 @@ class FloppaVpnService : VpnService() {
             // service that never came up.
             // Keep in sync with SOCKET_NAME in rpc.rs.
             val socketPath = applicationInfo.dataDir + "/vpn.sock"
-            epoch = intent.getLongExtra(EXTRA_EPOCH, 0L)
             nativeStartServer(fd, socketPath, epoch)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start VPN tunnel", e)
@@ -123,7 +127,10 @@ class FloppaVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
-        return START_STICKY
+        // Not sticky: a restart arrives with a null intent, and without the config that carried
+        // there is no tunnel to rebuild — the null branch above can only stop again. Declaring
+        // START_STICKY asked the system for a restart this service then refuses to honour.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -183,15 +190,17 @@ class FloppaVpnService : VpnService() {
         }
     }
 
-    private fun startVpnForeground() {
-        val notification =
-            NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("Floppa VPN")
-                .setContentText("Connected")
-                .setSmallIcon(android.R.drawable.ic_lock_lock)
-                .setOngoing(true)
-                .setContentIntent(createOpenAppIntent())
-                .build()
+    private fun buildNotification(connected: Boolean) =
+        NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("Floppa VPN")
+            .setContentText(if (connected) "Connected" else "Connecting\u2026")
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setOngoing(true)
+            .setContentIntent(createOpenAppIntent())
+            .build()
+
+    private fun startVpnForeground(connected: Boolean) {
+        val notification = buildNotification(connected)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(
@@ -202,6 +211,19 @@ class FloppaVpnService : VpnService() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+    }
+
+    /**
+     * Promote the notification once a tunnel is actually up.
+     *
+     * Called from Rust after `start_tunnel` succeeds. Until then the service is foreground and
+     * holding a descriptor, which is not the same thing as being connected — and the notification
+     * used to claim it was from the moment the service started, including for the whole of a start
+     * that went on to fail.
+     */
+    fun setConnected(connected: Boolean) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(connected))
     }
 
     /** Create a PendingIntent that opens the app when the notification is tapped. */

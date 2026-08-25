@@ -57,7 +57,7 @@ package-target: build-target
 
 # ktfmt (Kotlin formatter) — auto-downloaded on first use
 
-ktfmt_version := "0.61"
+ktfmt_version := "0.64"
 ktfmt_jar := ".cache/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
 ktfmt_url := "https://repo1.maven.org/maven2/com/facebook/ktfmt/" + ktfmt_version + "/ktfmt-" + ktfmt_version + "-with-dependencies.jar"
 kotlin_sources := "tauri-plugin-vpn/android/src"
@@ -73,6 +73,21 @@ fmt-kotlin: ensure-ktfmt
     set -euo pipefail
     echo "ktfmt..."
     out=$(java -jar {{ ktfmt_jar }} --kotlinlang-style {{ kotlin_sources }} 2>&1) || { echo "$out"; exit 1; }
+
+# Android Lint on the VPN plugin — the only linter that sees Android platform misuse
+# (API-level guards, manifest correctness, policy-sensitive intents). ktfmt only formats.
+#
+# Not in ci.yml, and this is why: Gradle cannot configure the project until
+# `gen/android/tauri.settings.gradle` exists. It carries absolute paths into the local cargo
+# registry, so it is gitignored, and the only command that writes it is `tauri android build`.
+# So the automated run lives in release.yml, right after the APK build that has already paid that
+# cost. Use this recipe during development; `client-check` calls it.
+lint-kotlin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "android lint..."
+    cd floppa-client/src-tauri/gen/android
+    out=$(./gradlew :tauri-plugin-vpn:lintRelease --console=plain 2>&1) || { echo "$out"; exit 1; }
 
 # Check Kotlin formatting
 check-kotlin: ensure-ktfmt
@@ -102,20 +117,18 @@ client-check:
     echo "tests (client crates)..."
     run cargo test --quiet --manifest-path floppa-client/src-tauri/Cargo.toml
     run cargo test --quiet --manifest-path tauri-plugin-vpn/Cargo.toml
-    for pkg in floppa-web-shared floppa-client; do
-        echo "$pkg: format + lint..."
-        cd "$pkg"
-        run vp run format:check
-        run vp run lint:check
-        cd ..
-    done
-    echo "client frontend: typecheck..."
+    # `vp check` has no package filter, so it covers floppa-face too. That is cheaper than
+    # arranging not to: the whole workspace takes under a second.
+    echo "frontend: format + lint + types..."
+    run vp check
+    echo "frontend: vue type-check..."
     run vp run --filter floppa-web-shared --filter floppa-client typecheck
-    echo "shared frontend: tests..."
-    run vp run --filter floppa-web-shared test
+    echo "frontend: tests..."
+    run vp test --run
     echo "floppa-client: build..."
     run vp run --filter floppa-client build
     just check-kotlin
+    just lint-kotlin
 
 # Server: workspace Rust (fmt + clippy + tests) + admin panel frontend (floppa-face)
 server-check:
@@ -128,12 +141,9 @@ server-check:
     cargo clippy --quiet -- -D warnings
     echo "tests (workspace)..."
     output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
-    echo "floppa-face: format + lint..."
-    cd floppa-face
-    run vp run format:check
-    run vp run lint:check
-    cd ..
-    echo "server frontend: typecheck..."
+    echo "frontend: format + lint + types..."
+    run vp check
+    echo "server frontend: vue type-check..."
     run vp run --filter floppa-face typecheck
     echo "floppa-face: build..."
     run vp run --filter floppa-face build
@@ -147,21 +157,14 @@ fmt:
     cargo fmt
     cargo fmt --manifest-path floppa-client/src-tauri/Cargo.toml
     cargo fmt --manifest-path tauri-plugin-vpn/Cargo.toml
-    for pkg in floppa-web-shared floppa-face floppa-client; do
-        echo "$pkg: format + lint..."
-        cd "$pkg"
-        run vp run format
-        run vp run lint
-        cd ..
-    done
+    echo "frontend: format + lint..."
+    run vp check --fix
     just fmt-kotlin
 
 # Lint (without auto-fix)
 lint:
     @cargo clippy --quiet -- -D warnings
-    @cd floppa-web-shared && vp run lint:check
-    @cd floppa-face && vp run lint:check
-    @cd floppa-client && vp run lint:check
+    @vp check --no-fmt
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
 sqlx-prepare:

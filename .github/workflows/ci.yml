@@ -150,7 +150,7 @@ jobs:
         run: vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
 
       - name: Frontend tests
-        run: vp run --filter floppa-web-shared test
+        run: vp test --run
 
       - name: Build frontends
         run: |
@@ -258,6 +258,7 @@ jobs:
       - name: Clippy (client, Windows)
         run: cargo clippy --manifest-path floppa-client/src-tauri/Cargo.toml --all-targets -- -D warnings
 
+  # Android Lint is deliberately not here; see the `lint-kotlin` recipe in the justfile.
   kotlin:
     name: Kotlin format check
     runs-on: ubuntu-latest

@@ -49,6 +49,8 @@ jobs:
       - name: Install Android NDK
         run: sdkmanager "ndk;27.0.12077973"
 
+      - uses: extractions/setup-just@v4
+
       - name: Set up keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -68,6 +70,14 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
         run: cd floppa-client && vp exec tauri android build --apk --target aarch64
+
+      # Runs here rather than in ci.yml because Gradle cannot configure this project until
+      # `gen/android/tauri.settings.gradle` exists, and the only thing that writes it is the
+      # command above — it carries absolute paths into the local cargo registry, so it is not
+      # committed. The APK build has already paid that cost by this point, so the check is
+      # seconds. `just lint-kotlin` is the same check during development.
+      - name: Android Lint (vpn plugin)
+        run: just lint-kotlin
 
       - name: Rename APK with version
         run: |

@@ -10,6 +10,7 @@ import changelogData from '../changelog.json'
 import logoUrl from '../assets/logo.png'
 import ColorModeButton from '../components/ColorModeButton.vue'
 import { durationUnit } from '../utils/format'
+import { renderLinks } from '../utils/renderLinks'
 
 // `landing` is shown to logged-out visitors (web home, with a Login CTA);
 // `tab` is the in-app Info tab for authenticated users.
@@ -110,14 +111,6 @@ const sectionIcons: Record<string, string> = {
 
 function changelogText(item: ChangelogItem): string {
   return locale.value === 'ru' ? item.ru : item.en
-}
-
-/** Render markdown-style [text](url) links as anchors (clicks intercepted by onChangelogClick). */
-function renderLinks(text: string): string {
-  return text.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" class="underline text-[var(--ui-primary)] hover:opacity-80">$1</a>',
-  )
 }
 
 function onChangelogClick(event: MouseEvent) {

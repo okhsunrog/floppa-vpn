@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
+import { renderLinks } from 'floppa-web-shared'
 import { useUpdateStore, type ChangelogItem } from '../stores/updateStore'
 
 const { t, locale } = useI18n()
@@ -32,14 +33,6 @@ const defaultOpen = computed(() => updateStore.changelog?.sections.map((s) => s.
 
 function getItemText(item: ChangelogItem): string {
   return locale.value === 'ru' ? item.ru : item.en
-}
-
-/** Convert markdown-style [text](url) links to <a> tags */
-function renderLinks(text: string): string {
-  return text.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" class="underline text-[var(--ui-primary)] hover:opacity-80">$1</a>',
-  )
 }
 
 /** Intercept <a> clicks to open in system browser */

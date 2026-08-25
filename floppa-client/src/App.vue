@@ -4,6 +4,7 @@ import { useDark } from '@vueuse/core'
 import { AppLayout, useAuthStore } from 'floppa-web-shared'
 import { useI18n } from 'vue-i18n'
 import { useUpdateStore } from './stores/updateStore'
+import { useVpnStore } from './stores/vpnStore'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { commands } from './bindings'
 import ChangelogModal from './components/ChangelogModal.vue'
@@ -11,6 +12,7 @@ import ChangelogModal from './components/ChangelogModal.vue'
 const { t } = useI18n()
 const authStore = useAuthStore()
 const updateStore = useUpdateStore()
+const vpn = useVpnStore()
 const isDark = useDark()
 
 // Sync status bar icon color with app theme on Android
@@ -22,12 +24,14 @@ watch(
   { immediate: true },
 )
 
-// Stop VPN tunnel on logout
+// Stop VPN tunnel on logout, through the store rather than around it: the store is the one
+// mirror of the tunnel, and a command issued past it leaves its `requesting`/`error` describing
+// a tunnel that is no longer what they say.
 watch(
   () => authStore.isAuthenticated,
   (authenticated, wasAuthenticated) => {
     if (wasAuthenticated && !authenticated) {
-      commands.tunnelSetIntentDown().catch(() => {})
+      void vpn.disconnect()
     }
   },
 )
