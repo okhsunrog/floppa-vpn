@@ -1,7 +1,9 @@
 //! Shared business logic used by both bot and admin.
 
 use crate::error::{FloppaError, Result};
-use crate::models::{Lang, LinkCodeKind, PeerSyncStatus, Protocol, SubscriptionSource};
+use crate::models::{
+    Lang, LinkCodeKind, PeerSyncStatus, Protocol, SessionKind, SessionRecord, SubscriptionSource,
+};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
@@ -1436,6 +1438,152 @@ pub async fn upsert_installation(
     .await?;
 
     Ok(row)
+}
+
+// ── Sessions ──
+//
+// Every JWT issued since migration 0018 carries a `sessions.id` as its `jti`; the server's auth
+// extractor rejects a token whose row is missing or revoked, which is what makes a token
+// revocable at all. Tokens from before that carry no `jti`: they stay valid until they expire
+// unless `users.tokens_valid_after` says otherwise — a cutoff that only those legacy tokens are
+// checked against, since a session-backed token is governed by its row.
+
+/// Mint a session for a user who just authenticated. The returned id becomes the token's `jti`.
+pub async fn create_session(
+    executor: impl PgExecutor<'_>,
+    user_id: i64,
+    kind: SessionKind,
+) -> Result<Uuid> {
+    let id = Uuid::new_v4();
+    sqlx::query!(
+        "INSERT INTO sessions (id, user_id, kind) VALUES ($1, $2, $3)",
+        id,
+        user_id,
+        kind as _,
+    )
+    .execute(executor)
+    .await?;
+    Ok(id)
+}
+
+/// Record activity on a live session. Callers throttle this (see the server's auth extractor);
+/// the query itself is unconditional apart from ignoring revoked rows.
+pub async fn touch_session(executor: impl PgExecutor<'_>, session_id: Uuid) -> Result<()> {
+    sqlx::query!(
+        "UPDATE sessions SET last_seen_at = NOW() WHERE id = $1 AND revoked_at IS NULL",
+        session_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// Attach the device that reported itself while holding `session_id` to that session, so the
+/// owner can tell their sessions apart. `label` is kept when the caller has nothing better.
+/// Scoped to `user_id`: a session can only ever be bound to its own user's installation.
+pub async fn bind_session_installation(
+    executor: impl PgExecutor<'_>,
+    session_id: Uuid,
+    user_id: i64,
+    installation_id: i64,
+    label: Option<&str>,
+) -> Result<()> {
+    sqlx::query!(
+        r#"UPDATE sessions SET installation_id = $3, label = COALESCE($4, label)
+           WHERE id = $1 AND user_id = $2"#,
+        session_id,
+        user_id,
+        installation_id,
+        label,
+    )
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+/// The live sessions of `user_id`, most recently seen first. Rows idle longer than `max_idle`
+/// are left out: their token has expired (a session-backed token is refreshed on activity,
+/// and activity bumps `last_seen_at`), so they can no longer be used.
+pub async fn list_sessions(
+    executor: impl PgExecutor<'_>,
+    user_id: i64,
+    max_idle: Duration,
+) -> Result<Vec<SessionRecord>> {
+    let seen_after = Utc::now() - max_idle;
+    let rows = sqlx::query_as!(
+        SessionRecord,
+        r#"SELECT s.id, s.kind AS "kind: SessionKind", s.created_at, s.last_seen_at, s.label,
+                  s.installation_id, ai.device_name, ai.platform
+           FROM sessions s
+           LEFT JOIN app_installations ai ON ai.id = s.installation_id
+           WHERE s.user_id = $1 AND s.revoked_at IS NULL AND s.last_seen_at > $2
+           ORDER BY s.last_seen_at DESC"#,
+        user_id,
+        seen_after,
+    )
+    .fetch_all(executor)
+    .await?;
+    Ok(rows)
+}
+
+/// Revoke one live session. `owner` restricts it to a session of that user (the self-service
+/// path); `None` is the admin path. `false` when nothing changed: no such session, someone
+/// else's, or already revoked.
+pub async fn revoke_session(
+    executor: impl PgExecutor<'_>,
+    session_id: Uuid,
+    owner: Option<i64>,
+) -> Result<bool> {
+    let result = sqlx::query!(
+        r#"UPDATE sessions SET revoked_at = NOW()
+           WHERE id = $1 AND ($2::bigint IS NULL OR user_id = $2) AND revoked_at IS NULL"#,
+        session_id,
+        owner,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Log a user out everywhere except, optionally, the session making the request: every other
+/// live session is revoked and the legacy-token cutoff (`users.tokens_valid_after`) moves to
+/// now, so tokens that predate sessions die too. One statement, so a failure changes nothing.
+/// Returns how many sessions were revoked.
+///
+/// `keep = None` is the true "everywhere" — the caller's own token included.
+pub async fn revoke_sessions_except(
+    executor: impl PgExecutor<'_>,
+    user_id: i64,
+    keep: Option<Uuid>,
+) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"WITH cutoff AS (
+               UPDATE users SET tokens_valid_after = NOW() WHERE id = $1
+           )
+           UPDATE sessions SET revoked_at = NOW()
+           WHERE user_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR id <> $2)"#,
+        user_id,
+        keep,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Revoke the sessions bound to an installation that is being deleted: a device the user (or
+/// an admin) removed must not stay logged in. Returns how many sessions were revoked.
+pub async fn revoke_installation_sessions(
+    executor: impl PgExecutor<'_>,
+    installation_id: i64,
+) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"UPDATE sessions SET revoked_at = NOW()
+           WHERE installation_id = $1 AND revoked_at IS NULL"#,
+        installation_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 /// Generate a WireGuard client configuration string.
@@ -3591,5 +3739,221 @@ mod tests {
             .expect("user has a uuid to rotate");
         assert_ne!(first, rotated);
         assert_eq!(ensure_vless_uuid(&pool, user).await.unwrap(), rotated);
+    }
+
+    // ── Sessions ──
+
+    async fn session_state(pool: &DbPool, id: Uuid) -> Option<bool> {
+        sqlx::query_scalar!(
+            r#"SELECT revoked_at IS NOT NULL AS "revoked!" FROM sessions WHERE id = $1"#,
+            id
+        )
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn tokens_valid_after(pool: &DbPool, user: i64) -> Option<DateTime<Utc>> {
+        sqlx::query_scalar!("SELECT tokens_valid_after FROM users WHERE id = $1", user)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn revoke_sessions_except_keeps_only_the_caller(pool: DbPool) {
+        let user = seed_user(&pool, 5001).await;
+        let other = seed_user(&pool, 5002).await;
+        let phone = create_session(&pool, user, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        let laptop = create_session(&pool, user, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        let browser = create_session(&pool, user, SessionKind::TelegramWidget)
+            .await
+            .unwrap();
+        let foreign = create_session(&pool, other, SessionKind::Credential)
+            .await
+            .unwrap();
+        assert!(tokens_valid_after(&pool, user).await.is_none());
+
+        // Password change from the phone: everything else goes, the phone stays.
+        assert_eq!(
+            revoke_sessions_except(&pool, user, Some(phone))
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(session_state(&pool, phone).await, Some(false));
+        assert_eq!(session_state(&pool, laptop).await, Some(true));
+        assert_eq!(session_state(&pool, browser).await, Some(true));
+        assert_eq!(session_state(&pool, foreign).await, Some(false));
+        let cutoff = tokens_valid_after(&pool, user)
+            .await
+            .expect("legacy cutoff set");
+        assert!(cutoff <= Utc::now());
+        assert!(tokens_valid_after(&pool, other).await.is_none());
+
+        let listed = list_sessions(&pool, user, Duration::days(1)).await.unwrap();
+        assert_eq!(listed.iter().map(|s| s.id).collect::<Vec<_>>(), vec![phone]);
+        assert_eq!(listed[0].kind, SessionKind::DeepLink);
+
+        // "Log out everywhere": the caller's own session included.
+        assert_eq!(revoke_sessions_except(&pool, user, None).await.unwrap(), 1);
+        assert_eq!(session_state(&pool, phone).await, Some(true));
+        assert!(
+            list_sessions(&pool, user, Duration::days(1))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Nothing left to revoke, but the cutoff still moves forward.
+        assert_eq!(revoke_sessions_except(&pool, user, None).await.unwrap(), 0);
+        assert!(tokens_valid_after(&pool, user).await.unwrap() >= cutoff);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn revoke_session_is_scoped_to_its_owner(pool: DbPool) {
+        let user = seed_user(&pool, 5003).await;
+        let other = seed_user(&pool, 5004).await;
+        let mine = create_session(&pool, user, SessionKind::MiniApp)
+            .await
+            .unwrap();
+        let theirs = create_session(&pool, other, SessionKind::MiniApp)
+            .await
+            .unwrap();
+
+        assert!(!revoke_session(&pool, theirs, Some(user)).await.unwrap());
+        assert!(!revoke_session(&pool, Uuid::new_v4(), None).await.unwrap());
+        assert!(revoke_session(&pool, mine, Some(user)).await.unwrap());
+        assert!(!revoke_session(&pool, mine, Some(user)).await.unwrap());
+        // The admin path is not scoped.
+        assert!(revoke_session(&pool, theirs, None).await.unwrap());
+        // Single-session revocation leaves the legacy cutoff alone.
+        assert!(tokens_valid_after(&pool, user).await.is_none());
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn list_sessions_hides_idle_and_shows_the_bound_device(pool: DbPool) {
+        let user = seed_user(&pool, 5005).await;
+        let inst =
+            upsert_installation(&pool, user, "dev-1", Some("Pixel 7"), Some("android"), None)
+                .await
+                .unwrap()
+                .id;
+        let live = create_session(&pool, user, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        let idle = create_session(&pool, user, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        bind_session_installation(&pool, live, user, inst, Some("android · Pixel 7"))
+            .await
+            .unwrap();
+        // Binding is scoped to the owner: another user's session id is a no-op.
+        let other = seed_user(&pool, 5006).await;
+        let foreign = create_session(&pool, other, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        bind_session_installation(&pool, foreign, user, inst, None)
+            .await
+            .unwrap();
+        sqlx::query!(
+            "UPDATE sessions SET last_seen_at = NOW() - INTERVAL '3 days' WHERE id = $1",
+            idle
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let listed = list_sessions(&pool, user, Duration::days(2)).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, live);
+        assert_eq!(listed[0].installation_id, Some(inst));
+        assert_eq!(listed[0].device_name.as_deref(), Some("Pixel 7"));
+        assert_eq!(listed[0].platform.as_deref(), Some("android"));
+        assert_eq!(listed[0].label.as_deref(), Some("android · Pixel 7"));
+        let foreign_row = list_sessions(&pool, other, Duration::days(2))
+            .await
+            .unwrap();
+        assert!(foreign_row[0].installation_id.is_none());
+
+        // `touch_session` brings an idle session back; a revoked one stays dead.
+        touch_session(&pool, idle).await.unwrap();
+        assert_eq!(
+            list_sessions(&pool, user, Duration::days(2))
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(revoke_session(&pool, idle, None).await.unwrap());
+        touch_session(&pool, idle).await.unwrap();
+        assert_eq!(session_state(&pool, idle).await, Some(true));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn deleting_an_installation_revokes_its_sessions(pool: DbPool) {
+        let user = seed_user(&pool, 5007).await;
+        let inst = upsert_installation(&pool, user, "dev-1", None, None, None)
+            .await
+            .unwrap()
+            .id;
+        let bound = create_session(&pool, user, SessionKind::DeepLink)
+            .await
+            .unwrap();
+        let unbound = create_session(&pool, user, SessionKind::TelegramWidget)
+            .await
+            .unwrap();
+        bind_session_installation(&pool, bound, user, inst, None)
+            .await
+            .unwrap();
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            revoke_installation_sessions(&mut *tx, inst).await.unwrap(),
+            1
+        );
+        release_installation_peers(&mut tx, inst).await.unwrap();
+        sqlx::query!("DELETE FROM app_installations WHERE id = $1", inst)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        assert_eq!(session_state(&pool, bound).await, Some(true));
+        assert_eq!(session_state(&pool, unbound).await, Some(false));
+        // The FK is SET NULL, so the revoked row survives its installation for the audit trail.
+        let inst_ref =
+            sqlx::query_scalar!("SELECT installation_id FROM sessions WHERE id = $1", bound)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(inst_ref.is_none());
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn merging_accounts_drops_the_husk_sessions_only(pool: DbPool) {
+        let survivor = create_credential_user(&pool, "keeps_session", "password123")
+            .await
+            .unwrap()
+            .id;
+        let husk = seed_user(&pool, 5008).await;
+        let survivor_session = create_session(&pool, survivor, SessionKind::Credential)
+            .await
+            .unwrap();
+        let husk_session = create_session(&pool, husk, SessionKind::DeepLink)
+            .await
+            .unwrap();
+
+        assert!(
+            merge_telegram_into_session(&pool, survivor, husk)
+                .await
+                .unwrap()
+        );
+
+        assert_eq!(session_state(&pool, survivor_session).await, Some(false));
+        assert_eq!(session_state(&pool, husk_session).await, None);
     }
 }

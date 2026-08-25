@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH cutoff AS (\n               UPDATE users SET tokens_valid_after = NOW() WHERE id = $1\n           )\n           UPDATE sessions SET revoked_at = NOW()\n           WHERE user_id = $1 AND revoked_at IS NULL AND ($2::uuid IS NULL OR id <> $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9682dd658b9bb49ef48340aa90cf0d4c62f7e3bf0af475a4f6f67a84993d73f5"
+}

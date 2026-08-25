@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::fmt;
 use std::str::FromStr;
+use uuid::Uuid;
 
 /// VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
 /// AmneziaWG adds interface-wide obfuscation and runs on its own server interface.
@@ -202,6 +203,41 @@ pub enum SubscriptionSource {
     AdminGrant,
 }
 
+/// Which login path minted an API session; `sessions.kind` (TEXT, CHECK-constrained by
+/// migration 0018). Bind as `SessionKind::DeepLink as _`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    /// Telegram Login Widget in the browser (admin panel).
+    TelegramWidget,
+    /// Telegram Mini App `initData`.
+    MiniApp,
+    /// The app's deep-link flow (browser → one-time code → app).
+    DeepLink,
+    /// Login + password.
+    Credential,
+    /// Created when a token issued before sessions existed was refreshed: the old client
+    /// migrates onto a revocable session without logging in again.
+    Legacy,
+}
+
+/// One row of `sessions` as shown to its owner or an admin, with the bound installation's
+/// device description when there is one.
+#[derive(Debug, Clone, FromRow)]
+pub struct SessionRecord {
+    pub id: Uuid,
+    pub kind: SessionKind,
+    pub created_at: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub label: Option<String>,
+    pub installation_id: Option<i64>,
+    pub device_name: Option<String>,
+    pub platform: Option<String>,
+}
+
 /// App installation (device) tracked independently of VPN peers
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct AppInstallation {
@@ -270,6 +306,10 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&LinkCodeKind::Merge).unwrap(),
             "\"merge\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionKind::TelegramWidget).unwrap(),
+            "\"telegram_widget\""
         );
     }
 }
