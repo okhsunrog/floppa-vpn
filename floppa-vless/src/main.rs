@@ -70,9 +70,9 @@ async fn main() -> anyhow::Result<()> {
         .iter()
         .map(|s| {
             reality::decode_short_id(s)
-                .unwrap_or_else(|e| panic!("Invalid REALITY short_id '{s}': {e}"))
+                .map_err(|e| anyhow::anyhow!("Invalid REALITY short_id '{s}': {e}"))
         })
-        .collect();
+        .collect::<anyhow::Result<_>>()?;
 
     // Create resolver and proxy selector (direct connections to internet)
     let resolver: Arc<dyn shoes_lite::resolver::Resolver> = Arc::new(CachingNativeResolver::new());
