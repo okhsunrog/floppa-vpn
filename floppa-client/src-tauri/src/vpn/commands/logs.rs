@@ -69,3 +69,37 @@ pub async fn set_log_config(
     info!("Log config updated");
     Ok(())
 }
+
+/// Where a line the webview wrote sits against the rest of the log.
+#[derive(Debug, Clone, Copy, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum WebviewLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+/// Record a line the frontend wrote, under the frontend's own target.
+///
+/// The webview used to reach the log through `tauri-plugin-log`, which hands the line to the
+/// `log` crate — and every `log` record arrives in tracing as the *same* callsite, target `log`,
+/// with the real source demoted to a `log.target` field. Third-party crates come in that way too,
+/// so the one directive that could quiet a noisy dependency also silenced the frontend: `log=warn`
+/// in the normal profile, and `console.info` — the level everything in the frontend is told to
+/// use — never reached logcat at all.
+///
+/// Five callsites rather than one dynamic target, because a tracing target is fixed at its
+/// callsite: that is exactly what makes `webview=…` a filter directive of its own.
+#[tauri::command]
+#[specta::specta]
+pub fn webview_log(level: WebviewLevel, message: String) {
+    match level {
+        WebviewLevel::Trace => tracing::trace!(target: "webview", "{message}"),
+        WebviewLevel::Debug => tracing::debug!(target: "webview", "{message}"),
+        WebviewLevel::Info => tracing::info!(target: "webview", "{message}"),
+        WebviewLevel::Warn => tracing::warn!(target: "webview", "{message}"),
+        WebviewLevel::Error => tracing::error!(target: "webview", "{message}"),
+    }
+}

@@ -17,11 +17,10 @@ import {
 } from 'floppa-web-shared'
 import { useUpdateStore } from './stores/updateStore'
 import { useDeepLinkAuthStore } from './stores/deepLinkAuthStore'
-import { commands } from './bindings'
+import { commands, type WebviewLevel } from './bindings'
 import { client } from 'floppa-web-shared/client/client.gen'
 import { exchangeTelegramLoginCode } from 'floppa-web-shared/client/sdk.gen'
 import { createAppRoutes, installAuthGuard } from 'floppa-web-shared/router'
-import { trace, debug, info, warn, error } from '@tauri-apps/plugin-log'
 
 import './styles.css'
 import App from './App.vue'
@@ -32,8 +31,8 @@ import { useVpnStore } from './stores/vpnStore'
 import { extractDeepLinkLoginCode } from './utils/deepLink'
 import { API_URL } from './config'
 
-// Forward console.* to Tauri's plugin-log so all frontend logs
-// appear in tracing (logcat on Android, stdout on desktop).
+// Forward console.* into tracing (logcat on Android, stdout on desktop) under the `webview`
+// target, so a filter directive can address the frontend on its own.
 // See docs/LOGGING.md for architecture details.
 const CONSOLE_FORWARDING_FLAG = '__floppa_console_forwarding_installed__'
 
@@ -42,10 +41,7 @@ function setupConsoleForwarding() {
   if (globalObj[CONSOLE_FORWARDING_FLAG]) return
   globalObj[CONSOLE_FORWARDING_FLAG] = true
 
-  const forward = (
-    fnName: 'log' | 'debug' | 'info' | 'warn' | 'error',
-    logger: (message: string) => Promise<void>,
-  ) => {
+  const forward = (fnName: 'log' | 'debug' | 'info' | 'warn' | 'error', level: WebviewLevel) => {
     const original = console[fnName]
     console[fnName] = (...args: unknown[]) => {
       original(...args)
@@ -63,19 +59,21 @@ function setupConsoleForwarding() {
           return String(arg)
         })
         .join(' ')
-      logger(message).catch(() => {})
+      // Swallowed deliberately: a failing invoke must not reach console.error, which is this
+      // very function.
+      commands.webviewLog(level, message).catch(() => {})
     }
   }
 
-  forward('log', trace)
-  forward('debug', debug)
-  forward('info', info)
-  forward('warn', warn)
-  forward('error', error)
+  forward('log', 'trace')
+  forward('debug', 'debug')
+  forward('info', 'info')
+  forward('warn', 'warn')
+  forward('error', 'error')
 }
 
 setupConsoleForwarding()
-void info('[web] Frontend initialized')
+console.info('[web] Frontend initialized')
 
 const app = createApp(App)
 
@@ -194,7 +192,7 @@ async function exchangeWithRetry(code: string) {
     if (!transient || attempt >= EXCHANGE_ATTEMPTS) {
       throw failure
     }
-    void warn(
+    console.warn(
       `[web] Deep-link code exchange attempt ${attempt} failed, retrying: ${failure.message}`,
     )
     await sleep(EXCHANGE_RETRY_DELAY_MS)
@@ -220,13 +218,13 @@ async function handleDeepLinkUrls(urls: string[]) {
       processedDeepLinkCodes.add(code)
       deepLinkAuth.succeed()
       await router.push('/')
-      void info('[web] Deep-link login completed.')
+      console.info('[web] Deep-link login completed.')
     } catch (e) {
       // A refusal the server worded (an expired code, a rate limit) is worth showing; an
       // unreachable server is not — the generic "did not complete" text already says that.
       const refused = e instanceof DeepLinkExchangeError && e.status !== undefined
       deepLinkAuth.fail(refused ? e.detail : null)
-      void error(`[web] Failed to exchange deep-link login code: ${String(e)}`)
+      console.error(`[web] Failed to exchange deep-link login code: ${String(e)}`)
     } finally {
       processingDeepLinkCodes.delete(code)
     }
@@ -254,18 +252,18 @@ async function setupDeepLinkAuth() {
       if (urls.length === 0) {
         return
       }
-      void info('[web] Deep-link received from single-instance payload.')
+      console.info('[web] Deep-link received from single-instance payload.')
       void handleDeepLinkUrls(urls)
     })
 
-    void info('[web] Deep-link listener initialized.')
+    console.info('[web] Deep-link listener initialized.')
 
     const startupUrls = await getCurrent()
     if (startupUrls && startupUrls.length > 0) {
       await handleDeepLinkUrls(startupUrls)
     }
   } catch (e) {
-    void error(`[web] Failed to initialize deep-link listener: ${String(e)}`)
+    console.error(`[web] Failed to initialize deep-link listener: ${String(e)}`)
   }
 }
 

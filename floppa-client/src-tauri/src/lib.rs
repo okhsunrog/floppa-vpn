@@ -48,6 +48,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::export_logs,
             vpn::commands::get_log_config,
             vpn::commands::set_log_config,
+            vpn::commands::webview_log,
         ])
         .events(tauri_specta::collect_events![
             vpn::events::TunnelStateChanged
@@ -116,7 +117,6 @@ pub fn run() {
     builder = builder
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_os::init())
-        .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
         .plugin(tauri_plugin_opener::init())
         .manage(platform.clone())
         .invoke_handler(specta_builder.invoke_handler());

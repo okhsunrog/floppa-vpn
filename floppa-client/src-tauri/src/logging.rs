@@ -123,7 +123,11 @@ fn build_filter_from_config(config: &LogConfig) -> EnvFilter {
             "floppa_client_lib=info",
             "shoes_lite=info",
             "gotatun=info",
-            "webview=warn",
+            // `info` and above, because that is the level the frontend is told to write at.
+            // `console.log` maps to trace and stays out, which is what makes the advice work.
+            "webview=info",
+            // Third-party crates reaching tracing through the `log` bridge — keyring and such.
+            // Quiet on purpose, and quiet in a way that no longer costs us the frontend.
             "log=warn",
             "tarpc=warn",
         ],
@@ -131,7 +135,7 @@ fn build_filter_from_config(config: &LogConfig) -> EnvFilter {
             "floppa_client_lib=trace",
             "shoes_lite=trace",
             "gotatun=trace",
-            "webview=debug",
+            "webview=trace",
             "log=debug",
             "tarpc=trace",
         ],

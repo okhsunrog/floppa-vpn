@@ -10,7 +10,6 @@
     "dialog:default",
     "opener:default",
     "os:default",
-    "log:default",
     "fs:default",
     "fs:allow-write-text-file",
     "android-fs:default",

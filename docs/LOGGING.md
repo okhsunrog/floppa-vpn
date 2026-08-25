@@ -13,42 +13,48 @@ There are three log sources, each producing tracing events with a specific targe
 | Source | Target | Example |
 |--------|--------|---------|
 | Our Rust code (`tracing::info!()` etc.) | `floppa_client_lib::module::path` | `INFO floppa_client_lib::vpn::config: WG config loaded` |
-| Frontend JS (`console.*` via plugin-log) | `log` | `INFO log: [web] Frontend initialized` |
+| Frontend JS (`console.*`) | `webview` | `INFO webview: [web] Frontend initialized` |
 | Rust `log` crate (keyring, etc.) | `log` | `DEBUG log: creating entry with service floppa-vpn` |
 
-### Why target is `log`, not `webview`
+### Why the frontend has a target of its own
 
-`@tauri-apps/plugin-log` JS functions (`info()`, `error()`, etc.) route through the
-Rust `log` crate, which `tracing-subscriber` bridges via `tracing-log`. This bridge
-assigns target `log` to all events.
+The frontend used to reach the log through `@tauri-apps/plugin-log`, which hands the line to
+the Rust `log` crate; `tracing-log` bridges that, and every bridged record arrives as the *same*
+tracing callsite — target `log`, with the real source demoted to a `log.target` field. Third-party
+crates arrive that way too, so the two could not be filtered apart: `log=warn`, which is there to
+keep a chatty dependency quiet, also silenced the frontend, and `console.info` — the level the
+frontend is told to write at — never reached logcat at all.
 
-There is a `tracing` feature flag on `tauri-plugin-log` that makes the plugin emit
-directly to `tracing` with target `webview` + a `location` field. However, this creates
-**duplicate events** because Tauri's built-in WebView console interception also fires
-for `console.*` calls, producing a second event with target `webview:LEVEL@URL`.
-We don't use the `tracing` feature to avoid these duplicates.
+The frontend now calls a command of ours, `webview_log(level, message)`, which emits under target
+`webview` directly. A tracing target is fixed at its callsite, so the command is a match over the
+level with one `tracing::event!` per arm — five callsites, and `webview=…` becomes a real filter
+directive. `tauri-plugin-log` is gone: with `skip_logger()` it provided nothing else.
 
 ### Desktop: `ShortTargetFormat`
 
-On desktop, `ShortTargetFormat` renames targets for cleaner output:
-- `log` → `webview` (displayed name only)
-- `webview:error@http://localhost:1420/node_modules/...` → `webview`
-- Other targets (e.g. `floppa_client_lib::vpn::config`) are left as-is.
+On desktop, `ShortTargetFormat` shortens targets for cleaner output:
+- `log` → the real source from the `log.target` field (e.g. `keyring`)
+- `webview:error@http://localhost:1420/node_modules/...` → `webview`, for the lines Tauri's own
+  WebView interception produces
+- Other targets (e.g. `floppa_client_lib::vpn::config`, and now `webview` itself) are left as-is.
 
 This formatter is **not used on Android** (`#[cfg(not(target_os = "android"))]`)
 because Android already shows short targets.
 
 ## Frontend Console Forwarding
 
-`setupConsoleForwarding()` in `main.ts` patches `console.log/debug/info/warn/error`
-to also call the corresponding `@tauri-apps/plugin-log` function. This ensures all
-frontend `console.*` calls (including from shared code in `floppa-web-shared`) appear
-in tracing output.
+`setupConsoleForwarding()` in `main.ts` patches `console.log/debug/info/warn/error` to also call
+`commands.webviewLog(level, message)`. This ensures all frontend `console.*` calls (including from
+shared code in `floppa-web-shared`) appear in tracing output.
 
-The original `console.*` function is still called, so browser DevTools work normally.
+The original `console.*` function is still called, so browser DevTools work normally. The invoke's
+rejection is swallowed: reporting it would reach `console.error`, which is this very function.
 
-Mapping: `console.log` → `trace()`, `console.debug` → `debug()`, `console.info` → `info()`,
-`console.warn` → `warn()`, `console.error` → `error()`.
+Mapping: `console.log` → `trace`, `console.debug` → `debug`, `console.info` → `info`,
+`console.warn` → `warn`, `console.error` → `error`.
+
+**Write at `console.info` and above.** `console.log` maps to trace and is filtered out in the
+normal profile — deliberately, so the noisy default level stays out of a user's logs.
 
 ## Filter Levels
 
@@ -68,8 +74,8 @@ Both profiles start from `EnvFilter::from_default_env()` with a `warn` base leve
 | `floppa_client_lib` (our Rust code) | `info` | `trace` |
 | `gotatun` (WireGuard/AmneziaWG tunnel) | `info` | `trace` |
 | `shoes_lite` (VLESS tunnel) | `info` | `trace` |
-| `webview` (Tauri console interception) | `warn` | `debug` |
-| `log` (frontend + `log`-crate bridge) | `warn` | `debug` |
+| `webview` (frontend `console.*`) | `info` | `trace` |
+| `log` (`log`-crate bridge: keyring and other deps) | `warn` | `debug` |
 | `tarpc` (Android IPC) | `warn` | `trace` |
 | everything else | `warn` | `warn` |
 
@@ -98,16 +104,14 @@ useful part — so a forgotten capture cannot fill the disk.
 ### Desktop (Linux/Windows)
 
 - Output: stdout with ANSI colors via `ShortTargetFormat`
-- `setupConsoleForwarding()` → plugin-log → `log` crate → `tracing-log` → target `log`
-- `ShortTargetFormat` renames `log` → `webview` for display
-- Tauri may also intercept WebView console → target `webview:LEVEL@URL` (deduplicated)
+- `setupConsoleForwarding()` → `webview_log` command → target `webview`
+- Tauri may also intercept WebView console → target `webview:LEVEL@URL`, shortened for display
 
 ### Android
 
 - Output: logcat via `tracing-logcat` (tag: `FloppaVPN`)
-- `setupConsoleForwarding()` → Tauri WebView console interception → target `webview:LEVEL@URL`
-- Direct `info()`/`error()` calls → target `webview:<anonymous>@http://tauri.localhost/...`
-- No `ShortTargetFormat` — long targets visible in logcat but harmless (filter by tag `FloppaVPN`)
+- `setupConsoleForwarding()` → `webview_log` command → target `webview`
+- No `ShortTargetFormat` — targets are already short (filter by tag `FloppaVPN`)
 
 ## Reading Logs
 
@@ -124,21 +128,10 @@ just deploy-android-test         # Build, install, restart, show logs
 adb logcat -d --pid=$(adb shell pidof dev.okhsunrog.floppa_vpn) -s FloppaVPN
 ```
 
-## Plugin Configuration
+## The `log` crate bridge
 
-In `lib.rs`:
-```rust
-.plugin(tauri_plugin_log::Builder::new().skip_logger().build())
-```
-
-`skip_logger()` prevents the plugin from registering its own global `log` logger,
-since we have our own `tracing-subscriber` setup in `logging.rs`.
-
-## Cargo Features
-
-```toml
-tauri-plugin-log = { version = "2", features = ["colored"] }
-```
-
-The `colored` feature adds ANSI colors to the plugin's internal formatting.
-The `tracing` feature is **not used** — see "Why target is `log`" above.
+We never register a `log` logger of our own. `tracing-subscriber`'s `tracing-log` feature is on
+by default, so `try_init()` installs `LogTracer`, and records from dependencies that log through
+the `log` crate arrive as tracing events with target `log` and a `log.target` field naming the
+real source. That is what the `log=…` directive addresses — dependencies only, now that the
+frontend has a target of its own.

@@ -93,6 +93,20 @@ export const commands = {
 	getLogConfig: () => __TAURI_INVOKE<LogConfig>("get_log_config"),
 	/**  Apply a new log configuration. Persists to disk and propagates to VPN process. */
 	setLogConfig: (config: LogConfig) => typedError<null, string>(__TAURI_INVOKE("set_log_config", { config })),
+	/**
+	 *  Record a line the frontend wrote, under the frontend's own target.
+	 * 
+	 *  The webview used to reach the log through `tauri-plugin-log`, which hands the line to the
+	 *  `log` crate — and every `log` record arrives in tracing as the *same* callsite, target `log`,
+	 *  with the real source demoted to a `log.target` field. Third-party crates come in that way too,
+	 *  so the one directive that could quiet a noisy dependency also silenced the frontend: `log=warn`
+	 *  in the normal profile, and `console.info` — the level everything in the frontend is told to
+	 *  use — never reached logcat at all.
+	 * 
+	 *  Five callsites rather than one dynamic target, because a tracing target is fixed at its
+	 *  callsite: that is exactly what makes `webview=…` a filter directive of its own.
+	 */
+	webviewLog: (level: WebviewLevel, message: string) => __TAURI_INVOKE<void>("webview_log", { level, message }),
 };
 
 /** Events */
@@ -391,6 +405,9 @@ export type TunnelState = {
  *  a direct read at startup and receiving the first pushed update.
  */
 export type TunnelStateChanged = TunnelState;
+
+/**  Where a line the webview wrote sits against the rest of the log. */
+export type WebviewLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

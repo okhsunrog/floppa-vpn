@@ -21,7 +21,6 @@ serde = { version = "1", features = ["derive"] }
 tauri = { version = "2", features = ["config-json5", "specta", "tray-icon", "image-png"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
-tauri-plugin-log = { version = "2", features = ["colored"] }
 tauri-plugin-os = "2"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = { version = "0.0.12" }
