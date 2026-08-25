@@ -1,6 +1,8 @@
 //! Background task that sends subscription expiry notifications via the Telegram bot.
 
+use crate::bot::callback::CallbackAction;
 use crate::bot::i18n;
+use floppa_core::models::{Lang, NotificationKind};
 use floppa_core::{Config, DbPool, billing};
 use std::time::Duration;
 use teloxide::prelude::*;
@@ -11,9 +13,8 @@ use tracing::{error, info, warn};
 struct ExpiringSubscription {
     subscription_id: i64,
     telegram_id: i64,
-    language: Option<String>,
-    /// "expiry_1d_before" or "expiry_now"
-    kind: String,
+    language: Option<Lang>,
+    kind: NotificationKind,
 }
 
 /// Spawn the background notification loop. Checks every 30 minutes.
@@ -62,11 +63,11 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
         SELECT
             s.id as subscription_id,
             u.telegram_id as "telegram_id!",
-            u.language,
+            u.language AS "language: Lang",
             CASE
-                WHEN s.expires_at <= NOW() THEN 'expiry_now'
-                ELSE 'expiry_1d_before'
-            END as "kind!"
+                WHEN s.expires_at <= NOW() THEN $1
+                ELSE $2
+            END as "kind!: NotificationKind"
         FROM subscriptions s
         JOIN users u ON s.user_id = u.id
         WHERE s.expires_at IS NOT NULL
@@ -86,11 +87,13 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
               SELECT 1 FROM notification_log nl
               WHERE nl.subscription_id = s.id
                 AND nl.kind = CASE
-                    WHEN s.expires_at <= NOW() THEN 'expiry_now'
-                    ELSE 'expiry_1d_before'
+                    WHEN s.expires_at <= NOW() THEN $1
+                    ELSE $2
                 END
           )
         "#,
+        NotificationKind::ExpiryNow as _,
+        NotificationKind::ExpiryOneDayBefore as _,
     )
     .fetch_all(pool)
     .await?;
@@ -105,11 +108,11 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
     let stars_rub_rate = config.bot.as_ref().and_then(|b| b.stars_rub_rate);
 
     for row in &rows {
-        let msgs = i18n::for_lang(row.language.as_deref());
+        let msgs = i18n::for_lang(row.language.unwrap_or(Lang::En));
 
-        let header = match row.kind.as_str() {
-            "expiry_now" => msgs.notify_expired,
-            _ => msgs.notify_expires_tomorrow,
+        let header = match row.kind {
+            NotificationKind::ExpiryNow => msgs.notify_expired,
+            NotificationKind::ExpiryOneDayBefore => msgs.notify_expires_tomorrow,
         };
 
         let text = i18n::format_plans_message(msgs, header, &plans);
@@ -126,7 +129,7 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
                         p.period_days,
                         stars_rub_rate,
                     ),
-                    format!("buy:{}", p.id),
+                    CallbackAction::Buy { plan_id: p.id }.to_string(),
                 )]
             })
             .collect();
@@ -145,7 +148,7 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
                     "INSERT INTO notification_log (user_id, kind, subscription_id)
                      SELECT u.id, $2, $3 FROM users u WHERE u.telegram_id = $1",
                     row.telegram_id,
-                    row.kind,
+                    row.kind as _,
                     row.subscription_id,
                 )
                 .execute(pool)

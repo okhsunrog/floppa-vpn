@@ -1,7 +1,9 @@
+use crate::bot::callback::CallbackAction;
 use crate::bot::i18n;
 use chrono::Utc;
 use dptree::di::DependencyMap;
-use floppa_core::{Config, DbPool, Secrets, billing, models::Lang, services};
+use floppa_core::models::{Lang, LinkCodeKind};
+use floppa_core::{Config, DbPool, Secrets, billing, services};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use teloxide::{
@@ -123,7 +125,7 @@ async fn tell_user_it_failed(bot: &Bot, update: &Update, pool: &DbPool, err: &Bo
         Some(user) => {
             i18n::resolve_lang(pool, user.id.0 as i64, user.language_code.as_deref()).await
         }
-        None => i18n::for_lang(None),
+        None => i18n::for_language_tag(None),
     };
     let sent = match &update.kind {
         // Not answering a pre-checkout leaves the payment hanging; declining it keeps the
@@ -247,7 +249,11 @@ async fn handle_menu_button(bot: Bot, msg: Message, pool: DbPool, config: Config
 }
 
 /// Mark a link code consumed (idempotent). Returns true if this call consumed it.
-async fn consume_link_code(pool: &DbPool, code: &str, kind: &str) -> Result<bool, sqlx::Error> {
+async fn consume_link_code(
+    pool: &DbPool,
+    code: &str,
+    kind: LinkCodeKind,
+) -> Result<bool, sqlx::Error> {
     let res = sqlx::query(
         "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()",
     )
@@ -272,11 +278,12 @@ async fn attach_telegram_with_link_code(
 
     let session_user_id = sqlx::query_scalar::<_, i64>(
         r#"UPDATE telegram_link_codes
-           SET consumed_at = NOW(), kind = 'simple'
+           SET consumed_at = NOW(), kind = $2
            WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()
            RETURNING user_id"#,
     )
     .bind(code)
+    .bind(LinkCodeKind::Simple)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -343,7 +350,7 @@ async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> 
     match existing {
         // Already this same account → nothing to do.
         Some(row) if row.id == session_user_id => {
-            if consume_link_code(&pool, &code, "simple").await? {
+            if consume_link_code(&pool, &code, LinkCodeKind::Simple).await? {
                 bot.send_message(msg.chat.id, msgs.link_already).await?;
             } else {
                 bot.send_message(msg.chat.id, msgs.link_invalid).await?;
@@ -373,11 +380,11 @@ async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> 
             let keyboard = InlineKeyboardMarkup::new(vec![
                 vec![InlineKeyboardButton::callback(
                     msgs.link_merge_confirm,
-                    format!("link_merge:{code}"),
+                    CallbackAction::LinkMerge { code: code.clone() }.to_string(),
                 )],
                 vec![InlineKeyboardButton::callback(
                     msgs.link_merge_cancel,
-                    "link_cancel".to_string(),
+                    CallbackAction::LinkCancel.to_string(),
                 )],
             ]);
             bot.send_message(msg.chat.id, text)
@@ -481,7 +488,7 @@ async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerRes
                     p.period_days,
                     stars_rub_rate,
                 ),
-                format!("buy:{}", p.id),
+                CallbackAction::Buy { plan_id: p.id }.to_string(),
             )]
         })
         .collect();
@@ -585,8 +592,8 @@ async fn lang(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
     let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
-        InlineKeyboardButton::callback("🇬🇧 English", "lang:en"),
-        InlineKeyboardButton::callback("🇷🇺 Русский", "lang:ru"),
+        InlineKeyboardButton::callback("🇬🇧 English", CallbackAction::SetLang(Lang::En).to_string()),
+        InlineKeyboardButton::callback("🇷🇺 Русский", CallbackAction::SetLang(Lang::Ru).to_string()),
     ]]);
 
     bot.send_message(msg.chat.id, msgs.lang_prompt)
@@ -601,29 +608,34 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
     // answered, and every early return below would otherwise leave it spinning.
     bot.answer_callback_query(q.id.clone()).await?;
 
-    let data = match q.data.as_deref() {
-        Some(d) => d,
+    let action = match q.data.as_deref().map(str::parse::<CallbackAction>) {
+        Some(Ok(action)) => action,
+        // A button from an older bot version, or made-up data: nothing to do.
+        Some(Err(e)) => {
+            warn!("Ignoring callback from telegram_id={}: {e}", q.from.id);
+            return Ok(());
+        }
         None => return Ok(()),
     };
 
-    if let Some(lang) = data.strip_prefix("lang:") {
+    if let CallbackAction::SetLang(lang) = action {
         let telegram_id = q.from.id.0 as i64;
 
         sqlx::query!(
             "UPDATE users SET language = $1 WHERE telegram_id = $2",
-            lang,
+            lang as _,
             telegram_id
         )
         .execute(&pool)
         .await?;
 
-        let msgs = i18n::for_lang(Some(lang));
+        let msgs = i18n::for_lang(lang);
 
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.lang_set)
                 .await?;
         }
-    } else if let Some(code) = data.strip_prefix("link_merge:") {
+    } else if let CallbackAction::LinkMerge { code } = &action {
         let telegram_id = q.from.id.0 as i64;
         let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
 
@@ -645,8 +657,9 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
                 _ => false,
             };
             sqlx::query!(
-                "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = 'merge' WHERE code = $1 AND consumed_at IS NULL",
+                "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 WHERE code = $1 AND consumed_at IS NULL",
                 code,
+                LinkCodeKind::Merge as _,
             )
             .execute(&pool)
             .await?;
@@ -663,19 +676,14 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             bot.edit_message_text(msg.chat().id, msg.id(), result_text)
                 .await?;
         }
-    } else if data == "link_cancel" {
+    } else if action == CallbackAction::LinkCancel {
         let telegram_id = q.from.id.0 as i64;
         let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.link_cancelled)
                 .await?;
         }
-    } else if let Some(plan_id_str) = data.strip_prefix("buy:") {
-        let plan_id: i32 = match plan_id_str.parse() {
-            Ok(id) => id,
-            Err(_) => return Ok(()),
-        };
-
+    } else if let CallbackAction::Buy { plan_id } = action {
         let telegram_id = q.from.id.0 as i64;
         let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
 

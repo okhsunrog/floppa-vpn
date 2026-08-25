@@ -63,6 +63,34 @@ impl TryFrom<&str> for Protocol {
     }
 }
 
+/// What a bot notification was about; `notification_log.kind` (TEXT, CHECK-constrained by
+/// migration 0017). The `(subscription_id, kind)` unique index makes each kind fire once per
+/// subscription. Bind as `NotificationKind::ExpiryNow as _`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT")]
+pub enum NotificationKind {
+    /// Sent about a day before the subscription ends.
+    #[sqlx(rename = "expiry_1d_before")]
+    #[serde(rename = "expiry_1d_before")]
+    ExpiryOneDayBefore,
+    /// Sent once the subscription has ended.
+    #[sqlx(rename = "expiry_now")]
+    #[serde(rename = "expiry_now")]
+    ExpiryNow,
+}
+
+/// How a Telegram link code was consumed; `telegram_link_codes.kind` (TEXT, NULL until
+/// consumed, CHECK-constrained by migration 0017). Bind as `LinkCodeKind::Simple as _`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum LinkCodeKind {
+    /// The Telegram was free and simply attached to the account that minted the code.
+    Simple,
+    /// The Telegram's established account was merged into the account that minted the code.
+    Merge,
+}
+
 /// Lifecycle of a `payments` row (TEXT column `status`). Bind as `PaymentStatus::Completed as _`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
@@ -234,6 +262,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&SubscriptionSource::AdminGrant).unwrap(),
             "\"admin_grant\""
+        );
+        assert_eq!(
+            serde_json::to_string(&NotificationKind::ExpiryOneDayBefore).unwrap(),
+            "\"expiry_1d_before\""
+        );
+        assert_eq!(
+            serde_json::to_string(&LinkCodeKind::Merge).unwrap(),
+            "\"merge\""
         );
     }
 }

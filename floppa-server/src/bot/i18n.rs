@@ -2,6 +2,7 @@
 /// Resolves language: DB preference → Telegram language_code → English.
 use floppa_core::DbPool;
 use floppa_core::billing::PurchasablePlan;
+use floppa_core::models::Lang;
 
 pub struct Messages {
     // /start
@@ -212,12 +213,17 @@ pub fn match_menu_button(text: &str) -> Option<BotMenuAction> {
     None
 }
 
-/// Get messages for a language code string.
-pub fn for_lang(lang_code: Option<&str>) -> &'static Messages {
-    match lang_code {
-        Some(code) if code.starts_with("ru") => &RU,
-        _ => &EN,
+/// Messages for a language.
+pub fn for_lang(lang: Lang) -> &'static Messages {
+    match lang {
+        Lang::En => &EN,
+        Lang::Ru => &RU,
     }
+}
+
+/// Messages for a Telegram `language_code` (or none): a supported language, else English.
+pub fn for_language_tag(tag: Option<&str>) -> &'static Messages {
+    for_lang(tag.and_then(Lang::from_language_tag).unwrap_or(Lang::En))
 }
 
 /// Resolve language for a user: DB preference → Telegram language_code → English.
@@ -228,7 +234,7 @@ pub async fn resolve_lang(
 ) -> &'static Messages {
     // Check DB preference first
     let db_lang = sqlx::query_scalar!(
-        "SELECT language FROM users WHERE telegram_id = $1",
+        r#"SELECT language AS "language: Lang" FROM users WHERE telegram_id = $1"#,
         telegram_id
     )
     .fetch_optional(pool)
@@ -237,12 +243,10 @@ pub async fn resolve_lang(
     .flatten()
     .flatten();
 
-    if let Some(lang) = db_lang {
-        return for_lang(Some(&lang));
+    match db_lang {
+        Some(lang) => for_lang(lang),
+        None => for_language_tag(telegram_lang),
     }
-
-    // Fall back to Telegram language_code
-    for_lang(telegram_lang)
 }
 
 /// Format status message with plan and expiry date.
