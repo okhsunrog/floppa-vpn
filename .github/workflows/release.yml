@@ -22,9 +22,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The Android target comes from rust-toolchain.toml, which pins the channel cargo runs.
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -41,7 +40,7 @@ jobs:
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
@@ -65,11 +64,13 @@ jobs:
           storeFile=$KEYSTORE_PATH
           EOF
 
+      # The same recipe as local development, so the flags (arm64-only, split per ABI) and the
+      # output path cannot drift between the two.
       - name: Build Android APK
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
-        run: cd floppa-client && vp exec tauri android build --apk --target aarch64
+        run: just build-android
 
       # Runs here rather than in ci.yml because Gradle cannot configure this project until
       # `gen/android/tauri.settings.gradle` exists, and the only thing that writes it is the
@@ -82,14 +83,14 @@ jobs:
       - name: Rename APK with version
         run: |
           VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
-          APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
-          mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
+          APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release"
+          mv "$APK_DIR/app-arm64-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: android-apk
-          path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/floppa-vpn-*-android-arm64.apk
+          path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/floppa-vpn-*-android-arm64.apk
 
   linux:
     name: Linux

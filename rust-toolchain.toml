@@ -1,3 +1,7 @@
 [toolchain]
 channel = "1.96"
 components = ["rustfmt", "clippy"]
+# The Android client is cross-compiled on the pinned channel, so the target lives here rather than
+# in each workflow: rustup installs it with the toolchain, and `dtolnay/rust-toolchain@stable`
+# with a `targets:` input only adds it to stable, which is not the toolchain cargo runs.
+targets = ["aarch64-linux-android"]
