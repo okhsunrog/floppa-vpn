@@ -226,16 +226,7 @@ impl FromRequestParts<AppState> for AuthUser {
 
         let token = auth_header.ok_or_else(ApiError::unauthorized)?;
 
-        // Get JWT secret from secrets
-        let secret = state
-            .secrets
-            .auth
-            .as_ref()
-            .map(|a| a.jwt_secret.as_str())
-            .ok_or_else(|| ApiError::internal("Auth secrets not configured"))?;
-
-        // Verify token
-        let claims = verify_jwt(token, secret).map_err(|e| {
+        let claims = verify_jwt(token, &state.auth_secrets.jwt_secret).map_err(|e| {
             warn!("JWT verification failed: {}", e);
             ApiError::unauthorized()
         })?;
