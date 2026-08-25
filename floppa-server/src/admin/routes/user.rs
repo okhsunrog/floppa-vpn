@@ -558,15 +558,7 @@ pub(super) async fn delete_my_peer(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let result = sqlx::query!(
-        "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND user_id = $2 AND sync_status IN ('active', 'pending_add')",
-        peer_id,
-        auth.user_id
-    )
-    .execute(&state.pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
+    if !services::mark_peer_for_removal(&state.pool, peer_id, Some(auth.user_id)).await? {
         return Err(ApiError::not_found("Peer not found"));
     }
 

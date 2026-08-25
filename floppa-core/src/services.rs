@@ -893,6 +893,50 @@ pub async fn mark_peer_for_removal(
     Ok(result.rows_affected() == 1)
 }
 
+/// Queue every live (`active`/`pending_add`) peer of `user_id` for removal. Returns how many
+/// peers changed — `0` means the user had nothing the daemon still serves.
+pub async fn mark_user_peers_for_removal(
+    executor: impl PgExecutor<'_>,
+    user_id: i64,
+) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"UPDATE peers SET sync_status = $1
+           WHERE user_id = $2 AND sync_status IN ('active', 'pending_add')"#,
+        PeerSyncStatus::PendingRemove as _,
+        user_id,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Prepare an installation's peers for the installation row being deleted: its live peers are
+/// queued for removal (a device that no longer exists must not keep a tunnel — or a peer slot),
+/// and every peer that pointed at it, live or historical, is detached so the FK allows the
+/// DELETE. Runs in the caller's transaction so the delete is atomic with it. Returns how many
+/// peers were queued for removal.
+pub async fn release_installation_peers(
+    tx: &mut PgTransaction<'_>,
+    installation_id: i64,
+) -> Result<u64> {
+    let queued = sqlx::query!(
+        r#"UPDATE peers SET sync_status = $1
+           WHERE installation_id = $2 AND sync_status IN ('active', 'pending_add')"#,
+        PeerSyncStatus::PendingRemove as _,
+        installation_id,
+    )
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    sqlx::query!(
+        "UPDATE peers SET installation_id = NULL WHERE installation_id = $1",
+        installation_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(queued)
+}
+
 /// Find an active peer by device_id + protocol for a given user (via app_installations JOIN).
 ///
 /// A device may hold one active peer per protocol, so the protocol is part of the lookup.
@@ -2252,6 +2296,58 @@ mod tests {
             ensure_vless_uuid(&pool, -1).await,
             Err(FloppaError::Database(sqlx::Error::RowNotFound))
         ));
+    }
+
+    // ── release_installation_peers ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_release_installation_peers_queues_live_and_detaches_all(pool: DbPool) {
+        let user = seed_user(&pool, 11111).await;
+        let inst = upsert_installation(&pool, user, "dev-1", None, None, None)
+            .await
+            .unwrap()
+            .id;
+        let insert = |key: &'static str, ip: &'static str, status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar!(
+                    "INSERT INTO peers (user_id, installation_id, public_key, assigned_ip, \
+                     sync_status) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                    user,
+                    inst,
+                    key,
+                    ip,
+                    status,
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let active = insert("k-active", "10.0.0.2", "active").await;
+        let removed = insert("k-removed", "10.0.0.3", "removed").await;
+
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(release_installation_peers(&mut tx, inst).await.unwrap(), 1);
+        sqlx::query!("DELETE FROM app_installations WHERE id = $1", inst)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let rows = sqlx::query!(
+            r#"SELECT id, sync_status AS "s: PeerSyncStatus", installation_id
+               FROM peers WHERE user_id = $1 ORDER BY id"#,
+            user
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows[0].id, active);
+        assert_eq!(rows[0].s, PeerSyncStatus::PendingRemove);
+        assert_eq!(rows[1].id, removed);
+        assert_eq!(rows[1].s, PeerSyncStatus::Removed);
+        assert!(rows.iter().all(|r| r.installation_id.is_none()));
     }
 
     // ── mark_peer_for_removal ──

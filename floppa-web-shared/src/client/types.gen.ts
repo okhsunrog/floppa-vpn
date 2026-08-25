@@ -760,7 +760,7 @@ export type DeleteInstallationError = DeleteInstallationErrors[keyof DeleteInsta
 
 export type DeleteInstallationResponses = {
     /**
-     * Installation deleted
+     * Installation deleted, its peers queued for removal
      */
     200: unknown;
 };
@@ -1542,6 +1542,10 @@ export type SetUserCredentialErrors = {
      */
     403: ApiError;
     /**
+     * User not found
+     */
+    404: ApiError;
+    /**
      * Login already taken
      */
     409: ApiError;
@@ -1656,7 +1660,7 @@ export type SetSubscriptionErrors = {
      */
     403: ApiError;
     /**
-     * Plan not found
+     * User or plan not found
      */
     404: ApiError;
     /**

@@ -120,7 +120,8 @@ export const getPublicConfig = <ThrowOnError extends boolean = false>(options?: 
 export const listInstallations = <ThrowOnError extends boolean = false>(options?: Options<ListInstallationsData, ThrowOnError>): RequestResult<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError> => (options?.client ?? client).get<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError>({ url: '/installations', ...options });
 
 /**
- * Delete an app installation (admin only)
+ * Delete an app installation (admin only). Its live peers are queued for removal — a device
+ * that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
  */
 export const deleteInstallation = <ThrowOnError extends boolean = false>(options: Options<DeleteInstallationData, ThrowOnError>): RequestResult<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError>({ url: '/installations/{id}', ...options });
 

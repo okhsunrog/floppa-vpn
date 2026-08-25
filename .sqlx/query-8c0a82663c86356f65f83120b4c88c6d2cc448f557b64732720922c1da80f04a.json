@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET sync_status = $1\n           WHERE installation_id = $2 AND sync_status IN ('active', 'pending_add')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8c0a82663c86356f65f83120b4c88c6d2cc448f557b64732720922c1da80f04a"
+}

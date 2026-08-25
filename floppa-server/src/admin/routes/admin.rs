@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use floppa_core::{PeerSyncStatus, Protocol, SubscriptionSource};
+use floppa_core::{PeerSyncStatus, Protocol, SubscriptionSource, services};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -67,6 +67,22 @@ pub(super) async fn get_stats(
         total_payments: stats.total_payments,
         total_stars_revenue: stats.total_stars_revenue,
     }))
+}
+
+/// 404 unless a user with this id exists. For admin endpoints that write rows *about* a user:
+/// without it a bad id surfaces as a foreign-key violation, i.e. a 500.
+async fn require_user(state: &AppState, user_id: i64) -> Result<(), ApiError> {
+    let exists = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1) AS "exists!""#,
+        user_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found("User not found"))
+    }
 }
 
 #[derive(Serialize, ToSchema)]
@@ -241,6 +257,7 @@ pub struct SetUserCredentialRequest {
         (status = 409, body = ApiError, description = "Login already taken"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "User not found"),
     )
 )]
 pub(super) async fn set_user_credential(
@@ -249,8 +266,8 @@ pub(super) async fn set_user_credential(
     Path(id): Path<i64>,
     Json(req): Json<SetUserCredentialRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    floppa_core::services::set_credential_for_user(&state.pool, id, &req.login, &req.password)
-        .await?;
+    require_user(&state, id).await?;
+    services::set_credential_for_user(&state.pool, id, &req.login, &req.password).await?;
     tracing::warn!(
         "Admin {} set a recovery credential for user {}",
         admin.0.user_id,
@@ -469,7 +486,7 @@ pub struct SetSubscriptionRequest {
         (status = 400, body = ApiError, description = "Days not specified and plan has no trial duration"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
-        (status = 404, body = ApiError, description = "Plan not found"),
+        (status = 404, body = ApiError, description = "User or plan not found"),
         (status = 500, body = ApiError, description = "Internal server error"),
     )
 )]
@@ -479,6 +496,7 @@ pub(super) async fn set_subscription(
     Path(id): Path<i64>,
     Json(req): Json<SetSubscriptionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    require_user(&state, id).await?;
     let now = Utc::now();
 
     let expires_at =
@@ -563,14 +581,7 @@ pub(super) async fn remove_peer(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let result = sqlx::query!(
-        "UPDATE peers SET sync_status = 'pending_remove' WHERE user_id = $1 AND sync_status = 'active'",
-        id
-    )
-    .execute(&state.pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
+    if services::mark_user_peers_for_removal(&state.pool, id).await? == 0 {
         return Err(ApiError::not_found("No active peers found for this user"));
     }
 
@@ -755,14 +766,7 @@ pub(super) async fn delete_admin_peer(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let result = sqlx::query!(
-        "UPDATE peers SET sync_status = 'pending_remove' WHERE id = $1 AND sync_status = 'active'",
-        peer_id
-    )
-    .execute(&state.pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
+    if !services::mark_peer_for_removal(&state.pool, peer_id, None).await? {
         return Err(ApiError::not_found("Peer not found or not active"));
     }
 
@@ -820,7 +824,8 @@ pub(super) async fn list_installations(
     Ok(Json(rows))
 }
 
-/// Delete an app installation (admin only)
+/// Delete an app installation (admin only). Its live peers are queued for removal — a device
+/// that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
 #[utoipa::path(
     delete,
     path = "/installations/{id}",
@@ -828,7 +833,7 @@ pub(super) async fn list_installations(
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Installation ID")),
     responses(
-        (status = 200, description = "Installation deleted"),
+        (status = 200, description = "Installation deleted, its peers queued for removal"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
         (status = 404, body = ApiError, description = "Installation not found"),
@@ -841,13 +846,7 @@ pub(super) async fn delete_installation(
 ) -> Result<impl IntoResponse, ApiError> {
     let mut tx = state.pool.begin().await?;
 
-    // Unlink peers from this installation
-    sqlx::query!(
-        "UPDATE peers SET installation_id = NULL WHERE installation_id = $1",
-        id
-    )
-    .execute(&mut *tx)
-    .await?;
+    services::release_installation_peers(&mut tx, id).await?;
 
     let result = sqlx::query!("DELETE FROM app_installations WHERE id = $1", id)
         .execute(&mut *tx)

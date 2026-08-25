@@ -216,7 +216,8 @@ export const listInstallationsQuery = defineQueryOptions<Options<ListInstallatio
 }));
 
 /**
- * Delete an app installation (admin only)
+ * Delete an app installation (admin only). Its live peers are queued for removal — a device
+ * that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
  */
 export const deleteInstallationMutation = (options?: Partial<Options<DeleteInstallationData>>): UseMutationOptions<unknown, Options<DeleteInstallationData>, DeleteInstallationError> => ({
     mutation: async (vars) => {
