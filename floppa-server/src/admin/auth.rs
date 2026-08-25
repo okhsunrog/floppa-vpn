@@ -296,6 +296,95 @@ mod tests {
         assert!(claims.admin);
     }
 
+    fn hmac_hex(key: &[u8], data: &str) -> String {
+        let mut mac = Hmac::<Sha256>::new_from_slice(key).unwrap();
+        mac.update(data.as_bytes());
+        hex::encode(mac.finalize().into_bytes())
+    }
+
+    const BOT_TOKEN: &str = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
+
+    fn widget_data(auth_date: i64) -> TelegramAuthData {
+        // Widget: secret = SHA256(bot_token), data-check-string = sorted "k=v" lines.
+        let secret = {
+            use sha2::Digest;
+            Sha256::digest(BOT_TOKEN.as_bytes())
+        };
+        let check = format!("auth_date={auth_date}\nfirst_name=Ann\nid=42\nusername=ann");
+        TelegramAuthData {
+            id: 42,
+            first_name: Some("Ann".into()),
+            last_name: None,
+            username: Some("ann".into()),
+            photo_url: None,
+            auth_date,
+            hash: hmac_hex(&secret, &check),
+        }
+    }
+
+    #[test]
+    fn widget_signature_accepts_only_the_signed_payload() {
+        let now = Utc::now().timestamp();
+        assert!(verify_telegram_auth(&widget_data(now), BOT_TOKEN));
+
+        let mut tampered = widget_data(now);
+        tampered.username = Some("admin".into());
+        assert!(!verify_telegram_auth(&tampered, BOT_TOKEN));
+
+        assert!(!verify_telegram_auth(&widget_data(now), "other-token"));
+
+        let mut not_hex = widget_data(now);
+        not_hex.hash = "zz".into();
+        assert!(!verify_telegram_auth(&not_hex, BOT_TOKEN));
+
+        // Signed correctly, but a day and a bit ago.
+        assert!(!verify_telegram_auth(
+            &widget_data(now - 86400 - 60),
+            BOT_TOKEN
+        ));
+    }
+
+    fn mini_app_init_data(auth_date: i64, user_json: &str) -> String {
+        // Mini App: secret = HMAC("WebAppData", bot_token), same data-check-string rule over the
+        // decoded query pairs.
+        let secret = {
+            let mut mac = Hmac::<Sha256>::new_from_slice(b"WebAppData").unwrap();
+            mac.update(BOT_TOKEN.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let check = format!("auth_date={auth_date}\nquery_id=AAEx\nuser={user_json}");
+        let hash = hmac_hex(&secret, &check);
+        form_urlencoded::Serializer::new(String::new())
+            .append_pair("query_id", "AAEx")
+            .append_pair("user", user_json)
+            .append_pair("auth_date", &auth_date.to_string())
+            .append_pair("hash", &hash)
+            .finish()
+    }
+
+    #[test]
+    fn mini_app_signature_accepts_only_the_signed_payload() {
+        let now = Utc::now().timestamp();
+        let user = r#"{"id":42,"first_name":"Ann","username":"ann","language_code":"en"}"#;
+
+        let ok = verify_telegram_mini_app(&mini_app_init_data(now, user), BOT_TOKEN)
+            .expect("valid initData");
+        assert_eq!(ok.id, 42);
+        assert_eq!(ok.username.as_deref(), Some("ann"));
+
+        assert!(verify_telegram_mini_app(&mini_app_init_data(now, user), "other").is_none());
+
+        let forged = mini_app_init_data(now, user).replace("%22id%22%3A42", "%22id%22%3A43");
+        assert_ne!(forged, mini_app_init_data(now, user));
+        assert!(verify_telegram_mini_app(&forged, BOT_TOKEN).is_none());
+
+        assert!(
+            verify_telegram_mini_app(&mini_app_init_data(now - 86400 - 60, user), BOT_TOKEN)
+                .is_none()
+        );
+        assert!(verify_telegram_mini_app("hash=abc", BOT_TOKEN).is_none());
+    }
+
     /// Tokens minted before the `username` claim was dropped must keep verifying.
     #[test]
     fn jwt_with_legacy_username_claim_still_verifies() {

@@ -456,3 +456,257 @@ async fn get_public_config(State(state): State<AppState>) -> Json<PublicConfig> 
         vless_available: state.config.vless.is_some() && state.secrets.vless.is_some(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::{Body, to_bytes},
+        http::{Request, header},
+    };
+    use floppa_core::config::{AuthSecrets, WireGuardConfig};
+    use tower::ServiceExt;
+
+    const JWT_SECRET: &str = "test-jwt-secret";
+
+    fn test_state(pool: DbPool, min_client_version: Option<&str>) -> AppState {
+        let config = Config {
+            wireguard: WireGuardConfig {
+                interface: "wg-test".into(),
+                endpoint: "vpn.test.com:51820".into(),
+                listen_port: None,
+                client_subnet: "10.200.0.0/24".parse().unwrap(),
+                server_ip: None,
+                dns: vec!["8.8.8.8".into()],
+                allowed_ips: "0.0.0.0/0".into(),
+                rate_limit: None,
+            },
+            amneziawg: None,
+            vless: None,
+            bot: None,
+            auth: None,
+            allowed_origins: vec![],
+            min_client_version: min_client_version.map(str::to_owned),
+            metrics: None,
+        };
+        let secrets = Secrets {
+            database_url: String::new(),
+            wg_private_key: String::new(),
+            awg_private_key: None,
+            bot: None,
+            auth: Some(AuthSecrets {
+                jwt_secret: JWT_SECRET.into(),
+                encryption_key: "00".repeat(32),
+                admin_telegram_ids: vec![],
+            }),
+            vless: None,
+        };
+        AppState::new(
+            pool,
+            config,
+            secrets,
+            "server-public-key".into(),
+            None,
+            Bot::new("123456:test-token"),
+        )
+        .expect("test state is valid")
+    }
+
+    fn token(sub: i64, is_admin: bool, issued: DateTime<Utc>) -> String {
+        let claims = crate::admin::auth::Claims {
+            sub,
+            admin: is_admin,
+            exp: (issued + Duration::days(30)).timestamp(),
+            iat: issued.timestamp(),
+        };
+        jsonwebtoken::encode(
+            &jsonwebtoken::Header::default(),
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(JWT_SECRET.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    async fn get(
+        router: &axum::Router,
+        uri: &str,
+        headers: &[(&str, &str)],
+    ) -> axum::response::Response {
+        let mut req = Request::builder().uri(uri);
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        router
+            .clone()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn startup_rejects_misconfiguration(pool: DbPool) {
+        let good = Config {
+            wireguard: WireGuardConfig {
+                interface: "wg".into(),
+                endpoint: "e:1".into(),
+                listen_port: None,
+                client_subnet: "10.200.0.0/24".parse().unwrap(),
+                server_ip: None,
+                dns: vec![],
+                allowed_ips: "0.0.0.0/0".into(),
+                rate_limit: None,
+            },
+            amneziawg: None,
+            vless: None,
+            bot: None,
+            auth: None,
+            allowed_origins: vec![],
+            min_client_version: Some("not-semver".into()),
+            metrics: None,
+        };
+        let secrets = Secrets {
+            database_url: String::new(),
+            wg_private_key: String::new(),
+            awg_private_key: None,
+            bot: None,
+            auth: None,
+            vless: None,
+        };
+        let bot = Bot::new("123456:test-token");
+
+        let err = AppState::new(
+            pool.clone(),
+            good.clone(),
+            secrets.clone(),
+            String::new(),
+            None,
+            bot.clone(),
+        )
+        .err()
+        .expect("no [auth] secrets");
+        assert!(matches!(err, StartupError::MissingAuthSecrets));
+
+        let secrets = Secrets {
+            auth: Some(AuthSecrets {
+                jwt_secret: "s".into(),
+                encryption_key: "not-hex".into(),
+                admin_telegram_ids: vec![],
+            }),
+            ..secrets
+        };
+        let err = AppState::new(
+            pool.clone(),
+            good.clone(),
+            secrets.clone(),
+            String::new(),
+            None,
+            bot.clone(),
+        )
+        .err()
+        .expect("bad encryption key");
+        assert!(matches!(err, StartupError::InvalidEncryptionKey(_)));
+
+        let secrets = Secrets {
+            auth: Some(AuthSecrets {
+                encryption_key: "00".repeat(32),
+                ..secrets.auth.unwrap()
+            }),
+            ..secrets
+        };
+        let err = AppState::new(pool, good, secrets, String::new(), None, bot)
+            .err()
+            .expect("bad min_client_version");
+        assert!(matches!(err, StartupError::InvalidMinClientVersion(v, _) if v == "not-semver"));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn outdated_clients_get_426(pool: DbPool) {
+        let router = create_router(test_state(pool, Some("1.2.0")));
+
+        let resp = get(&router, "/version", &[(CLIENT_VERSION_HEADER, "1.1.9")]).await;
+        assert_eq!(resp.status(), StatusCode::UPGRADE_REQUIRED);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(resp.into_body(), 1 << 16).await.unwrap()).unwrap();
+        assert_eq!(body["error"], "upgrade_required");
+        assert_eq!(body["min_version"], "1.2.0");
+
+        for (label, headers) in [
+            ("exact minimum", vec![(CLIENT_VERSION_HEADER, "1.2.0")]),
+            ("newer", vec![(CLIENT_VERSION_HEADER, "2.0.0")]),
+            ("browser (no header)", vec![]),
+            ("unparseable", vec![(CLIENT_VERSION_HEADER, "dev")]),
+        ] {
+            let resp = get(&router, "/version", &headers).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{label}");
+        }
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn no_gate_without_min_client_version(pool: DbPool) {
+        let router = create_router(test_state(pool, None));
+        let resp = get(&router, "/version", &[(CLIENT_VERSION_HEADER, "0.0.1")]).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn stale_tokens_are_refreshed_from_the_database(pool: DbPool) {
+        let user_id = sqlx::query_scalar!(
+            "INSERT INTO users (telegram_id, username) VALUES (1, 'u') RETURNING id"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let router = create_router(test_state(pool.clone(), None));
+        let bearer = |t: String| format!("Bearer {t}");
+
+        // Fresh token: authenticated, nothing to refresh.
+        let resp = get(
+            &router,
+            "/me",
+            &[(
+                header::AUTHORIZATION.as_str(),
+                &bearer(token(user_id, false, Utc::now())),
+            )],
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().get(REFRESHED_TOKEN_HEADER).is_none());
+
+        // Old token, and the user was promoted since it was issued: the refreshed token must
+        // carry the flag as stored, not as claimed.
+        sqlx::query!("UPDATE users SET is_admin = true WHERE id = $1", user_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let old = token(user_id, false, Utc::now() - Duration::days(2));
+        let resp = get(
+            &router,
+            "/me",
+            &[(header::AUTHORIZATION.as_str(), &bearer(old))],
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let fresh = resp
+            .headers()
+            .get(REFRESHED_TOKEN_HEADER)
+            .expect("refreshed token")
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let claims = crate::admin::auth::verify_jwt(&fresh, JWT_SECRET).unwrap();
+        assert_eq!(claims.sub, user_id);
+        assert!(claims.admin);
+        assert!(claims.iat > (Utc::now() - Duration::minutes(1)).timestamp());
+
+        // A valid token whose user is gone: 401, and no refresh to keep it alive.
+        let ghost = token(user_id + 1_000_000, false, Utc::now() - Duration::days(2));
+        let resp = get(
+            &router,
+            "/me",
+            &[(header::AUTHORIZATION.as_str(), &bearer(ghost))],
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(resp.headers().get(REFRESHED_TOKEN_HEADER).is_none());
+    }
+}
