@@ -285,7 +285,7 @@ build-cli:
 build-vless:
     cargo build --release -p floppa-vless
 
-# Create deployment archive for floppa-vless (EU VPS)
+# Create deployment archive for floppa-vless (runs on the Moscow VPS behind HAProxy)
 package-vless: build-vless
     #!/usr/bin/env bash
     set -euo pipefail
@@ -308,6 +308,8 @@ deploy: package
     cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa,network
 
 # Deploy to Europe VPS via Ansible (builds, packages, then deploys).
-# Includes the network role so the AmneziaWG subnet gets exit NAT (masquerade).
+# Includes the network role so the AmneziaWG subnet gets exit NAT (masquerade). The floppa_vless
+# role is disabled there (floppa-vless runs on Moscow — the `floppa` tag of `just deploy`), so this
+# is mostly the network half; the archive is still built in case it is ever enabled.
 deploy-europe: package-vless
     cd ../cloud-forge && ansible-playbook site-europe.yml --tags floppa-vless,network

@@ -78,7 +78,7 @@ jwt_expiration_hours = 168  # 1 week (optional, default is 168)
 # VLESS+REALITY proxy configuration (optional)
 # Only needed if the VLESS proxy is deployed. Used by floppa-server to generate vless:// URIs.
 # [vless]
-# endpoint = "eu.example.com:443"        # VLESS+REALITY server address
+# endpoint = "vpn.example.com:443"       # VLESS+REALITY server address (HAProxy in front of floppa-vless)
 # sni = "www.microsoft.com"              # REALITY SNI for camouflage
 # short_id = "abcdef1234567890"           # REALITY short ID (hex)
 # flow = "xtls-rprx-vision"              # Flow control (default: xtls-rprx-vision)

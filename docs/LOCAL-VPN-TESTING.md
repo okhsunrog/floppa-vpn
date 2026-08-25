@@ -71,9 +71,9 @@ Find your gateway: `ip route show default` (the "via" address).
 ### 4. Copy auth token and connect
 
 ```bash
-# Copy token so root can use it
-mkdir -p /root/.config/floppa-cli
-cp /home/<user>/.config/floppa-cli/token /root/.config/floppa-cli/token
+# Under `sudo` the CLI reads the invoking user's ~/.config/floppa-cli/token itself; when that
+# does not apply (a plain root shell, `ip netns exec` without sudo), point it at the file:
+export FLOPPA_TOKEN_FILE=/home/<user>/.config/floppa-cli/token   # or --token-file / FLOPPA_TOKEN
 
 # Connect (WireGuard)
 ip netns exec floppa-test /path/to/floppa-cli connect
