@@ -509,7 +509,7 @@ mod tests {
         body::{Body, to_bytes},
         http::{Request, header},
     };
-    use floppa_core::config::{AuthSecrets, WireGuardConfig};
+    use floppa_core::config::{AuthSecrets, TunnelInterfaceConfig};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -517,7 +517,7 @@ mod tests {
 
     fn test_state(pool: DbPool, min_client_version: Option<&str>) -> AppState {
         let config = Config {
-            wireguard: WireGuardConfig {
+            wireguard: TunnelInterfaceConfig {
                 interface: "wg-test".into(),
                 endpoint: "vpn.test.com:51820".into(),
                 listen_port: None,
@@ -526,6 +526,8 @@ mod tests {
                 dns: vec!["8.8.8.8".into()],
                 allowed_ips: "0.0.0.0/0".into(),
                 rate_limit: None,
+                mtu: None,
+                obfuscation: None,
             },
             amneziawg: None,
             vless: None,
@@ -651,7 +653,7 @@ mod tests {
     #[sqlx::test(migrations = "../migrations")]
     async fn startup_rejects_misconfiguration(pool: DbPool) {
         let good = Config {
-            wireguard: WireGuardConfig {
+            wireguard: TunnelInterfaceConfig {
                 interface: "wg".into(),
                 endpoint: "e:1".into(),
                 listen_port: None,
@@ -660,6 +662,8 @@ mod tests {
                 dns: vec![],
                 allowed_ips: "0.0.0.0/0".into(),
                 rate_limit: None,
+                mtu: None,
+                obfuscation: None,
             },
             amneziawg: None,
             vless: None,

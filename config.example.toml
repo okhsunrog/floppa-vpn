@@ -3,7 +3,8 @@
 # Secrets go in secrets.toml (permissions: 0600)
 
 # Top-level keys MUST stay above the first [table]: anything below a table header belongs to
-# that table, and a key placed there is silently ignored.
+# that table. Parsing is strict — a key the section does not know (a typo, or a top-level key
+# that slipped under a table) is rejected at startup, naming the key.
 
 # Minimum client version (optional). Clients with older X-Client-Version get 426 Upgrade Required.
 # min_client_version = "0.2.0"

@@ -55,7 +55,8 @@ pub async fn create_tunnel(
 mod tests {
     use super::*;
 
-    /// The shape `floppa_core::services::generate_wg_config` produces, with real keys.
+    /// The shape `floppa_core::services::generate_tunnel_config` produces for `[wireguard]`, with
+    /// real keys.
     const SERVER_WG_CONF: &str = "\
 [Interface]
 PrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=
@@ -69,7 +70,8 @@ AllowedIPs = 0.0.0.0/0, ::/0
 PersistentKeepalive = 25
 ";
 
-    /// The shape `floppa_core::services::generate_awg_config` produces with the default preset.
+    /// The shape `floppa_core::services::generate_tunnel_config` produces for `[amneziawg]` with
+    /// the default preset.
     const SERVER_AWG_CONF: &str = "\
 [Interface]
 PrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=

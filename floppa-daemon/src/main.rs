@@ -28,15 +28,7 @@ async fn main() -> Result<()> {
     info!(public_key = %wg_public_key, "Derived WireGuard public key");
 
     // Ensure WireGuard interface exists and matches config
-    wg::ensure_interface(&wg::InterfaceSpec {
-        tool: wg::WgTool::Wg,
-        interface: &config.wireguard.interface,
-        private_key: &secrets.wg_private_key,
-        listen_port: config.wireguard.get_listen_port(),
-        server_ip: config.wireguard.get_server_ip(),
-        subnet: config.wireguard.client_subnet,
-        obfuscation: None,
-    })?;
+    wg::ensure_interface(wg::WgTool::Wg, &config.wireguard, &secrets.wg_private_key)?;
 
     // Ensure AmneziaWG interface exists and matches config (if configured)
     if let Some(ref awg) = config.amneziawg {
@@ -44,15 +36,7 @@ async fn main() -> Result<()> {
             anyhow::anyhow!("amneziawg configured but awg_private_key secret is missing")
         })?;
         let awg_public_key = secrets.awg_public_key()?;
-        wg::ensure_interface(&wg::InterfaceSpec {
-            tool: wg::WgTool::Awg,
-            interface: &awg.interface,
-            private_key: awg_private_key,
-            listen_port: awg.get_listen_port(),
-            server_ip: awg.get_server_ip(),
-            subnet: awg.client_subnet,
-            obfuscation: Some(&awg.obfuscation),
-        })?;
+        wg::ensure_interface(wg::WgTool::Awg, awg, awg_private_key)?;
         info!(public_key = %awg_public_key, "AmneziaWG interface ready");
     }
 

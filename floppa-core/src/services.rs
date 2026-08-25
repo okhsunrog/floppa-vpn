@@ -4,7 +4,7 @@ use crate::error::{FloppaError, Result};
 use crate::models::{
     Lang, LinkCodeKind, PeerSyncStatus, Protocol, SessionKind, SessionRecord, SubscriptionSource,
 };
-use crate::{Config, DbPool, encrypt_private_key};
+use crate::{Config, DbPool, TunnelInterfaceConfig, encrypt_private_key};
 use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
 use sqlx::{PgExecutor, PgTransaction};
@@ -1178,17 +1178,16 @@ pub async fn create_peer(
 
     tx.commit().await?;
 
-    let config = match awg {
-        None => generate_wg_config(
-            private_key.as_base64(),
-            &assigned_ip,
-            ctx.config,
-            ctx.wg_public_key,
-        ),
-        Some((awg, awg_public_key)) => {
-            generate_awg_config(private_key.as_base64(), &assigned_ip, awg, awg_public_key)
-        }
+    let (iface, server_public_key) = match awg {
+        None => (&ctx.config.wireguard, ctx.wg_public_key),
+        Some((awg, awg_public_key)) => (awg, awg_public_key),
     };
+    let config = generate_tunnel_config(
+        private_key.as_base64(),
+        &assigned_ip,
+        iface,
+        server_public_key,
+    );
 
     Ok(CreatePeerResult {
         id: peer_id,
@@ -1586,77 +1585,51 @@ pub async fn revoke_installation_sessions(
     Ok(result.rows_affected())
 }
 
-/// Generate a WireGuard client configuration string.
-pub fn generate_wg_config(
-    private_key: &str,
-    assigned_ip: &str,
-    config: &Config,
-    wg_public_key: &str,
-) -> String {
-    let dns = config.wireguard.dns.join(", ");
-    format!(
-        r#"[Interface]
-PrivateKey = {}
-Address = {}/32
-DNS = {}
-
-[Peer]
-PublicKey = {}
-Endpoint = {}
-AllowedIPs = {}
-PersistentKeepalive = 25
-"#,
-        private_key,
-        assigned_ip,
-        dns,
-        wg_public_key,
-        config.wireguard.endpoint,
-        config.wireguard.allowed_ips
-    )
-}
-
-/// Generate an AmneziaWG client configuration string.
+/// Render a client `.conf` for a WireGuard or AmneziaWG peer of `iface`.
 ///
-/// This is a standard AmneziaWG `.conf`: a WireGuard config plus the interface-wide
-/// obfuscation params in `[Interface]`. The params are echoed verbatim from the server
-/// config so both ends agree. The same text is parsed by the Tauri client (→ gotatun
-/// `AwgConfig`) and importable into the official Amnezia client.
-pub fn generate_awg_config(
+/// The AmneziaWG form is the standard WireGuard `.conf` plus `MTU` and the interface-wide
+/// obfuscation params in `[Interface]`, echoed verbatim from the server config so both ends
+/// agree. The same text is parsed by the Tauri client (→ gotatun `AwgConfig`) and importable
+/// into the official WireGuard/Amnezia clients.
+pub fn generate_tunnel_config(
     private_key: &str,
     assigned_ip: &str,
-    awg: &crate::config::AmneziaWgConfig,
-    awg_public_key: &str,
+    iface: &TunnelInterfaceConfig,
+    server_public_key: &str,
 ) -> String {
-    let dns = awg.dns.join(", ");
-    let o = &awg.obfuscation;
+    let dns = iface.dns.join(", ");
 
     let mut interface = format!(
-        "[Interface]\nPrivateKey = {private_key}\nAddress = {assigned_ip}/32\nDNS = {dns}\nMTU = {mtu}\n",
-        mtu = awg.mtu,
+        "[Interface]\nPrivateKey = {private_key}\nAddress = {assigned_ip}/32\nDNS = {dns}\n"
     );
-    // Obfuscation params (AmneziaWG 2.0). H/S must match both ends; Jc/I are initiator-side.
-    interface.push_str(&format!(
-        "Jc = {}\nJmin = {}\nJmax = {}\n",
-        o.jc, o.jmin, o.jmax
-    ));
-    interface.push_str(&format!(
-        "S1 = {}\nS2 = {}\nS3 = {}\nS4 = {}\n",
-        o.s1, o.s2, o.s3, o.s4
-    ));
-    interface.push_str(&format!(
-        "H1 = {}\nH2 = {}\nH3 = {}\nH4 = {}\n",
-        o.h1, o.h2, o.h3, o.h4
-    ));
-    for (n, val) in [(1, &o.i1), (2, &o.i2), (3, &o.i3), (4, &o.i4), (5, &o.i5)] {
-        if !val.is_empty() {
-            interface.push_str(&format!("I{n} = {val}\n"));
+    if let Some(mtu) = iface.mtu {
+        interface.push_str(&format!("MTU = {mtu}\n"));
+    }
+    if let Some(o) = &iface.obfuscation {
+        // Obfuscation params (AmneziaWG 2.0). H/S must match both ends; Jc/I are initiator-side.
+        interface.push_str(&format!(
+            "Jc = {}\nJmin = {}\nJmax = {}\n",
+            o.jc, o.jmin, o.jmax
+        ));
+        interface.push_str(&format!(
+            "S1 = {}\nS2 = {}\nS3 = {}\nS4 = {}\n",
+            o.s1, o.s2, o.s3, o.s4
+        ));
+        interface.push_str(&format!(
+            "H1 = {}\nH2 = {}\nH3 = {}\nH4 = {}\n",
+            o.h1, o.h2, o.h3, o.h4
+        ));
+        for (n, val) in [(1, &o.i1), (2, &o.i2), (3, &o.i3), (4, &o.i4), (5, &o.i5)] {
+            if !val.is_empty() {
+                interface.push_str(&format!("I{n} = {val}\n"));
+            }
         }
     }
 
     format!(
-        "{interface}\n[Peer]\nPublicKey = {awg_public_key}\nEndpoint = {endpoint}\nAllowedIPs = {allowed_ips}\nPersistentKeepalive = 25\n",
-        endpoint = awg.endpoint,
-        allowed_ips = awg.allowed_ips,
+        "{interface}\n[Peer]\nPublicKey = {server_public_key}\nEndpoint = {endpoint}\nAllowedIPs = {allowed_ips}\nPersistentKeepalive = 25\n",
+        endpoint = iface.endpoint,
+        allowed_ips = iface.allowed_ips,
     )
 }
 
@@ -1678,11 +1651,11 @@ pub fn generate_vless_uri(uuid: &str, config: &Config, reality_public_key: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::WireGuardConfig;
+    use crate::config::AwgObfuscation;
 
     fn test_config() -> Config {
         Config {
-            wireguard: WireGuardConfig {
+            wireguard: TunnelInterfaceConfig {
                 interface: "wg-test".into(),
                 endpoint: "vpn.test.com:51820".into(),
                 listen_port: None,
@@ -1691,6 +1664,8 @@ mod tests {
                 dns: vec!["8.8.8.8".into()],
                 allowed_ips: "0.0.0.0/0, ::/0".into(),
                 rate_limit: None,
+                mtu: None,
+                obfuscation: None,
             },
             amneziawg: None,
             vless: None,
@@ -1783,12 +1758,13 @@ mod tests {
         assert!(has_active_subscription(&pool, user_id).await.unwrap());
     }
 
-    // ── generate_wg_config (pure, no DB) ──
+    // ── generate_tunnel_config (pure, no DB) ──
 
     #[test]
     fn test_generate_wg_config() {
         let config = test_config();
-        let result = generate_wg_config("PRIVATE_KEY", "10.200.0.5", &config, "PUBLIC_KEY");
+        let result =
+            generate_tunnel_config("PRIVATE_KEY", "10.200.0.5", &config.wireguard, "PUBLIC_KEY");
 
         assert!(result.contains("PrivateKey = PRIVATE_KEY"));
         assert!(result.contains("Address = 10.200.0.5/32"));
@@ -1799,10 +1775,9 @@ mod tests {
         assert!(result.contains("PersistentKeepalive = 25"));
     }
 
-    #[test]
-    fn test_generate_awg_config() {
-        use crate::config::{AmneziaWgConfig, AwgObfuscation};
-        let awg = AmneziaWgConfig {
+    /// The `[amneziawg]` half of a test config, as `Config::parse` would settle it.
+    fn test_awg_config() -> TunnelInterfaceConfig {
+        TunnelInterfaceConfig {
             interface: "awg-test".into(),
             endpoint: "vpn.test.com:51821".into(),
             listen_port: None,
@@ -1810,15 +1785,23 @@ mod tests {
             server_ip: None,
             dns: vec!["1.1.1.1".into()],
             allowed_ips: "0.0.0.0/0, ::/0".into(),
-            mtu: 1280,
             rate_limit: None,
-            obfuscation: AwgObfuscation::default(),
-        };
-        let cfg = generate_awg_config("PRIV", "10.101.0.5", &awg, "AWGPUB");
+            mtu: Some(1280),
+            obfuscation: Some(AwgObfuscation::default()),
+        }
+    }
+
+    #[test]
+    fn test_generate_awg_config() {
+        let cfg = generate_tunnel_config("PRIV", "10.101.0.5", &test_awg_config(), "AWGPUB");
 
         assert!(cfg.contains("PrivateKey = PRIV"));
         assert!(cfg.contains("Address = 10.101.0.5/32"));
         assert!(cfg.contains("MTU = 1280"));
+        // No MTU line without one: plain WireGuard configs never carry it.
+        let wg = generate_tunnel_config("PRIV", "10.200.0.5", &test_config().wireguard, "PUB");
+        assert!(!wg.contains("MTU ="));
+        assert!(!wg.contains("Jc ="));
         // AmneziaWG 2.0 obfuscation params present.
         assert!(cfg.contains("Jc = 6"));
         assert!(cfg.contains("S3 = 32")); // 2.0-only padding
@@ -1835,7 +1818,7 @@ mod tests {
     fn test_generate_wg_config_multiple_dns() {
         let mut config = test_config();
         config.wireguard.dns = vec!["8.8.8.8".into(), "1.1.1.1".into()];
-        let result = generate_wg_config("KEY", "10.0.0.2", &config, "PUB");
+        let result = generate_tunnel_config("KEY", "10.0.0.2", &config.wireguard, "PUB");
 
         assert!(result.contains("DNS = 8.8.8.8, 1.1.1.1"));
     }
@@ -3236,21 +3219,9 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_per_device_slot_allows_second_protocol(pool: DbPool) {
-        use crate::config::{AmneziaWgConfig, AwgObfuscation};
         // AmneziaWG-enabled config so the AWG peer can be created.
         let mut config = test_config();
-        config.amneziawg = Some(AmneziaWgConfig {
-            interface: "awg-test".into(),
-            endpoint: "vpn.test.com:51821".into(),
-            listen_port: None,
-            client_subnet: "10.101.0.0/24".parse().unwrap(),
-            server_ip: None,
-            dns: vec!["1.1.1.1".into()],
-            allowed_ips: "0.0.0.0/0, ::/0".into(),
-            mtu: 1280,
-            rate_limit: None,
-            obfuscation: AwgObfuscation::default(),
-        });
+        config.amneziawg = Some(test_awg_config());
         static KEY: [u8; 32] = [0x42u8; 32];
         let ctx = CreatePeerContext {
             pool: &pool,
@@ -3419,20 +3390,8 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn test_create_awg_peer_without_server_key_writes_nothing(pool: DbPool) {
-        use crate::config::{AmneziaWgConfig, AwgObfuscation};
         let mut config = test_config();
-        config.amneziawg = Some(AmneziaWgConfig {
-            interface: "awg-test".into(),
-            endpoint: "vpn.test.com:51821".into(),
-            listen_port: None,
-            client_subnet: "10.101.0.0/24".parse().unwrap(),
-            server_ip: None,
-            dns: vec!["1.1.1.1".into()],
-            allowed_ips: "0.0.0.0/0, ::/0".into(),
-            mtu: 1280,
-            rate_limit: None,
-            obfuscation: AwgObfuscation::default(),
-        });
+        config.amneziawg = Some(test_awg_config());
         // [amneziawg] is configured but the server has no awg_private_key → no public key.
         let ctx = test_ctx(&pool, &config);
         let plan_id = get_basic_plan_id(&pool).await;

@@ -14,4 +14,3 @@ sqlx.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 thiserror.workspace = true
-ipnetwork = "0.21.1"

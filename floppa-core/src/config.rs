@@ -14,14 +14,17 @@ use veil::Redact;
 // Public Configuration (config.toml)
 // =============================================================================
 
+/// Both files are parsed strictly: a key the schema does not know — a typo, or a key that landed
+/// in the wrong table — is an error rather than a silently ignored setting.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
-    pub wireguard: WireGuardConfig,
+    pub wireguard: TunnelInterfaceConfig,
     /// AmneziaWG configuration (optional — only needed if AmneziaWG is offered).
     /// AmneziaWG is WireGuard plus interface-wide obfuscation params; it runs on its
     /// own interface/port/subnet on the same daemon.
     #[serde(default)]
-    pub amneziawg: Option<AmneziaWgConfig>,
+    pub amneziawg: Option<TunnelInterfaceConfig>,
     /// VLESS+REALITY configuration (optional — only needed if VLESS is offered)
     #[serde(default)]
     pub vless: Option<VlessConfig>,
@@ -40,16 +43,30 @@ pub struct Config {
     pub metrics: Option<MetricsConfig>,
 }
 
+/// One WireGuard-family server interface: the `[wireguard]` and `[amneziawg]` sections share
+/// this shape, differing only in the two AmneziaWG-only keys.
+///
+/// AmneziaWG is WireGuard plus interface-wide obfuscation parameters (junk packets, padding,
+/// magic headers, signature packets). Both interfaces are managed by floppa-daemon (kernel
+/// `wireguard`/`amneziawg` module + `wg`/`awg` tooling), and the obfuscation params are echoed
+/// verbatim into each AmneziaWG client's `.conf` so both ends agree — they are the single
+/// source of truth.
+///
+/// [`Config::parse`] settles the AmneziaWG-only keys per section: under `[wireguard]` they are
+/// rejected, under `[amneziawg]` a missing one gets its default. After loading, `obfuscation`
+/// is therefore `Some` exactly for the AmneziaWG interface, which is what
+/// [`Self::is_amneziawg`] reports.
 #[derive(Debug, Clone, Deserialize)]
-pub struct WireGuardConfig {
-    /// Interface name (e.g., "wg-floppa")
+#[serde(deny_unknown_fields)]
+pub struct TunnelInterfaceConfig {
+    /// Interface name (e.g., "wg-floppa" / "awg-floppa")
     pub interface: String,
-    /// Server's WireGuard endpoint (e.g., "vpn.example.com:51820")
+    /// Server endpoint as seen by clients (e.g., "vpn.example.com:51820")
     pub endpoint: String,
-    /// Listen port for WireGuard (parsed from endpoint if not specified)
+    /// Listen port (parsed from endpoint if not specified)
     #[serde(default)]
     pub listen_port: Option<u16>,
-    /// VPN subnet for client IPs (e.g., "10.100.0.0/24")
+    /// VPN subnet for client IPs (e.g., "10.100.0.0/24"); the two interfaces need distinct ones
     pub client_subnet: Ipv4Network,
     /// Server IP within the subnet (e.g., "10.100.0.1"). Reserved by the client IP allocator.
     #[serde(default)]
@@ -58,20 +75,51 @@ pub struct WireGuardConfig {
     pub dns: Vec<String>,
     /// Allowed IPs for clients (typically "0.0.0.0/0, ::/0")
     pub allowed_ips: String,
-    /// Rate limiting configuration
+    /// Rate limiting configuration (the same tc machinery on either interface)
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
+    /// Client MTU, AmneziaWG only: padding/junk adds overhead, so it sits below plain WG's
+    /// (default [`DEFAULT_AWG_MTU`]). Rendered into client configs when set.
+    #[serde(default)]
+    pub mtu: Option<u16>,
+    /// Obfuscation parameters (AmneziaWG 2.0), AmneziaWG only. Defaults to the recommended
+    /// preset.
+    #[serde(default)]
+    pub obfuscation: Option<AwgObfuscation>,
 }
 
-impl WireGuardConfig {
-    /// Get listen port (from config or parsed from endpoint)
+/// Default client MTU for AmneziaWG (`[amneziawg] mtu`).
+pub const DEFAULT_AWG_MTU: u16 = 1280;
+
+/// Listen port assumed when neither `listen_port` nor the endpoint names one.
+const DEFAULT_WG_PORT: u16 = 51820;
+const DEFAULT_AWG_PORT: u16 = 51821;
+
+/// Which section of `config.toml` a [`TunnelInterfaceConfig`] came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TunnelSection {
+    WireGuard,
+    AmneziaWg,
+}
+
+impl TunnelInterfaceConfig {
+    /// Whether this is the AmneziaWG interface (see the type-level note on `obfuscation`).
+    pub fn is_amneziawg(&self) -> bool {
+        self.obfuscation.is_some()
+    }
+
+    /// Get listen port (from config, parsed from endpoint, or the protocol's usual port)
     pub fn get_listen_port(&self) -> u16 {
         self.listen_port.unwrap_or_else(|| {
             self.endpoint
                 .rsplit(':')
                 .next()
                 .and_then(|p| p.parse().ok())
-                .unwrap_or(51820)
+                .unwrap_or(if self.is_amneziawg() {
+                    DEFAULT_AWG_PORT
+                } else {
+                    DEFAULT_WG_PORT
+                })
         })
     }
 
@@ -79,6 +127,26 @@ impl WireGuardConfig {
     pub fn get_server_ip(&self) -> Ipv4Addr {
         self.server_ip
             .unwrap_or_else(|| default_server_ip(self.client_subnet))
+    }
+
+    /// Settle the AmneziaWG-only keys for the section this interface was read from: rejected
+    /// under `[wireguard]`, defaulted under `[amneziawg]`.
+    fn settle_section(&mut self, section: TunnelSection) -> Result<(), ConfigError> {
+        match section {
+            TunnelSection::WireGuard => {
+                let key = match (&self.mtu, &self.obfuscation) {
+                    (Some(_), _) => "mtu",
+                    (None, Some(_)) => "obfuscation",
+                    (None, None) => return Ok(()),
+                };
+                Err(ConfigError::AmneziaWgOnlyKey { key })
+            }
+            TunnelSection::AmneziaWg => {
+                self.mtu.get_or_insert(DEFAULT_AWG_MTU);
+                self.obfuscation.get_or_insert_default();
+                Ok(())
+            }
+        }
     }
 }
 
@@ -87,69 +155,17 @@ fn default_server_ip(subnet: Ipv4Network) -> Ipv4Addr {
     subnet.nth(1).unwrap_or_else(|| subnet.network())
 }
 
-/// AmneziaWG configuration. AmneziaWG is WireGuard plus interface-wide obfuscation
-/// parameters (junk packets, padding, magic headers, signature packets). The server
-/// interface is managed by floppa-daemon (kernel `amneziawg` module + `awg` tooling),
-/// and the obfuscation params are echoed verbatim into each client's `.conf` so both
-/// ends agree — they are the single source of truth.
-#[derive(Debug, Clone, Deserialize)]
-pub struct AmneziaWgConfig {
-    /// Interface name (e.g., "awg-floppa")
-    pub interface: String,
-    /// Server's AmneziaWG endpoint (e.g., "vpn.example.com:51821")
-    pub endpoint: String,
-    /// Listen port (parsed from endpoint if not specified)
-    #[serde(default)]
-    pub listen_port: Option<u16>,
-    /// VPN subnet for client IPs (e.g., "10.101.0.0/24") — must differ from the WireGuard subnet
-    pub client_subnet: Ipv4Network,
-    /// Server IP within the subnet (e.g., "10.101.0.1"). Reserved by the client IP allocator.
-    #[serde(default)]
-    pub server_ip: Option<Ipv4Addr>,
-    /// DNS servers for clients
-    pub dns: Vec<String>,
-    /// Allowed IPs for clients (typically "0.0.0.0/0, ::/0")
-    pub allowed_ips: String,
-    /// Client MTU. AmneziaWG padding/junk adds overhead, so this is lower than plain WG.
-    #[serde(default = "default_awg_mtu")]
-    pub mtu: u16,
-    /// Rate limiting configuration (shared tc machinery with WireGuard)
-    #[serde(default)]
-    pub rate_limit: Option<RateLimitConfig>,
-    /// Obfuscation parameters (AmneziaWG 2.0). Defaults to the recommended preset.
-    #[serde(default)]
-    pub obfuscation: AwgObfuscation,
-}
-
-fn default_awg_mtu() -> u16 {
-    1280
-}
-
-impl AmneziaWgConfig {
-    /// Get listen port (from config or parsed from endpoint)
-    pub fn get_listen_port(&self) -> u16 {
-        self.listen_port.unwrap_or_else(|| {
-            self.endpoint
-                .rsplit(':')
-                .next()
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(51821)
-        })
-    }
-
-    /// Server IP: from config, or the first host address of `client_subnet` (the ".1").
-    pub fn get_server_ip(&self) -> Ipv4Addr {
-        self.server_ip
-            .unwrap_or_else(|| default_server_ip(self.client_subnet))
-    }
-}
-
 /// AmneziaWG 2.0 obfuscation parameters, shared with the clients (they parse the same values back
 /// out of the configs this crate renders). Re-exported so `floppa_core::config::AwgObfuscation`
 /// keeps working for the daemon and server.
+///
+/// Deliberately not `deny_unknown_fields`, unlike every section here: the Tauri client persists
+/// the same struct in its saved-config store, and a strict schema would make an older build
+/// refuse a store written by a newer one.
 pub use floppa_tunnel_config::AwgObfuscation;
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
     /// Enable traffic control rate limiting
     #[serde(default = "default_enabled")]
@@ -171,6 +187,7 @@ fn default_total_bandwidth() -> u32 {
 /// The actual VLESS server runs as a separate binary (floppa-vless) on the EU VPS;
 /// this section provides the parameters needed to construct `vless://` URIs.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VlessConfig {
     /// VLESS+REALITY endpoint for client configs (e.g., "eu.example.com:443")
     pub endpoint: String,
@@ -188,6 +205,7 @@ fn default_vless_flow() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct BotConfig {
     /// Bot username (without @) for Telegram Login Widget
     pub username: Option<String>,
@@ -198,6 +216,7 @@ pub struct BotConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// JWT token expiration in hours (default: 24 * 7 = 1 week)
     #[serde(default = "default_jwt_expiration_hours")]
@@ -236,6 +255,7 @@ fn default_login_rate_limit_per_15min() -> u32 {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsConfig {
     /// VictoriaMetrics query URL (default: http://127.0.0.1:8428)
     #[serde(default = "default_vm_url")]
@@ -249,7 +269,18 @@ fn default_vm_url() -> String {
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
-        let config: Config = toml::from_str(&content)?;
+        Self::parse(&content)
+    }
+
+    /// Parse `config.toml` text and settle the per-section rules `toml` alone cannot express
+    /// (see [`TunnelInterfaceConfig`]). This is the only supported way to build a `Config`
+    /// from text; a bare `toml::from_str` leaves an `[amneziawg]` section without its defaults.
+    pub fn parse(toml: &str) -> Result<Self, ConfigError> {
+        let mut config: Config = toml::from_str(toml)?;
+        config.wireguard.settle_section(TunnelSection::WireGuard)?;
+        if let Some(awg) = &mut config.amneziawg {
+            awg.settle_section(TunnelSection::AmneziaWg)?;
+        }
         Ok(config)
     }
 
@@ -265,6 +296,7 @@ impl Config {
 // =============================================================================
 
 #[derive(Redact, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Secrets {
     /// PostgreSQL connection URL
     #[redact]
@@ -287,6 +319,7 @@ pub struct Secrets {
 }
 
 #[derive(Redact, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VlessSecrets {
     /// REALITY x25519 public key (base64), embedded in client `vless://` URIs
     pub reality_public_key: String,
@@ -296,6 +329,7 @@ pub struct VlessSecrets {
 }
 
 #[derive(Redact, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct BotSecrets {
     /// Telegram bot token from @BotFather
     #[redact]
@@ -303,6 +337,7 @@ pub struct BotSecrets {
 }
 
 #[derive(Redact, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthSecrets {
     /// Secret key for signing JWT tokens (hex-encoded, 32 bytes)
     #[redact]
@@ -387,6 +422,9 @@ pub enum ConfigError {
     Parse(#[from] toml::de::Error),
     #[error("Invalid key: {0}")]
     InvalidKey(String),
+    /// An AmneziaWG-only key (`mtu`, `obfuscation`) under the `[wireguard]` section.
+    #[error("`{key}` under [wireguard] is an [amneziawg]-only setting")]
+    AmneziaWgOnlyKey { key: &'static str },
 }
 
 #[cfg(test)]
@@ -417,7 +455,7 @@ mod tests {
 
     #[test]
     fn config_example_parses_as_is() {
-        let config: Config = toml::from_str(CONFIG_EXAMPLE).unwrap();
+        let config = Config::parse(CONFIG_EXAMPLE).unwrap();
         assert_eq!(config.wireguard.interface, "wg-floppa");
         assert_eq!(
             config.wireguard.client_subnet,
@@ -427,6 +465,8 @@ mod tests {
             config.wireguard.get_server_ip(),
             Ipv4Addr::new(10, 100, 0, 1)
         );
+        assert!(!config.wireguard.is_amneziawg());
+        assert_eq!(config.wireguard.get_listen_port(), 51820);
         assert!(config.amneziawg.is_none());
         assert!(config.vless.is_none());
         assert!(config.metrics.is_none());
@@ -441,7 +481,7 @@ mod tests {
     #[test]
     fn config_example_parses_with_every_optional_key_enabled() {
         let toml = uncomment_optional(CONFIG_EXAMPLE);
-        let config: Config = toml::from_str(&toml).unwrap();
+        let config = Config::parse(&toml).unwrap();
 
         // Top-level optional keys must land at the top level, not inside the last [table].
         assert_eq!(config.min_client_version.as_deref(), Some("0.2.0"));
@@ -453,9 +493,15 @@ mod tests {
             "10.101.0.0/24".parse::<Ipv4Network>().unwrap()
         );
         assert_eq!(awg.get_server_ip(), Ipv4Addr::new(10, 101, 0, 1));
-        assert_eq!(awg.mtu, 1280);
-        assert_eq!(awg.obfuscation.jc, 6);
-        assert_eq!(awg.obfuscation.h1, "234567-345678");
+        assert!(awg.is_amneziawg());
+        assert_eq!(awg.get_listen_port(), 51821);
+        assert_eq!(awg.mtu, Some(1280));
+        let obfuscation = awg
+            .obfuscation
+            .as_ref()
+            .expect("[amneziawg.obfuscation] enabled");
+        assert_eq!(obfuscation.jc, 6);
+        assert_eq!(obfuscation.h1, "234567-345678");
 
         let auth = config.auth.expect("[auth] present");
         assert_eq!(auth, AuthConfig::default());
@@ -489,21 +535,20 @@ mod tests {
         assert!(secrets.vless.is_some());
     }
 
+    const MINIMAL_CONFIG: &str = r#"
+        [wireguard]
+        interface = "wg0"
+        endpoint = "vpn.example.com:51820"
+        client_subnet = "10.100.0.0/24"
+        dns = ["1.1.1.1"]
+        allowed_ips = "0.0.0.0/0"
+    "#;
+
     #[test]
     fn auth_defaults_match_serde_defaults() {
         // A config without [auth] falls back to AuthConfig::default() in the server; it must be
         // the same thing as an empty [auth] table.
-        let config: Config = toml::from_str(
-            r#"
-            [wireguard]
-            interface = "wg0"
-            endpoint = "vpn.example.com:51820"
-            client_subnet = "10.100.0.0/24"
-            dns = ["1.1.1.1"]
-            allowed_ips = "0.0.0.0/0"
-            "#,
-        )
-        .unwrap();
+        let config = Config::parse(MINIMAL_CONFIG).unwrap();
         assert!(config.auth.is_none());
 
         let empty_section: AuthConfig = toml::from_str("").unwrap();
@@ -516,17 +561,59 @@ mod tests {
 
     #[test]
     fn invalid_client_subnet_is_a_parse_error() {
-        let err = toml::from_str::<Config>(
-            r#"
-            [wireguard]
-            interface = "wg0"
-            endpoint = "vpn.example.com:51820"
-            client_subnet = "not-a-subnet"
-            dns = ["1.1.1.1"]
-            allowed_ips = "0.0.0.0/0"
-            "#,
-        )
-        .unwrap_err();
+        let err =
+            Config::parse(&MINIMAL_CONFIG.replace("10.100.0.0/24", "not-a-subnet")).unwrap_err();
         assert!(err.to_string().contains("client_subnet"), "{err}");
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected_by_name() {
+        // A top-level key that slipped under a table header — the classic silent misconfig.
+        let toml = format!("{MINIMAL_CONFIG}\n[auth]\nmin_client_version = \"0.2.0\"\n");
+        let err = Config::parse(&toml).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse(_)), "{err:?}");
+        assert!(err.to_string().contains("min_client_version"), "{err}");
+
+        // Typos in nested tables and in secrets are caught the same way.
+        let toml = format!("{MINIMAL_CONFIG}\n[wireguard.rate_limit]\ntotal_bandwidth = 1000\n");
+        let err = Config::parse(&toml).unwrap_err();
+        assert!(err.to_string().contains("total_bandwidth"), "{err}");
+
+        let secrets = format!("{SECRETS_EXAMPLE}\njwt_secrett = \"x\"\n");
+        let err = toml::from_str::<Secrets>(&secrets).unwrap_err();
+        assert!(err.to_string().contains("jwt_secrett"), "{err}");
+    }
+
+    #[test]
+    fn amneziawg_only_keys_are_rejected_under_wireguard() {
+        let toml = format!("{MINIMAL_CONFIG}mtu = 1280\n");
+        let err = Config::parse(&toml).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::AmneziaWgOnlyKey { key: "mtu" }),
+            "{err:?}"
+        );
+
+        let toml = format!("{MINIMAL_CONFIG}[wireguard.obfuscation]\njc = 6\n");
+        let err = Config::parse(&toml).unwrap_err();
+        assert!(
+            matches!(err, ConfigError::AmneziaWgOnlyKey { key: "obfuscation" }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn amneziawg_section_gets_the_default_mtu_and_preset() {
+        let toml = format!(
+            "{MINIMAL_CONFIG}\n[amneziawg]\ninterface = \"awg0\"\nendpoint = \"vpn.example.com\"\n\
+             client_subnet = \"10.101.0.0/24\"\ndns = [\"1.1.1.1\"]\nallowed_ips = \"0.0.0.0/0\"\n"
+        );
+        let config = Config::parse(&toml).unwrap();
+        let awg = config.amneziawg.expect("[amneziawg] present");
+        assert!(awg.is_amneziawg());
+        assert_eq!(awg.mtu, Some(DEFAULT_AWG_MTU));
+        assert_eq!(awg.obfuscation, Some(AwgObfuscation::default()));
+        // No port in the endpoint → the AmneziaWG default, not WireGuard's.
+        assert_eq!(awg.get_listen_port(), 51821);
+        assert!(!config.wireguard.is_amneziawg());
     }
 }

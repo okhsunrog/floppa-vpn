@@ -1,11 +1,9 @@
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use floppa_core::config::AwgObfuscation;
-use ipnetwork::Ipv4Network;
+use floppa_core::config::{AwgObfuscation, TunnelInterfaceConfig};
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
-use std::net::Ipv4Addr;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
@@ -56,18 +54,6 @@ impl WgTool {
     }
 }
 
-/// Everything an interface must look like. `obfuscation` is `Some` for AmneziaWG only.
-pub struct InterfaceSpec<'a> {
-    pub tool: WgTool,
-    pub interface: &'a str,
-    pub private_key: &'a str,
-    pub listen_port: u16,
-    pub server_ip: Ipv4Addr,
-    /// Client subnet; only its prefix length is used for the server address.
-    pub subnet: Ipv4Network,
-    pub obfuscation: Option<&'a AwgObfuscation>,
-}
-
 /// Check if WireGuard interface exists
 fn interface_exists(interface: &str) -> bool {
     Command::new("ip")
@@ -93,7 +79,8 @@ fn ip(args: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Ensure the interface exists and matches `spec`, creating and/or reconfiguring it.
+/// Ensure the interface exists and matches `iface` (its `[wireguard]`/`[amneziawg]` section,
+/// with `private_key` from the secrets), creating and/or reconfiguring it.
 ///
 /// Idempotent and convergent: the live `[Interface]` (`wg/awg showconf`) is diffed
 /// against the spec and only the differing params go into a single `set`, then the
@@ -105,10 +92,12 @@ fn ip(args: &[&str]) -> Result<()> {
 /// re-runs `jp_spec_setup` in the kernel module, and on builds before ac946a9
 /// (2026-03-25) that races the handshake-send path whenever an I-packet is
 /// configured — a use-after-free that has taken the whole VPS down.
-pub fn ensure_interface(spec: &InterfaceSpec<'_>) -> Result<()> {
-    let InterfaceSpec {
-        tool, interface, ..
-    } = *spec;
+pub fn ensure_interface(
+    tool: WgTool,
+    iface: &TunnelInterfaceConfig,
+    private_key: &str,
+) -> Result<()> {
+    let interface = iface.interface.as_str();
 
     let created = if interface_exists(interface) {
         debug!(interface, %tool, "Interface already exists; reconciling");
@@ -135,7 +124,7 @@ pub fn ensure_interface(spec: &InterfaceSpec<'_>) -> Result<()> {
     };
 
     // Everything that differs goes into one `set`; the private key is fed over stdin.
-    let params = params_to_set(&current, spec);
+    let params = params_to_set(&current, iface, private_key);
     if params.is_empty() {
         debug!(interface, %tool, "Interface config already matches spec");
     } else {
@@ -148,10 +137,11 @@ pub fn ensure_interface(spec: &InterfaceSpec<'_>) -> Result<()> {
         let needs_key = params.iter().any(|(_, v)| v == PRIVATE_KEY_STDIN);
         let mut args: Vec<String> = vec!["set".into(), interface.into()];
         args.extend(params.into_iter().flat_map(|(k, v)| [k, v]));
-        run_set(tool, &args, needs_key.then(|| spec.private_key.trim()))?;
+        run_set(tool, &args, needs_key.then(|| private_key.trim()))?;
     }
 
-    let address = format!("{}/{}", spec.server_ip, spec.subnet.prefix());
+    // Only the client subnet's prefix length is used for the server address.
+    let address = format!("{}/{}", iface.get_server_ip(), iface.client_subnet.prefix());
     ip(&["address", "replace", &address, "dev", interface])?;
     ip(&["link", "set", interface, "up"])?;
 
@@ -159,7 +149,7 @@ pub fn ensure_interface(spec: &InterfaceSpec<'_>) -> Result<()> {
         interface,
         %tool,
         address,
-        listen_port = spec.listen_port,
+        listen_port = iface.get_listen_port(),
         created,
         "Interface ready"
     );
@@ -273,21 +263,22 @@ fn param_matches(current: &HashMap<String, String>, key: &str, value: &str) -> b
 const PRIVATE_KEY_STDIN: &str = "/dev/stdin";
 
 /// `<tool> set` key/value pairs needed to bring `current` (parsed showconf) in line with
-/// `spec`. Empty when the interface already matches. The private key, if it differs, is
-/// reported as `("private-key", "/dev/stdin")` and never as its value.
+/// `iface` + `private_key`. Empty when the interface already matches. The private key, if it
+/// differs, is reported as `("private-key", "/dev/stdin")` and never as its value.
 fn params_to_set(
     current: &HashMap<String, String>,
-    spec: &InterfaceSpec<'_>,
+    iface: &TunnelInterfaceConfig,
+    private_key: &str,
 ) -> Vec<(String, String)> {
     let mut params = Vec::new();
-    if current.get("privatekey").map(String::as_str) != Some(spec.private_key.trim()) {
+    if current.get("privatekey").map(String::as_str) != Some(private_key.trim()) {
         params.push(("private-key".to_string(), PRIVATE_KEY_STDIN.to_string()));
     }
-    let port = spec.listen_port.to_string();
+    let port = iface.get_listen_port().to_string();
     if !param_matches(current, "listenport", &port) {
         params.push(("listen-port".to_string(), port));
     }
-    if let Some(o) = spec.obfuscation {
+    if let Some(o) = &iface.obfuscation {
         for (k, v) in awg_obfuscation_params(o) {
             if !param_matches(current, k, &v) {
                 params.push((k.to_string(), v));
@@ -426,15 +417,19 @@ pub(crate) mod tests {
         assert!(!conf.contains_key("allowedips"));
     }
 
-    fn awg_spec<'a>(o: &'a AwgObfuscation, private_key: &'a str) -> InterfaceSpec<'a> {
-        InterfaceSpec {
-            tool: WgTool::Awg,
-            interface: "awg-floppa",
-            private_key,
-            listen_port: 51821,
-            server_ip: Ipv4Addr::new(10, 101, 0, 1),
-            subnet: "10.101.0.0/24".parse().unwrap(),
-            obfuscation: Some(o),
+    /// An `[amneziawg]` section as `Config::parse` settles it, with `o` as its obfuscation.
+    fn awg_iface(o: &AwgObfuscation) -> TunnelInterfaceConfig {
+        TunnelInterfaceConfig {
+            interface: "awg-floppa".into(),
+            endpoint: "vpn.example.com:51821".into(),
+            listen_port: Some(51821),
+            client_subnet: "10.101.0.0/24".parse().unwrap(),
+            server_ip: None,
+            dns: vec![],
+            allowed_ips: "0.0.0.0/0".into(),
+            rate_limit: None,
+            mtu: Some(1280),
+            obfuscation: Some(o.clone()),
         }
     }
 
@@ -443,7 +438,7 @@ pub(crate) mod tests {
         let conf = parse_showconf_interface(SHOWCONF);
         let mut o = AwgObfuscation::default();
         o.i1.clear();
-        assert!(params_to_set(&conf, &awg_spec(&o, "cHJpdmF0ZQ==\n")).is_empty());
+        assert!(params_to_set(&conf, &awg_iface(&o), "cHJpdmF0ZQ==\n").is_empty());
     }
 
     #[test]
@@ -455,7 +450,7 @@ pub(crate) mod tests {
         // A configured I1 the interface lacks, and a changed scalar
         o.i1 = "<b 0x01>".to_string();
         o.jc = 7;
-        let params = params_to_set(&conf, &awg_spec(&o, "cHJpdmF0ZQ=="));
+        let params = params_to_set(&conf, &awg_iface(&o), "cHJpdmF0ZQ==");
         assert_eq!(
             params,
             vec![
@@ -467,9 +462,9 @@ pub(crate) mod tests {
         // Key and port differ → set over stdin, key never appears in the args
         o = AwgObfuscation::default();
         o.i1.clear();
-        let mut spec = awg_spec(&o, "b3RoZXI=");
-        spec.listen_port = 51899;
-        let params = params_to_set(&conf, &spec);
+        let mut iface = awg_iface(&o);
+        iface.listen_port = Some(51899);
+        let params = params_to_set(&conf, &iface, "b3RoZXI=");
         assert_eq!(
             params,
             vec![
@@ -483,7 +478,7 @@ pub(crate) mod tests {
     #[test]
     fn fresh_interface_gets_everything() {
         let o = AwgObfuscation::default();
-        let params = params_to_set(&HashMap::new(), &awg_spec(&o, "cHJpdmF0ZQ=="));
+        let params = params_to_set(&HashMap::new(), &awg_iface(&o), "cHJpdmF0ZQ==");
         let keys: Vec<&str> = params.iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(
             keys,

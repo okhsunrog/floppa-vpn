@@ -90,7 +90,7 @@ fn render_peer_config(
     private_key: &str,
     assigned_ip: &str,
 ) -> Result<String, ApiError> {
-    match protocol {
+    let (iface, server_public_key) = match protocol {
         Protocol::AmneziaWg => {
             let awg = state
                 .config
@@ -101,20 +101,16 @@ fn render_peer_config(
                 .awg_public_key
                 .as_deref()
                 .ok_or(floppa_core::FloppaError::AmneziaWgNotConfigured)?;
-            Ok(services::generate_awg_config(
-                private_key,
-                assigned_ip,
-                awg,
-                awg_pub,
-            ))
+            (awg, awg_pub)
         }
-        Protocol::WireGuard => Ok(services::generate_wg_config(
-            private_key,
-            assigned_ip,
-            &state.config,
-            &state.wg_public_key,
-        )),
-    }
+        Protocol::WireGuard => (&state.config.wireguard, state.wg_public_key.as_str()),
+    };
+    Ok(services::generate_tunnel_config(
+        private_key,
+        assigned_ip,
+        iface,
+        server_public_key,
+    ))
 }
 
 #[derive(Serialize, ToSchema)]

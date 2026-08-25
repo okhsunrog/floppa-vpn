@@ -1245,7 +1245,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "floppa-core",
- "ipnetwork",
  "metrics",
  "metrics-exporter-prometheus",
  "sqlx",
