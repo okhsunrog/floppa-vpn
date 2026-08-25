@@ -1,6 +1,8 @@
+use std::net::SocketAddr;
+
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::HeaderMap,
     response::Html,
 };
@@ -16,9 +18,15 @@ use crate::admin::{
         MiniAppUser, TelegramAuthData, create_jwt, verify_telegram_auth, verify_telegram_mini_app,
     },
     error::ApiError,
+    rate_limit::{RateLimitScope, client_ip},
 };
 
 use super::AppState;
+
+/// Per-IP cap on deep-link login starts and code exchanges per 15 minutes. Each start mints a
+/// pending-state entry, so this bounds how fast one client can fill the map; exchanges are
+/// capped mainly so a lost code cannot be guessed at line rate (it is 256 random bits anyway).
+const TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN: u32 = 30;
 
 #[derive(Clone, Serialize, ToSchema)]
 pub struct AuthResponse {
@@ -204,14 +212,23 @@ async fn authenticate_telegram_user(
     responses(
         (status = 200, description = "HTML login page"),
         (status = 400, body = ApiError, description = "Invalid request"),
+        (status = 429, body = ApiError, description = "Too many attempts"),
         (status = 500, body = ApiError, description = "Server misconfiguration"),
     )
 )]
 pub(super) async fn start_telegram_deep_link_login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<TelegramDeepLinkStartQuery>,
     headers: HeaderMap,
 ) -> Result<Html<String>, ApiError> {
+    state.rate_limiter.check(
+        RateLimitScope::TelegramStart,
+        client_ip(&headers, peer).to_string(),
+        TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN,
+        Duration::minutes(15),
+    )?;
+
     if !is_allowed_redirect_uri(&query.redirect_uri) {
         warn!(
             "Rejected deep-link auth start with invalid redirect URI: {}",
@@ -234,17 +251,14 @@ pub(super) async fn start_telegram_deep_link_login(
 
     let now = Utc::now();
     let state_token = generate_nonce();
-    {
-        let mut login_states = state.telegram_login_states.write().await;
-        login_states.retain(|_, value| value.expires_at > now);
-        login_states.insert(
-            state_token.clone(),
-            super::PendingTelegramLoginState {
-                redirect_uri: query.redirect_uri.clone(),
-                expires_at: now + Duration::minutes(10),
-            },
-        );
-    }
+    state.telegram_login_states.write().await.insert(
+        now,
+        state_token.clone(),
+        super::PendingTelegramLoginState {
+            redirect_uri: query.redirect_uri.clone(),
+            expires_at: now + Duration::minutes(10),
+        },
+    );
 
     let callback_url = format!("{request_origin}/api/auth/telegram/callback?state={state_token}");
     let html = format!(
@@ -292,15 +306,15 @@ pub(super) async fn telegram_deep_link_callback(
     Query(query): Query<TelegramDeepLinkCallbackQuery>,
 ) -> Result<Html<String>, ApiError> {
     let now = Utc::now();
-    let login_state = {
-        let mut login_states = state.telegram_login_states.write().await;
-        login_states.retain(|_, value| value.expires_at > now);
-        login_states.remove(&query.state)
-    }
-    .ok_or_else(|| {
-        warn!("Deep-link callback received with unknown or expired state");
-        ApiError::bad_request("Invalid or expired state")
-    })?;
+    let login_state = state
+        .telegram_login_states
+        .write()
+        .await
+        .remove(now, &query.state)
+        .ok_or_else(|| {
+            warn!("Deep-link callback received with unknown or expired state");
+            ApiError::bad_request("Invalid or expired state")
+        })?;
 
     let auth_data = TelegramAuthData {
         id: query.id,
@@ -314,18 +328,15 @@ pub(super) async fn telegram_deep_link_callback(
     let auth_response = authenticate_telegram_user(&state, auth_data).await?;
 
     let login_code = generate_nonce();
-    {
-        let mut login_codes = state.telegram_login_codes.write().await;
-        login_codes.retain(|_, value| value.expires_at > now);
-        login_codes.insert(
-            login_code.clone(),
-            super::PendingTelegramLoginCode {
-                auth_response,
-                expires_at: now + Duration::minutes(2),
-                consumed_at: None,
-            },
-        );
-    }
+    state.telegram_login_codes.write().await.insert(
+        now,
+        login_code.clone(),
+        super::PendingTelegramLoginCode {
+            auth_response,
+            expires_at: now + Duration::minutes(2),
+            consumed_at: None,
+        },
+    );
 
     let separator = if login_state.redirect_uri.contains('?') {
         '&'
@@ -445,26 +456,30 @@ pub(super) async fn telegram_deep_link_callback(
     responses(
         (status = 200, body = AuthResponse),
         (status = 401, body = ApiError, description = "Invalid or expired code"),
+        (status = 429, body = ApiError, description = "Too many attempts"),
     )
 )]
 pub(super) async fn exchange_telegram_login_code(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(request): Json<ExchangeTelegramLoginCodeRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
+    state.rate_limiter.check(
+        RateLimitScope::ExchangeCode,
+        client_ip(&headers, peer).to_string(),
+        TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN,
+        Duration::minutes(15),
+    )?;
+
     let now = Utc::now();
     let auth_response = {
         let mut login_codes = state.telegram_login_codes.write().await;
-        // Drop expired codes and codes whose post-consumption grace window has passed. The grace
-        // window lets the client retry the exchange when the first response was lost mid-flight
-        // (e.g. the webview got suspended during the browser → app switch on mobile).
-        login_codes.retain(|_, value| {
-            value.expires_at > now
-                && value
-                    .consumed_at
-                    .is_none_or(|consumed| now - consumed < Duration::seconds(30))
-        });
+        // A consumed code stays exchangeable for a short grace window (`TtlMap` drops it after)
+        // so the client can retry when the first response was lost mid-flight, e.g. the webview
+        // got suspended during the browser → app switch on mobile.
         let pending = login_codes
-            .get_mut(&request.code)
+            .get_mut(now, &request.code)
             .ok_or_else(ApiError::unauthorized)?;
         pending.consumed_at.get_or_insert(now);
         pending.auth_response.clone()
@@ -580,10 +595,12 @@ async fn fetch_user_result(
         (status = 200, body = AuthResponse),
         (status = 400, body = ApiError, description = "Invalid login or password"),
         (status = 409, body = ApiError, description = "Login already taken"),
+        (status = 429, body = ApiError, description = "Too many attempts"),
     )
 )]
 pub(super) async fn register_account(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<AccountRegisterRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
@@ -593,13 +610,12 @@ pub(super) async fn register_account(
         .as_ref()
         .map(|a| a.register_rate_limit_per_hour)
         .unwrap_or_else(|| floppa_core::AuthConfig::default().register_rate_limit_per_hour);
-    super::check_rate_limit(
-        &state,
-        format!("register:{}", super::client_ip(&headers)),
+    state.rate_limiter.check(
+        RateLimitScope::Register,
+        client_ip(&headers, peer).to_string(),
         limit,
         Duration::hours(1),
-    )
-    .await?;
+    )?;
 
     let result = services::create_credential_user(&state.pool, &req.login, &req.password).await?;
     Ok(Json(build_auth_response(&state, result)?))
@@ -614,10 +630,12 @@ pub(super) async fn register_account(
     responses(
         (status = 200, body = AuthResponse),
         (status = 401, body = ApiError, description = "Invalid login or password"),
+        (status = 429, body = ApiError, description = "Too many attempts"),
     )
 )]
 pub(super) async fn login_account(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<AccountLoginRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
@@ -627,13 +645,21 @@ pub(super) async fn login_account(
         .as_ref()
         .map(|a| a.login_rate_limit_per_15min)
         .unwrap_or_else(|| floppa_core::AuthConfig::default().login_rate_limit_per_15min);
-    super::check_rate_limit(
-        &state,
-        format!("login:{}", super::client_ip(&headers)),
+    let window = Duration::minutes(15);
+    // Per IP against one client trying many accounts; per login name against many addresses
+    // trying one account. Logins are matched case-insensitively, so key on the lowercase form.
+    state.rate_limiter.check(
+        RateLimitScope::LoginIp,
+        client_ip(&headers, peer).to_string(),
         limit,
-        Duration::minutes(15),
-    )
-    .await?;
+        window,
+    )?;
+    state.rate_limiter.check(
+        RateLimitScope::LoginName,
+        req.login.trim().to_lowercase(),
+        limit,
+        window,
+    )?;
 
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
     let result = fetch_user_result(&state, user_id).await?;

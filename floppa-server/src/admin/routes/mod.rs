@@ -11,7 +11,7 @@ use axum::{
     middleware::{self, Next},
     response::IntoResponse,
 };
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use floppa_core::{Config, DbPool, Secrets};
 use serde::Serialize;
 use std::{collections::HashMap, sync::Arc};
@@ -21,9 +21,7 @@ use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub(crate) use crate::admin::error::ApiError;
-
-/// Fixed-window rate-limit buckets: key → (count, window_start).
-type RateBuckets = Arc<RwLock<HashMap<String, (u32, chrono::DateTime<Utc>)>>>;
+use crate::admin::rate_limit::RateLimiter;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,25 +34,108 @@ pub struct AppState {
     pub bot: Bot,
     pub http_client: reqwest::Client,
     pub vm_url: String,
-    telegram_login_states: Arc<RwLock<HashMap<String, PendingTelegramLoginState>>>,
-    telegram_login_codes: Arc<RwLock<HashMap<String, PendingTelegramLoginCode>>>,
-    /// Fixed-window rate-limit counters for credential auth, keyed "register:<ip>" / "login:<ip>".
-    rate_buckets: RateBuckets,
+    telegram_login_states: Arc<RwLock<TtlMap<PendingTelegramLoginState>>>,
+    telegram_login_codes: Arc<RwLock<TtlMap<PendingTelegramLoginCode>>>,
+    /// Fixed-window counters for the unauthenticated auth endpoints.
+    rate_limiter: Arc<RateLimiter>,
 }
 
 #[derive(Clone)]
 struct PendingTelegramLoginState {
     redirect_uri: String,
-    expires_at: chrono::DateTime<Utc>,
+    expires_at: DateTime<Utc>,
 }
 
 #[derive(Clone)]
 struct PendingTelegramLoginCode {
     auth_response: auth::AuthResponse,
-    expires_at: chrono::DateTime<Utc>,
+    expires_at: DateTime<Utc>,
     /// Set on first exchange. The code stays exchangeable for a short grace window afterwards so
     /// the client can retry when the response was lost mid-flight (app switch on mobile).
-    consumed_at: Option<chrono::DateTime<Utc>>,
+    consumed_at: Option<DateTime<Utc>>,
+}
+
+/// An entry of a [`TtlMap`].
+trait Expiring {
+    fn expires_at(&self) -> DateTime<Utc>;
+    /// Whether the entry is still usable at `now`. Defaults to "not yet expired".
+    fn is_live(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at() > now
+    }
+}
+
+impl Expiring for PendingTelegramLoginState {
+    fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
+}
+
+impl Expiring for PendingTelegramLoginCode {
+    fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
+
+    /// Codes also die once their post-consumption grace window has passed.
+    fn is_live(&self, now: DateTime<Utc>) -> bool {
+        self.expires_at > now
+            && self
+                .consumed_at
+                .is_none_or(|consumed| now - consumed < LOGIN_CODE_EXCHANGE_GRACE)
+    }
+}
+
+/// Retry window for exchanging an already-consumed login code (see
+/// [`PendingTelegramLoginCode::consumed_at`]).
+const LOGIN_CODE_EXCHANGE_GRACE: Duration = Duration::seconds(30);
+
+/// Upper bound on live entries in each pending-login map. The entries are minted by
+/// unauthenticated requests, so without a cap a flood of `/auth/telegram/start` calls could
+/// grow the map until the process is OOM-killed; the rate limiter makes reaching this bound
+/// impractical, the cap makes it harmless.
+const PENDING_LOGIN_CAP: usize = 10_000;
+
+/// A bounded in-memory map of nonce → pending login entry. Dead entries are dropped on every
+/// access; when the map is full the entry closest to expiry goes first.
+struct TtlMap<V> {
+    inner: HashMap<String, V>,
+    cap: usize,
+}
+
+impl<V: Expiring> TtlMap<V> {
+    fn with_cap(cap: usize) -> Self {
+        Self {
+            inner: HashMap::new(),
+            cap,
+        }
+    }
+
+    fn prune(&mut self, now: DateTime<Utc>) {
+        self.inner.retain(|_, v| v.is_live(now));
+    }
+
+    fn insert(&mut self, now: DateTime<Utc>, key: String, value: V) {
+        self.prune(now);
+        if self.inner.len() >= self.cap
+            && let Some(oldest) = self
+                .inner
+                .iter()
+                .min_by_key(|(_, v)| v.expires_at())
+                .map(|(k, _)| k.clone())
+        {
+            self.inner.remove(&oldest);
+        }
+        self.inner.insert(key, value);
+    }
+
+    fn remove(&mut self, now: DateTime<Utc>, key: &str) -> Option<V> {
+        self.prune(now);
+        self.inner.remove(key)
+    }
+
+    fn get_mut(&mut self, now: DateTime<Utc>, key: &str) -> Option<&mut V> {
+        self.prune(now);
+        self.inner.get_mut(key)
+    }
 }
 
 fn openapi_router() -> OpenApiRouter<AppState> {
@@ -201,40 +282,6 @@ async fn token_refresh_middleware(
     response
 }
 
-/// Extract the client IP from the leftmost X-Forwarded-For entry (server runs behind a proxy).
-pub(super) fn client_ip(headers: &axum::http::HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-/// Fixed-window rate limit. Returns Err(429) once `max` requests for `key` occur within `window`.
-pub(super) async fn check_rate_limit(
-    state: &AppState,
-    key: String,
-    max: u32,
-    window: Duration,
-) -> Result<(), ApiError> {
-    let now = Utc::now();
-    let mut buckets = state.rate_buckets.write().await;
-    buckets.retain(|_, (_, start)| now - *start < window);
-    let entry = buckets.entry(key).or_insert((0, now));
-    if now - entry.1 >= window {
-        *entry = (0, now);
-    }
-    entry.0 += 1;
-    if entry.0 > max {
-        return Err(ApiError::too_many_requests(
-            "Too many attempts, please try again later",
-        ));
-    }
-    Ok(())
-}
-
 pub fn create_router(
     pool: DbPool,
     config: Config,
@@ -260,9 +307,9 @@ pub fn create_router(
         bot,
         http_client: reqwest::Client::new(),
         vm_url,
-        telegram_login_states: Arc::new(RwLock::new(HashMap::new())),
-        telegram_login_codes: Arc::new(RwLock::new(HashMap::new())),
-        rate_buckets: Arc::new(RwLock::new(HashMap::new())),
+        telegram_login_states: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
+        telegram_login_codes: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
+        rate_limiter: Arc::new(RateLimiter::default()),
     };
 
     let (router, _openapi) = openapi_router().with_state(state.clone()).split_for_parts();

@@ -157,7 +157,7 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
     tokio::select! {
-        result = axum::serve(listener, app) => {
+        result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()) => {
             error!("Axum server exited: {:?}", result);
             result?;
         }
