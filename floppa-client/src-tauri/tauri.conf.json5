@@ -25,7 +25,62 @@
         center: true,
       },
     ],
-    security: {},
+    security: {
+      // Content-Security-Policy for the webview. Tauri sends the map below as one header on
+      // every page it serves and appends a nonce for the module script it tags in index.html,
+      // so anything the page itself loads or fetches must be listed here. Links the app opens in
+      // the system browser (Telegram, GitHub, the bot, the login deep link) go through
+      // plugin-opener and never hit the webview, so they are not listed.
+      csp: {
+        // Whatever is not named below: bundled assets only. Also rules out frames and workers.
+        "default-src": "'self'",
+        // Bundled chunks. Tauri adds 'nonce-…' for the entry script itself.
+        "script-src": "'self'",
+        // 'unsafe-inline': Vue, reka-ui and Nuxt UI write `style="…"` attributes at runtime.
+        // Never put a <style> element into index.html: Tauri would add a nonce for it, and a
+        // nonce in the same directive makes browsers ignore 'unsafe-inline'.
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "connect-src": [
+          "'self'",
+          // Tauri IPC: `ipc://localhost` on Linux/macOS, `http://ipc.localhost` on Windows/Android.
+          "ipc:",
+          "http://ipc.localhost",
+          // Every remote fetch the page makes is HTTPS:
+          //  - the server at VITE_API_URL: REST API, avatar cache, and the update mirror at
+          //    <origin>/downloads/ (latest.json, changelog.json). The origin is baked in at
+          //    build time from a secret and is not written down in the repo, so only the scheme
+          //    can be fixed here; a release build can narrow it with `tauri build --config`.
+          //  - the Iconify API (api.iconify.design, falling back to api.simplesvg.com and
+          //    api.unisvg.com): Nuxt UI loads icons on demand, no collection is bundled.
+          "https:",
+        ],
+        // data: — per-app icons in split tunneling, the cached avatar; blob: — the admin user
+        // page shows the server's avatar copy through an object URL.
+        "img-src": ["'self'", "data:", "blob:"],
+        // No web fonts are shipped (Nuxt UI runs with `fonts: false`).
+        "font-src": "'self'",
+        // These three do not fall back to default-src.
+        "base-uri": "'self'",
+        "form-action": "'self'",
+        "object-src": "'none'",
+      },
+      // `tauri dev`: the same policy, plus a local floppa-server (VITE_API_URL on
+      // http://localhost:3000 or, under `tauri android dev --host`, the LAN address the dev
+      // server is bound to) and Vite's HMR socket (ws://127.0.0.1:1420, or ws://<host>:1421 over
+      // the LAN). Tauri attaches it to the pages it serves itself; with `build.devUrl` set the
+      // page comes straight from Vite, so this mainly records what a dev run needs.
+      devCsp: {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "https:", "http:", "ws:"],
+        "img-src": ["'self'", "data:", "blob:"],
+        "font-src": "'self'",
+        "base-uri": "'self'",
+        "form-action": "'self'",
+        "object-src": "'none'",
+      },
+    },
     trayIcon: {
       iconPath: "icons/icon.png",
       iconAsTemplate: true,
