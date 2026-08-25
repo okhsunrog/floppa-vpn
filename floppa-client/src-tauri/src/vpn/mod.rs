@@ -15,6 +15,10 @@ pub mod rpc;
 pub mod rpc_listener;
 #[cfg(target_os = "android")]
 pub mod rpc_server;
+/// Unix-only rather than Android-only, so what a generation reports about itself is tested on the
+/// host.
+#[cfg(unix)]
+pub mod service_state;
 pub mod state;
 pub mod store;
 pub mod tunnel;

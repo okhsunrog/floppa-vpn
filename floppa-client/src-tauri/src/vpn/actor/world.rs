@@ -4,7 +4,7 @@
 //! [`Policy`] make of it. The distinction that matters is [`World::Dark`]: not knowing is never
 //! evidence that there is no tunnel.
 
-use super::intent::{IntentEpoch, TunnelParams};
+use super::intent::TunnelParams;
 use super::policy::Policy;
 use crate::vpn::protocol::Protocol;
 use std::time::Instant;
@@ -55,7 +55,11 @@ pub struct TunnelObservation {
     /// Starting a tunnel tears down the previous service first, and that teardown is asynchronous
     /// — so "something answered" is not the same as "the service we just asked for answered". The
     /// dying previous instance replies quite happily right up until it does not.
-    pub epoch: u64,
+    ///
+    /// Minted per service start by [`ServiceGenerations`](crate::vpn::autostart::ServiceGenerations),
+    /// never by the cycle: an intent epoch is shared by every pass of a cycle and restarts at 1
+    /// in each UI process, so comparing generations by it matched instances we had moved past.
+    pub generation: u64,
     pub running: Option<RunningTunnel>,
     /// True between "the peer bound its socket" and "the tunnel start returned". Requires the RPC
     /// server to bind ahead of the tunnel start, which is what turns a failed Android start into
@@ -88,9 +92,9 @@ pub enum ServiceReadiness {
 }
 
 impl TunnelObservation {
-    pub fn readiness_for(&self, wanted_epoch: u64) -> ServiceReadiness {
-        if self.epoch != wanted_epoch {
-            return ServiceReadiness::OtherGeneration(self.epoch);
+    pub fn readiness_for(&self, wanted: u64) -> ServiceReadiness {
+        if self.generation != wanted {
+            return ServiceReadiness::OtherGeneration(self.generation);
         }
         if let Some(detail) = &self.start_error {
             return ServiceReadiness::Failed(detail.clone());
@@ -116,8 +120,9 @@ pub struct RawStats {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunningTunnel {
     pub protocol: Protocol,
-    /// Which intent started it. `None` when adopting after a restart.
-    pub epoch: Option<IntentEpoch>,
+    /// Which service generation is carrying it. `None` for a backend that has no generations —
+    /// the in-process one, where the tunnel and the observer are the same process.
+    pub generation: Option<u64>,
     pub endpoint: String,
     pub address: String,
     pub connected_secs: Option<u64>,
@@ -177,7 +182,7 @@ mod tests {
         let obs = Observation {
             observed_at: now,
             view: WorldView::Reachable(TunnelObservation {
-                epoch: 0,
+                generation: 0,
                 running: None,
                 starting: false,
                 tun_ready: true,
@@ -199,7 +204,7 @@ mod tests {
         let obs = Observation {
             observed_at: now,
             view: WorldView::Reachable(TunnelObservation {
-                epoch: 0,
+                generation: 0,
                 running: None,
                 starting: true,
                 tun_ready: false,
@@ -233,9 +238,9 @@ mod tests {
         }
     }
 
-    fn service(epoch: u64, tun_ready: bool, start_error: Option<&str>) -> TunnelObservation {
+    fn service(generation: u64, tun_ready: bool, start_error: Option<&str>) -> TunnelObservation {
         TunnelObservation {
-            epoch,
+            generation,
             running: None,
             starting: start_error.is_none(),
             tun_ready,

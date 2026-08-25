@@ -397,15 +397,10 @@ pub fn reconcile(
                 outcome: CycleOutcome::Cancelled,
             }),
             // 26: a tunnel appeared while we were waiting to retry. Its params are what its
-            // owner reports; failing that, if it carries this cycle's epoch it is ours — an
-            // attempt that was given up on but whose service came up late — so they are the
-            // cycle's own. Otherwise it is somebody's, and they are not known.
+            // owner reports, and nothing else: a service generation is not an intent epoch, so
+            // there is no way to recognise a late tunnel of our own by its identity alone.
             (Rel::Same(up), World::Running(rt)) if cycle.order.contains(&rt.protocol) => {
-                let params = rt
-                    .params
-                    .clone()
-                    .or_else(|| (rt.epoch == Some(cycle.epoch)).then(|| cycle.params.clone()));
-                adopt(up, rt, params, now_unix)
+                adopt(up, rt, rt.params.clone(), now_unix)
             }
             // 27
             (Rel::Same(_), World::Running(_)) => {

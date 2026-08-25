@@ -91,20 +91,25 @@ pub struct TunnelInfo {
     ///
     /// Carried so a reply from a service instance that has since been superseded is rejectable by
     /// value rather than by timing. Without it, an observation from the previous instance is
-    /// indistinguishable from one describing the current tunnel.
-    pub epoch: u64,
-    /// The service is up and holding a descriptor, but no tunnel has been asked for yet.
+    /// indistinguishable from one describing the current tunnel. Minted per service start, never
+    /// per intent: an intent epoch is shared by every pass of a cycle and restarts at 1 in each
+    /// UI process, so comparing by it matched instances it was meant to reject.
+    pub generation: u64,
+    /// The service is coming up: bound, perhaps established, with no tunnel asked for yet.
     ///
     /// This is the state that only exists because the RPC server binds *before* the tunnel starts.
     /// Beforehand, "the service is starting" and "the service failed to start" both looked like an
-    /// unreachable socket, and the only way to tell them apart was to wait and see.
+    /// unreachable socket, and the only way to tell them apart was to wait and see. Read off the
+    /// generation's own phase, so a generation that has been *stopped* — which also has no tunnel
+    /// and no error — does not claim to still be on its way up.
     pub starting: bool,
     /// `VpnService.Builder.establish()` has handed the service its descriptor.
     ///
     /// The socket is bound *before* the TUN is established, so that an `establish()` that fails
     /// — consent revoked, another VPN holding lockdown, every selected app uninstalled — reaches
     /// the caller as `start_error` on its next poll instead of as a service that never answers.
-    /// Until this is true a `start_tunnel` has no descriptor to run on and must not be sent.
+    /// True only while the descriptor is *available*: once it has been handed to a tunnel this
+    /// goes back to false, because a start request against it can only fail from then on.
     pub tun_ready: bool,
     /// Why the last start attempt failed, if it did. Returned rather than only logged, so the
     /// caller gets a reason instead of a timeout.
@@ -137,7 +142,7 @@ pub trait VpnRpc {
     /// and it means a failure to start comes back here as a reason instead of being logged and
     /// then inferred from a timeout.
     ///
-    /// `epoch` identifies the request; a call for a generation the service has moved past is
+    /// `generation` identifies the request; a call for a generation the service has moved past is
     /// rejected rather than obeyed.
     /// `endpoint` is the already-resolved `ip:port`. It is resolved by the caller because by the
     /// time this service exists, name resolution on the device points at a tunnel that is not up
@@ -145,7 +150,7 @@ pub trait VpnRpc {
     /// `params` are the split rules the descriptor was built with; the service only echoes them,
     /// so that whoever finds this tunnel later learns what it routes from its owner.
     async fn start_tunnel(
-        epoch: u64,
+        generation: u64,
         config: WireConfig,
         endpoint: String,
         params: TunnelParams,
@@ -279,7 +284,7 @@ AllowedIPs = 0.0.0.0/0
                 // Bound, TUN not established yet (the state bind-before-establish introduced).
                 TunnelInfo {
                     running: None,
-                    epoch: 3,
+                    generation: 3,
                     starting: true,
                     tun_ready: false,
                     start_error: None,
@@ -290,7 +295,7 @@ AllowedIPs = 0.0.0.0/0
                 // Established, idle.
                 TunnelInfo {
                     running: None,
-                    epoch: 3,
+                    generation: 3,
                     starting: true,
                     tun_ready: true,
                     start_error: None,
@@ -301,7 +306,7 @@ AllowedIPs = 0.0.0.0/0
                 // Failed to start.
                 TunnelInfo {
                     running: None,
-                    epoch: 3,
+                    generation: 3,
                     starting: false,
                     tun_ready: false,
                     start_error: Some("VpnService.Builder.establish() returned null".into()),
@@ -309,12 +314,13 @@ AllowedIPs = 0.0.0.0/0
                     tx_bytes: None,
                     rx_bytes: None,
                 },
-                // Running, requested by the UI.
+                // Running, requested by the UI. The descriptor has been taken, so it is no
+                // longer available for a start.
                 TunnelInfo {
                     running: Some(running(params()[1].clone(), false)),
-                    epoch: 3,
+                    generation: 3,
                     starting: false,
-                    tun_ready: true,
+                    tun_ready: false,
                     start_error: None,
                     last_packet_received: Some(1_700_000_000),
                     tx_bytes: Some(1),
@@ -323,9 +329,9 @@ AllowedIPs = 0.0.0.0/0
                 // Running, started autonomously (always-on).
                 TunnelInfo {
                     running: Some(running(params()[2].clone(), true)),
-                    epoch: 1 << 62,
+                    generation: 1 << 62,
                     starting: false,
-                    tun_ready: true,
+                    tun_ready: false,
                     start_error: None,
                     last_packet_received: Some(0),
                     tx_bytes: Some(0),
@@ -339,8 +345,8 @@ AllowedIPs = 0.0.0.0/0
 
         #[test]
         fn start_tunnel_every_argument_and_result() {
-            // epoch
-            assert_eq!(survives("epoch", &(1u64 << 62)), 1u64 << 62);
+            // generation
+            assert_eq!(survives("generation", &(1u64 << 62)), 1u64 << 62);
             // config: every protocol; AmneziaWG with the default preset, with custom slots, and
             // with every slot unset (the shape that used to break).
             let configs = [
@@ -478,7 +484,7 @@ AllowedIPs = 0.0.0.0/0
                 params: TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]),
                 autonomous: true,
             }),
-            epoch: crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 3,
+            generation: crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 3,
             starting: false,
             tun_ready: true,
             start_error: None,

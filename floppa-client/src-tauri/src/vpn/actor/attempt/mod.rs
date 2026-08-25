@@ -35,6 +35,11 @@ use tracing::{info, warn};
 /// Everything one attempt needs. Assembled by the actor, moved into the task.
 pub struct AttemptCtx {
     pub epoch: IntentEpoch,
+    /// The identity of the `:vpn` service instance this attempt starts. Distinct from `epoch`,
+    /// which every protocol and pass of one cycle shares — see
+    /// [`ServiceGenerations`](crate::vpn::autostart::ServiceGenerations).
+    #[cfg(target_os = "android")]
+    pub generation: u64,
     pub index: usize,
     pub protocol: Protocol,
     pub config: ProtocolConfig,

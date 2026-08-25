@@ -128,7 +128,7 @@ impl VpnBackend for AndroidIpcBackend {
 
     async fn start_tunnel(
         &self,
-        epoch: u64,
+        generation: u64,
         config: &ProtocolConfig,
         endpoint: std::net::SocketAddr,
         params: &TunnelParams,
@@ -140,11 +140,11 @@ impl VpnBackend for AndroidIpcBackend {
 
         // A generous deadline: this is the call that actually brings the tunnel up, unlike the
         // polls that only ask about it.
-        debug!(%epoch, "sending start_tunnel");
+        debug!(%generation, "sending start_tunnel");
         let ctx = Self::deadline(std::time::Duration::from_secs(15));
         let wire = crate::vpn::rpc::WireConfig::from(config);
         match client
-            .start_tunnel(ctx, epoch, wire, endpoint.to_string(), params.clone())
+            .start_tunnel(ctx, generation, wire, endpoint.to_string(), params.clone())
             .await
         {
             Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),
@@ -261,10 +261,10 @@ impl VpnBackend for AndroidIpcBackend {
             Ok(info) => Observation {
                 observed_at,
                 view: WorldView::Reachable(TunnelObservation {
-                    epoch: info.epoch,
+                    generation: info.generation,
                     running: info.running.map(|r| RunningTunnel {
                         protocol: r.protocol,
-                        epoch: Some(crate::vpn::actor::types::IntentEpoch(info.epoch)),
+                        generation: Some(info.generation),
                         endpoint: r.endpoint,
                         address: r.address,
                         connected_secs: r.connected_secs,

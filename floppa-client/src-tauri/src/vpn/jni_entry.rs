@@ -38,12 +38,12 @@ enum EntryError {
     ServerStart(String),
     #[error("the autostart bundle cannot be encoded for the service: {0}")]
     Encode(#[from] serde_json::Error),
-    #[error("no autostart plan is prepared for epoch {epoch}")]
-    NoPlan { epoch: u64 },
+    #[error("no autostart plan is prepared for generation {generation}")]
+    NoPlan { generation: u64 },
     #[error("no service generation is serving yet")]
     NoService,
-    #[error("generation {epoch} is not serving (this process serves {current})")]
-    WrongGeneration { epoch: u64, current: u64 },
+    #[error("generation {generation} is not serving (this process serves {current})")]
+    WrongGeneration { generation: u64, current: u64 },
 }
 
 /// Global state for the VPN process
@@ -61,7 +61,7 @@ static SERVICE_STATE: Mutex<Option<Arc<ServiceState>>> = Mutex::new(None);
 /// it — so the tunnel is built from exactly what the service was told to build a TUN for, with
 /// no second read of the file in between.
 struct PreparedAutostart {
-    epoch: u64,
+    generation: u64,
     config: ProtocolConfig,
     endpoint: SocketAddr,
     params: TunnelParams,
@@ -73,13 +73,20 @@ static AUTOSTART: Mutex<Option<PreparedAutostart>> = Mutex::new(None);
 /// lockdown nothing is allowed on the network yet, so this is mostly the time it takes to fail.
 const AUTOSTART_RESOLVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Generation of the service instance that owns [`RPC_HANDLE`].
+/// Generation of the service instance that owns [`RPC_HANDLE`], or [`NO_GENERATION`] when none
+/// does.
 ///
 /// The `:vpn` process outlives the individual service instances inside it, so this global is
 /// shared between them. Stopping is asynchronous: a previous instance's `onDestroy` can arrive
 /// *after* the next one has already bound its socket, and without this it would tear down a server
-/// it does not own.
-static SERVER_EPOCH: Mutex<u64> = Mutex::new(0);
+/// it does not own. It is reset to the sentinel on every teardown, so a `nativeStop` that arrives
+/// after its generation has gone matches nothing rather than matching whatever came next.
+static SERVER_GENERATION: Mutex<u64> = Mutex::new(NO_GENERATION);
+
+/// "Nothing is being served". No generation is ever minted as this — a UI one comes from
+/// [`ServiceGenerations`](crate::vpn::autostart::ServiceGenerations) and counts up from a random
+/// base, an autonomous one from the reserved range — so it can never be matched by mistake.
+const NO_GENERATION: u64 = 0;
 
 /// Log whatever a JNI entry point that returns nothing to Java ended with.
 ///
@@ -305,12 +312,12 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
     mut env: EnvUnowned<'local>,
     this: JObject<'local>,
     socket_path: JString<'local>,
-    epoch: jlong,
+    generation: jlong,
 ) {
     env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
-        let epoch = epoch as u64;
-        info!("nativeStartServer: socket={socket_path_str}, epoch={epoch}");
+        let generation = generation as u64;
+        info!("nativeStartServer: socket={socket_path_str}, generation={generation}");
 
         // Socket protection for gotatun (WireGuard) and shoes-lite (VLESS).
         tunnel::set_socket_protect_callback(protect_socket_jni);
@@ -321,7 +328,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
         // No descriptor yet: the socket is bound before `establish()` runs, so that a TUN that
         // cannot be established is reported over it (`nativeReportStartError`) instead of
         // leaving the UI to time out on a socket nobody bound.
-        let service = Arc::new(rpc_server::ServiceState::new(epoch));
+        let service = Arc::new(rpc_server::ServiceState::new(generation));
 
         // Everything that can fail and does not need the bind comes before it, so that once the
         // socket is bound the only way out is the success path. (Should one of the locks below
@@ -345,7 +352,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
             old.shutdown();
         }
         *guard = Some(handle);
-        *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)? = epoch;
+        *SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)? = generation;
 
         info!("tarpc RPC server started, waiting for the TUN and a tunnel request");
         Ok(())
@@ -353,11 +360,14 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-/// The generation currently serving, if it is `epoch`.
-fn serving(epoch: u64) -> Result<Arc<ServiceState>, EntryError> {
-    let current = *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)?;
-    if current != epoch {
-        return Err(EntryError::WrongGeneration { epoch, current });
+/// The generation currently serving, if it is `generation`.
+fn serving(generation: u64) -> Result<Arc<ServiceState>, EntryError> {
+    let current = *SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)?;
+    if current == NO_GENERATION || current != generation {
+        return Err(EntryError::WrongGeneration {
+            generation,
+            current,
+        });
     }
     SERVICE_STATE
         .lock()
@@ -370,19 +380,19 @@ fn serving(epoch: u64) -> Result<Arc<ServiceState>, EntryError> {
 /// generation `nativeStartServer` bound. From this moment the observation says `tun_ready` and
 /// a `start_tunnel` request has something to run on.
 ///
-/// Throws when `epoch` is not the generation serving, so a descriptor from a start that has
+/// Throws when `generation` is not the one serving, so a descriptor from a start that has
 /// since been superseded is never adopted by the newer generation.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTunFd<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    epoch: jlong,
+    generation: jlong,
     tun_fd: jint,
 ) {
     env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let epoch = epoch as u64;
-        serving(epoch)?.set_fd(tun_fd as RawFd);
-        info!("nativeSetTunFd: generation {epoch} holds fd {tun_fd}");
+        let generation = generation as u64;
+        serving(generation)?.set_fd(tun_fd as RawFd);
+        info!("nativeSetTunFd: generation {generation} holds fd {tun_fd}");
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
@@ -399,14 +409,14 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReport
 >(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    epoch: jlong,
+    generation: jlong,
     message: JString<'local>,
 ) {
     let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let message: String = message.mutf8_chars(env)?.to_string();
-        let epoch = epoch as u64;
-        error!("nativeReportStartError: generation {epoch} could not start: {message}");
-        serving(epoch)?.set_error(message);
+        let generation = generation as u64;
+        error!("nativeReportStartError: generation {generation} could not start: {message}");
+        serving(generation)?.set_error(message);
         Ok(())
     });
     log_outcome("nativeReportStartError", outcome.into_outcome());
@@ -420,10 +430,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReport
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    epoch: jlong,
+    generation: jlong,
 ) {
     let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let epoch = epoch as u64;
+        let generation = generation as u64;
 
         // Only tear down our own generation.
         //
@@ -431,18 +441,26 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'
         // instance's onDestroy routinely arrives after the next instance has already bound its
         // socket. Without this check it killed the new server roughly 150ms after it came up, and
         // the connect that was about to use it failed with "the connection was already shutdown"
-        // — every time.
-        let current = *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)?;
-        if current != epoch {
+        // — every time. What is compared is a *service generation*, minted once per start: an
+        // intent epoch is shared by every pass of a cycle and restarts at 1 in every UI process,
+        // so this check used to pass for exactly the instances it was written to reject.
+        let mut serving = SERVER_GENERATION.lock().map_err(|_| EntryError::Poisoned)?;
+        if *serving == NO_GENERATION || *serving != generation {
             info!(
-                "nativeStop: ignoring a stop for epoch {epoch}; this process now serves {current}"
+                "nativeStop: ignoring a stop for generation {generation}; this process now serves {}",
+                *serving
             );
             return Ok(());
         }
+        // Cleared before anything is torn down, so a later stop for a generation that has already
+        // gone — a linger timer racing onDestroy — matches nothing instead of matching its
+        // successor.
+        *serving = NO_GENERATION;
+        drop(serving);
 
-        info!("nativeStop: stopping tunnel and RPC server (epoch {epoch})");
+        info!("nativeStop: stopping tunnel and RPC server (generation {generation})");
 
-        // Shutdown RPC server. This generation owns the socket path (the epoch matched above and
+        // Shutdown RPC server. This generation owns the socket path (it matched above and
         // `nativeStartServer` runs on the same main thread), so unlinking is safe here and only
         // here.
         if let Some(handle) = RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)?.take() {
@@ -480,7 +498,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'
 ///
 /// Reads the bundle the last successful connect wrote. Returns the TUN the service should build,
 /// as the JSON form of the plugin's start payload (the same field names Kotlin reads out of a
-/// start intent), with a fresh epoch from the reserved autonomous range; or `null` when there is
+/// start intent), with a fresh generation from the reserved autonomous range; or `null` when there is
 /// nothing to restore, in which case the service stops and the reason is in the log.
 ///
 /// This is the one moment an autonomous start can still resolve a name: no TUN exists yet. Under
@@ -504,7 +522,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAu
                 return Ok(JString::default());
             };
 
-            let epoch = autostart::next_autonomous_epoch(dir);
+            let generation = autostart::next_autonomous_epoch(dir);
             let endpoint = get_runtime().block_on(autostart::resolve_endpoint(
                 &bundle,
                 AUTOSTART_RESOLVE_BUDGET,
@@ -512,7 +530,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAu
             info!(
                 protocol = %bundle.protocol(),
                 %endpoint,
-                epoch,
+                generation,
                 saved_at = bundle.saved_at,
                 "autonomous start: rebuilding the last-good tunnel"
             );
@@ -523,9 +541,9 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAu
                 params,
                 ..
             } = bundle;
-            let plan = serde_json::to_string(&tun.with_epoch(epoch))?;
+            let plan = serde_json::to_string(&tun.with_generation(generation))?;
             *AUTOSTART.lock().map_err(|_| EntryError::Poisoned)? = Some(PreparedAutostart {
-                epoch,
+                generation,
                 config,
                 endpoint,
                 params,
@@ -545,7 +563,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAu
 /// UI process to react, a failed autonomous start stops the service itself, so it never sits
 /// foreground holding a descriptor with a default route into nothing.
 ///
-/// Throws when there is nothing to start from — no prepared plan for this epoch, or no service
+/// Throws when there is nothing to start from — no prepared plan for this generation, or no service
 /// generation — so Kotlin cleans up the TUN it has already established.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartTunnelFromBundle<
@@ -553,20 +571,20 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartT
 >(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
-    epoch: jlong,
+    generation: jlong,
 ) {
     env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let epoch = epoch as u64;
+        let generation = generation as u64;
         let plan = AUTOSTART
             .lock()
             .map_err(|_| EntryError::Poisoned)?
-            .take_if(|p| p.epoch == epoch)
-            .ok_or(EntryError::NoPlan { epoch })?;
+            .take_if(|p| p.generation == generation)
+            .ok_or(EntryError::NoPlan { generation })?;
         let service = SERVICE_STATE
             .lock()
             .map_err(|_| EntryError::Poisoned)?
             .clone()
-            .filter(|s| s.epoch == epoch)
+            .filter(|s| s.generation == generation)
             .ok_or(EntryError::NoService)?;
         let tunnel_manager = get_tunnel_manager();
 

@@ -45,7 +45,7 @@ fn params() -> Option<TunnelParams> {
 fn running(protocol: Protocol) -> World {
     World::Running(RunningTunnel {
         protocol,
-        epoch: None,
+        generation: None,
         endpoint: "vpn.example:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),
@@ -55,13 +55,11 @@ fn running(protocol: Protocol) -> World {
 }
 
 /// A tunnel the Android service brought up by itself from the autostart bundle: it reports the
-/// rules it was built with and an epoch no UI intent can have minted.
+/// rules it was built with and a generation no UI process can have minted.
 fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
     World::Running(RunningTunnel {
         protocol,
-        epoch: Some(IntentEpoch(
-            crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 1,
-        )),
+        generation: Some(crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 1),
         endpoint: "203.0.113.7:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),
@@ -892,16 +890,15 @@ fn a_tunnel_that_comes_back_on_its_own_ends_the_retry() {
 }
 
 #[test]
-fn a_late_tunnel_of_our_own_epoch_is_adopted_with_the_params_we_asked_for() {
-    // The service came up after the attempt was given up on. It carries our epoch, so it was
-    // built from our params — and knowing them is what lets a later Connect with the same rules
-    // be a hand-over instead of a rebuild.
+fn a_tunnel_found_while_retrying_is_adopted_with_only_the_rules_its_owner_reports() {
+    // A service generation is not an intent epoch, so a tunnel that appeared late cannot be
+    // recognised as ours by its identity: what it routes is known only when its owner says so.
     let now = t0();
     let mut rt = match running(AWG) {
         World::Running(rt) => rt,
         _ => unreachable!(),
     };
-    rt.epoch = Some(IntentEpoch(1));
+    rt.generation = Some(9_999);
     let d = go(
         &retrying(now, &[AWG]),
         &up_intent(1, &[AWG], params()),
@@ -909,7 +906,7 @@ fn a_late_tunnel_of_our_own_epoch_is_adopted_with_the_params_we_asked_for() {
         now,
     );
     match &d.next {
-        Status::Up(u) => assert_eq!(u.params.as_ref(), Some(&TunnelParams::default())),
+        Status::Up(u) => assert_eq!(u.params, None, "unknown rules stay unknown"),
         other => panic!("expected adoption, got {other:?}"),
     }
 }

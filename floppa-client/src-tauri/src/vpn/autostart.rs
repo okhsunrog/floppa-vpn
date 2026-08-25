@@ -91,7 +91,7 @@ impl TunSpec {
     }
 
     /// The plugin's start payload for one particular generation.
-    pub fn with_epoch(self, epoch: u64) -> tauri_plugin_vpn::VpnConfig {
+    pub fn with_generation(self, generation: u64) -> tauri_plugin_vpn::VpnConfig {
         tauri_plugin_vpn::VpnConfig {
             ipv4_addr: self.ipv4_addr,
             ipv6_addr: self.ipv6_addr,
@@ -100,7 +100,7 @@ impl TunSpec {
             mtu: self.mtu,
             disallowed_apps: self.disallowed_apps,
             allowed_apps: self.allowed_apps,
-            epoch,
+            generation,
         }
     }
 }
@@ -247,6 +247,49 @@ pub const fn is_autonomous_epoch(epoch: u64) -> bool {
     epoch >= AUTONOMOUS_EPOCH_BASE
 }
 
+/// The identity of one Android service start, minted by the UI process.
+///
+/// Deliberately **not** the cycle's `IntentEpoch`. An intent's epoch is shared by every protocol
+/// and every pass of one cycle, and it restarts at 1 in each UI process while the `:vpn` process
+/// outlives the UI — so every "is this our generation?" check (`wait_for_service`,
+/// `start_tunnel`, `nativeStop`, `closeGeneration`) could pass for a service instance we had
+/// already moved on from. A generation is minted per *service start* instead: one value per
+/// `vpn().start()`, never reused, and never equal to one another process minted.
+///
+/// Uniqueness across processes comes from a random 32-bit base rather than a persisted counter:
+/// the value only ever has to be compared for equality, so a counter's ordering would buy
+/// nothing, and a file read on the actor's task would buy a blocking call per attempt. Every
+/// value is at most `(2^32 - 1) << 20 + n`, comfortably below [`AUTONOMOUS_EPOCH_BASE`], so a
+/// UI generation can never be mistaken for a start the service made on its own.
+#[derive(Debug)]
+pub struct ServiceGenerations(u64);
+
+impl ServiceGenerations {
+    /// A fresh, process-unique sequence. `RandomState` is seeded per process by the standard
+    /// library, which is where the entropy comes from — no dependency, no syscall.
+    pub fn new() -> Self {
+        use std::hash::{BuildHasher, Hasher};
+        let seed = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
+        // 2^20 generations of headroom per process: a cycle burns a handful.
+        Self(u64::from(seed as u32) << 20)
+    }
+
+    /// The next generation. Monotonic within the process.
+    pub fn mint(&mut self) -> u64 {
+        self.0 += 1;
+        debug_assert!(!is_autonomous_epoch(self.0));
+        self.0
+    }
+}
+
+impl Default for ServiceGenerations {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The address to dial for an autonomous start.
 ///
 /// The service is started before any TUN exists, so this is the one moment it can still resolve
@@ -365,9 +408,9 @@ AllowedIPs = 0.0.0.0/0
         // Kotlin reads one set of names out of the intent extras and out of the bundle's JSON.
         let spec = bundle(TunnelParams::new(SplitMode::Exclude, vec!["a".into()])).tun;
         let from_bundle = serde_json::to_value(&spec).unwrap();
-        let mut from_plugin = serde_json::to_value(spec.with_epoch(7)).unwrap();
-        assert_eq!(from_plugin["epoch"], 7);
-        from_plugin.as_object_mut().unwrap().remove("epoch");
+        let mut from_plugin = serde_json::to_value(spec.with_generation(7)).unwrap();
+        assert_eq!(from_plugin["generation"], 7);
+        from_plugin.as_object_mut().unwrap().remove("generation");
         assert_eq!(from_bundle, from_plugin);
         assert!(
             from_bundle.get("ipv4Addr").is_some(),
@@ -443,6 +486,23 @@ AllowedIPs = 0.0.0.0/0
         assert!(!is_autonomous_epoch(u32::MAX as u64));
         // The value survives as a Kotlin Long: bit 63 is never set.
         assert!(i64::try_from(second).is_ok());
+    }
+
+    #[test]
+    fn service_generations_are_unique_per_process_and_out_of_the_autonomous_range() {
+        let mut generations = ServiceGenerations::new();
+        let first = generations.mint();
+        let second = generations.mint();
+        assert!(second > first, "monotonic within the process");
+        assert!(
+            !is_autonomous_epoch(second),
+            "never mistakable for a bundle start"
+        );
+        assert!(i64::try_from(second).is_ok(), "survives as a Kotlin Long");
+        // The base is a multiple of 2^20 and the low bits are the per-process counter, so two
+        // processes only collide when their random bases do.
+        assert_eq!(first & 0xF_FFFF, 1);
+        assert_eq!(second & 0xF_FFFF, 2);
     }
 
     #[test]

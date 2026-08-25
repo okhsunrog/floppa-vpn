@@ -47,8 +47,11 @@ class VpnConfigArgs {
     var mtu: Int = 1280
     var disallowedApps: Array<String> = emptyArray()
     var allowedApps: Array<String> = emptyArray()
-    /** Generation of the request, echoed back so a superseded service instance is rejectable. */
-    var epoch: Long = 0
+    /**
+     * Identity of this service start, echoed back so a superseded instance is rejectable by value.
+     * Minted per start by the UI process, never the intent's epoch.
+     */
+    var generation: Long = 0
 }
 
 @InvokeArg
@@ -131,7 +134,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                     putExtra(FloppaVpnService.EXTRA_MTU, args.mtu)
                     putExtra(FloppaVpnService.EXTRA_DISALLOWED_APPS, args.disallowedApps)
                     putExtra(FloppaVpnService.EXTRA_ALLOWED_APPS, args.allowedApps)
-                    putExtra(FloppaVpnService.EXTRA_EPOCH, args.epoch)
+                    putExtra(FloppaVpnService.EXTRA_GENERATION, args.generation)
                 }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

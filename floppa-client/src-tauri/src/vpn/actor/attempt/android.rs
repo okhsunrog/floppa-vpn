@@ -70,8 +70,10 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Starting).await;
 
-    let vpn_config = TunSpec::derive(&ctx.config, &ctx.params).with_epoch(ctx.epoch.0);
-    stack.push(Step::AndroidService { epoch: ctx.epoch.0 });
+    let vpn_config = TunSpec::derive(&ctx.config, &ctx.params).with_generation(ctx.generation);
+    stack.push(Step::AndroidService {
+        generation: ctx.generation,
+    });
 
     ctx.app
         .vpn()
@@ -80,7 +82,9 @@ pub(super) async fn ladder(
         .map_err(|e| AttemptError::PeerStartFailed {
             detail: e.to_string(),
         })?;
-    stack.confirm_top(Step::AndroidService { epoch: ctx.epoch.0 });
+    stack.confirm_top(Step::AndroidService {
+        generation: ctx.generation,
+    });
 
     // 4. Ask the service for a tunnel ------------------------------------------------------
     // The service binds its socket before starting anything, so waiting here means waiting for it
@@ -90,7 +94,7 @@ pub(super) async fn ladder(
     ctx.phase(AttemptPhase::Configuring).await;
     wait_for_service(ctx).await?;
     ctx.backend
-        .start_tunnel(ctx.epoch.0, &ctx.config, endpoint, &ctx.params)
+        .start_tunnel(ctx.generation, &ctx.config, endpoint, &ctx.params)
         .await
         .map_err(|e| AttemptError::PeerStartFailed {
             detail: e.to_string(),
@@ -139,7 +143,7 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
             return Err(AttemptError::Cancelled);
         }
         if let WorldView::Reachable(t) = ctx.backend.observe().await.view {
-            match t.readiness_for(ctx.epoch.0) {
+            match t.readiness_for(ctx.generation) {
                 ServiceReadiness::Ready => return Ok(()),
                 ServiceReadiness::Failed(detail) => {
                     error!("the VPN service reported a failed start: {detail}");
@@ -154,7 +158,7 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
                 ServiceReadiness::OtherGeneration(answered) => {
                     debug!(
                         answered,
-                        wanted = ctx.epoch.0,
+                        wanted = ctx.generation,
                         "a previous service instance is still answering; waiting for ours"
                     );
                 }

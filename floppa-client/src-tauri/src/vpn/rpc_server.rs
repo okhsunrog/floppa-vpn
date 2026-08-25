@@ -5,6 +5,7 @@
 
 use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
 pub use super::rpc_listener::RpcServerHandle;
+pub use super::service_state::{GenerationPhase, ServiceState, Started};
 use super::state::ProtocolConfig;
 use super::tunnel::TunnelManager;
 use crate::vpn::actor::types::TunnelParams;
@@ -16,106 +17,9 @@ use tarpc::server::Channel;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, error, info, warn};
 
-/// How the tunnel on this service's descriptor was started, reported back with every
-/// observation so the UI process learns it from the owner rather than guessing.
-#[derive(Debug, Clone)]
-pub struct Started {
-    pub params: TunnelParams,
-    pub autonomous: bool,
-}
-
-/// The descriptor's life in this service: not yet established, held, or already handed to a
-/// tunnel. Three states rather than an `Option`, because "not yet" and "already used" both read
-/// as `None` and mean opposite things to a start request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FdSlot {
-    NotEstablished,
-    Ready(std::os::fd::RawFd),
-    Taken,
-}
-
-/// What the service is holding before any tunnel exists.
-///
-/// This only has anywhere to live because the RPC server binds ahead of everything else — ahead
-/// of `establish()` too. Before that, "the service is coming up", "the service is up and idle",
-/// "the TUN could not be established" and "the service failed" were all a socket that would not
-/// connect, and the caller could only wait and guess.
-pub struct ServiceState {
-    /// Generation of the service, taken from the request that started it.
-    pub epoch: u64,
-    /// The descriptor handed over by `VpnService.Builder.establish()`, once it has been.
-    tun_fd: std::sync::Mutex<FdSlot>,
-    start_error: std::sync::Mutex<Option<String>>,
-    /// Set once a tunnel is up on the descriptor.
-    started: std::sync::Mutex<Option<Started>>,
-}
-
-impl ServiceState {
-    pub fn new(epoch: u64) -> Self {
-        Self {
-            epoch,
-            tun_fd: std::sync::Mutex::new(FdSlot::NotEstablished),
-            start_error: std::sync::Mutex::new(None),
-            started: std::sync::Mutex::new(None),
-        }
-    }
-
-    /// The service has established its TUN; from now on a tunnel can be started on it.
-    pub fn set_fd(&self, fd: std::os::fd::RawFd) {
-        if let Ok(mut guard) = self.tun_fd.lock() {
-            *guard = FdSlot::Ready(fd);
-        }
-    }
-
-    /// Established, or already running a tunnel — either way, not "still waiting for the TUN".
-    pub fn tun_ready(&self) -> bool {
-        self.tun_fd
-            .lock()
-            .map(|g| !matches!(*g, FdSlot::NotEstablished))
-            .unwrap_or(false)
-    }
-
-    fn take_fd(&self) -> Result<std::os::fd::RawFd, &'static str> {
-        let mut guard = self
-            .tun_fd
-            .lock()
-            .map_err(|_| "the descriptor lock is poisoned")?;
-        match *guard {
-            FdSlot::Ready(fd) => {
-                *guard = FdSlot::Taken;
-                Ok(fd)
-            }
-            FdSlot::NotEstablished => Err("the tunnel descriptor has not been established yet"),
-            FdSlot::Taken => Err("the tunnel descriptor has already been used"),
-        }
-    }
-
-    /// Record why this generation could not start, for whoever observes next. Public because the
-    /// one failure the Rust side cannot see itself — `establish()` — is reported from Kotlin.
-    pub fn set_error(&self, error: String) {
-        if let Ok(mut guard) = self.start_error.lock() {
-            *guard = Some(error);
-        }
-    }
-
-    fn error(&self) -> Option<String> {
-        self.start_error.lock().ok()?.clone()
-    }
-
-    fn set_started(&self, started: Started) {
-        if let Ok(mut guard) = self.started.lock() {
-            *guard = Some(started);
-        }
-    }
-
-    fn started(&self) -> Option<Started> {
-        self.started.lock().ok()?.clone()
-    }
-}
-
 /// Bring a tunnel up on the descriptor this service holds.
 ///
-/// The one start path. The RPC `start_tunnel` reaches it after checking the request's epoch; an
+/// The one start path. The RPC `start_tunnel` reaches it after checking the request's generation; an
 /// autonomous start (`nativeStartTunnelFromBundle`) reaches it with what the bundle held. Whatever
 /// the route in, what is recorded about the running tunnel — its params, whether anyone asked for
 /// it — and what the notification says come out of this function alone.
@@ -180,6 +84,7 @@ pub async fn bring_up(
                 "tunnel started"
             );
             service.set_started(started);
+            service.advance_to(GenerationPhase::Started);
             // The notification has been saying "connecting" since the service came up; this is
             // the first moment it is entitled to say anything else.
             super::jni_entry::set_service_connected(true);
@@ -231,12 +136,12 @@ impl VpnRpc for VpnRpcServer {
         });
         let start_error = self.service.error();
         TunnelInfo {
-            // Up and idle, with no tunnel asked for yet and nothing having gone wrong. Only
-            // reachable because the socket is bound before the tunnel is started.
-            starting: running.is_none() && start_error.is_none(),
+            // Read off the generation's own phase rather than inferred from the absence of a
+            // tunnel, which a *stopped* generation also looks like.
+            starting: self.service.starting(),
             tun_ready: self.service.tun_ready(),
             running,
-            epoch: self.service.epoch,
+            generation: self.service.generation,
             start_error,
             last_packet_received: self.tunnel_manager.get_last_packet_received().await,
             tx_bytes: stats.as_ref().map(|s| s.tx_bytes),
@@ -247,16 +152,16 @@ impl VpnRpc for VpnRpcServer {
     async fn start_tunnel(
         self,
         _ctx: Context,
-        epoch: u64,
+        generation: u64,
         config: crate::vpn::rpc::WireConfig,
         endpoint: String,
         params: TunnelParams,
     ) -> Result<(), String> {
         // A request for a generation we have moved past is not ours to obey.
-        if epoch != self.service.epoch {
+        if generation != self.service.generation {
             return Err(format!(
-                "stale request: epoch {epoch}, this service is {}",
-                self.service.epoch
+                "stale request: generation {generation}, this service is {}",
+                self.service.generation
             ));
         }
         let endpoint: SocketAddr = endpoint
@@ -277,6 +182,7 @@ impl VpnRpc for VpnRpcServer {
 
     async fn stop(self, _ctx: Context) -> Result<(), String> {
         let result = self.tunnel_manager.stop().await.map_err(|e| e.to_string());
+        self.service.mark_stopped();
 
         // Stop the Android VPN service (foreground notification, TUN, stopSelf)
         #[cfg(target_os = "android")]

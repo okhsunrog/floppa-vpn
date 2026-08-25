@@ -83,14 +83,16 @@ pub trait VpnBackend: Send + Sync {
     /// Ask a already-running out-of-process service to bring up a tunnel on the descriptor it
     /// holds, and get back a reason if it cannot.
     ///
-    /// `epoch` identifies the request, so a service instance that has been superseded can refuse
-    /// it instead of obeying. Meaningless for an in-process backend, which has no service to ask.
+    /// `generation` identifies the service instance the request is for, so one that has been
+    /// superseded refuses it instead of obeying. It is minted per service start — never the
+    /// intent's epoch, which every protocol and pass of one cycle shares. Meaningless for an
+    /// in-process backend, which has no service to ask.
     ///
     /// `params` are the split rules the service's descriptor was built with. They travel so the
     /// service can report them back to whoever finds the tunnel later.
     async fn start_tunnel(
         &self,
-        _epoch: u64,
+        _generation: u64,
         _config: &ProtocolConfig,
         _endpoint: SocketAddr,
         _params: &TunnelParams,

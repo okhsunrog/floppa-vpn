@@ -76,7 +76,7 @@ impl VpnBackend for FakeBackend {
         }
         *self.running.lock().unwrap() = Some(RunningTunnel {
             protocol: config.protocol(),
-            epoch: None,
+            generation: None,
             endpoint: endpoint.to_string(),
             address: config.address(),
             connected_secs: Some(0),
@@ -96,7 +96,7 @@ impl VpnBackend for FakeBackend {
         Observation {
             observed_at: Instant::now(),
             view: WorldView::Reachable(TunnelObservation {
-                epoch: 0,
+                generation: 0,
                 running: self.running(),
                 starting: false,
                 tun_ready: true,
@@ -547,7 +547,7 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
     h.wait_for_phase(Phase::Connecting).await;
     *h.backend.running.lock().unwrap() = Some(RunningTunnel {
         protocol: Protocol::WireGuard,
-        epoch: None,
+        generation: None,
         endpoint: "127.0.0.1:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(1),

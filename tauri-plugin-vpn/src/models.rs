@@ -32,13 +32,17 @@ pub struct VpnConfig {
     #[serde(default)]
     pub allowed_apps: Vec<String>,
 
-    /// Generation of the request that is starting the service.
+    /// Identity of this service start.
+    ///
+    /// Minted per start by the UI process and never reused, so a reply from an instance that has
+    /// since been superseded is rejectable by value. It is deliberately not the intent's epoch,
+    /// which every protocol and pass of one cycle shares.
     ///
     /// The tunnel config itself no longer travels here: the service binds its socket first and is
     /// then given a typed config over it, so the protocol is stated rather than re-derived by
     /// inspecting a string at the far end.
     #[serde(default)]
-    pub epoch: u64,
+    pub generation: u64,
 }
 
 fn default_mtu() -> u32 {

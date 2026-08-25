@@ -26,8 +26,14 @@ import org.json.JSONObject
  * configured — so anything missing is an error, not a fallback.
  */
 data class TunSpec(
-    /** Generation this instance serves; echoed over the RPC and matched on teardown. */
-    val epoch: Long,
+    /**
+     * Generation this instance serves; echoed over the RPC and matched on teardown.
+     *
+     * Minted per service start by the UI process (or, for an autonomous start, by Rust from the
+     * reserved range) and never reused — deliberately not the intent's epoch, which every protocol
+     * and pass of one connect cycle shares and which restarts at 1 in every UI process.
+     */
+    val generation: Long,
     val ipv4Addr: String,
     val ipv6Addr: String?,
     val routes: List<String>,
@@ -46,7 +52,7 @@ data class TunSpec(
                 throw IllegalArgumentException("start intent has no ${FloppaVpnService.EXTRA_MTU}")
             }
             return TunSpec(
-                epoch = intent.getLongExtra(FloppaVpnService.EXTRA_EPOCH, 0L),
+                generation = intent.getLongExtra(FloppaVpnService.EXTRA_GENERATION, 0L),
                 ipv4Addr =
                     intent.getStringExtra(FloppaVpnService.EXTRA_IPV4_ADDR)
                         ?: throw IllegalArgumentException(
@@ -71,12 +77,12 @@ data class TunSpec(
 
         /**
          * The JSON `nativeLoadAutostart` returns: the plugin's start payload, with the same field
-         * names the intent extras use (`TunSpec::with_epoch` in `vpn/autostart.rs`).
+         * names the intent extras use (`TunSpec::with_generation` in `vpn/autostart.rs`).
          */
         fun fromJson(json: String): TunSpec {
             val o = JSONObject(json)
             return TunSpec(
-                epoch = o.getLong("epoch"),
+                generation = o.getLong("generation"),
                 ipv4Addr = o.getString("ipv4Addr"),
                 ipv6Addr = o.stringOrNull("ipv6Addr"),
                 routes = o.getJSONArray("routes").toStringList(),
@@ -131,13 +137,19 @@ class FloppaVpnService : VpnService() {
          * Echoed back over the RPC so a reply from an instance that has since been superseded is
          * rejectable by value, rather than by guessing from timing.
          */
-        const val EXTRA_EPOCH = "epoch"
+        const val EXTRA_GENERATION = "generation"
 
         /**
          * How long a generation whose TUN could not be established keeps answering the RPC, so the
          * UI (polling every 200 ms) reads `start_error` before the socket goes away.
          */
         private const val START_ERROR_LINGER_MS = 3_000L
+
+        /**
+         * "This instance is serving nothing". No start ever mints it, so a teardown that arrives
+         * after the generation it belonged to has gone matches nothing.
+         */
+        private const val NO_GENERATION = 0L
 
         init {
             System.loadLibrary("floppa_client_lib")
@@ -147,24 +159,24 @@ class FloppaVpnService : VpnService() {
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit(logDir: String)
 
-    /** Binds the RPC socket for [epoch]. Throws [RuntimeException] when it cannot. */
-    private external fun nativeStartServer(socketPath: String, epoch: Long)
+    /** Binds the RPC socket for [generation]. Throws [RuntimeException] when it cannot. */
+    private external fun nativeStartServer(socketPath: String, generation: Long)
 
     /**
      * Hands the descriptor `establish()` produced to the generation [nativeStartServer] bound.
-     * Throws [RuntimeException] when [epoch] is no longer the generation serving.
+     * Throws [RuntimeException] when [generation] is no longer the one serving.
      */
-    private external fun nativeSetTunFd(epoch: Long, tunFd: Int)
+    private external fun nativeSetTunFd(generation: Long, tunFd: Int)
 
     /**
      * Records why this generation could not establish its TUN, so the UI process reads the reason
      * on its next poll instead of waiting for a service that never becomes ready.
      */
-    private external fun nativeReportStartError(epoch: Long, message: String)
+    private external fun nativeReportStartError(generation: Long, message: String)
 
     /**
      * For a start the system issued: the TUN to build from the autostart bundle, as the JSON
-     * [TunSpec.fromJson] reads, with a fresh epoch — or null when there is nothing to restore.
+     * [TunSpec.fromJson] reads, with a fresh generation — or null when there is nothing to restore.
      */
     private external fun nativeLoadAutostart(dataDir: String): String?
 
@@ -173,18 +185,26 @@ class FloppaVpnService : VpnService() {
      * [nativeLoadAutostart] prepared. Throws [RuntimeException] when there is nothing to start
      * from; a start that fails later stops the service from the Rust side.
      */
-    private external fun nativeStartTunnelFromBundle(epoch: Long)
+    private external fun nativeStartTunnelFromBundle(generation: Long)
 
     /**
-     * Generation this instance was started with.
+     * Generation this instance is currently serving.
      *
      * Passed back on teardown so a late onDestroy from a previous instance cannot stop the server
      * belonging to the one that replaced it — these instances share a process, and stopService is
-     * asynchronous.
+     * asynchronous. [NO_GENERATION] once nothing is being served, so a teardown that arrives after
+     * one matches nothing.
      */
-    private var epoch: Long = 0
+    private var generation: Long = NO_GENERATION
 
-    private external fun nativeStop(epoch: Long)
+    /**
+     * The most recent `startId`. `stopSelf(startId)` refuses to stop the service when a newer start
+     * has arrived since, which a bare `stopSelf()` cannot see — and a linger timer or a late
+     * teardown from a superseded generation used to stop the instance that replaced it.
+     */
+    private var lastStartId: Int = 0
+
+    private external fun nativeStop(generation: Long)
 
     private var tunInterface: ParcelFileDescriptor? = null
 
@@ -207,7 +227,8 @@ class FloppaVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.i(TAG, "onStartCommand: action=${intent?.action}")
+        Log.i(TAG, "onStartCommand: action=${intent?.action}, startId=$startId")
+        lastStartId = startId
 
         if (intent == null) {
             Log.w(TAG, "Null intent, stopping service")
@@ -218,9 +239,7 @@ class FloppaVpnService : VpnService() {
         // Handle stop request from UI process
         if (intent.action == ACTION_STOP) {
             Log.i(TAG, "Received STOP action, shutting down")
-            nativeStop(epoch)
-            cleanupAndroid()
-            stopSelf()
+            closeGeneration(generation)
             return START_NOT_STICKY
         }
 
@@ -232,9 +251,9 @@ class FloppaVpnService : VpnService() {
         //
         // The service is a singleton per process, so such an intent can also land on an instance
         // that is carrying a live tunnel. That tunnel is left exactly as it is: stopSelf() here
-        // would run onDestroy, whose nativeStop(epoch) matches this generation and tears it
+        // would run onDestroy, whose nativeStop(generation) matches this generation and tears it
         // down. Only an instance with nothing to keep alive acts on the intent.
-        if (intent.action == SERVICE_INTERFACE || !intent.hasExtra(EXTRA_EPOCH)) {
+        if (intent.action == SERVICE_INTERFACE || !intent.hasExtra(EXTRA_GENERATION)) {
             if (tunInterface != null) {
                 Log.w(
                     TAG,
@@ -251,7 +270,8 @@ class FloppaVpnService : VpnService() {
         // otherwise the old fd leaked with the old tunnel still reading from it.
         if (tunInterface != null) {
             Log.w(TAG, "Start while a tunnel is established; stopping the previous one first")
-            nativeStop(epoch)
+            nativeStop(generation)
+            generation = NO_GENERATION
             cleanupAndroid()
         }
 
@@ -274,9 +294,9 @@ class FloppaVpnService : VpnService() {
      * A start the system issued: rebuild the last-good tunnel with no UI process.
      *
      * Rust reads the bundle and says what TUN to build; the tunnel is then brought up in this
-     * process, on the same path the RPC start uses, under an epoch from a range no UI intent can
-     * mint. A UI process that opens later finds it over the RPC — with its protocol and split rules
-     * reported by this side — and adopts it.
+     * process, on the same path the RPC start uses, under a generation from a range no UI process
+     * can mint. A UI process that opens later finds it over the RPC — with its protocol and split
+     * rules reported by this side — and adopts it.
      */
     private fun startFromBundle(): Int {
         val plan =
@@ -299,8 +319,10 @@ class FloppaVpnService : VpnService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-        Log.i(TAG, "System start: rebuilding the last-good tunnel (epoch=${spec.epoch})")
-        return startGeneration(spec, autonomous = true) { nativeStartTunnelFromBundle(spec.epoch) }
+        Log.i(TAG, "System start: rebuilding the last-good tunnel (generation=${spec.generation})")
+        return startGeneration(spec, autonomous = true) {
+            nativeStartTunnelFromBundle(spec.generation)
+        }
     }
 
     /**
@@ -318,7 +340,8 @@ class FloppaVpnService : VpnService() {
     private fun startGeneration(spec: TunSpec, autonomous: Boolean, afterReady: () -> Unit): Int {
         // Before anything that can fail or tear down: onDestroy stops by this value, and reading
         // it later meant a start that threw left the previous instance's generation in the field.
-        epoch = spec.epoch
+        val generation = spec.generation
+        this.generation = generation
         this.autonomous = autonomous
 
         // Foreground before the TUN exists, because Android requires it — so the notification says
@@ -328,12 +351,12 @@ class FloppaVpnService : VpnService() {
 
         try {
             // Keep in sync with SOCKET_NAME in rpc.rs.
-            nativeStartServer(applicationInfo.dataDir + "/vpn.sock", epoch)
+            nativeStartServer(applicationInfo.dataDir + "/vpn.sock", generation)
         } catch (e: Exception) {
             // Nothing is listening, so nothing can be told; the service must not stay foreground
             // as if it had started.
             Log.e(TAG, "Failed to bind the RPC socket", e)
-            closeGeneration(epoch)
+            closeGeneration(generation)
             return START_NOT_STICKY
         }
 
@@ -341,7 +364,7 @@ class FloppaVpnService : VpnService() {
             tunInterface = createTunInterface(spec)
             val fd = tunInterface?.fd ?: throw IllegalStateException("Failed to get TUN fd")
             Log.i(TAG, "TUN interface created with fd: $fd")
-            nativeSetTunFd(epoch, fd)
+            nativeSetTunFd(generation, fd)
             afterReady()
         } catch (e: Exception) {
             // The socket is bound, so this is reportable. Leave the generation answering for a
@@ -349,11 +372,15 @@ class FloppaVpnService : VpnService() {
             // teardown usually gets there first, and closeGeneration is idempotent.
             Log.e(TAG, "Failed to establish the TUN", e)
             try {
-                nativeReportStartError(epoch, e.message ?: e.toString())
+                nativeReportStartError(generation, e.message ?: e.toString())
             } catch (report: Exception) {
                 Log.w(TAG, "Could not record the start error", report)
             }
-            mainHandler.postDelayed({ closeGeneration(epoch) }, START_ERROR_LINGER_MS)
+            // The generation is captured in a local: reading the field when the timer fires meant
+            // the guard in closeGeneration compared a value against itself and always passed, so
+            // this timer tore down whichever generation happened to be serving three seconds
+            // later — usually the one that replaced this failed start.
+            mainHandler.postDelayed({ closeGeneration(generation) }, START_ERROR_LINGER_MS)
             return START_NOT_STICKY
         }
 
@@ -364,31 +391,37 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * Tear down [generation] and stop, unless a newer start has since taken over this instance —
-     * then the generation is already gone and the newer one must be left alone.
+     * Tear down [target] and stop, unless a newer start has since taken over this instance — then
+     * that generation is already gone and the newer one must be left alone. Idempotent: the field
+     * is cleared, so a second call for the same generation finds nothing to do.
      */
-    private fun closeGeneration(generation: Long) {
-        if (epoch != generation) {
-            Log.i(TAG, "closeGeneration($generation): superseded by $epoch, nothing to do")
+    private fun closeGeneration(target: Long) {
+        if (target == NO_GENERATION || generation != target) {
+            Log.i(TAG, "closeGeneration($target): superseded by $generation, nothing to do")
             return
         }
-        nativeStop(generation)
+        nativeStop(target)
+        generation = NO_GENERATION
         cleanupAndroid()
-        stopSelf()
+        // By startId, so a start that arrived after this teardown was scheduled keeps the service
+        // alive; a bare stopSelf() stopped it regardless of what had happened since.
+        stopSelf(lastStartId)
     }
 
     override fun onDestroy() {
         Log.i(TAG, "VPN service destroying")
         // onDestroy is called by Android when the service is being torn down
         // (e.g., system kill). Stop Rust side and clean up.
-        nativeStop(epoch)
+        nativeStop(generation)
+        generation = NO_GENERATION
         cleanupAndroid()
         super.onDestroy()
     }
 
     override fun onRevoke() {
         Log.i(TAG, "VPN permission revoked")
-        nativeStop(epoch)
+        nativeStop(generation)
+        generation = NO_GENERATION
         cleanupAndroid()
         super.onRevoke()
     }
@@ -403,8 +436,9 @@ class FloppaVpnService : VpnService() {
     fun shutdownService() {
         Log.i(TAG, "shutdownService() called")
         mainHandler.post {
+            generation = NO_GENERATION
             cleanupAndroid()
-            stopSelf()
+            stopSelf(lastStartId)
         }
     }
 

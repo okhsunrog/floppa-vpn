@@ -108,6 +108,10 @@ pub struct TunnelActor {
 
     // ---- bookkeeping ----
     next_epoch: u64,
+    /// Identities for the `:vpn` service instances this process starts. Separate from
+    /// [`IntentEpoch`] on purpose — see [`ServiceGenerations`](crate::vpn::autostart::ServiceGenerations).
+    #[cfg(target_os = "android")]
+    generations: crate::vpn::autostart::ServiceGenerations,
     seq: u64,
     last_outcome: Option<CycleOutcome>,
     recent_outcomes: VecDeque<(IntentEpoch, CycleOutcome)>,
@@ -197,6 +201,8 @@ impl TunnelActor {
             unwind: None,
             unwind_started: None,
             next_epoch: 1,
+            #[cfg(target_os = "android")]
+            generations: crate::vpn::autostart::ServiceGenerations::new(),
             seq: 0,
             last_outcome: None,
             recent_outcomes: VecDeque::new(),
@@ -692,6 +698,10 @@ impl TunnelActor {
                 let cancel = CancellationToken::new();
                 let ctx = attempt::AttemptCtx {
                     epoch,
+                    // One per service start, never reused: the ladder hands it to the service and
+                    // every later "is this ours?" check compares against it.
+                    #[cfg(target_os = "android")]
+                    generation: self.generations.mint(),
                     index,
                     protocol,
                     config,

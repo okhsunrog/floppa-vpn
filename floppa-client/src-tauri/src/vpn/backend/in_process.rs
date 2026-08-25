@@ -65,7 +65,7 @@ impl VpnBackend for InProcessBackend {
         let running = match self.tunnel_manager.meta().await {
             Some(meta) => Some(RunningTunnel {
                 protocol: meta.protocol,
-                epoch: None,
+                generation: None,
                 endpoint: meta.endpoint,
                 address: meta.address,
                 connected_secs: self
@@ -85,7 +85,7 @@ impl VpnBackend for InProcessBackend {
             observed_at: std::time::Instant::now(),
             view: WorldView::Reachable(TunnelObservation {
                 // In-process: there is no separate service to have generations of.
-                epoch: 0,
+                generation: 0,
                 running,
                 starting: false,
                 // In-process there is no descriptor hand-over to wait for.

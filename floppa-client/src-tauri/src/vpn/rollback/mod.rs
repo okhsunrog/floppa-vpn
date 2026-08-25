@@ -72,7 +72,7 @@ pub enum Step {
     /// Its undo is cross-process, and the OS can also perform it unilaterally — revoked consent, a
     /// low-memory kill — so "undo returned Ok" is not the same as "it is gone". The caller
     /// re-observes rather than trusting the return value.
-    AndroidService { epoch: u64 },
+    AndroidService { generation: u64 },
 }
 
 #[derive(
