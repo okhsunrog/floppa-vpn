@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO peers (user_id, public_key, assigned_ip, protocol) VALUES ($1, 'k', '10.0.0.2', 'vless')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bd17c2286d6babc5fa0c9f542377f0476021adbc110dbece49e92223bdd1cc55"
+}

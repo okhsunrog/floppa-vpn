@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT installation_id FROM peers WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "installation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "installation_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "a67eef2f630cd28c04ba5dab0d1b43959f0151917242bc299bab4b6fee860813"
+}

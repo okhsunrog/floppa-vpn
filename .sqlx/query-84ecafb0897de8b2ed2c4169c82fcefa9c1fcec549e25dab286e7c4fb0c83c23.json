@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, installation_id, protocol) VALUES ($1, 'PUBKEYHUSK', '10.0.0.11', 'active', $2, 'amneziawg') RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "84ecafb0897de8b2ed2c4169c82fcefa9c1fcec549e25dab286e7c4fb0c83c23"
+}

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO telegram_link_codes (code, user_id, expires_at) VALUES ('stale', $1, NOW() - INTERVAL '1 minute')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b4b9c6964844800bbea92549d0ed45897d4d3aea581af7f23b79c048017a9a8"
+}

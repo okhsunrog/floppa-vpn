@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_id, installation_id, sync_status FROM peers WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "installation_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "installation_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "sync_status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "sync_status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "ebd0d81affd67d181dbb08aa23b43864480165fd0d51158695e8d0309c9a327d"
+}

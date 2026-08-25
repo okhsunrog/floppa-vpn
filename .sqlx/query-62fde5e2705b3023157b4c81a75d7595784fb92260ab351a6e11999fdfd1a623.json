@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions SET expires_at = NOW() - INTERVAL '5 minutes' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "62fde5e2705b3023157b4c81a75d7595784fb92260ab351a6e11999fdfd1a623"
+}

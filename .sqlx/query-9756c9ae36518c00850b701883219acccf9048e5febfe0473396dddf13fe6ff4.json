@@ -1,0 +1,69 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT status, amount, credit_amount, subscription_id,\n                      provider_data->>'error' AS error\n               FROM payments WHERE telegram_charge_id = 'charge_lost'",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "amount",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "credit_amount",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "credit_amount"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "subscription_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "subscription_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "error",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "9756c9ae36518c00850b701883219acccf9048e5febfe0473396dddf13fe6ff4"
+}

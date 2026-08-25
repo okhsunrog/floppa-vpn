@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status) VALUES ($1, 'k', '10.0.0.2', 'pending')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b3c8c02132cc3a2175c86fded9671c51857268f7f793a0819e8cfa88370d326d"
+}

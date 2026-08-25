@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sync_status AS \"sync_status: PeerSyncStatus\", protocol AS \"protocol: Protocol\"\n               FROM peers WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "sync_status: PeerSyncStatus",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "sync_status"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "protocol: Protocol",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "protocol"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "e75077add96cbe048b3784193e1acbadeea12ad12992fb9dfe58975ad71ef929"
+}

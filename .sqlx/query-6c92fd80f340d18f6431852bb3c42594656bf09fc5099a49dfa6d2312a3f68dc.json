@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devX')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6c92fd80f340d18f6431852bb3c42594656bf09fc5099a49dfa6d2312a3f68dc"
+}

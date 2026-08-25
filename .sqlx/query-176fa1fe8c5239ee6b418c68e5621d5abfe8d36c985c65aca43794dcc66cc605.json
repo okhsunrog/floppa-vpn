@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT amount, credit_amount, status FROM payments WHERE subscription_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "amount",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "amount"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "credit_amount",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "credit_amount"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "payments",
+            "name": "status"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "176fa1fe8c5239ee6b418c68e5621d5abfe8d36c985c65aca43794dcc66cc605"
+}

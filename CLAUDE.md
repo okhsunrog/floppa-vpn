@@ -69,7 +69,7 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 
 ## Database
 
-PostgreSQL + sqlx (compile-time checked). Migrations in `migrations/`, sequential `NNNN_description.sql` (daemon auto-runs on startup).
+PostgreSQL + sqlx (compile-time checked). Migrations in `migrations/`, sequential `NNNN_description.sql` (daemon auto-runs on startup). After changing any `query!`/`query_as!`/`query_scalar!` run `just sqlx-prepare` (`cargo sqlx prepare --workspace -- --all-targets` — test targets included, since CI's clippy job and `just lint` compile them under `SQLX_OFFLINE`) and commit `.sqlx/`; `just sqlx-check` is the CI check.
 
 Tables: `users` (`is_admin`, `trial_used_at`, `vless_uuid`), `peers` (`sync_status`, `protocol` — both CHECK-constrained since 0014), `subscriptions` (`source` CHECK-constrained, speed/traffic limits; `payment_id` dropped in 0015), `plans` (seeded by migration, `trial_minutes`). Traffic counters live in VictoriaMetrics, not in the DB. Auto-trial on first user creation (`floppa_core::services::upsert_user`).
 

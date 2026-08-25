@@ -189,11 +189,11 @@ lint:
 
 # Prepare sqlx offline cache (requires running Postgres via DATABASE_URL)
 sqlx-prepare:
-    cargo sqlx prepare --workspace
+    cargo sqlx prepare --workspace -- --all-targets
 
 # Check sqlx cache matches the database (requires DATABASE_URL)
 sqlx-check:
-    cargo sqlx prepare --workspace --check
+    cargo sqlx prepare --workspace --check -- --all-targets
 
 # Clean build artifacts
 clean:

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO peers (user_id, public_key, assigned_ip, installation_id) VALUES ($1, 'PUBKEYHUSK', '10.0.0.50', $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6d566670b9ab1975046e1aac3736f5e636420aaa264654c143095f336f80aa7a"
+}

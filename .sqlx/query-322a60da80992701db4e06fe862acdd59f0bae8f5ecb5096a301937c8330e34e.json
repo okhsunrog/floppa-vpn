@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT consumed_at, kind AS \"kind: LinkCodeKind\" FROM telegram_link_codes WHERE code = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "consumed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "telegram_link_codes",
+            "name": "consumed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "kind: LinkCodeKind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "telegram_link_codes",
+            "name": "kind"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "322a60da80992701db4e06fe862acdd59f0bae8f5ecb5096a301937c8330e34e"
+}

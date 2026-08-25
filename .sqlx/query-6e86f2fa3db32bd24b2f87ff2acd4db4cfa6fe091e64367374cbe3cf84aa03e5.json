@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO payments (user_id, plan_id, amount, invoice_payload, status) VALUES ($1, $2, 100, 'payload-1', 'completed')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e86f2fa3db32bd24b2f87ff2acd4db4cfa6fe091e64367374cbe3cf84aa03e5"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM plans WHERE name = 'basic'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "c94b00ec9a166a658aa63fab32c99c25414adc3e4fdeb16b9b580b05de549d32"
+}

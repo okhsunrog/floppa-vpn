@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id FROM peers\n               WHERE installation_id = $1 AND protocol = 'amneziawg'\n                 AND sync_status NOT IN ('removed', 'pending_remove')",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5bf399441d32cd527cfc1e3a121b4e050af2973599db5933eb60ae113f1873b8"
+}
