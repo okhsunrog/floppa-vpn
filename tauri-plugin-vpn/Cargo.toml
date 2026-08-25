@@ -2,7 +2,7 @@
 name = "tauri-plugin-vpn"
 version = "0.1.0"
 authors = ["okhsunrog"]
-description = "Tauri plugin for VPN functionality on mobile platforms"
+description = "Tauri plugin for the Android VpnService used by the Floppa VPN client"
 edition = "2024"
 license = "MIT"
 links = "tauri-plugin-vpn"
