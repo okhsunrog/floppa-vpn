@@ -27,8 +27,11 @@ watch(
 )
 
 async function onReset() {
-  await vpn.forgetPreferred()
-  toast.add({ title: t('settings.protocolPreferenceReset'), color: 'success' })
+  if (await vpn.forgetPreferred()) {
+    toast.add({ title: t('settings.protocolPreferenceReset'), color: 'success' })
+  } else {
+    toast.add({ title: t('settings.protocolPreferenceResetFailed'), color: 'error' })
+  }
 }
 
 function closeModal() {

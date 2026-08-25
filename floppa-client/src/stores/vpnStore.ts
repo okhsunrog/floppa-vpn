@@ -11,7 +11,6 @@ import {
   type TunnelParams,
   type TunnelState,
 } from '../bindings'
-import type { UnlistenFn } from '@tauri-apps/api/event'
 import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { platform } from '@tauri-apps/plugin-os'
@@ -102,6 +101,9 @@ export const useVpnStore = defineStore(
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
 
+    /** True once `init()` has learnt the platform, the device identity and the first snapshot. */
+    const ready = ref(false)
+
     const phase = computed(() => state.value.phase)
     const isConnected = computed(() => phase.value === 'connected')
     /**
@@ -172,24 +174,34 @@ export const useVpnStore = defineStore(
       if (next.seq >= state.value.seq) state.value = next
     }
 
-    let unlisten: UnlistenFn | null = null
+    let initialising: Promise<void> | null = null
 
     /**
-     * Subscribe to state changes, then seed from a direct read.
+     * Learn the platform and device identity, subscribe to state changes, then seed from a
+     * direct read.
      *
      * In that order deliberately: subscribing first means no update can slip through the gap
      * between reading and listening. Polling is gone — a webview that has been backgrounded has
      * its timers throttled, so an interval here was never a dependable clock. The clock lives in
      * Rust, where it keeps running.
+     *
+     * Idempotent: main.ts starts it at app scope, and any screen that needs the device identity
+     * awaits the same promise rather than re-running the platform probes.
      */
-    async function init() {
-      if (unlisten) return
-      try {
-        unlisten = await events.tunnelStateChanged.listen((e) => apply(e.payload))
-      } catch (e) {
-        console.error('[vpnStore] failed to subscribe to tunnel state:', e)
-      }
-      await refresh()
+    function init(): Promise<void> {
+      initialising ??= (async () => {
+        await initPlatform()
+        try {
+          // The subscription lives as long as the app: the store is never disposed, so the
+          // unlisten handle has no caller and is not kept.
+          await events.tunnelStateChanged.listen((e) => apply(e.payload))
+        } catch (e) {
+          console.error('[vpnStore] failed to subscribe to tunnel state:', e)
+        }
+        await refresh()
+        ready.value = true
+      })()
+      return initialising
     }
 
     function params(): TunnelParams {
@@ -268,21 +280,23 @@ export const useVpnStore = defineStore(
       }
     }
 
-    /** Forget which protocol last worked, so the next connect probes from the top again. */
-    async function forgetPreferred() {
-      await commands.forgetPreferredProtocol()
-      await refresh()
-    }
-
-    async function clearConfigs() {
+    /**
+     * Forget which protocol last worked, so the next connect probes from the top again.
+     * Returns whether it happened; a failure is also recorded in `error`.
+     */
+    async function forgetPreferred(): Promise<boolean> {
       error.value = null
-      requesting.value = true
       try {
-        const result = await commands.clearConfigs()
-        if (result.status === 'error') error.value = result.error
+        const result = await commands.forgetPreferredProtocol()
+        if (result.status === 'error') {
+          error.value = { kind: 'unexpected', detail: 'forget_preferred_protocol was refused' }
+          return false
+        }
         await refresh()
-      } finally {
-        requesting.value = false
+        return true
+      } catch (e) {
+        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
+        return false
       }
     }
 
@@ -298,6 +312,7 @@ export const useVpnStore = defineStore(
       isAndroid,
       deviceId,
       deviceName,
+      ready,
       availableProtocols,
       hasConfig,
       activeProtocol,
@@ -305,14 +320,12 @@ export const useVpnStore = defineStore(
       attempt,
       retry,
       lastOutcome,
-      initPlatform,
       init,
       refresh,
       connect,
       disconnect,
       importConfig,
       forgetPreferred,
-      clearConfigs,
     }
   },
   { persist: false },

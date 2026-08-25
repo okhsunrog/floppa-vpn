@@ -343,6 +343,7 @@ export default {
       'Автоматически подбирать самый быстрый рабочий протокол при подключении. Выключите для ручного выбора.',
     resetProtocolPreference: 'Сбросить',
     protocolPreferenceReset: 'Предпочтение протокола сброшено',
+    protocolPreferenceResetFailed: 'Не удалось сбросить предпочтение протокола',
     configure: 'Настроить',
     protocolSettings: 'Настройки протокола',
     protocolPriority: 'Приоритет',

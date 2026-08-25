@@ -284,12 +284,11 @@ async function setupAutoPeer() {
 }
 
 onMounted(async () => {
-  await vpn.initPlatform()
+  // Started at app scope in main.ts; this only waits for the device identity and first snapshot.
+  await vpn.init()
 
   // Preload app list for settings page (non-blocking)
   if (vpn.isAndroid) settingsStore.loadApps()
-
-  await vpn.refresh()
 
   if (vpn.deviceId) {
     await setupAutoPeer()

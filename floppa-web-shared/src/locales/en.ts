@@ -344,6 +344,7 @@ export default {
       'Automatically pick the fastest working protocol on connect. Turn off to choose manually.',
     resetProtocolPreference: 'Reset',
     protocolPreferenceReset: 'Protocol preference reset',
+    protocolPreferenceResetFailed: 'Could not reset the protocol preference',
     configure: 'Configure',
     protocolSettings: 'Protocol settings',
     protocolPriority: 'Priority',
