@@ -3,7 +3,7 @@
 pkgname=floppa-vpn-git
 pkgver=0.3.3
 pkgrel=1
-pkgdesc='WireGuard VPN desktop client built with Tauri (git version)'
+pkgdesc='Floppa VPN desktop client (AmneziaWG, WireGuard, VLESS+REALITY) built with Tauri (git version)'
 arch=('x86_64')
 url='https://github.com/okhsunrog/floppa-vpn'
 license=('GPL-3.0-or-later')

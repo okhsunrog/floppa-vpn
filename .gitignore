@@ -43,8 +43,7 @@ components.d.ts
 # Tool cache (ktfmt JAR etc.)
 .cache/
 
-# ESLint/Prettier cache
-.eslintcache
+# Tool caches under node_modules
 node_modules/.cache/
 
 # makepkg (Arch packaging)

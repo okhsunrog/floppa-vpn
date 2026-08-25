@@ -90,7 +90,16 @@ graph TD
 Telegram profile photos are served from a CDN that's unreachable from clients in Russia (and sends no CORS headers), so the server downloads each user's photo — via the Bot API (`getUserProfilePhotos` → `getFile`), falling back to the stored `photo_url` — caches it as a blob in PostgreSQL, and serves it from our own origin. Populated on demand (first avatar request triggers a background fetch) with a periodic TTL refresh; the admin user list fetches avatars for the visible page in one batch.
 
 ### CLI Client
-- Standalone WireGuard / AmneziaWG / VLESS client (`floppa-cli`) for headless/server use (`--protocol`)
+- Standalone WireGuard / AmneziaWG / VLESS client (`floppa-cli`) for headless/server use:
+  `login` (Telegram in the browser), `config`, `connect --protocol wireguard|amneziawg|vless`,
+  `peers`, `logout`
+- Login token: `<config dir>/floppa-cli/token` (0600; under `sudo` the invoking user's config dir),
+  or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`
+- Device identity generated once and persisted next to the token as `device_id`, so every run
+  finds its own peer instead of adopting another device's
+- DNS on Linux goes through `resolvectl` when systemd-resolved manages `/etc/resolv.conf`
+  (`resolvectl revert` on exit), `/etc/resolv.conf` otherwise; `--no-dns` skips it
+- Exits cleanly on SIGINT, SIGTERM (systemd/docker stop) and SIGHUP, restoring routes and DNS
 - Also used as the tunnel binary for integration tests
 
 ### Client App (Tauri 2)
@@ -99,7 +108,8 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
 - [gotatun](https://github.com/okhsunrog/gotatun) — WireGuard and AmneziaWG in userspace, a fork of
   Mullvad's boringtun carrying the AmneziaWG obfuscation work
 - Split tunneling with per-app selection (Android)
-- WireGuard config persistence via OS keyring (desktop) or encrypted file (Android)
+- VPN config persistence in the OS keyring (desktop, with a 0600 file fallback when the keyring is
+  unavailable) or a 0600 file in the app's private data directory (Android)
 - Deep-link authentication (Telegram Login Widget → JWT)
 - Two-process architecture on Android (VPN survives app swipe-close)
 
@@ -132,7 +142,7 @@ graph LR
     Platform -- "routes, DNS,<br/>TUN device" --> OS["OS Network Stack"]
 ```
 
-Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a polkit helper script for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI). Graceful cleanup on exit restores DNS and routes.
+Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a polkit helper script for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI); a 0600 file in the config directory is the fallback while the keyring is unavailable, and whichever copy was written last wins (the file is migrated into the keyring and removed once it is usable again). Graceful cleanup on exit restores DNS and routes.
 
 ### Android
 
@@ -163,11 +173,11 @@ graph LR
 
 Two-process model so the VPN survives app swipe-close:
 
-**Single `.so`, two entry points, two processes** — Tauri compiles all Rust code into one `libfloppa_client_lib.so` with two entry points: the standard Tauri/JNI entry for the UI process, and `nativeInit` / `nativeStartTunnel` / `nativeStop` JNI exports for the VPN process. The Kotlin `FloppaVpnService` is declared with `android:process=":vpn"` in the manifest, so Android loads the same `.so` into a separate process. JNI statics (`JAVA_VM`, `TOKIO_RUNTIME`, `TUNNEL_MANAGER`) are per-process — each process gets its own isolated Rust state from the same binary.
+**Single `.so`, two entry points, two processes** — Tauri compiles all Rust code into one `libfloppa_client_lib.so` with two entry points: the standard Tauri/JNI entry for the UI process, and `nativeInit` / `nativeStartServer` / `nativeStop` JNI exports for the VPN process. The Kotlin `FloppaVpnService` is declared with `android:process=":vpn"` in the manifest, so Android loads the same `.so` into a separate process. JNI statics (`JAVA_VM`, `TOKIO_RUNTIME`, `TUNNEL_MANAGER`) are per-process — each process gets its own isolated Rust state from the same binary.
 
 **Why tarpc?** Android's standard IPC (AIDL, Messenger) is Java/Kotlin-only — useless when both ends are Rust. gRPC adds HTTP/2 overhead. tarpc is pure Rust, async-native, and works directly over Unix domain sockets with bincode serialization. The UI process connects to `vpn.sock` in the app data directory to query stats or request stop.
 
-**The flow:** `tauri-plugin-vpn` (Kotlin) starts `FloppaVpnService` as a foreground service → service creates TUN via Android's `VpnService.Builder` → passes the raw fd to Rust via JNI (`nativeStartTunnel`) → gotatun starts the WireGuard tunnel using that fd → tarpc server begins listening. When gotatun creates UDP sockets, it calls back into Kotlin via JNI (`protectSocket`) to mark them as bypass — preventing WireGuard packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
+**The flow:** `tauri-plugin-vpn` (Kotlin) starts `FloppaVpnService` as a foreground service → service creates TUN via Android's `VpnService.Builder` → passes the raw fd to Rust via JNI (`nativeStartServer`) → the tarpc server starts listening on `vpn.sock` and the tunnel (gotatun or shoes-lite) is brought up over that fd. When gotatun creates UDP sockets, it calls back into Kotlin via JNI (`protectSocket`) to mark them as bypass — preventing WireGuard packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
 
 ## Frontend Sharing
 
