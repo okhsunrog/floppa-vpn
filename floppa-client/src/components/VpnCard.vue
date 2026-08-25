@@ -107,8 +107,14 @@ watch(
   async (outcome) => {
     if (!outcome) return
     vpn.markOutcomeHandled(vpn.state.epoch, outcome)
-    if (!needsAttention(outcome)) return
-    console.info(`[VpnCard] a cycle nobody awaited ended: ${outcome.outcome}`)
+    if (needsAttention(outcome)) {
+      console.info(`[VpnCard] a cycle nobody awaited ended: ${outcome.outcome}`)
+    }
+    // Every outcome is offered, not only the ones with something to say. A cycle that *connected*
+    // can still have stepped over a protocol whose peer is gone, and repairing it is silent work
+    // with nothing to show a user — so gating this on "needs attention" meant the repair never ran
+    // for the reconnects that happen with nobody watching, which is exactly when it is needed.
+    // `handleOutcome` decides; for an ordinary success it decides to do nothing.
     await handleOutcome(outcome)
   },
 )
