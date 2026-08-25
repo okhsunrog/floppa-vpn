@@ -6,6 +6,11 @@ import { getMyAvatar } from '../client/sdk.gen'
 const TOKEN_KEY = 'floppa-token'
 const USER_KEY = 'floppa-user'
 const AVATAR_KEY = 'floppa-avatar'
+// Timestamp of the last confirmed "this user has no avatar", so users without a Telegram photo
+// don't cost a retry chain of avatar requests on every start. Re-checked after the TTL so a
+// newly added photo still shows up within the hour.
+const AVATAR_MISSING_KEY = 'floppa-avatar-missing-at'
+const AVATAR_MISSING_TTL_MS = 60 * 60 * 1000
 const TELEGRAM_ID_KEY = 'floppa-telegram-id'
 
 /** The JWT `exp` claim (seconds since epoch), or null if absent/unreadable. */
@@ -60,15 +65,22 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value && !isTokenExpired(token.value))
   const isAdmin = computed(() => user.value?.is_admin ?? false)
 
+  function avatarKnownMissing(): boolean {
+    const at = Number(localStorage.getItem(AVATAR_MISSING_KEY))
+    return Number.isFinite(at) && at > 0 && Date.now() - at < AVATAR_MISSING_TTL_MS
+  }
+
   /// Fetch the current user's avatar from the server (Bearer-authed) and cache it as a data URL.
   /// The first request triggers a background download from Telegram (getUserProfilePhotos →
   /// getFile → download), which can take ~10s, so retry generously (≈24s window) before giving up.
+  /// Once the retries are exhausted the miss is remembered (see AVATAR_MISSING_KEY).
   function cacheAvatar(retries = 8) {
     getMyAvatar({ parseAs: 'blob' })
       .then(({ data, response }) => {
         if (!response) return
         if (response.status === 404) {
           if (retries > 0) setTimeout(() => cacheAvatar(retries - 1), 3000)
+          else localStorage.setItem(AVATAR_MISSING_KEY, String(Date.now()))
           return
         }
         if (!response.ok || !(data instanceof Blob)) return
@@ -77,6 +89,7 @@ export const useAuthStore = defineStore('auth', () => {
           const dataUrl = reader.result as string
           cachedAvatar.value = dataUrl
           localStorage.setItem(AVATAR_KEY, dataUrl)
+          localStorage.removeItem(AVATAR_MISSING_KEY)
         }
         reader.readAsDataURL(data)
       })
@@ -92,6 +105,8 @@ export const useAuthStore = defineStore('auth', () => {
       telegramId.value = newTelegramId
       localStorage.setItem(TELEGRAM_ID_KEY, String(newTelegramId))
     }
+    // A fresh login may be a different user: forget the previous "no avatar" verdict.
+    localStorage.removeItem(AVATAR_MISSING_KEY)
     cacheAvatar()
   }
 
@@ -108,6 +123,7 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
     localStorage.removeItem(AVATAR_KEY)
+    localStorage.removeItem(AVATAR_MISSING_KEY)
     telegramId.value = null
     localStorage.removeItem(TELEGRAM_ID_KEY)
   }
@@ -118,8 +134,9 @@ export const useAuthStore = defineStore('auth', () => {
     logout()
   }
 
-  // Refresh the avatar from the server on startup when authenticated but not yet cached.
-  if (token.value && !cachedAvatar.value) {
+  // Refresh the avatar from the server on startup when authenticated but not yet cached, unless
+  // the last attempt established that there is none to fetch.
+  if (token.value && !cachedAvatar.value && !avatarKnownMissing()) {
     cacheAvatar()
   }
 
