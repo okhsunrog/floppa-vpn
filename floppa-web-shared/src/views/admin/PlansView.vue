@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
   listPlansQuery,
+  listPlansQueryKey,
   createPlanMutation,
   updatePlanMutation,
   deletePlanMutation,
@@ -11,15 +12,19 @@ import {
 import type { Plan, CreatePlanRequest, UpdatePlanRequest } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 import { durationUnit } from '../../utils/format'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const { t } = useI18n()
 const toast = useToast()
 
-const { data: plans, status, error, refresh } = useQuery(listPlansQuery())
+const { data: plans, status, error } = useQuery(listPlansQuery())
 
-const createMut = useMutation(createPlanMutation())
-const updateMut = useMutation(updatePlanMutation())
-const deleteMut = useMutation(deletePlanMutation())
+// The plan list is also read by the user/subscription dialogs, so invalidate rather than refresh.
+const invalidate = useInvalidateQueries()
+const invalidatePlans = () => invalidate(listPlansQueryKey())
+const createMut = useMutation({ ...createPlanMutation(), onSettled: invalidatePlans })
+const updateMut = useMutation({ ...updatePlanMutation(), onSettled: invalidatePlans })
+const deleteMut = useMutation({ ...deletePlanMutation(), onSettled: invalidatePlans })
 
 const submitting = computed(
   () =>
@@ -139,7 +144,6 @@ async function savePlan() {
         path: { id: editingPlanId.value },
         body: update,
       })
-      // refresh() below re-fetches the list, so no manual cache patch is needed.
       toast.add({
         title: t('common.success'),
         description: t('adminPlans.planUpdated'),
@@ -153,7 +157,6 @@ async function savePlan() {
         color: 'success',
       })
     }
-    await refresh()
     planDialog.value = false
   } catch (e) {
     toast.add({
@@ -174,7 +177,6 @@ async function doDeletePlan() {
   if (!pendingDeletePlan.value) return
   try {
     await deleteMut.mutateAsync({ path: { id: pendingDeletePlan.value.id } })
-    await refresh()
     toast.add({
       title: t('common.success'),
       description: t('adminPlans.planDeleted'),

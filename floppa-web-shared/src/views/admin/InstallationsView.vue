@@ -3,22 +3,26 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { listInstallationsQuery, deleteInstallationMutation } from '../../client/@pinia/colada.gen'
+import {
+  listInstallationsQuery,
+  listInstallationsQueryKey,
+  deleteInstallationMutation,
+} from '../../client/@pinia/colada.gen'
 import type { InstallationSummary } from '../../client/types.gen'
 import { formatDateTime } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const {
-  data: installations,
-  status,
-  error,
-  refresh: refreshInstallations,
-} = useQuery(listInstallationsQuery())
-const deleteMut = useMutation(deleteInstallationMutation())
+const { data: installations, status, error } = useQuery(listInstallationsQuery())
+const invalidate = useInvalidateQueries()
+const deleteMut = useMutation({
+  ...deleteInstallationMutation(),
+  onSettled: () => invalidate(listInstallationsQueryKey()),
+})
 const search = ref('')
 
 const {
@@ -55,7 +59,6 @@ async function doDelete() {
   await runDelete(async (id) => {
     try {
       await deleteMut.mutateAsync({ path: { id } })
-      await refreshInstallations()
       toast.add({
         title: t('common.success'),
         description: t('adminInstallations.deleted'),

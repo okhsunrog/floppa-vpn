@@ -3,17 +3,26 @@ import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { listPeersQuery, deleteAdminPeerMutation } from '../../client/@pinia/colada.gen'
+import {
+  listPeersQuery,
+  listPeersQueryKey,
+  deleteAdminPeerMutation,
+} from '../../client/@pinia/colada.gen'
 import type { PeerSummary } from '../../client/types.gen'
 import { formatBytes, formatDateTime } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: peers, status, error, refresh: refreshPeers } = useQuery(listPeersQuery())
-const deleteMut = useMutation(deleteAdminPeerMutation())
+const { data: peers, status, error } = useQuery(listPeersQuery())
+const invalidate = useInvalidateQueries()
+const deleteMut = useMutation({
+  ...deleteAdminPeerMutation(),
+  onSettled: () => invalidate(listPeersQueryKey()),
+})
 const search = ref('')
 
 const {
@@ -50,7 +59,6 @@ async function doDeletePeer() {
   await runDeletePeer(async (id) => {
     try {
       await deleteMut.mutateAsync({ path: { id } })
-      await refreshPeers()
       toast.add({
         title: t('common.success'),
         description: t('adminPeers.peerDeleted'),

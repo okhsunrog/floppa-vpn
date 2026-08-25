@@ -5,18 +5,24 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
   listVlessPeersQuery,
+  listVlessPeersQueryKey,
   regenerateAdminVlessConfigMutation,
 } from '../../client/@pinia/colada.gen'
 import type { VlessPeerSummary } from '../../client/types.gen'
 import { formatBytes } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 import { useClientPagination, useConfirmAction } from '../../composables/adminList'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: peers, status, error, refresh: refreshPeers } = useQuery(listVlessPeersQuery())
-const regenerateMut = useMutation(regenerateAdminVlessConfigMutation())
+const { data: peers, status, error } = useQuery(listVlessPeersQuery())
+const invalidate = useInvalidateQueries()
+const regenerateMut = useMutation({
+  ...regenerateAdminVlessConfigMutation(),
+  onSettled: () => invalidate(listVlessPeersQueryKey()),
+})
 const search = ref('')
 
 const {
@@ -52,7 +58,6 @@ async function doRegenerate() {
   await runRegenerate(async (id) => {
     try {
       await regenerateMut.mutateAsync({ path: { id } })
-      await refreshPeers()
       toast.add({
         title: t('common.success'),
         description: t('adminVless.regenerated'),

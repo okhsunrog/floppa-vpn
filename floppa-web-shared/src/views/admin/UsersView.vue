@@ -3,17 +3,24 @@ import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
-import { listUsersQuery, listPlansQuery, createUserMutation } from '../../client/@pinia/colada.gen'
+import {
+  listUsersQuery,
+  listUsersQueryKey,
+  listPlansQuery,
+  createUserMutation,
+} from '../../client/@pinia/colada.gen'
 import { getAvatarsBatch } from '../../client/sdk.gen'
 import type { UserSummary } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 import { formatDate } from '../../utils'
 import { useClientPagination } from '../../composables/adminList'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: users, status, error, refresh: refreshUsers } = useQuery(listUsersQuery())
+const { data: users, status, error } = useQuery(listUsersQuery())
+const invalidate = useInvalidateQueries()
 const { data: plans } = useQuery(listPlansQuery())
 const search = ref('')
 
@@ -81,7 +88,10 @@ const addUserPlanId = ref<number | undefined>(undefined)
 const addUserDays = ref(30)
 const addUserPermanent = ref(false)
 
-const addUserMut = useMutation(createUserMutation())
+const addUserMut = useMutation({
+  ...createUserMutation(),
+  onSettled: () => invalidate(listUsersQueryKey()),
+})
 
 const planItems = computed(() =>
   (plans.value ?? []).map((p) => ({ label: p.display_name, value: p.id })),
@@ -126,7 +136,6 @@ async function addUser() {
         permanent: addUserPermanent.value,
       },
     })
-    await refreshUsers()
     addUserDialog.value = false
     toast.add({
       title: t('common.success'),

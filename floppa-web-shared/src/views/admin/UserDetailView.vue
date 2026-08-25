@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
   getUserQuery,
+  getUserQueryKey,
   listPlansQuery,
   setSubscriptionMutation,
   deleteSubscriptionMutation,
@@ -15,6 +16,7 @@ import { getUserAvatar } from '../../client/sdk.gen'
 import { formatBytes, formatDateTime, formatSpeedLimit, handleExternalLinkClick } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const { t } = useI18n()
 
@@ -66,17 +68,19 @@ const {
   data: user,
   status: userStatus,
   error: userError,
-  refresh: refreshUser,
 } = useQuery(getUserQuery({ path: { id: userId } }))
 const { data: plans, status: plansStatus, error: plansError } = useQuery(listPlansQuery())
 
 const loading = computed(() => userStatus.value === 'pending' || plansStatus.value === 'pending')
 const error = computed(() => userError.value || plansError.value)
 
-const setSubMut = useMutation(setSubscriptionMutation())
-const deleteSubMut = useMutation(deleteSubscriptionMutation())
-const deletePeerMut = useMutation(deleteAdminPeerMutation())
-const setCredMut = useMutation(setUserCredentialMutation())
+// Every change to this user refetches the detail (and any other cached getUser entry).
+const invalidate = useInvalidateQueries()
+const invalidateUser = () => invalidate(getUserQueryKey({ path: { id: userId } }))
+const setSubMut = useMutation({ ...setSubscriptionMutation(), onSettled: invalidateUser })
+const deleteSubMut = useMutation({ ...deleteSubscriptionMutation(), onSettled: invalidateUser })
+const deletePeerMut = useMutation({ ...deleteAdminPeerMutation(), onSettled: invalidateUser })
+const setCredMut = useMutation({ ...setUserCredentialMutation(), onSettled: invalidateUser })
 
 // Recovery credential dialog (admin sets a login + password for the user)
 const credDialog = ref(false)
@@ -187,7 +191,6 @@ async function setSubscription() {
         permanent: subPermanent.value,
       },
     })
-    await refreshUser()
     subDialog.value = false
     toast.add({
       title: t('common.success'),
@@ -207,7 +210,6 @@ async function deleteSubscription() {
   if (!user.value) return
   try {
     await deleteSubMut.mutateAsync({ path: { id: user.value.id } })
-    await refreshUser()
     deleteSubConfirm.value = false
     toast.add({
       title: t('common.success'),
@@ -233,7 +235,6 @@ async function doRemovePeer() {
   if (!user.value || !pendingPeerId.value) return
   try {
     await deletePeerMut.mutateAsync({ path: { id: pendingPeerId.value } })
-    await refreshUser()
     toast.add({
       title: t('common.success'),
       description: t('adminUserDetail.peerRemoved'),

@@ -5,6 +5,7 @@ import { useQuery, useMutation } from '@pinia/colada'
 import {
   getMeQuery,
   getMyPeersQuery,
+  getMyPeersQueryKey,
   getPublicConfigQuery,
   createMyPeerMutation,
   deleteMyPeerMutation,
@@ -16,6 +17,7 @@ import type { DropdownMenuItem } from '@nuxt/ui'
 import { formatBytes, formatDate, formatDateTime } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
+import { useInvalidateQueries } from '../../composables/invalidate'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -26,12 +28,7 @@ const isMiniApp = Boolean(
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
 const { data: publicConfig } = useQuery(getPublicConfigQuery())
-const {
-  data: peersData,
-  status: peersStatus,
-  error: peersError,
-  refresh: refreshPeers,
-} = useQuery(getMyPeersQuery())
+const { data: peersData, status: peersStatus, error: peersError } = useQuery(getMyPeersQuery())
 
 const amneziaWgAvailable = computed(() => publicConfig.value?.amneziawg_available ?? false)
 
@@ -47,8 +44,11 @@ const queryErrorMessage = computed(() => {
 const peers = computed(() => peersData.value?.peers)
 const vless = computed(() => peersData.value?.vless)
 
-const createMut = useMutation(createMyPeerMutation())
-const deleteMut = useMutation(deleteMyPeerMutation())
+// Every peer mutation invalidates the list, so the slot counter and the dashboard stay in sync.
+const invalidate = useInvalidateQueries()
+const invalidatePeers = () => invalidate(getMyPeersQueryKey())
+const createMut = useMutation({ ...createMyPeerMutation(), onSettled: invalidatePeers })
+const deleteMut = useMutation({ ...deleteMyPeerMutation(), onSettled: invalidatePeers })
 
 const configDialog = ref(false)
 const currentConfig = ref<CreatePeerResponse | null>(null)
@@ -83,7 +83,10 @@ const vlessDialog = ref(false)
 const vlessUri = ref<string | null>(null)
 const vlessLoading = ref(false)
 const vlessRegenerateConfirmOpen = ref(false)
-const regenerateMut = useMutation(regenerateMyVlessConfigMutation())
+const regenerateMut = useMutation({
+  ...regenerateMyVlessConfigMutation(),
+  onSettled: invalidatePeers,
+})
 
 // Slots are counted per-device: a client device (which may hold both a WireGuard and an
 // AmneziaWG peer) is one slot; each standalone exported config (no device) is one slot.
@@ -112,7 +115,6 @@ async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
     currentConfig.value = response
     currentProtocol.value = protocol
     configDialog.value = true
-    await refreshPeers()
     toast.add({
       title: t('userPeers.configCreated'),
       description: t('userPeers.configCreatedMessage'),
@@ -137,7 +139,6 @@ async function doDeletePeer() {
   if (!pendingDeletePeerId.value) return
   try {
     await deleteMut.mutateAsync({ path: { id: pendingDeletePeerId.value } })
-    await refreshPeers()
     toast.add({
       title: t('userPeers.configDeleted'),
       description: t('userPeers.configDeletedMessage'),
@@ -276,7 +277,6 @@ async function doRegenerateVless() {
     const response = await regenerateMut.mutateAsync({})
     vlessUri.value = response.uri
     vlessDialog.value = true
-    await refreshPeers()
     toast.add({ title: t('userPeers.vlessRegenerated'), color: 'success' })
   } catch (e) {
     toast.add({
