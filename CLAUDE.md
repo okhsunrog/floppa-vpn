@@ -110,7 +110,7 @@ define only what Vite+ has no built-in for (`dev`, `preview`, `openapi-ts`, `syn
 `just` recipes and CI both go through `vp check`; `vue-tsc --build` still runs separately as the
 `typecheck` task, because `vp check`'s type pass does not resolve `.vue` SFCs. For that pass each package's `env.d.ts` declares a generic `*.vue` module shim (`DefineComponent<Record<string, unknown>, …>`); it satisfies `vp check` only, and it is `vue-tsc` — resolving SFCs natively — that catches prop-type errors, so both must stay green.
 
-**UI:** Nuxt UI v4 via `@nuxt/ui/vite` + `@nuxt/ui/vue-plugin` (no Nuxt framework). Components auto-imported. `useToast()` auto-imported.
+**UI:** Nuxt UI v4 via `@nuxt/ui/vite` + `@nuxt/ui/vue-plugin` (no Nuxt framework). Components auto-imported. `useToast()` auto-imported. Icons are bundled offline: each app's `vite.config.ts` passes `icon.clientBundle.icons` = every `i-lucide-*` literal found in its sources + `floppa-web-shared/src` (`floppa-web-shared/vite/icons.ts`), so nothing is fetched from api.iconify.design at runtime; an unknown icon name fails the production build and `vite/icons.test.ts` checks the inventory against `@iconify-json/lucide`. Only literal names are collected — never build an icon name dynamically.
 
 **Auto-generated — NEVER edit manually:**
 - `floppa-web-shared/src/client/` — OpenAPI TS client. Regenerate: `just openapi`

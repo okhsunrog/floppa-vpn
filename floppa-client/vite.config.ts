@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, lazyPlugins } from 'vite-plus'
+import { collectLucideIcons } from '../floppa-web-shared/vite/icons'
 import JSON5 from 'json5'
 
 const host = process.env.TAURI_DEV_HOST
@@ -60,6 +61,18 @@ export default defineConfig({
       // white screens and "can't access lexical declaration before initialization" errors.
       // `ignore` prevents "options" from being auto-imported. `exclude` skips transforming SDK files.
       ui({
+        // Bundle every icon the app can render (offline, no runtime Iconify API calls): our
+        // own literals from this app and floppa-web-shared, plus Nuxt UI's component defaults.
+        // Unresolvable names fail the production build. See floppa-web-shared/vite/icons.ts.
+        icon: {
+          clientBundle: {
+            icons: collectLucideIcons([
+              fileURLToPath(new URL('./src', import.meta.url)),
+              fileURLToPath(new URL('../floppa-web-shared/src', import.meta.url)),
+            ]),
+            sizeLimitKb: 512,
+          },
+        },
         autoImport: {
           ignore: ['options'],
           exclude: [/floppa-web-shared\/src\/client/, /node_modules/],

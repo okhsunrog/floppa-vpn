@@ -31,6 +31,7 @@
     "vue-router": "^5.2.0"
   },
   "devDependencies": {
+    "@iconify-json/lucide": "^1.2.126",
     "@tauri-apps/cli": "^2.11.4",
     "@tsconfig/node22": "^22.0.6",
     "@types/node": "^26.3.0",
@@ -41,7 +42,7 @@
     "typescript": "catalog:",
     "vite": "catalog:",
     "vite-plugin-vue-devtools": "^8.2.1",
-    "vue-tsc": "^3.3.11",
-    "vite-plus": "catalog:"
+    "vite-plus": "catalog:",
+    "vue-tsc": "^3.3.11"
   }
 }

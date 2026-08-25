@@ -45,13 +45,12 @@
           // Tauri IPC: `ipc://localhost` on Linux/macOS, `http://ipc.localhost` on Windows/Android.
           "ipc:",
           "http://ipc.localhost",
-          // Every remote fetch the page makes is HTTPS:
-          //  - the server at VITE_API_URL: REST API, avatar cache, and the update mirror at
-          //    <origin>/downloads/ (latest.json, changelog.json). The origin is baked in at
-          //    build time from a secret and is not written down in the repo, so only the scheme
-          //    can be fixed here; a release build can narrow it with `tauri build --config`.
-          //  - the Iconify API (api.iconify.design, falling back to api.simplesvg.com and
-          //    api.unisvg.com): Nuxt UI loads icons on demand, no collection is bundled.
+          // The only remote host the page talks to is the server at VITE_API_URL: REST API,
+          // avatar cache, and the update mirror at <origin>/downloads/ (latest.json,
+          // changelog.json). Icons are bundled offline (floppa-web-shared/vite/icon-bundle.ts),
+          // so nothing else is fetched. The origin is baked in at build time from a secret and
+          // is not written down in the repo, so only the scheme is fixed here; a release build
+          // can narrow it with `tauri build --config` (app.security.csp.connect-src).
           "https:",
         ],
         // data: — per-app icons in split tunneling, the cached avatar; blob: — the admin user
