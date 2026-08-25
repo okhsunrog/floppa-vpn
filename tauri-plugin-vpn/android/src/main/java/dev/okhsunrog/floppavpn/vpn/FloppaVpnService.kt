@@ -113,6 +113,12 @@ class FloppaVpnService : VpnService() {
          */
         private const val NO_GENERATION = 0L
 
+        /**
+         * How long a service that was started may wait for the actor to actually be given something
+         * to do. Generous next to an RPC round trip, short next to anything a person would notice.
+         */
+        private const val WORK_DEADLINE_MS = 10_000L
+
         init {
             System.loadLibrary("floppa_client_lib")
         }
@@ -206,9 +212,17 @@ class FloppaVpnService : VpnService() {
         createNotificationChannel()
         val logDir = File(applicationInfo.dataDir, "logs")
         logDir.mkdirs()
-        // Boots the actor on the first instance; refreshes the callback reference on every one.
-        nativeInit(logDir.absolutePath, applicationInfo.dataDir)
-        Log.i(TAG, "the VPN process is up")
+        try {
+            // Boots the actor on the first instance; refreshes the callback reference on every one.
+            nativeInit(logDir.absolutePath, applicationInfo.dataDir)
+            Log.i(TAG, "the VPN process is up")
+        } catch (e: Exception) {
+            // Caught rather than thrown on: an exception out of onCreate takes the process with it,
+            // and the UI binds on every launch — so a boot that cannot succeed would be a crash
+            // loop instead of an app that says it cannot reach the tunnel. The socket will not
+            // exist, which is exactly what the UI renders as "not reachable".
+            Log.e(TAG, "the VPN process could not boot", e)
+        }
     }
 
     /**
@@ -236,7 +250,15 @@ class FloppaVpnService : VpnService() {
             // The UI is about to ask for a tunnel and wants this service to outlive it. Foreground
             // immediately: `startForegroundService` gives us seconds, not minutes, and what the
             // notification says at this point is "connecting", which is true.
-            ACTION_KEEP_ALIVE -> startVpnForeground(connected = false)
+            //
+            // "About to" is a promise, and this is what happens when it is not kept: the request
+            // that follows can be refused — no usable config, a wipe in between — and a refusal
+            // changes no phase, so nothing would ever stand this service back down. It gets a
+            // deadline instead, cancelled the moment the actor is visibly working.
+            ACTION_KEEP_ALIVE -> {
+                startVpnForeground(connected = false)
+                awaitWork()
+            }
 
             // A start the system issued: always-on, boot, or a lockdown restore. Same requirement
             // — foreground at once — and then the actor is told to want a tunnel.
@@ -491,18 +513,43 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * What the notification says, following the actor's own phase. Called from Rust.
+     * What the actor's phase is, as often as it changes. Called from Rust.
      *
-     * The notification is the only UI a tunnel has while the app is closed, so it is written from
-     * the one place that knows what is true — not by whatever last touched the tunnel, which is how
-     * it used to claim "connected" for the whole of a start that went on to fail.
+     * Two things follow from it. The notification is the only UI a tunnel has while the app is
+     * closed, so what it says is written from the one place that knows what is true — not by
+     * whatever last touched the tunnel, which is how it used to claim "connected" for the whole of
+     * a start that went on to fail. And `busy` — the actor is working on something — is what
+     * cancels the deadline a bare start armed: from here on the service stands down when the actor
+     * says so, not when a timer runs out.
      */
-    fun setConnected(connected: Boolean) {
+    fun setState(busy: Boolean, connected: Boolean) {
         mainHandler.post {
+            if (busy) cancelAwaitWork()
             if (!foreground) return@post
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(NOTIFICATION_ID, buildNotification(connected))
         }
+    }
+
+    /**
+     * Stand down if nothing comes of the start that armed this.
+     *
+     * Bounded by how long the UI takes to place its request, not by how long a connect takes: the
+     * deadline is cancelled by the actor being *busy*, which happens within milliseconds of the
+     * request landing, and a connect that then runs for a minute is never touched by it.
+     */
+    private fun awaitWork() {
+        cancelAwaitWork()
+        mainHandler.postDelayed(standDown, WORK_DEADLINE_MS)
+    }
+
+    private fun cancelAwaitWork() {
+        mainHandler.removeCallbacks(standDown)
+    }
+
+    private val standDown = Runnable {
+        Log.w(TAG, "started, but nothing asked for a tunnel; standing down")
+        shutdownService()
     }
 
     /** Create a PendingIntent that opens the app when the notification is tapped. */

@@ -90,9 +90,6 @@ async fn bring_up(
             );
             service.set_started(started);
             service.advance_to(GenerationPhase::Started);
-            // The notification has been saying "connecting" since the service came up; this is
-            // the first moment it is entitled to say anything else.
-            crate::vpn::jni_entry::set_service_connected(true);
             Ok(())
         }
         Err(e) => {

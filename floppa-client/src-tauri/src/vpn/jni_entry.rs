@@ -201,20 +201,20 @@ pub fn stop_vpn_service() {
     }
 }
 
-/// Tell the service what its notification should say.
+/// Tell the service where the actor has got to.
 ///
 /// Best-effort: a failure here costs a stale notification line, never the tunnel.
-pub fn set_service_connected(connected: bool) {
-    if let Err(e) = with_service("setConnected", |env, service| {
+pub fn set_service_state(busy: bool, connected: bool) {
+    if let Err(e) = with_service("setState", |env, service| {
         env.call_method(
             service,
-            jni::jni_str!("setConnected"),
-            jni::jni_sig!("(Z)V"),
-            &[connected.into()],
+            jni::jni_str!("setState"),
+            jni::jni_sig!("(ZZ)V"),
+            &[busy.into(), connected.into()],
         )?;
         Ok(())
     }) {
-        debug!("could not update the VPN notification: {e}");
+        debug!("could not tell the service the actor's phase: {e}");
     }
 }
 
@@ -326,10 +326,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
                         stop_vpn_service();
                         continue;
                     }
-                    let connected = phase == Phase::Connected;
-                    if said != Some(connected) {
-                        said = Some(connected);
-                        set_service_connected(connected);
+                    let now = (phase.is_busy(), phase == Phase::Connected);
+                    if said != Some(now) {
+                        said = Some(now);
+                        set_service_state(now.0, now.1);
                     }
                 }
             });
