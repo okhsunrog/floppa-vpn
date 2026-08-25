@@ -2690,8 +2690,9 @@
               "integer",
               "null"
             ],
-            "format": "int64",
-            "description": "Duration in days. Required unless `permanent` is true."
+            "format": "int32",
+            "description": "Duration in days. Required unless `permanent` is true or the plan has a trial duration.",
+            "minimum": 0
           },
           "first_name": {
             "type": [
@@ -3407,8 +3408,9 @@
               "integer",
               "null"
             ],
-            "format": "int64",
-            "description": "Duration in days. If omitted, uses the plan's trial duration (for trial plans).\nUse `permanent: true` to create a subscription with no expiration."
+            "format": "int32",
+            "description": "Duration in days. If omitted, uses the plan's trial duration (for trial plans).\nUse `permanent: true` to create a subscription with no expiration.",
+            "minimum": 0
           },
           "permanent": {
             "type": "boolean",

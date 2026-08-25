@@ -5,7 +5,10 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use floppa_core::{PeerSyncStatus, Protocol, SubscriptionSource, services};
+use floppa_core::{
+    PeerSyncStatus, Protocol, SubscriptionSource,
+    services::{self, SubscriptionTerm},
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -85,6 +88,16 @@ async fn require_user(state: &AppState, user_id: i64) -> Result<(), ApiError> {
     }
 }
 
+/// The admin request shape for a subscription length: explicit `days`, or `permanent`, or
+/// (neither) the plan's own trial duration.
+fn subscription_term(days: Option<u32>, permanent: bool) -> SubscriptionTerm {
+    match (permanent, days) {
+        (true, _) => SubscriptionTerm::Permanent,
+        (false, Some(days)) => SubscriptionTerm::Days(days),
+        (false, None) => SubscriptionTerm::PlanDefault,
+    }
+}
+
 #[derive(Serialize, ToSchema)]
 pub struct UserSummary {
     id: i64,
@@ -152,9 +165,9 @@ pub struct CreateUserRequest {
     #[serde(default)]
     first_name: Option<String>,
     plan_id: i32,
-    /// Duration in days. Required unless `permanent` is true.
+    /// Duration in days. Required unless `permanent` is true or the plan has a trial duration.
     #[serde(default)]
-    days: Option<i64>,
+    days: Option<u32>,
     /// If true, creates a permanent subscription (no expiration date).
     #[serde(default)]
     permanent: bool,
@@ -188,11 +201,13 @@ pub(super) async fn create_user(
     State(state): State<AppState>,
     Json(req): Json<CreateUserRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let now = Utc::now();
-
-    let expires_at =
-        super::resolve_subscription_expires(&state.pool, req.plan_id, req.days, req.permanent, now)
-            .await?;
+    let expires_at = services::resolve_subscription_expires(
+        &state.pool,
+        req.plan_id,
+        subscription_term(req.days, req.permanent),
+        Utc::now(),
+    )
+    .await?;
 
     let mut tx = state.pool.begin().await?;
 
@@ -218,15 +233,14 @@ pub(super) async fn create_user(
         ApiError::from(e)
     })?;
 
-    // Create subscription
-    sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'admin_grant')",
+    // A brand-new user has nothing to supersede, so a plain insert is enough.
+    services::insert_subscription(
+        &mut tx,
         user_id,
         req.plan_id,
-        now,
-        expires_at
+        expires_at,
+        SubscriptionSource::AdminGrant,
     )
-    .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
@@ -466,7 +480,7 @@ pub struct SetSubscriptionRequest {
     /// Duration in days. If omitted, uses the plan's trial duration (for trial plans).
     /// Use `permanent: true` to create a subscription with no expiration.
     #[serde(default)]
-    days: Option<i64>,
+    days: Option<u32>,
     /// If true, creates a permanent subscription (no expiration date).
     #[serde(default)]
     permanent: bool,
@@ -497,33 +511,16 @@ pub(super) async fn set_subscription(
     Json(req): Json<SetSubscriptionRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_user(&state, id).await?;
-    let now = Utc::now();
-
-    let expires_at =
-        super::resolve_subscription_expires(&state.pool, req.plan_id, req.days, req.permanent, now)
-            .await?;
+    let expires_at = services::resolve_subscription_expires(
+        &state.pool,
+        req.plan_id,
+        subscription_term(req.days, req.permanent),
+        Utc::now(),
+    )
+    .await?;
 
     let mut tx = state.pool.begin().await?;
-
-    // Expire current active subscription (if any)
-    sqlx::query!(
-        "UPDATE subscriptions SET expires_at = NOW() WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
-        id
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // Insert new subscription
-    sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'admin_grant')",
-        id,
-        req.plan_id,
-        now,
-        expires_at
-    )
-    .execute(&mut *tx)
-    .await?;
-
+    services::grant_subscription(&mut tx, id, req.plan_id, expires_at).await?;
     tx.commit().await?;
 
     Ok(StatusCode::OK)
@@ -880,16 +877,10 @@ pub(super) async fn regenerate_admin_vless_config(
     State(state): State<AppState>,
     Path(user_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let new_uuid = uuid::Uuid::new_v4().to_string();
-    let result = sqlx::query!(
-        "UPDATE users SET vless_uuid = $1 WHERE id = $2 AND vless_uuid IS NOT NULL",
-        &new_uuid,
-        user_id
-    )
-    .execute(&state.pool)
-    .await?;
-
-    if result.rows_affected() == 0 {
+    if services::rotate_vless_uuid(&state.pool, user_id)
+        .await?
+        .is_none()
+    {
         return Err(ApiError::not_found("User not found or has no VLESS config"));
     }
 

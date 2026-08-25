@@ -5,7 +5,9 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
-use floppa_core::{PeerSyncStatus, Protocol, SubscriptionSource, decrypt_private_key, services};
+use floppa_core::{
+    FloppaError, PeerSyncStatus, Protocol, SubscriptionSource, decrypt_private_key, services,
+};
 use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
 use utoipa::ToSchema;
@@ -17,6 +19,71 @@ use super::AppState;
 /// Protocol assumed when a request omits it: clients that predate the `protocol` field only
 /// speak plain WireGuard, so AmneziaWG has to be asked for explicitly.
 const LEGACY_REQUEST_PROTOCOL: Protocol = Protocol::WireGuard;
+
+/// A rendered client config for one of the user's peers.
+struct PeerConfig {
+    assigned_ip: String,
+    /// The `.conf` text.
+    text: String,
+}
+
+/// Load one of `user_id`'s peers (404 otherwise), decrypt its key and render its config.
+async fn load_my_peer_config(
+    state: &AppState,
+    user_id: i64,
+    peer_id: i64,
+) -> Result<PeerConfig, ApiError> {
+    let peer = sqlx::query!(
+        r#"
+        SELECT private_key_encrypted, assigned_ip, protocol AS "protocol: Protocol"
+        FROM peers
+        WHERE id = $1 AND user_id = $2 AND sync_status != $3
+        "#,
+        peer_id,
+        user_id,
+        PeerSyncStatus::Removed as _,
+    )
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::not_found("Peer not found"))?;
+
+    let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
+        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
+    })?;
+    let private_key = decrypt_private_key(encrypted, &state.encryption_key)
+        .map_err(|e| ApiError::internal(format!("Decryption failed for peer {peer_id}: {e}")))?;
+
+    let text = render_peer_config(state, peer.protocol, &private_key, &peer.assigned_ip)?;
+    Ok(PeerConfig {
+        assigned_ip: peer.assigned_ip,
+        text,
+    })
+}
+
+/// The REALITY public key, if VLESS is offered by this server (config + secrets both present).
+fn require_vless(state: &AppState) -> Result<&str, ApiError> {
+    match (&state.config.vless, &state.secrets.vless) {
+        (Some(_), Some(secrets)) => Ok(&secrets.reality_public_key),
+        _ => Err(FloppaError::VlessNotConfigured.into()),
+    }
+}
+
+/// 402 unless the user currently has an active subscription.
+async fn require_active_subscription(state: &AppState, user_id: i64) -> Result<(), ApiError> {
+    let has_sub = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM subscriptions
+                         WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW()))
+           AS "exists!""#,
+        user_id
+    )
+    .fetch_one(&state.pool)
+    .await?;
+    if has_sub {
+        Ok(())
+    } else {
+        Err(FloppaError::NoActiveSubscription.into())
+    }
+}
 
 /// Render a client config for a peer, branching on its stored protocol.
 fn render_peer_config(
@@ -583,27 +650,9 @@ pub(super) async fn get_my_peer_config(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<String, ApiError> {
-    let peer = sqlx::query!(
-        r#"
-        SELECT private_key_encrypted, assigned_ip, protocol AS "protocol: Protocol"
-        FROM peers
-        WHERE id = $1 AND user_id = $2 AND sync_status != $3
-        "#,
-        peer_id,
-        auth.user_id,
-        PeerSyncStatus::Removed as _,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::not_found("Peer not found"))?;
-
-    let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
-    })?;
-    let private_key = decrypt_private_key(encrypted, &state.encryption_key)
-        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
-
-    render_peer_config(&state, peer.protocol, &private_key, &peer.assigned_ip)
+    Ok(load_my_peer_config(&state, auth.user_id, peer_id)
+        .await?
+        .text)
 }
 
 /// Send WireGuard config to user via Telegram bot
@@ -625,28 +674,8 @@ pub(super) async fn send_my_peer_config(
     State(state): State<AppState>,
     Path(peer_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let peer = sqlx::query!(
-        r#"
-        SELECT private_key_encrypted, assigned_ip, protocol AS "protocol: Protocol"
-        FROM peers
-        WHERE id = $1 AND user_id = $2 AND sync_status != $3
-        "#,
-        peer_id,
-        auth.user_id,
-        PeerSyncStatus::Removed as _,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::not_found("Peer not found"))?;
-
-    let encrypted = peer.private_key_encrypted.as_deref().ok_or_else(|| {
-        ApiError::internal(format!("Peer {peer_id} has no encrypted private key"))
-    })?;
-    let private_key = decrypt_private_key(encrypted, &state.encryption_key)
-        .map_err(|e| ApiError::internal(format!("Decryption failed: {e}")))?;
-
-    let wg_config = render_peer_config(&state, peer.protocol, &private_key, &peer.assigned_ip)?;
-    let filename = format!("floppa-vpn-{}.conf", peer.assigned_ip);
+    let config = load_my_peer_config(&state, auth.user_id, peer_id).await?;
+    let filename = format!("floppa-vpn-{}.conf", config.assigned_ip);
 
     // Get user's telegram_id (None for credential-only accounts — they download the config directly)
     let telegram_id =
@@ -658,7 +687,7 @@ pub(super) async fn send_my_peer_config(
             })?;
 
     // Send config as document via Telegram bot
-    let file = InputFile::memory(wg_config.into_bytes()).file_name(filename);
+    let file = InputFile::memory(config.text.into_bytes()).file_name(filename);
 
     state
         .bot
@@ -699,23 +728,9 @@ pub(super) async fn get_my_peer_by_device(
     Query(query): Query<ByDeviceQuery>,
 ) -> Result<Json<MyPeer>, ApiError> {
     let protocol = query.protocol.unwrap_or(LEGACY_REQUEST_PROTOCOL);
-    let row = sqlx::query!(
-        r#"
-        SELECT p.id, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
-               p.protocol AS "protocol: Protocol", p.last_handshake, p.created_at,
-               ai.device_name, ai.device_id
-        FROM peers p
-        JOIN app_installations ai ON p.installation_id = ai.id
-        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3
-          AND p.sync_status NOT IN ('removed', 'pending_remove')
-        "#,
-        auth.user_id,
-        &device_id,
-        protocol as _,
-    )
-    .fetch_optional(&state.pool)
-    .await?
-    .ok_or_else(|| ApiError::not_found("No peer for this device"))?;
+    let row = services::find_peer_by_device_id(&state.pool, auth.user_id, &device_id, protocol)
+        .await?
+        .ok_or_else(|| ApiError::not_found("No peer for this device"))?;
 
     let (download, upload) =
         vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
@@ -755,57 +770,11 @@ pub(super) async fn get_my_vless_config(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<VlessConfigResponse>, ApiError> {
-    // Verify VLESS is configured on the server
-    let reality_public_key = state
-        .secrets
-        .vless
-        .as_ref()
-        .map(|v| v.reality_public_key.as_str())
-        .ok_or_else(|| ApiError::bad_request("VLESS is not configured on this server"))?;
+    let reality_public_key = require_vless(&state)?;
+    require_active_subscription(&state, auth.user_id).await?;
 
-    if state.config.vless.is_none() {
-        return Err(ApiError::bad_request(
-            "VLESS is not configured on this server",
-        ));
-    }
-
-    // Check active subscription
-    let has_sub = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW()))",
-        auth.user_id
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
-    if has_sub != Some(true) {
-        return Err(ApiError::from(
-            floppa_core::FloppaError::NoActiveSubscription,
-        ));
-    }
-
-    // Get or generate VLESS UUID
-    let vless_uuid =
-        sqlx::query_scalar!("SELECT vless_uuid FROM users WHERE id = $1", auth.user_id)
-            .fetch_one(&state.pool)
-            .await?;
-
-    let uuid = match vless_uuid {
-        Some(uuid) => uuid,
-        None => {
-            let new_uuid = uuid::Uuid::new_v4().to_string();
-            sqlx::query!(
-                "UPDATE users SET vless_uuid = $1 WHERE id = $2",
-                &new_uuid,
-                auth.user_id
-            )
-            .execute(&state.pool)
-            .await?;
-            new_uuid
-        }
-    };
-
-    let uri = services::generate_vless_uri(&uuid, &state.config, reality_public_key)
-        .map_err(|e| ApiError::internal(format!("Failed to generate VLESS URI: {e}")))?;
+    let uuid = services::ensure_vless_uuid(&state.pool, auth.user_id).await?;
+    let uri = services::generate_vless_uri(&uuid.to_string(), &state.config, reality_public_key)?;
 
     Ok(Json(VlessConfigResponse { uri }))
 }
@@ -827,44 +796,15 @@ pub(super) async fn regenerate_my_vless_config(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<VlessConfigResponse>, ApiError> {
-    let reality_public_key = state
-        .secrets
-        .vless
-        .as_ref()
-        .map(|v| v.reality_public_key.as_str())
-        .ok_or_else(|| ApiError::bad_request("VLESS is not configured on this server"))?;
+    let reality_public_key = require_vless(&state)?;
+    require_active_subscription(&state, auth.user_id).await?;
 
-    if state.config.vless.is_none() {
-        return Err(ApiError::bad_request(
-            "VLESS is not configured on this server",
-        ));
-    }
-
-    // Check active subscription
-    let has_sub = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW()))",
-        auth.user_id
-    )
-    .fetch_one(&state.pool)
-    .await?;
-
-    if has_sub != Some(true) {
-        return Err(ApiError::from(
-            floppa_core::FloppaError::NoActiveSubscription,
-        ));
-    }
-
-    let new_uuid = uuid::Uuid::new_v4().to_string();
-    sqlx::query!(
-        "UPDATE users SET vless_uuid = $1 WHERE id = $2",
-        &new_uuid,
-        auth.user_id
-    )
-    .execute(&state.pool)
-    .await?;
-
-    let uri = services::generate_vless_uri(&new_uuid, &state.config, reality_public_key)
-        .map_err(|e| ApiError::internal(format!("Failed to generate VLESS URI: {e}")))?;
+    // Rotate the existing UUID; a user who never had one simply gets their first.
+    let uuid = match services::rotate_vless_uuid(&state.pool, auth.user_id).await? {
+        Some(uuid) => uuid,
+        None => services::ensure_vless_uuid(&state.pool, auth.user_id).await?,
+    };
+    let uri = services::generate_vless_uri(&uuid.to_string(), &state.config, reality_public_key)?;
 
     Ok(Json(VlessConfigResponse { uri }))
 }

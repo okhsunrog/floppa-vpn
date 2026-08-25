@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id\n        FROM peers p\n        JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3\n          AND p.sync_status NOT IN ('removed', 'pending_remove')\n        ",
+  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake, p.created_at,\n               ai.device_id, ai.device_name\n        FROM peers p\n        JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3\n          AND p.sync_status NOT IN ('removed', 'pending_remove')\n        ",
   "describe": {
     "columns": [
       {
@@ -71,23 +71,23 @@
       },
       {
         "ordinal": 6,
-        "name": "device_name",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "app_installations",
-            "name": "device_name"
-          }
-        }
-      },
-      {
-        "ordinal": 7,
         "name": "device_id",
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "app_installations",
             "name": "device_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "device_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "device_name"
           }
         }
       }
@@ -106,9 +106,9 @@
       false,
       true,
       false,
-      true,
-      false
+      false,
+      true
     ]
   },
-  "hash": "82ac57f21846324edc18afc4bd7978cb9e241e7da7bf9779d8ae4447ce2f9d8d"
+  "hash": "68b42a9df6d7774f5339f64fe5cc060a89c3a63a56b326e9742cae286a86f044"
 }

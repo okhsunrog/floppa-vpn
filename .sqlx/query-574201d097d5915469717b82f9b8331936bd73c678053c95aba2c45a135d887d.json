@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT vless_uuid FROM users WHERE id = $1",
+  "query": "UPDATE users SET vless_uuid = $1\n           WHERE id = $2 AND vless_uuid IS NOT NULL RETURNING vless_uuid AS \"vless_uuid!\"",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "vless_uuid",
+        "name": "vless_uuid!",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -17,6 +17,7 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Int8"
       ]
     },
@@ -24,5 +25,5 @@
       true
     ]
   },
-  "hash": "dd3cdb82326948224a1fd44cec32c9a3a2af3708cd3e6cc2ec09bf620f2fbd28"
+  "hash": "574201d097d5915469717b82f9b8331936bd73c678053c95aba2c45a135d887d"
 }

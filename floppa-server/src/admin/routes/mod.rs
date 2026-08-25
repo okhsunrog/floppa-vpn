@@ -20,7 +20,6 @@ use tokio::sync::RwLock;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-pub(crate) use crate::admin::error::ApiError;
 use crate::admin::rate_limit::RateLimiter;
 
 /// Request header the client app sends with its own semver version; the 426 middleware compares
@@ -374,44 +373,6 @@ pub fn create_router(state: AppState) -> axum::Router {
             state,
             token_refresh_middleware,
         ))
-}
-
-/// Resolve subscription expiration from request parameters.
-/// Returns `None` for permanent subscriptions, `Some(expires_at)` otherwise.
-async fn resolve_subscription_expires(
-    pool: &DbPool,
-    plan_id: i32,
-    days: Option<i64>,
-    permanent: bool,
-    now: chrono::DateTime<Utc>,
-) -> Result<Option<chrono::DateTime<Utc>>, ApiError> {
-    // Validate the plan even when the caller supplied an explicit duration or requested a permanent
-    // subscription; otherwise the later FK failure is reported as an internal database error.
-    let plan_trial =
-        sqlx::query_scalar::<_, Option<i32>>("SELECT trial_minutes FROM plans WHERE id = $1")
-            .bind(plan_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| ApiError::not_found("Plan not found"))?;
-
-    if permanent {
-        return Ok(None);
-    }
-    // The admin `days` override is in whole days; the plan's own default trial duration is
-    // stored in minutes (`trial_minutes`) so it can express sub-day trials (e.g. taster).
-    let minutes = if let Some(d) = days {
-        d * 1440
-    } else {
-        match plan_trial {
-            Some(trial_minutes) => trial_minutes as i64,
-            None => {
-                return Err(ApiError::bad_request(
-                    "Days not specified and plan has no trial duration",
-                ));
-            }
-        }
-    };
-    Ok(Some(now + Duration::minutes(minutes)))
 }
 
 // Public endpoints

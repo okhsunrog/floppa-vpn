@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
 use axum::{Json, http::StatusCode, response::IntoResponse};
-use floppa_core::FloppaError;
+use floppa_core::{FloppaError, services::SubscriptionTermError};
 use serde::Serialize;
 use tracing::error;
 use utoipa::ToSchema;
@@ -117,6 +117,19 @@ impl From<FloppaError> for ApiError {
             | FloppaError::BlockingTask(_)
             | FloppaError::MalformedUuid(_)
             | FloppaError::Config(_) => Self::internal(e),
+        }
+    }
+}
+
+impl From<SubscriptionTermError> for ApiError {
+    fn from(e: SubscriptionTermError) -> Self {
+        match e {
+            SubscriptionTermError::PlanNotFound(_) => Self::not_found("Plan not found"),
+            SubscriptionTermError::NoDuration => {
+                Self::bad_request("Days not specified and plan has no trial duration")
+            }
+            SubscriptionTermError::DurationOutOfRange => Self::bad_request("Duration is too long"),
+            SubscriptionTermError::Database(e) => Self::from(e),
         }
     }
 }

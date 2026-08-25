@@ -175,6 +175,77 @@ pub async fn replace_active_subscription(
     insert_subscription(tx, user_id, plan_id, expires_at, source).await
 }
 
+/// How long an admin-granted subscription should last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubscriptionTerm {
+    /// A fixed number of whole days from now.
+    Days(u32),
+    /// The plan's own `trial_minutes` (sub-day trials such as the taster live here).
+    PlanDefault,
+    /// No expiry.
+    Permanent,
+}
+
+/// Why a [`SubscriptionTerm`] could not be turned into an expiry.
+#[derive(Debug, thiserror::Error)]
+pub enum SubscriptionTermError {
+    #[error("plan {0} not found")]
+    PlanNotFound(i32),
+    #[error("no duration given and the plan has no trial duration")]
+    NoDuration,
+    #[error("duration is too long to represent")]
+    DurationOutOfRange,
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+}
+
+/// Resolve `term` against `plan_id` into an expiry (`None` = permanent), anchored at `now`.
+///
+/// The plan is looked up even for [`SubscriptionTerm::Days`]/[`Permanent`](SubscriptionTerm),
+/// so an unknown plan is reported as such instead of surfacing later as a foreign-key error.
+pub async fn resolve_subscription_expires(
+    executor: impl PgExecutor<'_>,
+    plan_id: i32,
+    term: SubscriptionTerm,
+    now: DateTime<Utc>,
+) -> std::result::Result<Option<DateTime<Utc>>, SubscriptionTermError> {
+    let plan_trial_minutes =
+        sqlx::query_scalar!("SELECT trial_minutes FROM plans WHERE id = $1", plan_id)
+            .fetch_optional(executor)
+            .await?
+            .ok_or(SubscriptionTermError::PlanNotFound(plan_id))?;
+
+    let minutes = match term {
+        SubscriptionTerm::Permanent => return Ok(None),
+        SubscriptionTerm::Days(days) => i64::from(days) * 24 * 60,
+        SubscriptionTerm::PlanDefault => {
+            i64::from(plan_trial_minutes.ok_or(SubscriptionTermError::NoDuration)?)
+        }
+    };
+    Duration::try_minutes(minutes)
+        .and_then(|d| now.checked_add_signed(d))
+        .map(Some)
+        .ok_or(SubscriptionTermError::DurationOutOfRange)
+}
+
+/// Admin grant: supersede whatever the user has with `plan_id` until `expires_at`
+/// (see [`replace_active_subscription`]). Returns the new subscription's id.
+pub async fn grant_subscription(
+    tx: &mut PgTransaction<'_>,
+    user_id: i64,
+    plan_id: i32,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<i64> {
+    replace_active_subscription(
+        tx,
+        user_id,
+        plan_id,
+        expires_at,
+        SubscriptionSource::AdminGrant,
+    )
+    .await
+}
+
 /// Grant the one-time real trial (the "basic" plan's `trial_minutes`) if not yet used.
 ///
 /// Atomically claims `trial_used_at`, so concurrent calls grant at most one trial. Returns
@@ -868,6 +939,26 @@ pub async fn ensure_vless_uuid(executor: impl PgExecutor<'_>, user_id: i64) -> R
     Ok(stored.parse()?)
 }
 
+/// Replace the user's VLESS UUID with a fresh one; the old one stops working as soon as
+/// floppa-vless picks up the `vless_user_changed` notify. Returns `None` when the user has no
+/// UUID to rotate (or does not exist) — nothing is minted in that case, use
+/// [`ensure_vless_uuid`] for that.
+pub async fn rotate_vless_uuid(
+    executor: impl PgExecutor<'_>,
+    user_id: i64,
+) -> Result<Option<Uuid>> {
+    let fresh = Uuid::new_v4().to_string();
+    let stored = sqlx::query_scalar!(
+        r#"UPDATE users SET vless_uuid = $1
+           WHERE id = $2 AND vless_uuid IS NOT NULL RETURNING vless_uuid AS "vless_uuid!""#,
+        fresh,
+        user_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    stored.map(|u| u.parse()).transpose().map_err(Into::into)
+}
+
 /// Queue a peer for removal by the daemon: `active`/`pending_add` → `pending_remove`.
 ///
 /// `owner` restricts the change to a peer of that user (the self-service path); `None` is the
@@ -937,18 +1028,35 @@ pub async fn release_installation_peers(
     Ok(queued)
 }
 
-/// Find an active peer by device_id + protocol for a given user (via app_installations JOIN).
+/// A live peer together with the installation (device) it belongs to.
+#[derive(Debug, Clone)]
+pub struct DevicePeer {
+    pub id: i64,
+    pub assigned_ip: String,
+    pub sync_status: PeerSyncStatus,
+    pub protocol: Protocol,
+    pub last_handshake: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub device_id: String,
+    pub device_name: Option<String>,
+}
+
+/// Find the live (not removed / pending removal) peer a user's device holds for `protocol`.
 ///
-/// A device may hold one active peer per protocol, so the protocol is part of the lookup.
+/// A device may hold one live peer per protocol, so the protocol is part of the lookup.
 pub async fn find_peer_by_device_id(
-    pool: &DbPool,
+    executor: impl PgExecutor<'_>,
     user_id: i64,
     device_id: &str,
     protocol: Protocol,
-) -> Result<Option<i64>> {
-    let peer_id = sqlx::query_scalar!(
+) -> Result<Option<DevicePeer>> {
+    let peer = sqlx::query_as!(
+        DevicePeer,
         r#"
-        SELECT p.id FROM peers p
+        SELECT p.id, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
+               p.protocol AS "protocol: Protocol", p.last_handshake, p.created_at,
+               ai.device_id, ai.device_name
+        FROM peers p
         JOIN app_installations ai ON p.installation_id = ai.id
         WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3
           AND p.sync_status NOT IN ('removed', 'pending_remove')
@@ -957,10 +1065,10 @@ pub async fn find_peer_by_device_id(
         device_id,
         protocol as _,
     )
-    .fetch_optional(pool)
+    .fetch_optional(executor)
     .await?;
 
-    Ok(peer_id)
+    Ok(peer)
 }
 
 /// Upsert an app installation record. Updates last_seen_at and optional fields on conflict.
@@ -2441,8 +2549,12 @@ mod tests {
 
         let result = find_peer_by_device_id(&pool, user_id, "dev-123", Protocol::AmneziaWg)
             .await
-            .unwrap();
-        assert_eq!(result, Some(peer_id));
+            .unwrap()
+            .expect("peer found");
+        assert_eq!(result.id, peer_id);
+        assert_eq!(result.device_id, "dev-123");
+        assert_eq!(result.sync_status, PeerSyncStatus::Active);
+        assert_eq!(result.protocol, Protocol::AmneziaWg);
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -2452,7 +2564,7 @@ mod tests {
         let result = find_peer_by_device_id(&pool, user_id, "nonexistent", Protocol::AmneziaWg)
             .await
             .unwrap();
-        assert_eq!(result, None);
+        assert!(result.is_none());
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -2475,6 +2587,74 @@ mod tests {
         let result = find_peer_by_device_id(&pool, user_id, "dev-123", Protocol::AmneziaWg)
             .await
             .unwrap();
-        assert_eq!(result, None);
+        assert!(result.is_none());
+    }
+
+    // ── resolve_subscription_expires ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_resolve_subscription_expires(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let basic_trial_minutes =
+            sqlx::query_scalar!("SELECT trial_minutes FROM plans WHERE id = $1", basic)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+                .expect("seeded basic plan has a trial");
+        let no_trial = sqlx::query_scalar!(
+            "INSERT INTO plans (name, display_name, max_peers) VALUES ('flat', 'Flat', 1) RETURNING id"
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let now = Utc::now();
+        let resolve = |plan: i32, term: SubscriptionTerm| {
+            let pool = pool.clone();
+            async move { resolve_subscription_expires(&pool, plan, term, now).await }
+        };
+
+        assert_eq!(
+            resolve(basic, SubscriptionTerm::Days(3)).await.unwrap(),
+            Some(now + Duration::days(3))
+        );
+        assert_eq!(
+            resolve(basic, SubscriptionTerm::PlanDefault).await.unwrap(),
+            Some(now + Duration::minutes(i64::from(basic_trial_minutes)))
+        );
+        assert_eq!(
+            resolve(basic, SubscriptionTerm::Permanent).await.unwrap(),
+            None
+        );
+        assert!(matches!(
+            resolve(no_trial, SubscriptionTerm::PlanDefault).await,
+            Err(SubscriptionTermError::NoDuration)
+        ));
+        // The plan is validated for every term, not just PlanDefault.
+        assert!(matches!(
+            resolve(-1, SubscriptionTerm::Permanent).await,
+            Err(SubscriptionTermError::PlanNotFound(-1))
+        ));
+        // A huge day count is an error, not a panic.
+        assert!(matches!(
+            resolve(basic, SubscriptionTerm::Days(u32::MAX)).await,
+            Err(SubscriptionTermError::DurationOutOfRange)
+        ));
+    }
+
+    // ── VLESS UUID ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_rotate_vless_uuid_only_rotates_existing(pool: DbPool) {
+        let user = seed_user(&pool, 11111).await;
+        assert!(rotate_vless_uuid(&pool, user).await.unwrap().is_none());
+        assert!(rotate_vless_uuid(&pool, -1).await.unwrap().is_none());
+
+        let first = ensure_vless_uuid(&pool, user).await.unwrap();
+        let rotated = rotate_vless_uuid(&pool, user)
+            .await
+            .unwrap()
+            .expect("user has a uuid to rotate");
+        assert_ne!(first, rotated);
+        assert_eq!(ensure_vless_uuid(&pool, user).await.unwrap(), rotated);
     }
 }

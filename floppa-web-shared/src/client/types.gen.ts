@@ -78,7 +78,7 @@ export type CreatePlanRequest = {
 
 export type CreateUserRequest = {
     /**
-     * Duration in days. Required unless `permanent` is true.
+     * Duration in days. Required unless `permanent` is true or the plan has a trial duration.
      */
     days?: number | null;
     /**
