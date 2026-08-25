@@ -16,6 +16,7 @@
 //! declared a healthy tunnel lost. A look that is already stale when it is handled is dropped.
 
 pub mod attempt;
+pub mod deployment;
 pub mod handle;
 pub mod intent;
 pub mod outcome;
@@ -31,6 +32,7 @@ pub mod world;
 #[path = "actor_tests.rs"]
 mod tests;
 
+use self::deployment::{ConfigSource, Deployment};
 use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
@@ -40,7 +42,7 @@ use self::types::{
 };
 use crate::backend::VpnBackend;
 use crate::platform::{Platform, PlatformImpl};
-use crate::protocol::{InterfaceName, Protocol};
+use crate::protocol::Protocol;
 use crate::rollback::{Journal, RollbackStack, UnwindReport, unwind};
 use crate::state::SpeedTracker;
 use crate::store::ConfigStore;
@@ -100,7 +102,9 @@ pub struct TunnelActor {
     backend: Arc<dyn VpnBackend>,
     platform: Arc<dyn Platform>,
     policy: Policy,
-    iface: InterfaceName,
+    /// The fixed facts about the program this actor runs inside: the interface name, whether it
+    /// may touch the machine's DNS, and where configs live.
+    deployment: Deployment,
     journal: Option<Journal>,
     /// Only the Android ladder needs it: the service that owns the tunnel's descriptor.
     #[cfg(target_os = "android")]
@@ -149,6 +153,7 @@ impl TunnelActor {
         platform: Arc<PlatformImpl>,
         journal: Option<Journal>,
         spawn_task: Spawn,
+        deployment: Deployment,
         #[cfg(target_os = "android")] host: Arc<dyn crate::host::ServiceHost>,
     ) -> TunnelHandle {
         let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -166,13 +171,19 @@ impl TunnelActor {
             // Reading the OS keyring can block for as long as an unlock dialog stays open. It
             // runs on a blocking thread, and the loop starts only once it is done — so nothing
             // queues behind it, and the actor task itself never blocks.
-            let configs = ConfigStore::load().await;
+            let configs = match deployment.configs {
+                ConfigSource::Persisted => ConfigStore::load().await,
+                // Nothing to read and nothing to write: a one-shot run is handed its config and
+                // must not leave a copy in anybody's keyring.
+                ConfigSource::Ephemeral => ConfigStore::in_memory(Default::default()),
+            };
             let actor = Self::new(
                 backend,
                 platform,
                 journal,
                 policy,
                 configs,
+                deployment,
                 actor_tx,
                 state_tx,
                 #[cfg(target_os = "android")]
@@ -194,6 +205,7 @@ impl TunnelActor {
         journal: Option<Journal>,
         policy: Policy,
         configs: ConfigStore,
+        deployment: Deployment,
         cmd_tx: mpsc::Sender<Command>,
         state_tx: watch::Sender<TunnelState>,
         #[cfg(target_os = "android")] host: Arc<dyn crate::host::ServiceHost>,
@@ -211,7 +223,7 @@ impl TunnelActor {
             backend,
             platform,
             policy,
-            iface: InterfaceName::default(),
+            deployment,
             journal,
             #[cfg(target_os = "android")]
             host,
@@ -764,7 +776,8 @@ impl TunnelActor {
                     index,
                     protocol,
                     config,
-                    iface: self.iface.clone(),
+                    iface: self.deployment.iface.clone(),
+                    manage_dns: self.deployment.manage_dns,
                     params,
                     backend: self.backend.clone(),
                     platform: self.platform.clone(),

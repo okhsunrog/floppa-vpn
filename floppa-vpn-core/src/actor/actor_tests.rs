@@ -6,6 +6,7 @@
 //! to a stale observation. Every test here runs the real loop with the clock paused, so a
 //! deadline or a backoff elapses the instant nothing else can run.
 
+use super::deployment::Deployment;
 use super::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use super::types::*;
 use super::{TunnelActor, observer};
@@ -382,6 +383,7 @@ impl Harness {
             journal,
             policy.clone(),
             store,
+            Deployment::default(),
             cmd_tx.clone(),
             state_tx,
         );

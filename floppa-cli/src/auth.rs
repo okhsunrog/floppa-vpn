@@ -35,7 +35,7 @@ fn sudo_user() -> Option<SudoUser> {
     Some(SudoUser { home, uid, gid })
 }
 
-fn config_dir() -> Result<PathBuf> {
+pub fn config_dir() -> Result<PathBuf> {
     let sudo = sudo_user();
     let base = match &sudo {
         Some(sudo) => sudo.home.join(".config"),

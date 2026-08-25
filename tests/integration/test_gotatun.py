@@ -12,14 +12,14 @@ class TestGotatun:
 
     def test_interface_exists(self, gotatun_container):
         """Verify the TUN interface was created by floppa-cli."""
-        result = docker_exec(gotatun_container, ["ip", "link", "show", "floppa-test0"])
-        assert "floppa-test0" in result.stdout
+        result = docker_exec(gotatun_container, ["ip", "link", "show", "floppa9"])
+        assert "floppa9" in result.stdout
 
     def test_routes_configured(self, gotatun_container):
         """Verify routes were set up through the tunnel interface."""
         result = docker_exec(gotatun_container, ["ip", "route", "show"])
-        assert "floppa-test0" in result.stdout, (
-            f"No routes via floppa-test0:\n{result.stdout}"
+        assert "floppa9" in result.stdout, (
+            f"No routes via floppa9:\n{result.stdout}"
         )
 
     def test_ping_server(self, gotatun_container, server_ip):

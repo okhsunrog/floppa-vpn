@@ -44,6 +44,9 @@ pub struct AttemptCtx {
     pub protocol: Protocol,
     pub config: ProtocolConfig,
     pub iface: InterfaceName,
+    /// Whether this attempt may configure the machine's DNS. See
+    /// [`Deployment::manage_dns`](crate::actor::deployment::Deployment::manage_dns).
+    pub manage_dns: bool,
     pub params: TunnelParams,
     pub backend: Arc<dyn VpnBackend>,
     pub platform: Arc<dyn Platform>,

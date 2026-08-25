@@ -78,9 +78,51 @@ impl LinuxPlatform {
         running
     }
 
+    /// Whether this process is already root.
+    ///
+    /// It decides whether polkit is involved at all. A desktop app runs as the user and asks
+    /// polkit to raise a helper; `sudo floppa-cli` is *already* the user polkit would have
+    /// escalated to, and asking again means either a password prompt for a privilege we hold or —
+    /// in a container, which is where the integration suite runs — a `pkexec` that is not
+    /// installed and a connect that fails for no reason a user could act on.
+    fn running_as_root() -> bool {
+        // SAFETY: `geteuid` reads the calling process's effective uid. It takes no arguments,
+        // touches no memory and cannot fail.
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    /// The embedded helper script, written to a private temp file so root can run it directly.
+    ///
+    /// Kept alive by the caller for exactly as long as the command runs, and removed on drop:
+    /// a script that outlived its use would be a root-owned executable sitting in `/tmp`.
+    fn helper_script() -> Result<tempfile::TempPath, PlatformError> {
+        // Executable, and run through its own shebang rather than through `sh`: the helper is a
+        // bash script, and `sh` on Debian and Ubuntu is dash, which refuses its very first line
+        // (`set -o pipefail`). Owner-only, because it runs as root.
+        let file = tempfile::Builder::new()
+            .prefix("floppa-helper-")
+            .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .tempfile()
+            .map_err(|e| PlatformError::Failed(format!("failed to create temp helper: {e}")))?;
+        // The handle is dropped before the content is written and before anything execs it: a
+        // file still open for writing cannot be executed (`ETXTBSY`). `TempPath` keeps the
+        // delete-on-drop without keeping the descriptor.
+        let path = file.into_temp_path();
+        std::fs::write(&path, HELPER_CONTENT)
+            .map_err(|e| PlatformError::Failed(format!("failed to write temp helper: {e}")))?;
+        Ok(path)
+    }
+
     /// Check if the polkit policy and helper are installed and up-to-date.
     /// If not, write them to temp files and use pkexec to install (one password prompt).
     fn ensure_polkit_installed() -> Result<(), PlatformError> {
+        if Self::running_as_root() {
+            // Nothing to install: the helper is only ever reached through polkit, and root does
+            // not go through polkit.
+            debug!("running as root; the polkit helper is not needed");
+            return Ok(());
+        }
+
         let helper_ok = std::fs::read_to_string(HELPER_PATH).is_ok_and(|c| c == HELPER_CONTENT);
         let policy_ok = std::fs::read_to_string(POLICY_PATH).is_ok_and(|c| c == POLICY_CONTENT);
 
@@ -142,11 +184,15 @@ impl LinuxPlatform {
         })
     }
 
-    /// Run the network helper via pkexec.
+    /// Run the network helper, through polkit or directly.
     ///
-    /// With the polkit policy installed, this runs without a password prompt for active desktop
-    /// sessions. Runs on tokio's process reactor rather than blocking a worker thread, so a slow
-    /// pkexec stalls only this call; `timeout` bounds the wait for undo paths.
+    /// With the polkit policy installed, the escalated path runs without a password prompt for
+    /// active desktop sessions. Runs on tokio's process reactor rather than blocking a worker
+    /// thread, so a slow pkexec stalls only this call; `timeout` bounds the wait for undo paths.
+    ///
+    /// As root the helper is run from a temporary copy of the embedded script rather than from
+    /// `/usr/lib`: a root process should not need to install anything into the system to
+    /// configure its own network, and a command-line run leaves nothing behind.
     async fn run_helper(
         &self,
         args: &[&str],
@@ -154,8 +200,23 @@ impl LinuxPlatform {
     ) -> Result<(), PlatformError> {
         debug!("Running helper: {:?}", args);
 
-        let mut command = tokio::process::Command::new("pkexec");
-        command.arg(HELPER_PATH).args(args).kill_on_drop(true);
+        // Held for the whole call: dropping it removes the script, and the command is still
+        // running.
+        let root_helper = if Self::running_as_root() {
+            Some(Self::helper_script()?)
+        } else {
+            None
+        };
+
+        let mut command = match &root_helper {
+            Some(path) => tokio::process::Command::new(path.as_os_str()),
+            None => {
+                let mut c = tokio::process::Command::new("pkexec");
+                c.arg(HELPER_PATH);
+                c
+            }
+        };
+        command.args(args).kill_on_drop(true);
         let spawned = command.output();
         let output = match timeout {
             Some(limit) => tokio::time::timeout(limit, spawned).await.map_err(|_| {
@@ -174,8 +235,14 @@ impl LinuxPlatform {
         }
 
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        // pkexec exits 126 when authorisation is declined or dismissed, and 127 when the helper
-        // could not be launched at all. Both are pointless to retry with another protocol.
+        // Only meaningful for the polkit path: pkexec exits 126 when authorisation is declined or
+        // dismissed, and 127 when the helper could not be launched at all. Both are pointless to
+        // retry with another protocol. Run directly, those codes are the helper's own.
+        if root_helper.is_some() {
+            return Err(PlatformError::Failed(format!(
+                "network helper failed: {stderr}"
+            )));
+        }
         Err(match output.status.code() {
             Some(126) => PlatformError::PermissionDenied(if stderr.is_empty() {
                 "authorisation declined".to_string()

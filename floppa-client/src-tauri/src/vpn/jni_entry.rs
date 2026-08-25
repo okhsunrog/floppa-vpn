@@ -303,8 +303,14 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
             })
         };
 
-        let actor =
-            crate::vpn::actor::TunnelActor::spawn(backend, platform, journal, spawn, host.clone());
+        let actor = crate::vpn::actor::TunnelActor::spawn(
+            backend,
+            platform,
+            journal,
+            spawn,
+            crate::vpn::actor::deployment::Deployment::default(),
+            host.clone(),
+        );
 
         // The service follows the actor's phase, and nothing else writes it.
         //

@@ -262,7 +262,7 @@ def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
         docker_exec_detach(name, [
             "/test/floppa-cli", "connect",
             "--config", "/test/wg0.conf",
-            "--interface", "floppa-test0",
+            "--interface", "floppa9",
             "--no-dns",
         ])
 
@@ -270,7 +270,7 @@ def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
         deadline = time.time() + 15
         ready = False
         while time.time() < deadline:
-            iface_check = docker_exec(name, ["ip", "link", "show", "floppa-test0"], check=False)
+            iface_check = docker_exec(name, ["ip", "link", "show", "floppa9"], check=False)
             if iface_check.returncode == 0:
                 # Interface exists, wait a moment for routes to be configured
                 time.sleep(2)

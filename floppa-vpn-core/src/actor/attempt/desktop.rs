@@ -171,7 +171,14 @@ pub(super) async fn ladder(
     // Captured before the mutation and owned by the step, so a second attempt can never snapshot
     // the resolver config this process itself wrote.
     bail_if_cancelled!(ctx);
-    let dns_servers = ctx.config.dns_servers();
+    // An empty list and "do not touch DNS" reach the same place, and neither is an error: the
+    // first is a config that names no servers, the second a caller that has said the machine's
+    // resolution is not ours to change.
+    let dns_servers = if ctx.manage_dns {
+        ctx.config.dns_servers()
+    } else {
+        Vec::new()
+    };
     if !dns_servers.is_empty() {
         match ctx.platform.capture_dns(&iface, if_index).await {
             Ok(snapshot) => {

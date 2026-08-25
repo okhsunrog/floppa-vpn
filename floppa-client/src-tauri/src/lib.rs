@@ -232,7 +232,13 @@ pub fn run() {
                     log_dir.clone(),
                     Arc::new(logging::capture::BackendRelay(backend.clone())),
                 ));
-                vpn::actor::TunnelActor::spawn(backend, platform, journal, spawn.clone())
+                vpn::actor::TunnelActor::spawn(
+                    backend,
+                    platform,
+                    journal,
+                    spawn.clone(),
+                    vpn::actor::deployment::Deployment::default(),
+                )
             };
 
             // The bridge from the actor's state to the UI. It is here rather than inside the actor

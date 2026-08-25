@@ -35,6 +35,8 @@ uuid = { version = "1.25.0", features = ["v4"] }
 tokio-serde = { version = "0.9.0", features = ["json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Only for `geteuid`: whether the helper needs polkit or can just be run.
+libc = "0.2.189"
 # The runtime and the crypto backend are named here rather than left to feature unification.
 # `linux-native-async-persistent` pulls secret-service but picks neither, and the app only built
 # because something else in its tree happened to turn `tokio` on — which is not a dependency

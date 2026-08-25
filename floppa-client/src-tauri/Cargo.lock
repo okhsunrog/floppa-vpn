@@ -1537,6 +1537,7 @@ dependencies = [
  "ipnetwork",
  "jni 0.22.4",
  "keyring",
+ "libc",
  "serde",
  "serde_json",
  "shoes-lite",

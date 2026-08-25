@@ -1,16 +1,11 @@
 mod auth;
-mod dns;
-mod net;
+mod connect;
 mod protocol;
 mod provision;
-mod rollback;
-mod tunnel;
-mod vless;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use floppa_api_client::{ApiClient, ProvisionApi};
-use floppa_tunnel_config::TunnelConfig;
 
 const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
 
@@ -50,7 +45,7 @@ enum Command {
         #[arg(long, value_enum, default_value_t = protocol::Protocol::AmneziaWg)]
         protocol: protocol::Protocol,
         /// TUN interface name
-        #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
+        #[arg(long, default_value = floppa_vpn_core::protocol::InterfaceName::DEFAULT)]
         interface: String,
         /// Skip DNS configuration
         #[arg(long)]
@@ -79,10 +74,6 @@ enum Command {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
-}
-
-fn is_vless(config_str: &str) -> bool {
-    config_str.trim().starts_with("vless://")
 }
 
 #[tokio::main]
@@ -151,11 +142,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            if is_vless(&config_str) {
-                connect_vless(&config_str, &interface, no_dns).await?;
-            } else {
-                connect_wireguard(&config_str, &interface, no_dns).await?;
-            }
+            connect::run(&config_str, &interface, no_dns, &auth::config_dir()?).await?;
         }
         Command::Peers { api_url } => {
             let token = tokens.require()?;
@@ -232,124 +219,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-/// The running tunnel, whichever protocol backs it.
-enum Tunnel {
-    WireGuard(tunnel::FloppaDevice),
-    Vless(shoes_lite::api::VlessTunnel),
-}
-
-impl Tunnel {
-    async fn stop(self) -> Result<()> {
-        match self {
-            Tunnel::WireGuard(device) => {
-                device.stop().await;
-                Ok(())
-            }
-            Tunnel::Vless(tunnel) => tunnel
-                .stop()
-                .await
-                .map_err(|e| anyhow::anyhow!("VLESS tunnel stop failed: {e}")),
-        }
-    }
-}
-
-async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
-    let config = TunnelConfig::parse(config_str).context("Invalid WireGuard config")?;
-    let endpoint = tunnel::resolve_endpoint(&config).await?;
-    let name = if config.is_amneziawg() {
-        "AmneziaWG"
-    } else {
-        "WireGuard"
-    };
-    eprintln!("Creating {name} tunnel on {interface}...");
-    let device = tunnel::create_tunnel(&config, endpoint, interface).await?;
-    eprintln!("Configuring networking...");
-    let addr = tunnel::bring_up_interface(&config, interface)?;
-    let mut rollback = rollback::Rollback::new(net::configure_routes(
-        endpoint.ip(),
-        &config.peer.allowed_ips,
-        interface,
-    )?);
-    eprintln!("VPN IP: {}", addr.ip());
-    eprintln!("Endpoint: {} ({endpoint})", config.peer.endpoint);
-
-    let dns_servers: Vec<String> = config
-        .dns_servers()
-        .iter()
-        .map(ToString::to_string)
-        .collect();
-    if !no_dns && !dns_servers.is_empty() {
-        rollback.set_dns(dns::apply(interface, &dns_servers)?);
-    }
-
-    wait_then_disconnect(rollback, Tunnel::WireGuard(device)).await
-}
-
-async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
-    let config = vless::parse_uri(config_str.trim())?;
-
-    eprintln!("Creating VLESS+REALITY tunnel on {interface}...");
-    eprintln!("Server: {}", config.server_addr);
-    eprintln!("SNI: {}", config.server_name);
-
-    let tunnel = vless::create_tunnel(&config, interface).await?;
-
-    eprintln!("Configuring networking...");
-    let endpoint = vless::endpoint_ip(&config).await?;
-    let mut rollback = rollback::Rollback::new(net::configure_routes(
-        endpoint,
-        &vless::allowed_ips_networks(&config)?,
-        interface,
-    )?);
-    eprintln!("VPN IP: {}", config.address.as_deref().unwrap_or("unknown"));
-    eprintln!("Endpoint: {}", config.server_addr);
-
-    if !no_dns && let Some(ref dns) = config.dns {
-        let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
-        if !servers.is_empty() {
-            rollback.set_dns(dns::apply(interface, &servers)?);
-        }
-    }
-
-    wait_then_disconnect(rollback, Tunnel::Vless(tunnel)).await
-}
-
-/// Announce readiness, block until asked to stop, then tear everything down.
-async fn wait_then_disconnect(rollback: rollback::Rollback, tunnel: Tunnel) -> Result<()> {
-    println!("READY");
-    eprintln!("Connected! Press Ctrl+C to disconnect.");
-    let signal = wait_for_shutdown_signal().await?;
-
-    eprintln!("\n{signal} received, disconnecting...");
-    disconnect(rollback, tunnel).await?;
-    eprintln!("Disconnected.");
-    Ok(())
-}
-
-/// Block until SIGINT (Ctrl+C), SIGTERM (systemd/docker stop) or SIGHUP arrives.
-async fn wait_for_shutdown_signal() -> Result<&'static str> {
-    use tokio::signal::unix::{SignalKind, signal};
-    let mut terminate = signal(SignalKind::terminate())?;
-    let mut hangup = signal(SignalKind::hangup())?;
-    let name = tokio::select! {
-        r = tokio::signal::ctrl_c() => { r?; "SIGINT" }
-        _ = terminate.recv() => "SIGTERM",
-        _ = hangup.recv() => "SIGHUP",
-    };
-    Ok(name)
-}
-
-/// Undo the connection. The host rollback (DNS, routes) and the tunnel stop are independent:
-/// each runs even if the other failed, and the failures are reported together.
-async fn disconnect(mut rollback: rollback::Rollback, tunnel: Tunnel) -> Result<()> {
-    let mut errors = Vec::new();
-    if let Err(e) = rollback.run() {
-        errors.push(e);
-    }
-    if let Err(e) = tunnel.stop().await {
-        errors.push(e);
-    }
-    net::collect_errors(errors)
 }

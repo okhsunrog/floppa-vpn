@@ -189,13 +189,14 @@ impl ConfigStore {
     }
 
     /// A store that never touches the keyring or the filesystem.
-    #[cfg(test)]
-    pub(crate) fn in_memory(configs: SavedVpnConfigs) -> Self {
+    ///
+    /// What [`ConfigSource::Ephemeral`](crate::actor::deployment::ConfigSource::Ephemeral) runs
+    /// on, and what the tests use.
+    pub fn in_memory(configs: SavedVpnConfigs) -> Self {
         Self::with_persister(configs, Persister { tx: None })
     }
 
     /// A store writing through the given persister, for tests that fake the writes.
-    #[cfg(test)]
     pub(crate) fn with_persister(configs: SavedVpnConfigs, persister: Persister) -> Self {
         Self { configs, persister }
     }
