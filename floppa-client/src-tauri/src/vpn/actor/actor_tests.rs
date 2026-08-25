@@ -12,7 +12,7 @@ use super::{TunnelActor, observer};
 use crate::vpn::backend::{BackendError, VpnBackend};
 use crate::vpn::platform::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
 use crate::vpn::protocol::{InterfaceName, Protocol};
-use crate::vpn::rollback::RollbackStack;
+use crate::vpn::rollback::{Applied, Evidence, Journal, RollbackStack, StackId, Step};
 use crate::vpn::state::{ProtocolConfig, SavedVpnConfigs, WgConfig};
 use crate::vpn::store::ConfigStore;
 use async_trait::async_trait;
@@ -121,6 +121,8 @@ struct FakePlatform {
     released: Notify,
     /// Panic inside the ladder's link step, as a bug in a real platform would.
     crash_attempts: AtomicBool,
+    /// How many times DNS has been put back, so a recovery from the journal is observable.
+    dns_restores: AtomicUsize,
 }
 
 impl FakePlatform {
@@ -129,6 +131,7 @@ impl FakePlatform {
             park_attempts: AtomicBool::new(false),
             released: Notify::new(),
             crash_attempts: AtomicBool::new(false),
+            dns_restores: AtomicUsize::new(0),
         }
     }
 
@@ -238,6 +241,7 @@ impl Platform for FakePlatform {
         _: &DnsSnapshot,
         _: Option<u32>,
     ) -> Result<(), PlatformError> {
+        self.dns_restores.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     async fn ipv6_enabled(&self) -> bool {
@@ -249,10 +253,19 @@ impl Platform for FakePlatform {
 
 fn policy() -> Policy {
     Policy {
-        // Generous, so no test trips over the attempt budget by accident; the budget itself is
-        // exercised with a short one on purpose.
+        // Generous, so no test trips over the attempt budget by accident. The budget itself is
+        // exercised with `short_budget()` below.
         attempt_budget: Duration::from_secs(3600),
         ..Policy::default()
+    }
+}
+
+/// A budget an attempt can actually exceed, and room for a second pass to follow.
+fn short_budget() -> Policy {
+    Policy {
+        attempt_budget: Duration::from_secs(2),
+        cold_passes: 2,
+        ..policy()
     }
 }
 
@@ -294,7 +307,27 @@ impl Harness {
         Self::spawn_with(policy, ConfigStore::in_memory(configs()), Some(running))
     }
 
+    /// A process that died with network changes still applied, as the journal on disk records
+    /// them. The only way to reach bootstrap's crash-recovery path through the real loop.
+    fn spawn_recovering(policy: Policy, journal: Journal) -> Self {
+        Self::spawn_inner(
+            policy,
+            ConfigStore::in_memory(configs()),
+            None,
+            Some(journal),
+        )
+    }
+
     fn spawn_with(policy: Policy, store: ConfigStore, running: Option<RunningTunnel>) -> Self {
+        Self::spawn_inner(policy, store, running, None)
+    }
+
+    fn spawn_inner(
+        policy: Policy,
+        store: ConfigStore,
+        running: Option<RunningTunnel>,
+        journal: Option<Journal>,
+    ) -> Self {
         let backend = Arc::new(FakeBackend::default());
         *backend.running.lock().unwrap() = running;
         let platform = Arc::new(FakePlatform::new());
@@ -303,7 +336,7 @@ impl Harness {
         let actor = TunnelActor::new(
             backend.clone(),
             platform.clone(),
-            None,
+            journal,
             policy.clone(),
             store,
             cmd_tx.clone(),
@@ -741,4 +774,119 @@ async fn disconnecting_an_adopted_tunnel_stops_it_before_down_is_resolved() {
         "the tunnel is stopped by the teardown"
     );
     assert!(h.backend.running().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_attempt_that_never_finishes_hits_its_budget_and_the_cycle_retries() {
+    // Row 11 → CancelAttempt → the attempt unwinds its own ladder and reports Cancelled → U4/U5.
+    // The whole path from a wedged attempt to a scheduled retry, which nothing drove end to end
+    // before: the tables covered the transitions and the loop covered the routing, but the
+    // deadline that starts it was only ever exercised with a budget no test could reach.
+    let mut h = Harness::spawn(short_budget());
+    h.platform.park_attempts();
+
+    let epoch = h.set(up()).await;
+    h.wait_for_phase(Phase::Connecting).await;
+
+    // Nothing else can run, so the paused clock jumps to the deadline on its own: row 11 cancels
+    // the attempt and waits for it to report. The token is cooperative, so the parked attempt has
+    // to be let go before it can see it — which is the point of never dropping the task.
+    h.wait_for_phase(Phase::Disconnecting).await;
+    h.platform.release();
+
+    let state = h.wait_for_phase(Phase::Retrying).await;
+    let retry = state.retry.expect("a retry reports its countdown");
+    assert_eq!(retry.pass, 2, "the first pass is spent");
+    assert_eq!(retry.max, 2);
+
+    // The second pass is a real attempt: let it through and the cycle ends connected.
+    h.platform.park_attempts.store(false, Ordering::SeqCst);
+    h.platform.release();
+    assert!(matches!(
+        h.outcome(epoch).await,
+        CycleOutcome::Connected { .. }
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn rebuilding_an_adopted_tunnel_stops_it_before_building_the_new_one() {
+    // Changing the split rules while an adopted tunnel is up: row 16. Its rules are unknown, so
+    // it cannot satisfy the request and has to go — and because adoption holds no stack, the
+    // teardown has to stop the backend itself. Without that the new attempt was begun on top of
+    // a tunnel that was still running.
+    let mut h = Harness::spawn_adopting(
+        policy(),
+        RunningTunnel {
+            protocol: Protocol::WireGuard,
+            generation: None,
+            endpoint: "127.0.0.1:51820".into(),
+            address: "10.0.0.2/32".into(),
+            connected_secs: Some(9),
+            params: None,
+            autonomous: false,
+        },
+    );
+    let adopted = h.wait_for_phase(Phase::Connected).await;
+    assert!(adopted.adopted);
+    assert_eq!(adopted.params, None, "its rules are not ours to know");
+
+    let epoch = h
+        .set(IntentRequest::Up {
+            order: vec![Protocol::WireGuard],
+            params: TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]),
+        })
+        .await;
+    assert!(matches!(
+        h.outcome(epoch).await,
+        CycleOutcome::Connected { adopted: false, .. }
+    ));
+    assert_eq!(h.backend.stops(), 1, "the adopted tunnel was stopped first");
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 1);
+
+    let state = h
+        .wait_for("the rebuilt tunnel", |s| s.params.is_some())
+        .await;
+    assert_eq!(
+        state.params.as_ref().map(|p| p.apps.as_slice()),
+        Some(["org.example".to_string()].as_slice()),
+        "and the new one routes what was asked for"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_process_that_died_with_changes_applied_undoes_them_before_anything_else() {
+    // Bootstrap's other half, which no test had driven: the journal is the only record a crashed
+    // process leaves, so what it holds is undone before the actor will consider a tunnel at all.
+    // The DNS entry below is the one that matters — a machine left pointing at a resolver inside
+    // a tunnel that no longer exists has no working name resolution until this runs.
+    let dir = tempfile::tempdir().unwrap();
+    let journal = Journal::new(Journal::default_path(dir.path()));
+    journal.write(
+        StackId::next(),
+        [Applied {
+            step: Step::Dns {
+                iface: InterfaceName::default(),
+                snapshot: DnsSnapshot::Resolvectl,
+                if_index: None,
+            },
+            evidence: Evidence::Done,
+        }]
+        .iter(),
+    );
+
+    let mut h = Harness::spawn_recovering(policy(), journal.clone());
+    h.wait_for_phase(Phase::Disconnected).await;
+    assert_eq!(
+        h.platform.dns_restores.load(Ordering::SeqCst),
+        1,
+        "what the journal recorded is undone"
+    );
+    assert!(
+        journal.read_orphaned().is_empty(),
+        "and the journal is cleared once it has been"
+    );
+
+    // And the actor is usable afterwards rather than stuck in the recovery teardown.
+    let epoch = h.connect().await;
+    assert!(epoch > IntentEpoch(0));
 }

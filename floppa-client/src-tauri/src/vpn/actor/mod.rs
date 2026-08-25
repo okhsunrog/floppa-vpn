@@ -608,6 +608,15 @@ impl TunnelActor {
     /// privileged calls before the backend is stopped, so a look that began in the middle of it
     /// saw a tunnel that the same unwind went on to stop — and step 0 of the table read that as
     /// "the teardown did not work", ran another one, and spent a retry on an artefact of timing.
+    ///
+    /// The consequence is that step 0 (`U0a`/`U0b`) is a safety net rather than a normal path:
+    /// the report is sent the instant the unwind finishes and shares one queue with the
+    /// observations, so a look taken after it can only be *ahead* of it when the actor was busy
+    /// enough for both to queue. Falling through as dark is the right default — it lands in
+    /// Retrying or Idle and re-observes, and a tunnel that really is still there is picked up by
+    /// rows 2, 5b/6, 18 or 27 on the next look. What must not be left to that fall-through is a
+    /// teardown that never asked the tunnel to stop, which is why an adopted status unwinds with
+    /// `StopBackend` rather than relying on this to notice.
     fn judge_unwind(&self, report: &UnwindReport, now: Instant) -> World {
         if self.last_obs.observed_at < report.finished_at {
             return World::Dark;
