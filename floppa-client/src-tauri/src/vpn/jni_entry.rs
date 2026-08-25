@@ -3,13 +3,23 @@
 //! These functions are called by `FloppaVpnService` (Kotlin) in the separate
 //! VPN process. They initialize the Rust runtime, start/stop the WireGuard
 //! or VLESS tunnel, and run the tarpc RPC server.
+//!
+//! Two of them exist for the service to bring a tunnel up with no UI process at all — the
+//! always-on, boot and lockdown starts the system issues with an empty intent:
+//! `nativeLoadAutostart` reads the bundle the last successful connect wrote and says what TUN to
+//! build, and `nativeStartTunnelFromBundle` starts the tunnel on it through the same path the RPC
+//! `start_tunnel` uses.
 
-use super::rpc_server::{self, RpcServerHandle};
+use super::autostart::{self, AutostartBundle};
+use super::rpc_server::{self, RpcServerHandle, ServiceState, Started};
 use super::tunnel::{self, TunnelManager};
+use crate::vpn::actor::types::TunnelParams;
+use crate::vpn::state::ProtocolConfig;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM};
+use std::net::SocketAddr;
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
 use tracing::{debug, error, info, warn};
@@ -26,6 +36,12 @@ enum EntryError {
     Poisoned,
     #[error("failed to start the RPC server: {0}")]
     ServerStart(String),
+    #[error("the autostart bundle cannot be encoded for the service: {0}")]
+    Encode(#[from] serde_json::Error),
+    #[error("no autostart plan is prepared for epoch {epoch}")]
+    NoPlan { epoch: u64 },
+    #[error("no service generation is serving yet")]
+    NoService,
 }
 
 /// Global state for the VPN process
@@ -35,6 +51,25 @@ static VPN_SERVICE_REF: Mutex<Option<jni::objects::Global<JObject<'static>>>> = 
 static TOKIO_RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static TUNNEL_MANAGER: OnceLock<Arc<TunnelManager>> = OnceLock::new();
 static RPC_HANDLE: Mutex<Option<RpcServerHandle>> = Mutex::new(None);
+/// The generation behind [`RPC_HANDLE`], for a start that comes from inside this process rather
+/// than over the socket.
+static SERVICE_STATE: Mutex<Option<Arc<ServiceState>>> = Mutex::new(None);
+
+/// What `nativeLoadAutostart` decided, held for the `nativeStartTunnelFromBundle` that follows
+/// it — so the tunnel is built from exactly what the service was told to build a TUN for, with
+/// no second read of the file in between.
+struct PreparedAutostart {
+    epoch: u64,
+    config: ProtocolConfig,
+    endpoint: SocketAddr,
+    params: TunnelParams,
+}
+
+static AUTOSTART: Mutex<Option<PreparedAutostart>> = Mutex::new(None);
+
+/// How long an autonomous start waits for the resolver before dialling the stored literal. Under
+/// lockdown nothing is allowed on the network yet, so this is mostly the time it takes to fail.
+const AUTOSTART_RESOLVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Generation of the service instance that owns [`RPC_HANDLE`].
 ///
@@ -292,11 +327,12 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
         // Bind first. Nothing global is touched until the bind has succeeded, so a failed start
         // leaves the previous generation (if any) exactly as it was.
         let _enter = runtime.enter();
-        let handle = rpc_server::start_server(&socket_path_str, tunnel_manager, service)
+        let handle = rpc_server::start_server(&socket_path_str, tunnel_manager, service.clone())
             .map_err(EntryError::ServerStart)?;
 
         // Store/update the VpnService reference for protect() and shutdown calls.
         *VPN_SERVICE_REF.lock().map_err(|_| EntryError::Poisoned)? = Some(global_ref);
+        *SERVICE_STATE.lock().map_err(|_| EntryError::Poisoned)? = Some(service);
 
         // Supersede the previous generation. Its socket file is ours now (see
         // `RpcServerHandle::shutdown`), so only the accept loop is stopped.
@@ -365,9 +401,131 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'
             .lock()
             .map_err(|_| EntryError::Poisoned)?
             .take();
+        SERVICE_STATE
+            .lock()
+            .map_err(|_| EntryError::Poisoned)?
+            .take();
 
         info!("nativeStop: cleanup complete");
         Ok(())
     });
     log_outcome("nativeStop", outcome.into_outcome());
+}
+
+/// Called in `FloppaVpnService.onStartCommand()` for a start the system issued with no
+/// configuration — always-on VPN, boot, a lockdown restore — before anything else happens.
+///
+/// Reads the bundle the last successful connect wrote. Returns the TUN the service should build,
+/// as the JSON form of the plugin's start payload (the same field names Kotlin reads out of a
+/// start intent), with a fresh epoch from the reserved autonomous range; or `null` when there is
+/// nothing to restore, in which case the service stops and the reason is in the log.
+///
+/// This is the one moment an autonomous start can still resolve a name: no TUN exists yet. Under
+/// lockdown it cannot, and the literal the last connect resolved to is what gets dialled.
+///
+/// `data_dir` is passed in because the `:vpn` process never initialises the UI's config-dir
+/// resolver; it is the same directory (`applicationInfo.dataDir`) the UI writes into.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLoadAutostart<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    data_dir: JString<'local>,
+) -> JString<'local> {
+    env.with_env(
+        |env: &mut Env<'local>| -> Result<JString<'local>, EntryError> {
+            let dir: String = data_dir.mutf8_chars(env)?.to_string();
+            let dir = std::path::Path::new(&dir);
+
+            let Some(bundle) = autostart::load(dir) else {
+                info!("autonomous start: no usable autostart bundle, nothing to restore");
+                return Ok(JString::default());
+            };
+
+            let epoch = autostart::next_autonomous_epoch(dir);
+            let endpoint = get_runtime().block_on(autostart::resolve_endpoint(
+                &bundle,
+                AUTOSTART_RESOLVE_BUDGET,
+            ));
+            info!(
+                protocol = %bundle.protocol(),
+                %endpoint,
+                epoch,
+                saved_at = bundle.saved_at,
+                "autonomous start: rebuilding the last-good tunnel"
+            );
+
+            let AutostartBundle {
+                tun,
+                config,
+                params,
+                ..
+            } = bundle;
+            let plan = serde_json::to_string(&tun.with_epoch(epoch))?;
+            *AUTOSTART.lock().map_err(|_| EntryError::Poisoned)? = Some(PreparedAutostart {
+                epoch,
+                config,
+                endpoint,
+                params,
+            });
+            Ok(env.new_string(plan)?)
+        },
+    )
+    .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+/// Called after `nativeStartServer` on an autonomous start: bring the tunnel up on the descriptor
+/// the service just bound its socket for, from what `nativeLoadAutostart` prepared.
+///
+/// The start itself runs on the runtime rather than on the service's main thread. Its outcome is
+/// handled the way the RPC path's is — `start_error` recorded for whoever observes next, the
+/// notification promoted on success — plus one thing the RPC path leaves to its caller: with no
+/// UI process to react, a failed autonomous start stops the service itself, so it never sits
+/// foreground holding a descriptor with a default route into nothing.
+///
+/// Throws when there is nothing to start from — no prepared plan for this epoch, or no service
+/// generation — so Kotlin cleans up the TUN it has already established.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartTunnelFromBundle<
+    'local,
+>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    epoch: jlong,
+) {
+    env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let epoch = epoch as u64;
+        let plan = AUTOSTART
+            .lock()
+            .map_err(|_| EntryError::Poisoned)?
+            .take_if(|p| p.epoch == epoch)
+            .ok_or(EntryError::NoPlan { epoch })?;
+        let service = SERVICE_STATE
+            .lock()
+            .map_err(|_| EntryError::Poisoned)?
+            .clone()
+            .filter(|s| s.epoch == epoch)
+            .ok_or(EntryError::NoService)?;
+        let tunnel_manager = get_tunnel_manager();
+
+        get_runtime().spawn(async move {
+            let started = Started {
+                params: plan.params,
+                autonomous: true,
+            };
+            let result = rpc_server::bring_up(
+                &service,
+                &tunnel_manager,
+                plan.config,
+                plan.endpoint,
+                started,
+            )
+            .await;
+            if let Err(e) = result {
+                error!("autonomous start failed: {e}; stopping the service");
+                stop_vpn_service();
+            }
+        });
+        Ok(())
+    })
+    .resolve::<ThrowRuntimeExAndDefault>();
 }

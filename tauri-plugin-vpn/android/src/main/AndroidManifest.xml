@@ -19,19 +19,15 @@
             android:foregroundServiceType="systemExempted"
             android:stopWithTask="false"
             android:exported="false">
+            <!--
+              The system starts the service through this action, with no extras, for always-on
+              VPN, at boot and to restore a lockdown session; FloppaVpnService rebuilds the last
+              successful tunnel from the autostart bundle on its own. Both system toggles
+              ("Always-on VPN", "Block connections without VPN") are therefore available.
+            -->
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-            <!--
-              Always-on VPN is unsupported until the :vpn process can persist a config and rebuild
-              a tunnel from it on its own: the system starts the service with no configuration, and
-              the service can only refuse. With the toggle available, refusing meant "Always-on" did
-              nothing and "Block connections without VPN" (lockdown) left the device with no network
-              at all. This hides both toggles in the system VPN settings.
-            -->
-            <meta-data
-                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
-                android:value="false" />
         </service>
     </application>
 </manifest>
