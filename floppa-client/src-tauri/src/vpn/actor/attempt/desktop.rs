@@ -106,7 +106,9 @@ pub(super) async fn ladder(
     let addr = ctx
         .config
         .address_network()
-        .map_err(|detail| AttemptError::InvalidConfig { detail })?;
+        .map_err(|e| AttemptError::InvalidConfig {
+            detail: e.to_string(),
+        })?;
     stack.push(Step::Address {
         iface: iface.clone(),
         addr,

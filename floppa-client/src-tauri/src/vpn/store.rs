@@ -12,9 +12,7 @@
 //! protocol recorded as the preferred one.
 
 use super::protocol::{Preference, Protocol};
-use super::state::{
-    AwgConfig, ProtocolConfig, SavedVpnConfigs, VlessVpnConfig, WgConfig, config_str_is_amneziawg,
-};
+use super::state::{ProtocolConfig, SavedVpnConfigs};
 use crate::vpn::actor::types::{ConfigSummary, ConfigsView};
 use crate::vpn::config as vpn_config;
 use serde::{Deserialize, Serialize};
@@ -131,26 +129,15 @@ impl ConfigStore {
             return Err(ConfigError::Empty);
         }
 
-        let protocol = if trimmed.starts_with("vless://") {
-            let vless =
-                VlessVpnConfig::from_uri(trimmed).map_err(|e| ConfigError::Unparseable {
-                    detail: e.to_string(),
-                })?;
-            self.configs.vless = Some(vless);
-            Protocol::Vless
-        } else if config_str_is_amneziawg(raw) {
-            let awg = AwgConfig::from_config_str(raw).map_err(|e| ConfigError::Unparseable {
-                detail: e.to_string(),
-            })?;
-            self.configs.amneziawg = Some(awg);
-            Protocol::AmneziaWg
-        } else {
-            let wg = WgConfig::from_config_str(raw).map_err(|e| ConfigError::Unparseable {
-                detail: e.to_string(),
-            })?;
-            self.configs.wireguard = Some(wg);
-            Protocol::WireGuard
-        };
+        let config = ProtocolConfig::parse(trimmed).map_err(|e| ConfigError::Unparseable {
+            detail: e.to_string(),
+        })?;
+        let protocol = config.protocol();
+        match config {
+            ProtocolConfig::WireGuard(wg) => self.configs.wireguard = Some(wg),
+            ProtocolConfig::AmneziaWg(awg) => self.configs.amneziawg = Some(awg),
+            ProtocolConfig::Vless(vless) => self.configs.vless = Some(vless),
+        }
 
         self.save();
         info!(%protocol, "stored config");
@@ -248,6 +235,7 @@ fn summarize(protocol: Protocol, config: &ProtocolConfig) -> ConfigSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vpn::state::{AwgConfig, VlessVpnConfig, WgConfig};
 
     const WG_CONFIG: &str = "\
 [Interface]

@@ -7,6 +7,199 @@ use specta::Type;
 use std::net::IpAddr;
 use std::str::FromStr;
 
+/// Why a config could not be read.
+///
+/// Every value that is later parsed for real — addresses, DNS servers, allowed IPs, the MTU, the
+/// AmneziaWG numbers, the keys — is checked here, at import, so a typo is an error the user sees
+/// instead of an entry silently dropped by a `filter_map(Result::ok)` deep in the connect path.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigParseError {
+    #[error("line {line}: `{text}` is not `Key = Value`")]
+    NotKeyValue { line: usize, text: String },
+    #[error("line {line}: `{key}` appears before any section")]
+    OutsideSection { line: usize, key: String },
+    #[error("line {line}: unknown section [{name}]")]
+    UnknownSection { line: usize, name: String },
+    #[error("[{section}] is missing `{key}`")]
+    Missing {
+        section: &'static str,
+        key: &'static str,
+    },
+    #[error("line {line}: `{key} = {value}`: {detail}")]
+    InvalidValue {
+        line: usize,
+        key: String,
+        value: String,
+        detail: String,
+    },
+    #[error("invalid VLESS URI: {0}")]
+    Vless(String),
+}
+
+/// A WireGuard key that does not decode to 32 bytes.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum KeyError {
+    #[error("not base64: {0}")]
+    Base64(#[from] base64::DecodeError),
+    #[error("a key is 32 bytes, this one decodes to {0}")]
+    Length(usize),
+}
+
+fn decode_key(encoded: &str) -> Result<[u8; 32], KeyError> {
+    let bytes = BASE64.decode(encoded)?;
+    let len = bytes.len();
+    bytes.try_into().map_err(|_| KeyError::Length(len))
+}
+
+/// One `Key = Value` line, with the key lower-cased for matching and the line kept for errors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Entry {
+    line: usize,
+    key: String,
+    value: String,
+}
+
+/// The two sections a WireGuard-family `.conf` may contain. Unknown *keys* are tolerated — the
+/// format has many we do not model (`ListenPort`, `Table`, `PreUp`…) — unknown *sections* are not.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Sections {
+    interface: Vec<Entry>,
+    peer: Vec<Entry>,
+}
+
+impl Sections {
+    /// The last value for `key` in `entries`: a repeated key overrides, as `wg setconf` does.
+    fn last<'a>(entries: &'a [Entry], key: &str) -> Option<&'a Entry> {
+        entries.iter().rev().find(|e| e.key == key)
+    }
+
+    fn interface(&self, key: &str) -> Option<&Entry> {
+        Self::last(&self.interface, key)
+    }
+
+    fn peer(&self, key: &str) -> Option<&Entry> {
+        Self::last(&self.peer, key)
+    }
+}
+
+/// The one pass over the text. Strict about shape, lenient about vocabulary.
+fn parse_sections(config: &str) -> Result<Sections, ConfigParseError> {
+    #[derive(Clone, Copy)]
+    enum Section {
+        Interface,
+        Peer,
+    }
+
+    let mut sections = Sections::default();
+    let mut current = None;
+
+    for (index, raw) in config.lines().enumerate() {
+        let line = index + 1;
+        let text = raw.trim();
+        if text.is_empty() || text.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = text.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+            current = Some(match name.trim() {
+                n if n.eq_ignore_ascii_case("interface") => Section::Interface,
+                n if n.eq_ignore_ascii_case("peer") => Section::Peer,
+                n => {
+                    return Err(ConfigParseError::UnknownSection {
+                        line,
+                        name: n.to_string(),
+                    });
+                }
+            });
+            continue;
+        }
+        let Some((key, value)) = text.split_once('=') else {
+            return Err(ConfigParseError::NotKeyValue {
+                line,
+                text: text.to_string(),
+            });
+        };
+        let entry = Entry {
+            line,
+            key: key.trim().to_ascii_lowercase(),
+            value: value.trim().to_string(),
+        };
+        match current {
+            Some(Section::Interface) => sections.interface.push(entry),
+            Some(Section::Peer) => sections.peer.push(entry),
+            None => {
+                return Err(ConfigParseError::OutsideSection {
+                    line,
+                    key: entry.key,
+                });
+            }
+        }
+    }
+    Ok(sections)
+}
+
+/// Check that an entry's value parses as `T`, keeping the text: the stored form is the text.
+fn checked<T: FromStr>(entry: &Entry) -> Result<String, ConfigParseError>
+where
+    T::Err: std::fmt::Display,
+{
+    entry
+        .value
+        .parse::<T>()
+        .map_err(|e| invalid(entry, e))
+        .map(|_| entry.value.clone())
+}
+
+/// Parse an entry's value as `T`.
+fn parsed<T: FromStr>(entry: &Entry) -> Result<T, ConfigParseError>
+where
+    T::Err: std::fmt::Display,
+{
+    entry.value.parse::<T>().map_err(|e| invalid(entry, e))
+}
+
+/// Check every comma-separated item of an entry's value parses as `T`.
+fn checked_list<T: FromStr>(entry: &Entry) -> Result<String, ConfigParseError>
+where
+    T::Err: std::fmt::Display,
+{
+    for item in entry.value.split(',') {
+        item.trim().parse::<T>().map_err(|e| invalid(entry, e))?;
+    }
+    Ok(entry.value.clone())
+}
+
+fn checked_key(entry: &Entry) -> Result<String, ConfigParseError> {
+    decode_key(&entry.value).map_err(|e| invalid(entry, e))?;
+    Ok(entry.value.clone())
+}
+
+/// `host:port`, with the port a real port. The host is resolved later, by the attempt.
+fn checked_endpoint(entry: &Entry) -> Result<String, ConfigParseError> {
+    match entry.value.rsplit_once(':') {
+        Some((host, port)) if !host.is_empty() && port.parse::<u16>().is_ok() => {
+            Ok(entry.value.clone())
+        }
+        _ => Err(invalid(entry, "expected host:port")),
+    }
+}
+
+fn invalid(entry: &Entry, detail: impl std::fmt::Display) -> ConfigParseError {
+    ConfigParseError::InvalidValue {
+        line: entry.line,
+        key: entry.key.clone(),
+        value: entry.value.clone(),
+        detail: detail.to_string(),
+    }
+}
+
+fn required<'a>(
+    entry: Option<&'a Entry>,
+    section: &'static str,
+    key: &'static str,
+) -> Result<&'a Entry, ConfigParseError> {
+    entry.ok_or(ConfigParseError::Missing { section, key })
+}
+
 /// WireGuard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct WgConfig {
@@ -23,44 +216,26 @@ pub struct WgConfig {
 
 impl WgConfig {
     /// Get private key as 32-byte array for gotatun
-    pub fn private_key_bytes(&self) -> Result<[u8; 32], String> {
-        let bytes = BASE64
-            .decode(&self.private_key)
-            .map_err(|e| format!("Invalid private key base64: {}", e))?;
-        bytes
-            .try_into()
-            .map_err(|_| "Private key must be 32 bytes".to_string())
+    pub fn private_key_bytes(&self) -> Result<[u8; 32], KeyError> {
+        decode_key(&self.private_key)
     }
 
     /// Get peer public key as 32-byte array for gotatun
-    pub fn peer_public_key_bytes(&self) -> Result<[u8; 32], String> {
-        let bytes = BASE64
-            .decode(&self.peer_public_key)
-            .map_err(|e| format!("Invalid public key base64: {}", e))?;
-        bytes
-            .try_into()
-            .map_err(|_| "Public key must be 32 bytes".to_string())
+    pub fn peer_public_key_bytes(&self) -> Result<[u8; 32], KeyError> {
+        decode_key(&self.peer_public_key)
     }
 
     /// Get peer preshared key as 32-byte array for gotatun (if set)
-    pub fn peer_preshared_key_bytes(&self) -> Result<Option<[u8; 32]>, String> {
-        match &self.peer_preshared_key {
-            Some(psk) => {
-                let bytes = BASE64
-                    .decode(psk)
-                    .map_err(|e| format!("Invalid preshared key base64: {}", e))?;
-                let arr: [u8; 32] = bytes
-                    .try_into()
-                    .map_err(|_| "Preshared key must be 32 bytes".to_string())?;
-                Ok(Some(arr))
-            }
-            None => Ok(None),
-        }
+    pub fn peer_preshared_key_bytes(&self) -> Result<Option<[u8; 32]>, KeyError> {
+        self.peer_preshared_key
+            .as_deref()
+            .map(decode_key)
+            .transpose()
     }
 
     /// Get address as IpNetwork
-    pub fn address_network(&self) -> Result<IpNetwork, String> {
-        IpNetwork::from_str(&self.address).map_err(|e| format!("Invalid address: {}", e))
+    pub fn address_network(&self) -> Result<IpNetwork, ipnetwork::IpNetworkError> {
+        IpNetwork::from_str(&self.address)
     }
 
     /// Get DNS servers as `Vec<IpAddr>`
@@ -90,75 +265,47 @@ impl WgConfig {
 }
 
 impl WgConfig {
-    /// Parse from WireGuard config file format
-    pub fn from_config_str(config: &str) -> Result<Self, String> {
-        let mut private_key = None;
-        let mut address = None;
-        let mut dns = None;
-        let mut mtu = None;
-        let mut peer_public_key = None;
-        let mut peer_preshared_key = None;
-        let mut peer_endpoint = None;
-        let mut allowed_ips = None;
-        let mut persistent_keepalive = None;
+    /// Parse from WireGuard config file format.
+    pub fn from_config_str(config: &str) -> Result<Self, ConfigParseError> {
+        Self::from_sections(&parse_sections(config)?)
+    }
 
-        let mut in_interface = false;
-        let mut in_peer = false;
-
-        for line in config.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-
-            if line.eq_ignore_ascii_case("[Interface]") {
-                in_interface = true;
-                in_peer = false;
-                continue;
-            }
-            if line.eq_ignore_ascii_case("[Peer]") {
-                in_interface = false;
-                in_peer = true;
-                continue;
-            }
-
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim().to_lowercase();
-                let value = value.trim().to_string();
-
-                if in_interface {
-                    match key.as_str() {
-                        "privatekey" => private_key = Some(value),
-                        "address" => address = Some(value),
-                        "dns" => dns = Some(value),
-                        "mtu" => mtu = value.parse().ok(),
-                        _ => {}
-                    }
-                } else if in_peer {
-                    match key.as_str() {
-                        "publickey" => peer_public_key = Some(value),
-                        "presharedkey" => peer_preshared_key = Some(value),
-                        "endpoint" => peer_endpoint = Some(value),
-                        "allowedips" => allowed_ips = Some(value),
-                        "persistentkeepalive" => {
-                            persistent_keepalive = value.parse().ok();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
+    fn from_sections(sections: &Sections) -> Result<Self, ConfigParseError> {
         Ok(WgConfig {
-            private_key: private_key.ok_or("Missing PrivateKey")?,
-            address: address.ok_or("Missing Address")?,
-            dns,
-            mtu,
-            peer_public_key: peer_public_key.ok_or("Missing Peer PublicKey")?,
-            peer_preshared_key,
-            peer_endpoint: peer_endpoint.ok_or("Missing Peer Endpoint")?,
-            allowed_ips: allowed_ips.unwrap_or_else(|| "0.0.0.0/0, ::/0".to_string()),
-            persistent_keepalive,
+            private_key: checked_key(required(
+                sections.interface("privatekey"),
+                "Interface",
+                "PrivateKey",
+            )?)?,
+            address: checked::<IpNetwork>(required(
+                sections.interface("address"),
+                "Interface",
+                "Address",
+            )?)?,
+            dns: sections
+                .interface("dns")
+                .map(checked_list::<IpAddr>)
+                .transpose()?,
+            mtu: sections.interface("mtu").map(parsed::<u16>).transpose()?,
+            peer_public_key: checked_key(required(
+                sections.peer("publickey"),
+                "Peer",
+                "PublicKey",
+            )?)?,
+            peer_preshared_key: sections.peer("presharedkey").map(checked_key).transpose()?,
+            peer_endpoint: checked_endpoint(required(
+                sections.peer("endpoint"),
+                "Peer",
+                "Endpoint",
+            )?)?,
+            allowed_ips: match sections.peer("allowedips") {
+                Some(entry) => checked_list::<IpNetwork>(entry)?,
+                None => "0.0.0.0/0, ::/0".to_string(),
+            },
+            persistent_keepalive: sections
+                .peer("persistentkeepalive")
+                .map(parsed::<u16>)
+                .transpose()?,
         })
     }
 }
@@ -255,8 +402,8 @@ pub struct VlessVpnConfig {
 
 impl VlessVpnConfig {
     /// Parse a VLESS URI and fill VPN-specific fields with defaults.
-    pub fn from_uri(uri: &str) -> Result<Self, String> {
-        let parsed = VlessConfig::from_uri(uri)?;
+    pub fn from_uri(uri: &str) -> Result<Self, ConfigParseError> {
+        let parsed = VlessConfig::from_uri(uri).map_err(ConfigParseError::Vless)?;
         Ok(Self {
             uri: uri.to_string(),
             uuid: parsed.uuid,
@@ -292,8 +439,8 @@ impl VlessVpnConfig {
     }
 
     /// Get address as IpNetwork
-    pub fn address_network(&self) -> Result<IpNetwork, String> {
-        IpNetwork::from_str(&self.address).map_err(|e| format!("Invalid VLESS address: {}", e))
+    pub fn address_network(&self) -> Result<IpNetwork, ipnetwork::IpNetworkError> {
+        IpNetwork::from_str(&self.address)
     }
 
     /// Get DNS servers as `Vec<IpAddr>`
@@ -378,87 +525,70 @@ pub struct AwgConfig {
     pub obfuscation: AwgObfuscation,
 }
 
-/// AmneziaWG `[Interface]` obfuscation keys, used to tell an AmneziaWG `.conf` from a plain
-/// WireGuard one.
+/// AmneziaWG `[Interface]` obfuscation keys, whose presence tells an AmneziaWG `.conf` from a
+/// plain WireGuard one.
 const AWG_OBF_KEYS: &[&str] = &[
     "jc", "jmin", "jmax", "s1", "s2", "s3", "s4", "h1", "h2", "h3", "h4", "i1", "i2", "i3", "i4",
     "i5",
 ];
 
-/// True if a config string is an AmneziaWG `.conf` (i.e. its `[Interface]` carries obfuscation
-/// params). Used to route content-sniffed configs.
-pub fn config_str_is_amneziawg(config: &str) -> bool {
-    let mut in_interface = false;
-    for line in config.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.eq_ignore_ascii_case("[Interface]") {
-            in_interface = true;
-            continue;
-        }
-        if line.starts_with('[') {
-            in_interface = false;
-            continue;
-        }
-        if in_interface
-            && let Some((k, _)) = line.split_once('=')
-            && AWG_OBF_KEYS.contains(&k.trim().to_lowercase().as_str())
-        {
-            return true;
-        }
+impl Sections {
+    fn is_amneziawg(&self) -> bool {
+        self.interface
+            .iter()
+            .any(|e| AWG_OBF_KEYS.contains(&e.key.as_str()))
     }
-    false
 }
 
 impl AwgConfig {
     /// Parse an AmneziaWG `.conf` (WireGuard config + obfuscation params).
-    pub fn from_config_str(config: &str) -> Result<Self, String> {
-        let wg = WgConfig::from_config_str(config)?;
+    pub fn from_config_str(config: &str) -> Result<Self, ConfigParseError> {
+        Self::from_sections(&parse_sections(config)?)
+    }
+
+    fn from_sections(sections: &Sections) -> Result<Self, ConfigParseError> {
+        let wg = WgConfig::from_sections(sections)?;
         let mut obf = AwgObfuscation::default();
 
-        let mut in_interface = false;
-        for line in config.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
+        let number = |key: &str, slot: &mut u32| -> Result<(), ConfigParseError> {
+            if let Some(entry) = sections.interface(key) {
+                *slot = parsed::<u32>(entry)?;
             }
-            if line.eq_ignore_ascii_case("[Interface]") {
-                in_interface = true;
-                continue;
-            }
-            if line.starts_with('[') {
-                in_interface = false;
-                continue;
-            }
-            if !in_interface {
-                continue;
-            }
-            if let Some((k, v)) = line.split_once('=') {
-                let k = k.trim().to_lowercase();
-                let v = v.trim().to_string();
-                match k.as_str() {
-                    "jc" => obf.jc = v.parse().unwrap_or(0),
-                    "jmin" => obf.jmin = v.parse().unwrap_or(0),
-                    "jmax" => obf.jmax = v.parse().unwrap_or(0),
-                    "s1" => obf.s1 = v.parse().unwrap_or(0),
-                    "s2" => obf.s2 = v.parse().unwrap_or(0),
-                    "s3" => obf.s3 = v.parse().unwrap_or(0),
-                    "s4" => obf.s4 = v.parse().unwrap_or(0),
-                    "h1" => obf.h1 = v,
-                    "h2" => obf.h2 = v,
-                    "h3" => obf.h3 = v,
-                    "h4" => obf.h4 = v,
-                    "i1" => obf.i1 = (!v.is_empty()).then_some(v),
-                    "i2" => obf.i2 = (!v.is_empty()).then_some(v),
-                    "i3" => obf.i3 = (!v.is_empty()).then_some(v),
-                    "i4" => obf.i4 = (!v.is_empty()).then_some(v),
-                    "i5" => obf.i5 = (!v.is_empty()).then_some(v),
-                    _ => {}
+            Ok(())
+        };
+        number("jc", &mut obf.jc)?;
+        number("jmin", &mut obf.jmin)?;
+        number("jmax", &mut obf.jmax)?;
+        number("s1", &mut obf.s1)?;
+        number("s2", &mut obf.s2)?;
+        number("s3", &mut obf.s3)?;
+        number("s4", &mut obf.s4)?;
+
+        let header = |key: &str, slot: &mut String| -> Result<(), ConfigParseError> {
+            if let Some(entry) = sections.interface(key) {
+                if entry.value.is_empty() {
+                    return Err(invalid(entry, "a header spec cannot be empty"));
                 }
+                *slot = entry.value.clone();
             }
-        }
+            Ok(())
+        };
+        header("h1", &mut obf.h1)?;
+        header("h2", &mut obf.h2)?;
+        header("h3", &mut obf.h3)?;
+        header("h4", &mut obf.h4)?;
+
+        let signature = |key: &str| -> Option<String> {
+            sections
+                .interface(key)
+                .map(|e| e.value.clone())
+                .filter(|v| !v.is_empty())
+        };
+        obf.i1 = signature("i1");
+        obf.i2 = signature("i2");
+        obf.i3 = signature("i3");
+        obf.i4 = signature("i4");
+        obf.i5 = signature("i5");
 
         Ok(Self {
             wg,
@@ -487,6 +617,21 @@ pub enum ProtocolConfig {
 }
 
 impl ProtocolConfig {
+    /// Read a config in whichever of the three forms it comes: a `vless://` URI, an AmneziaWG
+    /// `.conf` (an `[Interface]` carrying obfuscation keys), or a plain WireGuard `.conf`.
+    pub fn parse(raw: &str) -> Result<Self, ConfigParseError> {
+        let trimmed = raw.trim();
+        if trimmed.starts_with("vless://") {
+            return VlessVpnConfig::from_uri(trimmed).map(Self::Vless);
+        }
+        let sections = parse_sections(raw)?;
+        if sections.is_amneziawg() {
+            AwgConfig::from_sections(&sections).map(Self::AmneziaWg)
+        } else {
+            WgConfig::from_sections(&sections).map(Self::WireGuard)
+        }
+    }
+
     /// Server endpoint as "host:port" string.
     pub fn endpoint_str(&self) -> &str {
         match self {
@@ -506,7 +651,7 @@ impl ProtocolConfig {
     }
 
     /// Local tunnel address as IpNetwork.
-    pub fn address_network(&self) -> Result<IpNetwork, String> {
+    pub fn address_network(&self) -> Result<IpNetwork, ipnetwork::IpNetworkError> {
         match self {
             Self::WireGuard(wg) => wg.address_network(),
             Self::AmneziaWg(awg) => awg.wg.address_network(),
@@ -594,5 +739,156 @@ impl SavedVpnConfigs {
     /// Whether any config is stored.
     pub fn has_any(&self) -> bool {
         self.wireguard.is_some() || self.amneziawg.is_some() || self.vless.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: &str = "aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=";
+
+    fn wg_conf(interface_extra: &str, peer_extra: &str) -> String {
+        format!(
+            "[Interface]\nPrivateKey = {KEY}\nAddress = 10.0.0.2/32\n{interface_extra}\n\
+             [Peer]\nPublicKey = {KEY}\nEndpoint = vpn.example.com:51820\n{peer_extra}\n"
+        )
+    }
+
+    fn err_of(raw: &str) -> ConfigParseError {
+        ProtocolConfig::parse(raw).expect_err("must be rejected")
+    }
+
+    #[test]
+    fn a_plain_wireguard_conf_parses_with_unknown_keys_tolerated() {
+        let raw = wg_conf(
+            "DNS = 1.1.1.1, 8.8.8.8\nMTU = 1380\nListenPort = 51820\nTable = off",
+            "AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25",
+        );
+        match ProtocolConfig::parse(&raw).unwrap() {
+            ProtocolConfig::WireGuard(wg) => {
+                assert_eq!(wg.mtu, Some(1380));
+                assert_eq!(wg.persistent_keepalive, Some(25));
+                assert_eq!(wg.dns_servers().len(), 2);
+                assert_eq!(wg.allowed_ips_networks().len(), 2);
+            }
+            other => panic!("expected WireGuard, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn obfuscation_keys_make_it_an_amneziawg_conf() {
+        let raw = wg_conf(
+            "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 18\nH1 = 5-10\nI1 = <b 0xf6>",
+            "",
+        );
+        match ProtocolConfig::parse(&raw).unwrap() {
+            ProtocolConfig::AmneziaWg(awg) => {
+                assert_eq!(awg.obfuscation.jc, 4);
+                assert_eq!(awg.obfuscation.jmin, 40);
+                assert_eq!(awg.obfuscation.s2, 18);
+                assert_eq!(awg.obfuscation.h1, "5-10");
+                assert_eq!(
+                    awg.obfuscation.h2, "2",
+                    "unset headers keep the WireGuard default"
+                );
+                assert_eq!(awg.obfuscation.i1.as_deref(), Some("<b 0xf6>"));
+            }
+            other => panic!("expected AmneziaWG, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_typo_in_a_value_is_an_error_not_a_silently_dropped_entry() {
+        // Each of these used to import fine and then quietly misbehave: the bad AllowedIPs
+        // entry vanished from the routes, the bad DNS server from the resolver list, the bad Jc
+        // became 0 and the bad MTU became the default.
+        for (interface, peer, key) in [
+            ("", "AllowedIPs = 0.0.0.0/0, ::/O", "allowedips"),
+            ("DNS = 1.1.1.1, one.one", "", "dns"),
+            ("Jc = four", "", "jc"),
+            ("MTU = big", "", "mtu"),
+            (
+                "Address = 10.0.0.2/32",
+                "PersistentKeepalive = soon",
+                "persistentkeepalive",
+            ),
+        ] {
+            match err_of(&wg_conf(interface, peer)) {
+                ConfigParseError::InvalidValue { key: k, .. } => assert_eq!(k, key),
+                other => panic!("expected `{key}` rejected, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_that_is_not_32_bytes_is_rejected_at_import() {
+        let raw = format!(
+            "[Interface]\nPrivateKey = aGVsbG8=\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = {KEY}\nEndpoint = h:1\n"
+        );
+        assert!(matches!(
+            err_of(&raw),
+            ConfigParseError::InvalidValue { key, .. } if key == "privatekey"
+        ));
+    }
+
+    #[test]
+    fn shape_errors_name_the_line() {
+        assert_eq!(
+            err_of("PrivateKey = x\n"),
+            ConfigParseError::OutsideSection {
+                line: 1,
+                key: "privatekey".into()
+            }
+        );
+        assert_eq!(
+            err_of("[Interface]\n\n# comment\nnonsense\n"),
+            ConfigParseError::NotKeyValue {
+                line: 4,
+                text: "nonsense".into()
+            }
+        );
+        assert_eq!(
+            err_of("[Interface]\n[Extra]\n"),
+            ConfigParseError::UnknownSection {
+                line: 2,
+                name: "Extra".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_required_key_names_its_section() {
+        let raw = format!(
+            "[Interface]\nPrivateKey = {KEY}\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = {KEY}\n"
+        );
+        assert_eq!(
+            err_of(&raw),
+            ConfigParseError::Missing {
+                section: "Peer",
+                key: "Endpoint"
+            }
+        );
+    }
+
+    #[test]
+    fn an_endpoint_needs_a_port() {
+        assert!(matches!(
+            err_of(&wg_conf("", "Endpoint = vpn.example.com")),
+            ConfigParseError::InvalidValue { key, .. } if key == "endpoint"
+        ));
+    }
+
+    #[test]
+    fn a_vless_uri_is_a_vless_config() {
+        let raw = "vless://0f7f6d3c-0a1c-4f1e-9d3a-1b2c3d4e5f60@vpn.example.com:443?security=reality&sni=example.com&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123abcd";
+        assert!(matches!(
+            ProtocolConfig::parse(raw),
+            Ok(ProtocolConfig::Vless(_))
+        ));
+        assert!(matches!(
+            err_of("vless://nobody"),
+            ConfigParseError::Vless(_)
+        ));
     }
 }
