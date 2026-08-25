@@ -106,13 +106,26 @@ class FloppaVpnService : VpnService() {
 
         // Only our own plugin starts this service with a configuration. The system also starts it
         // — with `Intent(action = android.net.VpnService)` and no extras — for always-on VPN,
-        // which this service does not support: there is no stored configuration to rebuild a
-        // tunnel from, and honouring the intent used to establish an empty TUN with an invented
-        // address, go foreground saying "Connecting…" and bind an RPC with epoch 0 that nobody
-        // would ever send a tunnel request to. In lockdown mode that left the device without a
-        // network. Refuse before startForeground so no notification is ever shown for it.
+        // which this service does not support (SUPPORTS_ALWAYS_ON=false in the manifest): there
+        // is no stored configuration to rebuild a tunnel from, and honouring the intent used to
+        // establish an empty TUN with an invented address, go foreground saying "Connecting…"
+        // and bind an RPC with epoch 0 that nobody would ever send a tunnel request to. In
+        // lockdown mode that left the device without a network. Refuse before startForeground so
+        // no notification is ever shown for it.
+        //
+        // The service is a singleton per process, so such an intent can also land on an instance
+        // that is carrying a live tunnel. That tunnel is left exactly as it is: stopSelf() here
+        // would run onDestroy, whose nativeStop(epoch) matches this generation and tears it
+        // down. Only an instance with nothing to keep alive stops.
         if (intent.action == SERVICE_INTERFACE || !intent.hasExtra(EXTRA_EPOCH)) {
-            Log.w(TAG, "Start intent is not from the plugin (action=${intent.action}), ignoring")
+            if (tunInterface != null) {
+                Log.w(
+                    TAG,
+                    "Start intent is not from the plugin (action=${intent.action}); a tunnel is up, ignoring",
+                )
+                return START_NOT_STICKY
+            }
+            Log.w(TAG, "Start intent is not from the plugin (action=${intent.action}), stopping")
             stopSelf()
             return START_NOT_STICKY
         }
