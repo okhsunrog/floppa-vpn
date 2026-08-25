@@ -159,6 +159,13 @@ pub struct TunnelState {
     pub stats: TrafficStats,
     /// Sticky until the next accepted intent.
     pub last_outcome: Option<CycleOutcome>,
+    /// Which cycle [`Self::last_outcome`] came from, counting up from zero.
+    ///
+    /// The only thing that identifies an outcome. Neither the intent's epoch nor the outcome's own
+    /// tag can do it: a reconnect runs under the *same* intent, so a tunnel that dropped and came
+    /// back reports `connected` twice under one epoch — and a consumer deduplicating by that pair
+    /// swallowed the second, which is precisely the one that says a protocol was stepped over.
+    pub outcome_serial: u64,
     pub configs: ConfigsView,
     /// False while the world is dark. This never by itself means the tunnel is down.
     pub backend_reachable: bool,
@@ -186,6 +193,7 @@ impl TunnelState {
             last_packet_received,
             stats,
             last_outcome,
+            outcome_serial,
             configs,
             backend_reachable,
         } = self;
@@ -206,6 +214,7 @@ impl TunnelState {
             && *last_packet_received == other.last_packet_received
             && *stats == other.stats
             && *last_outcome == other.last_outcome
+            && *outcome_serial == other.outcome_serial
             && *configs == other.configs
             && *backend_reachable == other.backend_reachable
     }
@@ -232,6 +241,7 @@ impl TunnelState {
             last_packet_received: None,
             stats: TrafficStats::default(),
             last_outcome: None,
+            outcome_serial: 0,
             configs: ConfigsView::default(),
             backend_reachable: false,
         }

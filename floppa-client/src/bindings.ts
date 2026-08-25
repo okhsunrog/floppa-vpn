@@ -369,6 +369,15 @@ export type TunnelState = {
 	stats: TrafficStats,
 	/**  Sticky until the next accepted intent. */
 	last_outcome: CycleOutcome | null,
+	/**
+	 *  Which cycle [`Self::last_outcome`] came from, counting up from zero.
+	 * 
+	 *  The only thing that identifies an outcome. Neither the intent's epoch nor the outcome's own
+	 *  tag can do it: a reconnect runs under the *same* intent, so a tunnel that dropped and came
+	 *  back reports `connected` twice under one epoch — and a consumer deduplicating by that pair
+	 *  swallowed the second, which is precisely the one that says a protocol was stepped over.
+	 */
+	outcome_serial: number,
 	configs: ConfigsView,
 	/**  False while the world is dark. This never by itself means the tunnel is down. */
 	backend_reachable: boolean,

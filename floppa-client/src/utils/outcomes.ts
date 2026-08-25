@@ -1,32 +1,32 @@
 import type { CycleOutcome } from '../bindings'
 
-/** The last outcome acted on: which cycle it belonged to, how it ended, and when it was seen. */
+/** The last outcome acted on: which cycle it was, and — for a human reading a log — how it ended. */
 export interface HandledOutcome {
-  epoch: number
+  /** `TunnelState.outcome_serial`: the one thing that identifies a cycle's outcome. */
+  serial: number
   outcome: CycleOutcome['outcome']
-  /** The snapshot `seq` it was handled at. Diagnostic, and a guard against a rewound snapshot. */
-  seq: number
 }
 
 /**
- * Whether an outcome published for `epoch` is one nobody has acted on yet.
+ * Whether the published outcome is one nobody has acted on yet.
  *
- * The actor republishes the whole state on every tick, and `last_outcome` stays put until the
- * next accepted intent, so the same outcome arrives many times and has to be deduplicated — but
- * by `{ epoch, outcome }`, not by epoch alone. A cycle that connects and later loses the tunnel
- * for good reports `connected` and then `lost_gave_up` under one epoch (the intent never
- * changed), and keying on the epoch swallowed the second.
+ * The actor republishes the whole state on every tick and `last_outcome` stays put until the next
+ * accepted intent, so the same outcome arrives many times and has to be deduplicated. What it is
+ * deduplicated *by* has been wrong twice. By epoch alone: a cycle that connects and later loses
+ * the tunnel for good reports `connected` and then `lost_gave_up` under one epoch, and the second
+ * was swallowed. By `{ epoch, outcome }`: a *reconnect* runs under the same intent, so a tunnel
+ * that dropped and came back reports `connected` twice under one epoch — and the second one is
+ * precisely the one carrying "a protocol was stepped over and its peer needs repairing". On the
+ * device that meant a dead AmneziaWG peer was never recreated.
+ *
+ * So the actor stamps every outcome with a serial, and that is the whole key.
  *
  * This lives beside the store rather than in a component: the record used to be a local of
  * `VpnCard`, so returning to the dashboard re-handled a `lost_gave_up` from minutes ago — a peer
  * lookup on every mount, and a connect nobody asked for if the peer really was gone.
  */
-export function isUnhandledOutcome(
-  handled: HandledOutcome | null,
-  epoch: number,
-  outcome: CycleOutcome,
-): boolean {
-  return handled === null || handled.epoch !== epoch || handled.outcome !== outcome.outcome
+export function isUnhandledOutcome(handled: HandledOutcome | null, serial: number): boolean {
+  return handled === null || handled.serial !== serial
 }
 
 /**

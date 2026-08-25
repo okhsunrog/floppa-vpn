@@ -24,6 +24,7 @@ pub fn render(
     traffic: Traffic,
     configs: &ConfigsView,
     last_outcome: Option<CycleOutcome>,
+    outcome_serial: u64,
     now: Instant,
     observed_once: bool,
 ) -> TunnelState {
@@ -98,6 +99,7 @@ pub fn render(
         last_packet_received,
         stats,
         last_outcome,
+        outcome_serial,
         configs: configs.clone(),
         backend_reachable: !world.is_dark(),
     }
@@ -158,6 +160,7 @@ mod tests {
             Traffic::default(),
             &ConfigsView::default(),
             None,
+            0,
             now,
             observed_once,
         )
@@ -245,6 +248,7 @@ mod tests {
             Traffic::default(),
             &ConfigsView::default(),
             None,
+            0,
             now,
             true,
         );
@@ -344,6 +348,7 @@ mod tests {
             Traffic::default(),
             &ConfigsView::default(),
             None,
+            0,
             now,
             true,
         );

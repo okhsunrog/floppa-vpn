@@ -118,6 +118,14 @@ pub struct TunnelActor {
     generations: crate::vpn::autostart::ServiceGenerations,
     seq: u64,
     last_outcome: Option<CycleOutcome>,
+    /// Which *cycle* the sticky outcome came from.
+    ///
+    /// `last_outcome` alone cannot be deduplicated by a consumer, and the pair it used to be
+    /// deduplicated by — the intent's epoch and the outcome's tag — cannot either: a reconnect
+    /// runs under the *same* intent, so a tunnel that dropped and came back reports `connected`
+    /// twice under one epoch. That is not a corner case any more, it is what a background
+    /// recovery looks like, and the second one was being swallowed as a duplicate of the first.
+    outcome_serial: u64,
     recent_outcomes: VecDeque<(IntentEpoch, CycleOutcome)>,
     cycle_waiters: Vec<(IntentEpoch, oneshot::Sender<CycleOutcome>)>,
     quiescent_waiters: Vec<oneshot::Sender<()>>,
@@ -214,6 +222,7 @@ impl TunnelActor {
             generations: crate::vpn::autostart::ServiceGenerations::new(),
             seq: 0,
             last_outcome: None,
+            outcome_serial: 0,
             recent_outcomes: VecDeque::new(),
             cycle_waiters: Vec::new(),
             quiescent_waiters: Vec::new(),
@@ -957,6 +966,7 @@ impl TunnelActor {
         // that newer intent is about to report.
         if epoch == self.intent.epoch() {
             self.last_outcome = Some(outcome.clone());
+            self.outcome_serial += 1;
         }
 
         self.recent_outcomes.push_back((epoch, outcome.clone()));
@@ -1031,6 +1041,7 @@ impl TunnelActor {
             self.traffic,
             &self.configs_view,
             self.last_outcome.clone(),
+            self.outcome_serial,
             now,
             self.observed_once,
         )

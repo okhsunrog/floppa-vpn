@@ -106,7 +106,7 @@ watch(
   () => vpn.unhandledOutcome,
   async (outcome) => {
     if (!outcome) return
-    vpn.markOutcomeHandled(vpn.state.epoch, outcome)
+    vpn.markOutcomeHandled(outcome)
     if (needsAttention(outcome)) {
       console.info(`[VpnCard] a cycle nobody awaited ended: ${outcome.outcome}`)
     }

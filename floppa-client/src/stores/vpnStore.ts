@@ -127,8 +127,8 @@ export const useVpnStore = defineStore(
      */
     const handled = ref<HandledOutcome | null>(null)
 
-    function markOutcomeHandled(epoch: number, outcome: CycleOutcome) {
-      handled.value = { epoch, outcome: outcome.outcome, seq: state.value.seq }
+    function markOutcomeHandled(outcome: CycleOutcome) {
+      handled.value = { serial: state.value.outcome_serial, outcome: outcome.outcome }
     }
 
     /**
@@ -141,7 +141,7 @@ export const useVpnStore = defineStore(
     const unhandledOutcome = computed<CycleOutcome | null>(() => {
       const outcome = state.value.last_outcome
       if (!outcome) return null
-      return isUnhandledOutcome(handled.value, state.value.epoch, outcome) ? outcome : null
+      return isUnhandledOutcome(handled.value, state.value.outcome_serial) ? outcome : null
     })
 
     async function initPlatform() {
@@ -303,7 +303,7 @@ export const useVpnStore = defineStore(
         }
         // Whoever called this is about to deal with it, so the unsolicited-outcome watcher must
         // not deal with it as well.
-        markOutcomeHandled(accepted.data.epoch, outcome.data)
+        markOutcomeHandled(outcome.data)
         return outcome.data
       } catch (e) {
         error.value = { kind: 'unexpected', detail: describeUnknown(e) }
@@ -451,6 +451,7 @@ function emptyState(): TunnelState {
     last_packet_received: null,
     stats: { tx_bytes: 0, rx_bytes: 0, tx_bytes_per_sec: 0, rx_bytes_per_sec: 0 },
     last_outcome: null,
+    outcome_serial: 0,
     configs: { available: [], preferred: null, summaries: [] },
     backend_reachable: false,
   }
