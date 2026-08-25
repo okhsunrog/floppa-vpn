@@ -54,7 +54,11 @@ async fn main() -> anyhow::Result<()> {
         .context("Failed to connect to database")?;
     info!("Connected to database");
 
-    // Initialize UUID registry
+    // Initialize UUID registry. Subscribe first so nothing committed between the
+    // initial sync and the subscription is missed.
+    let listener = registry::connect_listener(&pool)
+        .await
+        .context("Failed to subscribe to DB notifications")?;
     let authenticator = Arc::new(MultiUserAuthenticator::new());
     registry::full_sync(&pool, &authenticator)
         .await
@@ -137,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
     let listen_pool = pool.clone();
     let listen_auth = authenticator.clone();
     let listener_handle = tokio::spawn(async move {
-        registry::listen_for_changes(listen_pool, listen_auth).await;
+        registry::listen_for_changes(listener, listen_pool, listen_auth).await;
     });
 
     // 2. Periodic full sync as safety net

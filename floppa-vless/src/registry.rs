@@ -72,56 +72,75 @@ pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> any
     Ok(())
 }
 
-/// Background task: listen for DB changes via LISTEN/NOTIFY.
+/// Notification channels the registry subscribes to.
+const LISTEN_CHANNELS: [&str; 2] = ["vless_user_changed", "subscription_changed"];
+
+/// Open a dedicated LISTEN connection subscribed to all registry channels.
 ///
-/// Reacts to `peer_changed` and `subscription_changed` channels
-/// by re-syncing the registry. Reconnects with exponential backoff
-/// on connection failure.
-pub async fn listen_for_changes(pool: PgPool, auth: Arc<MultiUserAuthenticator>) {
-    let mut backoff_secs = 1u64;
-    const MAX_BACKOFF_SECS: u64 = 30;
-
-    loop {
-        match run_listener(&pool, &auth).await {
-            Ok(()) => {
-                // Shouldn't return Ok normally
-                warn!("LISTEN loop exited unexpectedly, reconnecting...");
-                backoff_secs = 1;
-            }
-            Err(e) => {
-                error!("LISTEN error: {e:#}, reconnecting in {backoff_secs}s...");
-                tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
-                backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF_SECS);
-            }
-        }
-
-        // After reconnection, do a full sync to catch anything missed
-        if let Err(e) = full_sync(&pool, &auth).await {
-            error!("Post-reconnect sync failed: {e:#}");
-        }
-    }
+/// Call this BEFORE the initial `full_sync`: anything committed between the sync
+/// and the subscription would otherwise be missed until the periodic sync.
+pub async fn connect_listener(pool: &PgPool) -> anyhow::Result<PgListener> {
+    let mut listener = PgListener::connect_with(pool).await?;
+    listener.listen_all(LISTEN_CHANNELS).await?;
+    info!(channels = ?LISTEN_CHANNELS, "Listening for DB notifications");
+    Ok(listener)
 }
 
-async fn run_listener(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> anyhow::Result<()> {
-    let mut listener = PgListener::connect_with(pool).await?;
-    listener.listen("vless_user_changed").await?;
-    listener.listen("subscription_changed").await?;
-    info!("Listening for DB notifications (vless_user_changed, subscription_changed)");
+/// Background task: react to DB changes via LISTEN/NOTIFY.
+///
+/// `vless_user_changed` (a user's VLESS UUID was set/regenerated) and
+/// `subscription_changed` (plan/speed limit changed, or the subscription expired)
+/// both trigger a full registry re-sync.
+///
+/// Uses `try_recv` rather than `recv`: sqlx reconnects transparently on a dropped
+/// connection but notifications sent meanwhile are gone, and `try_recv` reports
+/// that as `Ok(None)` — our cue for a catch-up sync. On a hard error a new
+/// listener is opened with backoff, and the catch-up sync runs only once LISTEN
+/// is back in place so nothing slips between the two.
+pub async fn listen_for_changes(
+    mut listener: PgListener,
+    pool: PgPool,
+    auth: Arc<MultiUserAuthenticator>,
+) {
+    const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
 
     loop {
-        let notification = listener.recv().await?;
-        match notification.channel() {
-            "vless_user_changed" | "subscription_changed" => {
-                // Both channels trigger a full registry re-sync.
-                // vless_user_changed: a user's VLESS UUID was set/regenerated.
-                // subscription_changed: a user's plan (speed limit) may have changed,
-                //   or subscription expired → user should be removed from registry.
-                if let Err(e) = full_sync(pool, auth).await {
-                    error!("Sync after {} failed: {e:#}", notification.channel());
+        match listener.try_recv().await {
+            Ok(Some(notification)) => match notification.channel() {
+                "vless_user_changed" | "subscription_changed" => {
+                    if let Err(e) = full_sync(&pool, &auth).await {
+                        error!("Sync after {} failed: {e:#}", notification.channel());
+                    }
+                }
+                other => warn!("Unexpected notification channel: {other}"),
+            },
+            Ok(None) => {
+                warn!("LISTEN connection was lost and re-established; resyncing");
+                if let Err(e) = full_sync(&pool, &auth).await {
+                    error!("Post-reconnect sync failed: {e:#}");
                 }
             }
-            other => {
-                warn!("Unexpected notification channel: {other}");
+            Err(e) => {
+                error!("LISTEN error: {e:#}, reconnecting...");
+                let mut backoff = std::time::Duration::from_secs(1);
+                loop {
+                    tokio::time::sleep(backoff).await;
+                    match connect_listener(&pool).await {
+                        Ok(new_listener) => {
+                            listener = new_listener;
+                            info!("LISTEN reconnected");
+                            if let Err(e) = full_sync(&pool, &auth).await {
+                                error!("Post-reconnect sync failed: {e:#}");
+                            }
+                            break;
+                        }
+                        Err(e) => warn!(
+                            "LISTEN reconnect failed: {e:#}, retrying in {}s",
+                            backoff.as_secs()
+                        ),
+                    }
+                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                }
             }
         }
     }
