@@ -419,16 +419,17 @@ mod tests {
             endpoint,
             gateway: None,
         });
+        let gw: Gateway = "192.168.1.1".parse().unwrap();
         stack.confirm_top(Step::EndpointRoute {
             endpoint,
-            gateway: Some(Gateway("192.168.1.1".into())),
+            gateway: Some(gw),
         });
 
         let top = stack.top().unwrap();
         assert_eq!(top.evidence, Evidence::Done);
         match &top.step {
             Step::EndpointRoute { gateway, .. } => {
-                assert_eq!(gateway.as_ref().unwrap().0, "192.168.1.1");
+                assert_eq!(*gateway, Some(gw));
             }
             other => panic!("wrong step: {other:?}"),
         }
@@ -440,7 +441,7 @@ mod tests {
         assert!(
             Step::EndpointRoute {
                 endpoint: "1.2.3.4".parse().unwrap(),
-                gateway: Some(Gateway("192.168.1.1".into())),
+                gateway: Some("192.168.1.1".parse().unwrap()),
             }
             .durable()
         );
@@ -510,6 +511,7 @@ mod tests {
         }
         async fn default_gateway(
             &self,
+            _: crate::vpn::platform::IpFamily,
         ) -> Result<Option<Gateway>, crate::vpn::platform::PlatformError> {
             Ok(None)
         }

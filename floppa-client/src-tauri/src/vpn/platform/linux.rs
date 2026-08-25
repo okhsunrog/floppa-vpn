@@ -4,17 +4,26 @@
 //! A polkit policy (`dev.okhsunrog.floppa-vpn.policy`) allows the helper to
 //! run without a password prompt for active desktop sessions.
 
-use super::{DnsSnapshot, Gateway, Platform, PlatformError, TunParams};
+use super::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
 use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
 use std::process::Command;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Firewall mark for policy routing — "flop" in hex.
 const FWMARK: u32 = 0x666c6f70;
+
+/// How long an *undo* may wait on the helper.
+///
+/// Apply calls are unbounded — pkexec may legitimately be waiting for the user — but an undo runs
+/// during unwind and on exit, where a pkexec that never returns (a dismissed agent, a hung
+/// session) used to hang the whole teardown. On timeout the child is killed and the step is
+/// reported as residual rather than waited for forever.
+const UNDO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Path to the installed network helper script
 const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper";
@@ -135,18 +144,30 @@ impl LinuxPlatform {
 
     /// Run the network helper via pkexec.
     ///
-    /// With the polkit policy installed, this runs without a password prompt
-    /// for active desktop sessions.
-    fn run_helper(&self, args: &[&str]) -> Result<(), PlatformError> {
+    /// With the polkit policy installed, this runs without a password prompt for active desktop
+    /// sessions. Runs on tokio's process reactor rather than blocking a worker thread, so a slow
+    /// pkexec stalls only this call; `timeout` bounds the wait for undo paths.
+    async fn run_helper(
+        &self,
+        args: &[&str],
+        timeout: Option<Duration>,
+    ) -> Result<(), PlatformError> {
         debug!("Running helper: {:?}", args);
 
-        let output = Command::new("pkexec")
-            .arg(HELPER_PATH)
-            .args(args)
-            .output()
-            .map_err(|e| {
-                PlatformError::Unavailable(format!("failed to run network helper: {e}"))
-            })?;
+        let mut command = tokio::process::Command::new("pkexec");
+        command.arg(HELPER_PATH).args(args).kill_on_drop(true);
+        let spawned = command.output();
+        let output = match timeout {
+            Some(limit) => tokio::time::timeout(limit, spawned).await.map_err(|_| {
+                PlatformError::Failed(format!(
+                    "network helper {} timed out after {}s",
+                    args.first().copied().unwrap_or_default(),
+                    limit.as_secs()
+                ))
+            })?,
+            None => spawned.await,
+        }
+        .map_err(|e| PlatformError::Unavailable(format!("failed to run network helper: {e}")))?;
 
         if output.status.success() {
             return Ok(());
@@ -166,19 +187,22 @@ impl LinuxPlatform {
         })
     }
 
-    /// Get the default gateway IP from the routing table (no privileges needed).
-    fn get_default_gateway() -> Result<Option<String>, PlatformError> {
-        let output = Command::new("ip")
-            .args(["route", "show", "default"])
+    /// Get the default gateway for `family` from the routing table (no privileges needed).
+    ///
+    /// `ip route show default` lists routes lowest metric first, so the first `via` is the one
+    /// the kernel would use.
+    async fn get_default_gateway(family: IpFamily) -> Result<Option<Gateway>, PlatformError> {
+        let flag = match family {
+            IpFamily::V4 => "-4",
+            IpFamily::V6 => "-6",
+        };
+        let output = tokio::process::Command::new("ip")
+            .args([flag, "route", "show", "default"])
             .output()
+            .await
             .map_err(|e| PlatformError::Failed(format!("failed to read default route: {e}")))?;
         let route_output = String::from_utf8_lossy(&output.stdout);
-        // Parse "default via 192.168.1.1 dev eth0"
-        Ok(route_output
-            .split_whitespace()
-            .skip_while(|&w| w != "via")
-            .nth(1)
-            .map(|s| s.to_string()))
+        parse_default_gateway(&route_output)
     }
 
     /// Check whether the current process has effective CAP_NET_ADMIN.
@@ -222,7 +246,11 @@ impl LinuxPlatform {
     /// The temp file goes to `/tmp` explicitly, not `$TMPDIR`: the helper accepts only
     /// `/tmp/floppa-resolv*` as a source, so on a host with `TMPDIR` set elsewhere every DNS
     /// configuration used to be refused.
-    fn write_resolv_conf(&self, content: &str) -> Result<(), PlatformError> {
+    async fn write_resolv_conf(
+        &self,
+        content: &str,
+        timeout: Option<Duration>,
+    ) -> Result<(), PlatformError> {
         let tmp = tempfile::Builder::new()
             .prefix("floppa-resolv-")
             .tempfile_in(RESOLV_TEMP_DIR)
@@ -235,7 +263,8 @@ impl LinuxPlatform {
         std::fs::write(tmp.path(), content).map_err(|e| {
             PlatformError::Failed(format!("failed to write temp resolv.conf {path}: {e}"))
         })?;
-        self.run_helper(&["set-resolv-conf", &path])
+        self.run_helper(&["set-resolv-conf", &path], timeout)
+            .await
             .map_err(|e| PlatformError::Failed(format!("set-resolv-conf {path}: {e}")))
     }
 
@@ -297,13 +326,15 @@ impl Platform for LinuxPlatform {
         let uid = std::fs::metadata("/proc/self")
             .map_err(|e| PlatformError::Failed(format!("failed to read process metadata: {e}")))?
             .uid();
-        self.run_helper(&["ensure-tun", iface.as_str(), &uid.to_string()])
+        self.run_helper(&["ensure-tun", iface.as_str(), &uid.to_string()], None)
+            .await
     }
 
     async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
         // `deconfigure` is down + addr flush, both `|| true`-guarded in the helper, so this is
         // safe when nothing was ever prepared.
-        self.run_helper(&["deconfigure", iface.as_str()])
+        self.run_helper(&["deconfigure", iface.as_str()], Some(UNDO_TIMEOUT))
+            .await
     }
 
     async fn configure_address(
@@ -312,7 +343,8 @@ impl Platform for LinuxPlatform {
         addr: IpNetwork,
     ) -> Result<(), PlatformError> {
         info!("Configuring address {addr} on interface {iface}");
-        self.run_helper(&["configure", iface.as_str(), &addr.to_string()])
+        self.run_helper(&["configure", iface.as_str(), &addr.to_string()], None)
+            .await
     }
 
     async fn deconfigure_address(
@@ -320,11 +352,15 @@ impl Platform for LinuxPlatform {
         iface: &InterfaceName,
         addr: IpNetwork,
     ) -> Result<(), PlatformError> {
-        self.run_helper(&["flush-addr", iface.as_str(), &addr.to_string()])
+        self.run_helper(
+            &["flush-addr", iface.as_str(), &addr.to_string()],
+            Some(UNDO_TIMEOUT),
+        )
+        .await
     }
 
-    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
-        Ok(Self::get_default_gateway()?.map(Gateway))
+    async fn default_gateway(&self, family: IpFamily) -> Result<Option<Gateway>, PlatformError> {
+        Self::get_default_gateway(family).await
     }
 
     async fn interface_index(&self, _iface: &InterfaceName) -> Option<u32> {
@@ -341,8 +377,9 @@ impl Platform for LinuxPlatform {
             PlatformError::Failed("no default gateway; cannot pin the endpoint route".to_string())
         })?;
         let route = endpoint_route(endpoint);
-        info!("Adding endpoint route: {route} via {}", gateway.0);
-        self.run_helper(&["add-route", &route, "via", &gateway.0])
+        info!("Adding endpoint route: {route} via {gateway}");
+        self.run_helper(&["add-route", &route, "via", &gateway.to_string()], None)
+            .await
     }
 
     async fn remove_endpoint_route(
@@ -355,8 +392,17 @@ impl Platform for LinuxPlatform {
         // Matching on the gateway too: without it this deletes any route to the endpoint, which
         // after a roaming event is the wrong one.
         match gateway {
-            Some(gw) => self.run_helper(&["del-route", &route, "via", &gw.0]),
-            None => self.run_helper(&["del-route", &route]),
+            Some(gw) => {
+                self.run_helper(
+                    &["del-route", &route, "via", &gw.to_string()],
+                    Some(UNDO_TIMEOUT),
+                )
+                .await
+            }
+            None => {
+                self.run_helper(&["del-route", &route], Some(UNDO_TIMEOUT))
+                    .await
+            }
         }
     }
 
@@ -373,7 +419,7 @@ impl Platform for LinuxPlatform {
         let strs: Vec<String> = routes.iter().map(|r| r.to_string()).collect();
         let mut args: Vec<&str> = vec!["add-routes", iface.as_str()];
         args.extend(strs.iter().map(|s| s.as_str()));
-        self.run_helper(&args)
+        self.run_helper(&args, None).await
     }
 
     async fn remove_routes(
@@ -389,7 +435,7 @@ impl Platform for LinuxPlatform {
         let strs: Vec<String> = routes.iter().map(|r| r.to_string()).collect();
         let mut args: Vec<&str> = vec!["del-routes", iface.as_str()];
         args.extend(strs.iter().map(|s| s.as_str()));
-        self.run_helper(&args)
+        self.run_helper(&args, Some(UNDO_TIMEOUT)).await
     }
 
     async fn capture_dns(
@@ -429,14 +475,14 @@ impl Platform for LinuxPlatform {
             let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
             let mut args: Vec<&str> = vec!["set-dns", iface.as_str()];
             args.extend(strs.iter().map(|s| s.as_str()));
-            return self.run_helper(&args);
+            return self.run_helper(&args, None).await;
         }
 
         let mut content = String::from("# Generated by floppa-vpn\n");
         for server in servers {
             content.push_str(&format!("nameserver {server}\n"));
         }
-        self.write_resolv_conf(&content)
+        self.write_resolv_conf(&content, None).await
     }
 
     async fn restore_dns(
@@ -447,15 +493,24 @@ impl Platform for LinuxPlatform {
     ) -> Result<(), PlatformError> {
         info!("Restoring DNS configuration");
         match snapshot {
-            DnsSnapshot::Resolvectl => self.run_helper(&["revert-dns", iface.as_str()]),
+            DnsSnapshot::Resolvectl => {
+                self.run_helper(&["revert-dns", iface.as_str()], Some(UNDO_TIMEOUT))
+                    .await
+            }
             DnsSnapshot::ResolvConf {
                 symlink_target: Some(target),
                 ..
-            } => self.run_helper(&["restore-resolv-conf-link", &target.to_string_lossy()]),
+            } => {
+                self.run_helper(
+                    &["restore-resolv-conf-link", &target.to_string_lossy()],
+                    Some(UNDO_TIMEOUT),
+                )
+                .await
+            }
             DnsSnapshot::ResolvConf {
                 content: Some(content),
                 symlink_target: None,
-            } => self.write_resolv_conf(content),
+            } => self.write_resolv_conf(content, Some(UNDO_TIMEOUT)).await,
             DnsSnapshot::ResolvConf {
                 content: None,
                 symlink_target: None,
@@ -489,4 +544,65 @@ const RESOLV_TEMP_DIR: &str = "/tmp";
 fn endpoint_route(endpoint: IpAddr) -> String {
     let prefix = if endpoint.is_ipv4() { 32 } else { 128 };
     format!("{endpoint}/{prefix}")
+}
+
+/// Parse the first `via` next hop out of `ip route show default` output.
+///
+/// A next hop that is not an address is an error, not a gateway: the string used to be passed on
+/// to the helper as-is and only rejected there.
+fn parse_default_gateway(route_output: &str) -> Result<Option<Gateway>, PlatformError> {
+    // "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
+    route_output
+        .split_whitespace()
+        .skip_while(|&w| w != "via")
+        .nth(1)
+        .map(|s| {
+            s.parse::<Gateway>().map_err(|e| {
+                PlatformError::Failed(format!("unparseable default gateway {s:?}: {e}"))
+            })
+        })
+        .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_is_the_first_via() {
+        let out = "default via 192.168.1.1 dev wlan0 proto dhcp metric 600\n\
+                   default via 10.0.0.1 dev eth0 proto static metric 700\n";
+        assert_eq!(
+            parse_default_gateway(out).unwrap(),
+            Some("192.168.1.1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn ipv6_gateway_parses() {
+        let out = "default via fe80::1 dev wlan0 proto ra metric 600 pref medium\n";
+        assert_eq!(
+            parse_default_gateway(out).unwrap(),
+            Some("fe80::1".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn no_default_route_is_none() {
+        assert_eq!(parse_default_gateway("").unwrap(), None);
+    }
+
+    #[test]
+    fn a_non_address_next_hop_is_an_error() {
+        assert!(parse_default_gateway("default via garbage dev eth0").is_err());
+    }
+
+    #[test]
+    fn endpoint_routes_are_host_routes() {
+        assert_eq!(endpoint_route("1.2.3.4".parse().unwrap()), "1.2.3.4/32");
+        assert_eq!(
+            endpoint_route("2001:db8::1".parse().unwrap()),
+            "2001:db8::1/128"
+        );
+    }
 }

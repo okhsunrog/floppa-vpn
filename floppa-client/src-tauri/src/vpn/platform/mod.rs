@@ -32,8 +32,47 @@ pub enum PlatformError {
 }
 
 /// The default gateway a host route was pinned to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Gateway(pub String);
+///
+/// An address, not a string: it is parsed once, where the routing table is read, and everything
+/// downstream — the helper's argument validation, the journal, the undo's gateway match — gets a
+/// value that is known to be an IP. Serialised as the plain address, so journals written by the
+/// string version read back unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Gateway(pub IpAddr);
+
+impl std::str::FromStr for Gateway {
+    type Err = std::net::AddrParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for Gateway {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Which routing table a gateway lookup is for.
+///
+/// A host route to an IPv6 endpoint needs the IPv6 default gateway; the previous lookup only ever
+/// read the IPv4 table and handed an IPv4 next hop to a v6 route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IpFamily {
+    V4,
+    V6,
+}
+
+impl IpFamily {
+    pub const fn of(addr: IpAddr) -> Self {
+        match addr {
+            IpAddr::V4(_) => Self::V4,
+            IpAddr::V6(_) => Self::V6,
+        }
+    }
+}
 
 /// DNS state captured *before* it was changed, owned by the rollback step that changed it.
 ///
@@ -119,9 +158,9 @@ pub trait Platform: Send + Sync {
         addr: IpNetwork,
     ) -> Result<(), PlatformError>;
 
-    /// The current default gateway, read before anything is mutated so the endpoint route's undo
-    /// can match on gateway as well as destination.
-    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError>;
+    /// The current default gateway for `family`, read before anything is mutated so the endpoint
+    /// route's undo can match on gateway as well as destination.
+    async fn default_gateway(&self, family: IpFamily) -> Result<Option<Gateway>, PlatformError>;
 
     /// The OS index of an interface, where the platform needs it to scope routes and DNS.
     /// Captured fresh per attempt: Wintun assigns a new index every time an adapter is created,
@@ -252,7 +291,7 @@ impl Platform for PlatformImpl {
         Ok(())
     }
 
-    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
+    async fn default_gateway(&self, _family: IpFamily) -> Result<Option<Gateway>, PlatformError> {
         Err(unsupported())
     }
 

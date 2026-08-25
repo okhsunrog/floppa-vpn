@@ -8,7 +8,7 @@
 //! is torn down as one unit when the service stops. That is why no Android rollback step is
 //! `durable()`: there is nothing that can outlive the process and need recovering at next start.
 
-use super::{DnsSnapshot, Gateway, Platform, PlatformError, TunParams};
+use super::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
 use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
 use ipnetwork::IpNetwork;
@@ -69,7 +69,7 @@ impl Platform for AndroidPlatform {
         Ok(())
     }
 
-    async fn default_gateway(&self) -> Result<Option<Gateway>, PlatformError> {
+    async fn default_gateway(&self, _family: IpFamily) -> Result<Option<Gateway>, PlatformError> {
         // The endpoint is protected with VpnService.protect(), not with a host route.
         Ok(None)
     }

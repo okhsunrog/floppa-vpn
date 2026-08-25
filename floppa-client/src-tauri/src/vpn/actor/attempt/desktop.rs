@@ -126,10 +126,14 @@ pub(super) async fn ladder(
     // deletes any route to the endpoint — and after a roaming event, which is exactly when a
     // reconnect happens, that is the wrong route or none at all.
     bail_if_cancelled!(ctx);
-    let gateway = ctx.platform.default_gateway().await.unwrap_or_default();
+    let gateway = ctx
+        .platform
+        .default_gateway(crate::vpn::platform::IpFamily::of(endpoint_ip))
+        .await
+        .unwrap_or_default();
     stack.push(Step::EndpointRoute {
         endpoint: endpoint_ip,
-        gateway: gateway.clone(),
+        gateway,
     });
     ctx.platform
         .add_endpoint_route(endpoint_ip, gateway.as_ref())
