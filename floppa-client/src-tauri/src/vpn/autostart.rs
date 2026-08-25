@@ -12,11 +12,15 @@
 //! restarts the service, and whether that should happen is the system toggle's decision, not ours.
 //!
 //! Protection at rest is the same as `vpn-config.json`, which already holds the same private key:
-//! a `0600` file in the app's private data directory. Only the calls that read and write the file
-//! are Android-specific; the types and the derivations are plain data, so their tests run on the
+//! a `0600` file in the app's private data directory, written atomically (see
+//! [`private_file`](super::private_file)) — a bundle caught half-written is one that does not
+//! parse, and the reader's only recourse is to stop, which under lockdown is a device with no
+//! network until somebody opens the app. Only the calls that read and write the file are
+//! Android-specific; the types and the derivations are plain data, so their tests run on the
 //! host.
 
 use super::actor::types::{SplitMode, TunnelParams};
+use super::private_file::write_private;
 use super::state::ProtocolConfig;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
@@ -153,7 +157,7 @@ fn bundle_path(dir: &Path) -> PathBuf {
 pub fn save(dir: &Path, bundle: &AutostartBundle) -> Result<(), String> {
     let json = serde_json::to_string(bundle).map_err(|e| format!("serialize: {e}"))?;
     let path = bundle_path(dir);
-    write_private(&path, json.as_bytes())?;
+    write_private(&path, json.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
     info!(
         protocol = %bundle.protocol(),
         endpoint = %bundle.endpoint,
@@ -318,32 +322,6 @@ pub async fn resolve_endpoint(bundle: &AutostartBundle, budget: std::time::Durat
             bundle.endpoint
         }
     }
-}
-
-/// `std::fs::write` followed by `chmod 0600`, creating the file private from the start on Unix.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
-    file.write_all(bytes)
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    #[cfg(unix)]
-    {
-        // The mode above only applies to a file that is being created; an existing one keeps
-        // whatever it had.
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

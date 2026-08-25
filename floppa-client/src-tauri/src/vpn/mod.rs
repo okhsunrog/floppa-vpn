@@ -7,6 +7,7 @@ pub mod events;
 #[cfg(target_os = "android")]
 pub mod jni_entry;
 pub mod platform;
+pub mod private_file;
 pub mod protocol;
 pub mod rollback;
 pub mod rpc;

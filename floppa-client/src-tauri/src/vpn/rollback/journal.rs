@@ -22,6 +22,7 @@
 //! deliberately kept, so crash recovery on the next start never saw it.
 
 use super::Applied;
+use crate::vpn::private_file::write_private;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn};
@@ -176,32 +177,6 @@ impl Journal {
             }
         }
     }
-}
-
-/// Write `bytes` to `path` atomically and readable only by the owner.
-///
-/// The content goes to a temp file in the same directory, is synced, and is then renamed over the
-/// destination, so a reader — including the next start after a crash — sees either the old journal
-/// or the new one, never a partial write.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-
-    let dir = path.parent().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "journal path has no parent directory",
-        )
-    })?;
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(".rollback-").suffix(".tmp");
-    #[cfg(unix)]
-    builder
-        .permissions(<std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600));
-    let mut tmp = builder.tempfile_in(dir)?;
-    tmp.write_all(bytes)?;
-    tmp.as_file().sync_all()?;
-    tmp.persist(path).map_err(|e| e.error)?;
-    Ok(())
 }
 
 #[cfg(test)]
