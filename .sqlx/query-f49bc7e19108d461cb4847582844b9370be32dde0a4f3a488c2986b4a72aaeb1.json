@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions SET is_current = false, expires_at = LEAST(expires_at, NOW()) WHERE user_id = $1 AND is_current AND id IS DISTINCT FROM $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f49bc7e19108d461cb4847582844b9370be32dde0a4f3a488c2986b4a72aaeb1"
+}

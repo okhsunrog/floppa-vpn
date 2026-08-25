@@ -246,8 +246,8 @@ pub(super) async fn create_user(
         ApiError::from(e)
     })?;
 
-    // A brand-new user has nothing to supersede, so a plain insert is enough.
-    services::insert_subscription(
+    // A brand-new user has nothing to supersede; this is still the one path that writes one.
+    services::replace_active_subscription(
         &mut tx,
         user_id,
         req.plan_id,

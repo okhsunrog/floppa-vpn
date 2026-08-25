@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT NOT EXISTS(\n                   SELECT 1 FROM subscriptions\n                   WHERE user_id = $1 AND NOT is_current AND (expires_at IS NULL OR expires_at > NOW())\n               ) AS \"closed!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "closed!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "bacf8c9806c6e12944f7ab52acf7746a12aa234a305308742939a615abe9d9be"
+}

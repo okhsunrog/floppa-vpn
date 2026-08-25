@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT cs.max_peers AS \"max_peers!\"\n        FROM current_subscriptions cs\n        WHERE cs.id = (SELECT id FROM subscriptions WHERE user_id = $1 AND is_current FOR UPDATE)\n          AND cs.is_active\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "max_peers!",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "current_subscriptions",
+            "name": "max_peers"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "4665db8552a6ffce1efb76ba58b6015faabe63b6d14f369bc987af5feab258f8"
+}

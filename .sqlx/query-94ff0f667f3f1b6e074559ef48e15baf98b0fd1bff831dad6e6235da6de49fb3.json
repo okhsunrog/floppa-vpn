@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, NOW(), $3, $4) RETURNING id",
+  "query": "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source, is_current) VALUES ($1, $2, NOW(), $3, $4, true) RETURNING id",
   "describe": {
     "columns": [
       {
@@ -27,5 +27,5 @@
       false
     ]
   },
-  "hash": "d5e9d470e54902c43bede11edb78bd585f106bfe7172327d2589705d4dabc587"
+  "hash": "94ff0f667f3f1b6e074559ef48e15baf98b0fd1bff831dad6e6235da6de49fb3"
 }

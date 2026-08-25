@@ -71,13 +71,10 @@ pub async fn get_current_subscription(
 ) -> Result<Option<CurrentSubscription>> {
     let row = sqlx::query!(
         r#"
-        SELECT s.id, s.plan_id, p.display_name AS plan_display_name,
-               p.price_stars, p.period_days, s.expires_at
-        FROM subscriptions s
-        JOIN plans p ON s.plan_id = p.id
-        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        ORDER BY s.expires_at DESC NULLS FIRST
-        LIMIT 1
+        SELECT id AS "id!", plan_id AS "plan_id!", plan_display_name AS "plan_display_name!",
+               price_stars, period_days, expires_at
+        FROM current_subscriptions
+        WHERE user_id = $1 AND is_active
         "#,
         user_id,
     )
@@ -200,7 +197,7 @@ async fn ensure_no_permanent_subscription(
     user_id: i64,
 ) -> std::result::Result<(), PurchaseError> {
     let permanent = sqlx::query_scalar!(
-        r#"SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND expires_at IS NULL)
+        r#"SELECT EXISTS(SELECT 1 FROM current_subscriptions WHERE user_id = $1 AND expires_at IS NULL)
            AS "permanent!""#,
         user_id,
     )
@@ -561,7 +558,7 @@ mod tests {
         .unwrap()
     }
 
-    /// `expires_at = None` seeds a permanent subscription.
+    /// Seeds the user's current subscription; `expires_at = None` makes it permanent.
     async fn seed_subscription(
         pool: &DbPool,
         user_id: i64,
@@ -569,7 +566,7 @@ mod tests {
         expires_at: Option<DateTime<Utc>>,
     ) {
         sqlx::query!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, NOW(), $3)",
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, is_current) VALUES ($1, $2, NOW(), $3, true)",
             user_id,
             plan_id,
             expires_at,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT EXISTS(\n               SELECT 1 FROM subscriptions\n               WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())\n           ) AS \"exists!\"",
+  "query": "SELECT EXISTS(\n               SELECT 1 FROM current_subscriptions WHERE user_id = $1 AND is_active\n           ) AS \"exists!\"",
   "describe": {
     "columns": [
       {
@@ -19,5 +19,5 @@
       null
     ]
   },
-  "hash": "9ff55d92a7de5bf18d43e9baf4ea8ddd31e07399d1bee83c734d6ae7e3e4b0e2"
+  "hash": "ac77163730dc88343c40b0d04b998f57e317c5295e5db790cc3605e7eb368d4b"
 }

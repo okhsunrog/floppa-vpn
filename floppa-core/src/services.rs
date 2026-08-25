@@ -133,8 +133,10 @@ async fn grant_trial(
         }
     }
 
+    // A trial supersedes whatever the user holds (the taster on signup, the basic trial on
+    // Telegram link) — there is never more than one current subscription.
     let expires_at = Utc::now() + Duration::minutes(minutes as i64);
-    insert_subscription(&mut tx, user_id, plan.id, Some(expires_at), source).await?;
+    replace_active_subscription(&mut tx, user_id, plan.id, Some(expires_at), source).await?;
 
     tx.commit().await?;
     Ok(Some(TrialGrant {
@@ -143,11 +145,12 @@ async fn grant_trial(
     }))
 }
 
-/// Insert a subscription starting now. `expires_at = None` means permanent. Returns its id.
+/// Insert the user's new current subscription, starting now. `expires_at = None` means
+/// permanent. Returns its id.
 ///
-/// Building block for the grant paths; it does NOT touch the user's other subscriptions — use
-/// [`replace_active_subscription`] when the new one must supersede them.
-pub async fn insert_subscription(
+/// The `subscriptions_one_current` index rejects this while the user still has a current row,
+/// so it is only ever reached through [`replace_active_subscription`], which demotes it first.
+async fn insert_subscription(
     tx: &mut PgTransaction<'_>,
     user_id: i64,
     plan_id: i32,
@@ -155,8 +158,8 @@ pub async fn insert_subscription(
     source: SubscriptionSource,
 ) -> Result<i64> {
     let id = sqlx::query_scalar!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) \
-         VALUES ($1, $2, NOW(), $3, $4) RETURNING id",
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source, is_current) \
+         VALUES ($1, $2, NOW(), $3, $4, true) RETURNING id",
         user_id,
         plan_id,
         expires_at,
@@ -167,12 +170,14 @@ pub async fn insert_subscription(
     Ok(id)
 }
 
-/// Close every currently active subscription of `user_id` (sets `expires_at = NOW()`) and insert
-/// a new one on `plan_id` starting now. Returns the new subscription's id.
+/// Supersede the user's current subscription with a new one on `plan_id` starting now.
+/// Returns the new subscription's id.
 ///
-/// This is the "switch plan" primitive shared by Stars purchases, credit-funded switches and
-/// admin grants: afterwards the user has exactly one active subscription. Runs inside the
-/// caller's transaction so a payment record can be written atomically alongside it.
+/// The ONLY way a subscription comes to exist (trials, Stars purchases, credit-funded switches,
+/// admin grants — see migration 0017): the previous current row, if any, is demoted to history
+/// and, if it was still running, closed out (`expires_at = NOW()`) so the history shows when it
+/// ended. Afterwards the user has exactly one current subscription. Runs inside the caller's
+/// transaction so a payment record can be written atomically alongside it.
 pub async fn replace_active_subscription(
     tx: &mut PgTransaction<'_>,
     user_id: i64,
@@ -180,14 +185,28 @@ pub async fn replace_active_subscription(
     expires_at: Option<DateTime<Utc>>,
     source: SubscriptionSource,
 ) -> Result<i64> {
+    demote_current_subscriptions(tx, user_id, None).await?;
+    insert_subscription(tx, user_id, plan_id, expires_at, source).await
+}
+
+/// Turn `user_id`'s current subscription(s) into history, closing out any that is still running.
+/// `keep` names a row to leave current (the merge winner); `None` demotes them all.
+async fn demote_current_subscriptions(
+    tx: &mut PgTransaction<'_>,
+    user_id: i64,
+    keep: Option<i64>,
+) -> Result<()> {
     sqlx::query!(
-        "UPDATE subscriptions SET expires_at = NOW() \
-         WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        "UPDATE subscriptions \
+         SET is_current = false, \
+             expires_at = LEAST(expires_at, NOW()) \
+         WHERE user_id = $1 AND is_current AND id IS DISTINCT FROM $2",
         user_id,
+        keep,
     )
     .execute(&mut **tx)
     .await?;
-    insert_subscription(tx, user_id, plan_id, expires_at, source).await
+    Ok(())
 }
 
 /// How long an admin-granted subscription should last.
@@ -248,8 +267,7 @@ pub async fn resolve_subscription_expires(
 pub async fn has_active_subscription(executor: impl PgExecutor<'_>, user_id: i64) -> Result<bool> {
     let active = sqlx::query_scalar!(
         r#"SELECT EXISTS(
-               SELECT 1 FROM subscriptions
-               WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())
+               SELECT 1 FROM current_subscriptions WHERE user_id = $1 AND is_active
            ) AS "exists!""#,
         user_id,
     )
@@ -610,11 +628,8 @@ async fn summarize_account(executor: impl PgExecutor<'_>, user_id: i64) -> Resul
                (SELECT provider_uid FROM auth_identities
                   WHERE user_id = u.id AND provider = 'password') AS login,
                (SELECT COUNT(*) FROM app_installations WHERE user_id = u.id) AS "devices!",
-               (SELECT p.display_name FROM subscriptions s
-                  JOIN plans p ON s.plan_id = p.id
-                  WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW())
-                  ORDER BY s.expires_at DESC NULLS FIRST
-                  LIMIT 1) AS plan
+               (SELECT cs.plan_display_name FROM current_subscriptions cs
+                  WHERE cs.user_id = u.id AND cs.is_active) AS plan
            FROM users u WHERE u.id = $1"#,
         user_id,
     )
@@ -915,6 +930,23 @@ async fn merge_telegram_into_session_in_tx(
     )
     .execute(&mut **tx)
     .await?;
+    //     Subscriptions: both sides may hold a current one, and the merged account gets exactly
+    //     one — the later-expiring (permanent wins). The other is demoted and closed out BEFORE
+    //     the re-point, which the `subscriptions_one_current` index would otherwise reject.
+    let winner = sqlx::query_scalar!(
+        "SELECT id FROM subscriptions \
+         WHERE user_id IN ($1, $2) AND is_current \
+         ORDER BY expires_at DESC NULLS FIRST, id DESC \
+         LIMIT 1",
+        survivor_id,
+        husk_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(winner) = winner {
+        demote_current_subscriptions(tx, survivor_id, Some(winner)).await?;
+        demote_current_subscriptions(tx, husk_id, Some(winner)).await?;
+    }
     sqlx::query!(
         "UPDATE subscriptions SET user_id = $1 WHERE user_id = $2",
         survivor_id,
@@ -1023,24 +1055,21 @@ pub async fn create_peer(
     // Transaction: check limit + allocate resources + insert peer atomically
     let mut tx = ctx.pool.begin().await?;
 
-    // Lock the subscription row to serialize concurrent peer creations for this user
-    let sub_info = sqlx::query!(
+    // Lock the current subscription row to serialize concurrent peer creations for this user.
+    // The lock is taken on the base table: a locking clause on the view would lock the plan
+    // row too and serialize every user on that plan.
+    let max_peers = sqlx::query_scalar!(
         r#"
-        SELECT p.max_peers
-        FROM subscriptions s
-        JOIN plans p ON s.plan_id = p.id
-        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        ORDER BY s.expires_at DESC NULLS FIRST
-        LIMIT 1
-        FOR UPDATE OF s
+        SELECT cs.max_peers AS "max_peers!"
+        FROM current_subscriptions cs
+        WHERE cs.id = (SELECT id FROM subscriptions WHERE user_id = $1 AND is_current FOR UPDATE)
+          AND cs.is_active
         "#,
         user_id,
     )
     .fetch_optional(&mut *tx)
-    .await?;
-
-    let sub = sub_info.ok_or(FloppaError::NoActiveSubscription)?;
-    let max_peers = sub.max_peers;
+    .await?
+    .ok_or(FloppaError::NoActiveSubscription)?;
 
     // A caller may only attach a peer to one of their own installations. Locking the row also
     // serializes concurrent peer creation for the same device, so the duplicate check below is
@@ -1542,9 +1571,10 @@ mod tests {
         .unwrap()
     }
 
+    /// A permanent subscription that is the user's current one (the user must not have one yet).
     async fn seed_subscription(pool: &DbPool, user_id: i64, plan_id: i32) {
         sqlx::query!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at) VALUES ($1, $2, NOW())",
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, is_current) VALUES ($1, $2, NOW(), true)",
             user_id,
             plan_id,
         )
@@ -1553,26 +1583,55 @@ mod tests {
         .unwrap();
     }
 
+    /// Grant `plan_id` through the one real writer, superseding whatever the user holds.
+    async fn grant(
+        pool: &DbPool,
+        user_id: i64,
+        plan_id: i32,
+        expires_at: Option<DateTime<Utc>>,
+        source: SubscriptionSource,
+    ) -> i64 {
+        let mut tx = pool.begin().await.unwrap();
+        let id = replace_active_subscription(&mut tx, user_id, plan_id, expires_at, source)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        id
+    }
+
+    /// The user's current subscription as `(id, is_active)`, straight from the view.
+    async fn current(pool: &DbPool, user_id: i64) -> Option<(i64, bool)> {
+        sqlx::query!(
+            r#"SELECT id AS "id!", is_active AS "is_active!" FROM current_subscriptions WHERE user_id = $1"#,
+            user_id
+        )
+        .fetch_optional(pool)
+        .await
+        .unwrap()
+        .map(|r| (r.id, r.is_active))
+    }
+
     #[sqlx::test(migrations = "../migrations")]
     async fn has_active_subscription_follows_expiry(pool: DbPool) {
         let basic = get_basic_plan_id(&pool).await;
         let user_id = seed_user(&pool, 4242).await;
         assert!(!has_active_subscription(&pool, user_id).await.unwrap());
 
-        // Expired: does not count.
-        sqlx::query!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at)
-             VALUES ($1, $2, NOW() - INTERVAL '2 days', NOW() - INTERVAL '1 day')",
+        // Expired (still the current row): does not count.
+        let expired = grant(
+            &pool,
             user_id,
             basic,
+            Some(Utc::now() - Duration::days(1)),
+            SubscriptionSource::AdminGrant,
         )
-        .execute(&pool)
-        .await
-        .unwrap();
+        .await;
+        assert_eq!(current(&pool, user_id).await, Some((expired, false)));
         assert!(!has_active_subscription(&pool, user_id).await.unwrap());
 
         // Permanent (NULL expiry): counts.
-        seed_subscription(&pool, user_id, basic).await;
+        let permanent = grant(&pool, user_id, basic, None, SubscriptionSource::AdminGrant).await;
+        assert_eq!(current(&pool, user_id).await, Some((permanent, true)));
         assert!(has_active_subscription(&pool, user_id).await.unwrap());
     }
 
@@ -1644,19 +1703,23 @@ mod tests {
             .unwrap();
         let user_id = seed_user(&pool, 11111).await;
         seed_subscription(&pool, user_id, basic).await; // permanent
-        seed_subscription(&pool, user_id, basic).await; // a second active one (legacy data)
+        let second = grant(
+            &pool,
+            user_id,
+            basic,
+            Some(Utc::now() + Duration::days(7)),
+            SubscriptionSource::Trial,
+        )
+        .await;
 
-        let mut tx = pool.begin().await.unwrap();
-        let new_id = replace_active_subscription(
-            &mut tx,
+        let new_id = grant(
+            &pool,
             user_id,
             standard,
             Some(Utc::now() + Duration::days(30)),
             SubscriptionSource::AdminGrant,
         )
-        .await
-        .unwrap();
-        tx.commit().await.unwrap();
+        .await;
 
         let active = sqlx::query!(
             r#"SELECT id, plan_id, source AS "source: SubscriptionSource" FROM subscriptions
@@ -1670,16 +1733,269 @@ mod tests {
         assert_eq!(active[0].id, new_id);
         assert_eq!(active[0].plan_id, standard);
         assert_eq!(active[0].source, SubscriptionSource::AdminGrant);
+        assert_eq!(current(&pool, user_id).await, Some((new_id, true)));
 
-        // The superseded ones are closed, not deleted.
-        let total = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1",
+        // The superseded ones are closed and demoted, not deleted.
+        let history = sqlx::query!(
+            "SELECT id, is_current, expires_at <= NOW() AS \"ended!\" FROM subscriptions \
+             WHERE user_id = $1 AND id <> $2",
+            user_id,
+            new_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history.iter().any(|h| h.id == second));
+        assert!(history.iter().all(|h| !h.is_current && h.ended));
+    }
+
+    // ── one current subscription per user (migration 0017) ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_one_current_index_rejects_a_second_current_row(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 11111).await;
+        seed_subscription(&pool, user_id, basic).await;
+
+        let second = sqlx::query!(
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, is_current) VALUES ($1, $2, NOW(), true)",
+            user_id,
+            basic,
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            matches!(second, Err(sqlx::Error::Database(e)) if e.constraint() == Some("subscriptions_one_current"))
+        );
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_current_subscriptions_view_is_one_row_per_user(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let alice = seed_user(&pool, 1).await;
+        let bob = seed_user(&pool, 2).await;
+        let carol = seed_user(&pool, 3).await; // never had one
+        for _ in 0..3 {
+            grant(&pool, alice, basic, None, SubscriptionSource::AdminGrant).await;
+        }
+        let bob_sub = grant(
+            &pool,
+            bob,
+            basic,
+            Some(Utc::now() - Duration::hours(1)),
+            SubscriptionSource::Trial,
+        )
+        .await;
+
+        let rows = sqlx::query!(
+            r#"SELECT user_id AS "user_id!", id AS "id!", is_active AS "is_active!",
+                      plan_name AS "plan_name!", max_peers AS "max_peers!"
+               FROM current_subscriptions ORDER BY user_id"#
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].user_id, alice);
+        assert!(rows[0].is_active);
+        assert_eq!(rows[0].plan_name, "basic");
+        assert_eq!(rows[0].max_peers, 1);
+        assert_eq!(
+            (rows[1].user_id, rows[1].id, rows[1].is_active),
+            (bob, bob_sub, false)
+        );
+        assert!(current(&pool, carol).await.is_none());
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_taster_twice_leaves_one_current(pool: DbPool) {
+        let user_id = seed_user(&pool, 11111).await;
+        grant_taster_trial(&pool, user_id).await.unwrap();
+        let (first, _) = current(&pool, user_id).await.unwrap();
+        grant_taster_trial(&pool, user_id).await.unwrap();
+        let (second, active) = current(&pool, user_id).await.unwrap();
+        assert_ne!(first, second);
+        assert!(active);
+
+        let current_rows = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "n!" FROM subscriptions WHERE user_id = $1 AND is_current"#,
             user_id
         )
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(total, Some(3));
+        assert_eq!(current_rows, 1);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_real_trial_supersedes_taster(pool: DbPool) {
+        let res = create_credential_user(&pool, "dave", "password123")
+            .await
+            .unwrap();
+        let (taster, true) = current(&pool, res.id).await.unwrap() else {
+            panic!("taster must be current and active")
+        };
+
+        assert!(
+            grant_real_trial_if_unused(&pool, res.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let (trial, true) = current(&pool, res.id).await.unwrap() else {
+            panic!("trial must be current and active")
+        };
+        assert_ne!(trial, taster);
+
+        let rows = sqlx::query!(
+            r#"SELECT id, source AS "source: SubscriptionSource", is_current,
+                      expires_at <= NOW() AS "ended!"
+               FROM subscriptions WHERE user_id = $1 ORDER BY id"#,
+            res.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, taster);
+        assert_eq!(rows[0].source, SubscriptionSource::Taster);
+        assert!(!rows[0].is_current && rows[0].ended);
+        assert_eq!(rows[1].id, trial);
+        assert_eq!(rows[1].source, SubscriptionSource::Trial);
+        assert!(rows[1].is_current && !rows[1].ended);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_purchase_supersedes_trial(pool: DbPool) {
+        let standard = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let user_id = seed_user(&pool, 11111).await;
+        let trial = grant_real_trial_if_unused(&pool, user_id).await.unwrap();
+        assert!(trial.is_some());
+
+        let purchase = grant(
+            &pool,
+            user_id,
+            standard,
+            Some(Utc::now() + Duration::days(30)),
+            SubscriptionSource::Purchase,
+        )
+        .await;
+        assert_eq!(current(&pool, user_id).await, Some((purchase, true)));
+        assert!(!sqlx::query_scalar!(
+            r#"SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND source = 'trial' AND is_current) AS "e!""#,
+            user_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap());
+    }
+
+    /// Merge two accounts that each hold a current subscription; returns the survivor's id and
+    /// what the view reports for it afterwards.
+    async fn merge_with_subscriptions(
+        pool: &DbPool,
+        survivor_expires: Option<DateTime<Utc>>,
+        husk_expires: Option<DateTime<Utc>>,
+    ) -> (i64, i64, i64, Option<(i64, bool)>) {
+        let basic = get_basic_plan_id(pool).await;
+        let survivor = create_credential_user(pool, "merge_me", "password123")
+            .await
+            .unwrap();
+        // The signup taster is replaced by the subscription under test.
+        let survivor_sub = grant(
+            pool,
+            survivor.id,
+            basic,
+            survivor_expires,
+            SubscriptionSource::AdminGrant,
+        )
+        .await;
+        let husk = seed_user(pool, 99999).await;
+        let husk_sub = grant(
+            pool,
+            husk,
+            basic,
+            husk_expires,
+            SubscriptionSource::AdminGrant,
+        )
+        .await;
+
+        assert!(
+            merge_telegram_into_session(pool, survivor.id, husk)
+                .await
+                .unwrap()
+        );
+        (
+            survivor_sub,
+            husk_sub,
+            survivor.id,
+            current(pool, survivor.id).await,
+        )
+    }
+
+    /// Every subscription of `user_id` that is not current has ended.
+    async fn history_is_closed(pool: &DbPool, user_id: i64) -> bool {
+        sqlx::query_scalar!(
+            r#"SELECT NOT EXISTS(
+                   SELECT 1 FROM subscriptions
+                   WHERE user_id = $1 AND NOT is_current AND (expires_at IS NULL OR expires_at > NOW())
+               ) AS "closed!""#,
+            user_id
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_keeps_the_later_expiring_subscription(pool: DbPool) {
+        let now = Utc::now();
+        // Husk's runs longer → it becomes the survivor's current one.
+        let (survivor_sub, husk_sub, survivor, cur) = merge_with_subscriptions(
+            &pool,
+            Some(now + Duration::days(3)),
+            Some(now + Duration::days(30)),
+        )
+        .await;
+        assert_eq!(cur, Some((husk_sub, true)));
+        assert!(history_is_closed(&pool, survivor).await);
+        let _ = survivor_sub;
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_keeps_the_survivors_subscription_when_it_runs_longer(pool: DbPool) {
+        let now = Utc::now();
+        let (survivor_sub, _husk_sub, survivor, cur) = merge_with_subscriptions(
+            &pool,
+            Some(now + Duration::days(30)),
+            Some(now + Duration::days(3)),
+        )
+        .await;
+        assert_eq!(cur, Some((survivor_sub, true)));
+        assert!(history_is_closed(&pool, survivor).await);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_permanent_subscription_wins(pool: DbPool) {
+        let now = Utc::now();
+        let (survivor_sub, _husk_sub, survivor, cur) =
+            merge_with_subscriptions(&pool, None, Some(now + Duration::days(365))).await;
+        assert_eq!(cur, Some((survivor_sub, true)));
+        assert!(history_is_closed(&pool, survivor).await);
+
+        // Only one current row exists, so nothing else can be reported as "the" subscription.
+        let n = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "n!" FROM subscriptions WHERE user_id = $1 AND is_current"#,
+            survivor
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(n, 1);
     }
 
     // ── credential auth (login + password) ──
