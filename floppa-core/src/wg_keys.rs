@@ -17,10 +17,10 @@ pub struct PrivateKey(#[redact] String);
 pub struct PublicKey(String);
 
 impl PrivateKey {
-    /// Parse and validate a base64-encoded private key.
+    /// Parse and validate a base64-encoded private key. Surrounding whitespace is stripped, so
+    /// the stored form is exactly what was validated.
     pub fn from_base64(s: &str) -> Result<Self, KeyError> {
-        validate_key(s)?;
-        Ok(Self(s.to_string()))
+        Ok(Self(validate_key(s)?.to_string()))
     }
 
     /// Get the base64 representation.
@@ -30,10 +30,10 @@ impl PrivateKey {
 }
 
 impl PublicKey {
-    /// Parse and validate a base64-encoded public key.
+    /// Parse and validate a base64-encoded public key. Surrounding whitespace is stripped, so
+    /// the stored form is exactly what was validated.
     pub fn from_base64(s: &str) -> Result<Self, KeyError> {
-        validate_key(s)?;
-        Ok(Self(s.to_string()))
+        Ok(Self(validate_key(s)?.to_string()))
     }
 
     /// Get the base64 representation.
@@ -42,7 +42,9 @@ impl PublicKey {
     }
 }
 
-fn validate_key(s: &str) -> Result<(), KeyError> {
+/// Validate a base64 WireGuard key and return its normalized (trimmed) form — the only form
+/// callers may store, so what is persisted is exactly what passed validation.
+fn validate_key(s: &str) -> Result<&str, KeyError> {
     let s = s.trim();
     if s.len() != WG_KEY_BASE64_LEN {
         return Err(KeyError::InvalidLength {
@@ -62,7 +64,7 @@ fn validate_key(s: &str) -> Result<(), KeyError> {
         });
     }
 
-    Ok(())
+    Ok(s)
 }
 
 /// Generate a WireGuard keypair using x25519-dalek.
@@ -99,6 +101,16 @@ mod tests {
         let key = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=";
         assert!(PrivateKey::from_base64(key).is_ok());
         assert!(PublicKey::from_base64(key).is_ok());
+    }
+
+    #[test]
+    fn test_surrounding_whitespace_is_stripped() {
+        // Keys pasted from a terminal or a .conf often carry a trailing newline. The stored form
+        // must be the validated (trimmed) 44 chars, never the raw input.
+        let key = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE=";
+        let padded = format!("  {key}\n");
+        assert_eq!(PrivateKey::from_base64(&padded).unwrap().as_base64(), key);
+        assert_eq!(PublicKey::from_base64(&padded).unwrap().as_base64(), key);
     }
 
     #[test]
