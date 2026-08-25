@@ -199,6 +199,27 @@ AllowedIPs = 0.0.0.0/0
         assert_eq!(restored.endpoint_str(), "vpn.example.com:51820");
     }
 
+    /// The AmneziaWG variant is the one that actually shipped broken: its `I` slots used to
+    /// deserialize as `Option` while serializing as `String`, which JSON forgives and bincode
+    /// does not — every AmneziaWG `start_tunnel` failed to decode at the service.
+    #[test]
+    fn the_awg_wire_config_survives_bincode() {
+        let obfuscation = floppa_tunnel_config::AwgObfuscation {
+            i2: String::new(),
+            i3: "<b 0xdeadbeef>".into(),
+            ..Default::default()
+        };
+        let sent = WireConfig::AmneziaWg(crate::vpn::state::AwgConfig {
+            wg: wg(),
+            obfuscation: obfuscation.clone(),
+        });
+        let received = roundtrip(&sent).expect("the AmneziaWG wire type must round-trip");
+        match received {
+            WireConfig::AmneziaWg(awg) => assert_eq!(awg.obfuscation, obfuscation),
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
     #[test]
     fn the_persisted_config_does_not_survive_bincode() {
         // Not a quirk to work around — the reason WireConfig exists. ProtocolConfig is adjacently

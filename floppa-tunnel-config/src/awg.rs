@@ -4,7 +4,7 @@
 //! serde) and renders it into client configs and `awg set` arguments; the clients parse it back
 //! out of the `[Interface]` section of an AmneziaWG `.conf` and hand it to gotatun.
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// AmneziaWG 2.0 obfuscation parameters. [`Default`] is the recommended (Amnezia) preset.
 ///
@@ -50,25 +50,44 @@ pub struct AwgObfuscation {
     #[serde(default = "awg_default_h4")]
     pub h4: String,
     /// Signature packet 1 (AmneziaWG 2.0 CPS) — protocol-mimicry tag spec. Empty = unset.
-    #[serde(default = "awg_default_i1", deserialize_with = "string_or_null")]
+    #[serde(default = "awg_default_i1", with = "i_slot")]
     pub i1: String,
     /// Signature packet 2. Empty = unset.
-    #[serde(default, deserialize_with = "string_or_null")]
+    #[serde(default, with = "i_slot")]
     pub i2: String,
     /// Signature packet 3. Empty = unset.
-    #[serde(default, deserialize_with = "string_or_null")]
+    #[serde(default, with = "i_slot")]
     pub i3: String,
     /// Signature packet 4. Empty = unset.
-    #[serde(default, deserialize_with = "string_or_null")]
+    #[serde(default, with = "i_slot")]
     pub i4: String,
     /// Signature packet 5. Empty = unset.
-    #[serde(default, deserialize_with = "string_or_null")]
+    #[serde(default, with = "i_slot")]
     pub i5: String,
 }
 
-/// `null` reads as "unset", the way an absent key does.
-fn string_or_null<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+/// Serde form of an `I` slot: `Option<String>`, `None` for "unset", in BOTH directions.
+///
+/// Symmetry is the point. An earlier version deserialized an `Option` (so that the `null` older
+/// client builds stored still read back as empty) but serialized a plain `String`. JSON never
+/// noticed; bincode — the format of the UI ↔ `:vpn` RPC — did: it is not self-describing, so the
+/// reader took the string's length byte for an `Option` tag and every AmneziaWG `start_tunnel`
+/// failed to decode ("tag for enum is not valid"). With the same shape on both sides every
+/// format round-trips, and the stored JSON is exactly what older builds wrote (`null`).
+mod i_slot {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &str, serializer: S) -> Result<S::Ok, S::Error> {
+        if value.is_empty() {
+            None::<&str>.serialize(serializer)
+        } else {
+            Some(value).serialize(serializer)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+        Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+    }
 }
 
 // Recommended AmneziaWG 2.0 preset (Amnezia default preset).
@@ -167,6 +186,25 @@ impl AwgObfuscation {
 
 #[cfg(test)]
 mod tests {
+
+    /// `null` (what older client builds stored), `""` and an absent key all mean "unset", and
+    /// an unset slot is written back as `null` — the same shape in both directions, which is
+    /// what keeps the type decodable from a non-self-describing format like bincode.
+    #[test]
+    fn i_slots_read_null_empty_and_absent_as_unset_and_write_null() {
+        let json = r#"{"jc":6,"jmin":55,"jmax":205,"s1":72,"s2":56,"s3":32,"s4":16,
+            "h1":"1","h2":"2","h3":"3","h4":"4","i1":null,"i2":"","i3":"<b 0x01>"}"#;
+        let parsed: AwgObfuscation = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.i1, "");
+        assert_eq!(parsed.i2, "");
+        assert_eq!(parsed.i3, "<b 0x01>");
+        assert_eq!(parsed.i4, "");
+        let written: serde_json::Value = serde_json::to_value(&parsed).unwrap();
+        assert_eq!(written["i1"], serde_json::Value::Null);
+        assert_eq!(written["i3"], "<b 0x01>");
+        let again: AwgObfuscation = serde_json::from_value(written).unwrap();
+        assert_eq!(again, parsed);
+    }
     use super::*;
 
     #[test]
