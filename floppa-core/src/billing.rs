@@ -3,6 +3,7 @@
 use crate::DbPool;
 use crate::error::Result;
 use crate::models::SubscriptionSource;
+use crate::services::replace_active_subscription;
 use chrono::{DateTime, Duration, Utc};
 
 /// A plan available for purchase with Stars.
@@ -166,24 +167,13 @@ pub async fn complete_payment(pool: &DbPool, params: CompletePaymentParams<'_>) 
 
     let mut tx = pool.begin().await?;
 
-    // Expire current active subscription
-    sqlx::query!(
-        "UPDATE subscriptions SET expires_at = NOW() WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
-        params.user_id,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    // Create new subscription
-    let sub_id: i64 = sqlx::query_scalar!(
-        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5) RETURNING id as "id!""#,
+    let sub_id = replace_active_subscription(
+        &mut tx,
         params.user_id,
         params.plan_id,
-        now,
-        expires_at,
-        SubscriptionSource::Purchase as _,
+        Some(expires_at),
+        SubscriptionSource::Purchase,
     )
-    .fetch_one(&mut *tx)
     .await?;
 
     // Record payment (telegram_charge_id UNIQUE enforces idempotency)
@@ -249,22 +239,13 @@ pub async fn process_credit_switch(
         return Ok(None);
     }
 
-    sqlx::query!(
-        "UPDATE subscriptions SET expires_at = NOW() WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
-        user_id,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    let sub_id: i64 = sqlx::query_scalar!(
-        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5) RETURNING id as "id!""#,
+    let sub_id = replace_active_subscription(
+        &mut tx,
         user_id,
         plan_id,
-        now,
-        expires_at,
-        SubscriptionSource::Purchase as _,
+        Some(expires_at),
+        SubscriptionSource::Purchase,
     )
-    .fetch_one(&mut *tx)
     .await?;
 
     sqlx::query!(

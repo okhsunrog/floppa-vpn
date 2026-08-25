@@ -3,8 +3,9 @@
 use crate::error::{FloppaError, Result};
 use crate::models::{PeerSyncStatus, Protocol, SubscriptionSource};
 use crate::{Config, DbPool, encrypt_private_key};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
+use sqlx::PgTransaction;
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use tracing::warn;
@@ -118,21 +119,58 @@ async fn grant_trial(
         }
     }
 
-    let now = Utc::now();
-    let expires_at = now + Duration::minutes(minutes as i64);
-    sqlx::query!(
-        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5)",
-        user_id,
-        plan.id,
-        now,
-        expires_at,
-        source as _,
-    )
-    .execute(&mut *tx)
-    .await?;
+    let expires_at = Utc::now() + Duration::minutes(minutes as i64);
+    insert_subscription(&mut tx, user_id, plan.id, Some(expires_at), source).await?;
 
     tx.commit().await?;
     Ok(true)
+}
+
+/// Insert a subscription starting now. `expires_at = None` means permanent. Returns its id.
+///
+/// Building block for the grant paths; it does NOT touch the user's other subscriptions — use
+/// [`replace_active_subscription`] when the new one must supersede them.
+pub async fn insert_subscription(
+    tx: &mut PgTransaction<'_>,
+    user_id: i64,
+    plan_id: i32,
+    expires_at: Option<DateTime<Utc>>,
+    source: SubscriptionSource,
+) -> Result<i64> {
+    let id = sqlx::query_scalar!(
+        "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) \
+         VALUES ($1, $2, NOW(), $3, $4) RETURNING id",
+        user_id,
+        plan_id,
+        expires_at,
+        source as _,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(id)
+}
+
+/// Close every currently active subscription of `user_id` (sets `expires_at = NOW()`) and insert
+/// a new one on `plan_id` starting now. Returns the new subscription's id.
+///
+/// This is the "switch plan" primitive shared by Stars purchases, credit-funded switches and
+/// admin grants: afterwards the user has exactly one active subscription. Runs inside the
+/// caller's transaction so a payment record can be written atomically alongside it.
+pub async fn replace_active_subscription(
+    tx: &mut PgTransaction<'_>,
+    user_id: i64,
+    plan_id: i32,
+    expires_at: Option<DateTime<Utc>>,
+    source: SubscriptionSource,
+) -> Result<i64> {
+    sqlx::query!(
+        "UPDATE subscriptions SET expires_at = NOW() \
+         WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+        user_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+    insert_subscription(tx, user_id, plan_id, expires_at, source).await
 }
 
 /// Grant the one-time real trial (the "basic" plan's `trial_minutes`) if not yet used.
@@ -1068,6 +1106,55 @@ mod tests {
         let result = generate_wg_config("KEY", "10.0.0.2", &config, "PUB");
 
         assert!(result.contains("DNS = 8.8.8.8, 1.1.1.1"));
+    }
+
+    // ── replace_active_subscription ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_replace_active_subscription_leaves_one_active(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let standard = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let user_id = seed_user(&pool, 11111).await;
+        seed_subscription(&pool, user_id, basic).await; // permanent
+        seed_subscription(&pool, user_id, basic).await; // a second active one (legacy data)
+
+        let mut tx = pool.begin().await.unwrap();
+        let new_id = replace_active_subscription(
+            &mut tx,
+            user_id,
+            standard,
+            Some(Utc::now() + Duration::days(30)),
+            SubscriptionSource::AdminGrant,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+
+        let active = sqlx::query!(
+            r#"SELECT id, plan_id, source AS "source: SubscriptionSource" FROM subscriptions
+               WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())"#,
+            user_id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].id, new_id);
+        assert_eq!(active[0].plan_id, standard);
+        assert_eq!(active[0].source, SubscriptionSource::AdminGrant);
+
+        // The superseded ones are closed, not deleted.
+        let total = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1",
+            user_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(total, Some(3));
     }
 
     // ── credential auth (login + password) ──

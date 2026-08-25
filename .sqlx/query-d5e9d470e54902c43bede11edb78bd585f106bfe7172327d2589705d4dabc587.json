@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5) RETURNING id as \"id!\"",
+  "query": "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, NOW(), $3, $4) RETURNING id",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id!",
+        "name": "id",
         "type_info": "Int8",
         "origin": {
           "Table": {
@@ -20,7 +20,6 @@
         "Int8",
         "Int4",
         "Timestamptz",
-        "Timestamptz",
         "Text"
       ]
     },
@@ -28,5 +27,5 @@
       false
     ]
   },
-  "hash": "0060f77af9acfcd688871d19a8221433b2304046781006e847b62edb997fcd26"
+  "hash": "d5e9d470e54902c43bede11edb78bd585f106bfe7172327d2589705d4dabc587"
 }
