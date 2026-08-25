@@ -136,6 +136,19 @@ fn unwinding(cycle: Option<Cycle>, reason: UnwindReason) -> Status {
     }
 }
 
+/// What tearing down this tunnel has to undo beyond the stack.
+///
+/// A tunnel we started is entirely described by the stack we hold for it, so unwinding that stack
+/// stops it. An **adopted** tunnel is not: adoption takes no stack, because we did not apply
+/// anything — so its unwind is an empty one that completes in microseconds and stops nothing.
+/// Every row that left `Up{adopted}` with `extra: None` therefore resolved its cycle against a
+/// world it had not touched, published Disconnected while the tunnel was still carrying traffic,
+/// and left the tunnel to be noticed and killed by row 2 a second later. On a logout that second
+/// was enough for the configs and the autostart bundle to be wiped under a live tunnel.
+fn undo_for(u: &UpStatus) -> Option<ExtraUndo> {
+    u.adopted.then_some(ExtraUndo::StopBackend)
+}
+
 /// Begin an attempt, unless the intent has no parameters to build a tunnel from.
 ///
 /// An intent without [`TunnelParams`](super::types::TunnelParams) is not a weaker request for a
@@ -286,7 +299,7 @@ pub fn reconcile(
         Status::Up(u) => match (relate(status, intent), world) {
             // 12
             (Rel::Down, _) => Decision::to(unwinding(None, UnwindReason::IntentDown))
-                .with(Effect::Unwind { extra: None }),
+                .with(Effect::Unwind { extra: undo_for(u) }),
             // 13, 14, 15: a newer intent that the running tunnel already satisfies is a hand-over,
             // not a reconnect. Pressing Connect while connected does nothing.
             (Rel::Newer(up), world) if up.satisfied_by(u) => match world {
@@ -313,14 +326,14 @@ pub fn reconcile(
                     Cycle::reconnect(up, policy),
                     UnwindReason::TunnelDied,
                 ))
-                .with(Effect::Unwind { extra: None }),
+                .with(Effect::Unwind { extra: undo_for(u) }),
             },
             // 16
             (Rel::Newer(up), _) => Decision::to(unwinding(
                 Cycle::start(up, policy),
                 UnwindReason::IntentChanged,
             ))
-            .with(Effect::Unwind { extra: None }),
+            .with(Effect::Unwind { extra: undo_for(u) }),
             // 17: confirmed alive. This is also what resets the darkness clock.
             (Rel::Same(_), World::Running(rt)) if rt.protocol == u.protocol => {
                 let mut next = u.clone();
@@ -357,7 +370,7 @@ pub fn reconcile(
                 Cycle::reconnect(up, policy),
                 UnwindReason::TunnelDied,
             ))
-            .with(Effect::Unwind { extra: None }),
+            .with(Effect::Unwind { extra: undo_for(u) }),
             // 20, 21, 22: darkness is never authoritative, so it only starts a clock. The grace is
             // wall-clock and armed on entry to Up, so it cannot be exhausted by how often anyone
             // polls — and on desktop it is zero, because an in-process backend always answers.
@@ -373,7 +386,7 @@ pub fn reconcile(
                     Cycle::reconnect(up, policy),
                     UnwindReason::PeerLost,
                 ))
-                .with(Effect::Unwind { extra: None }),
+                .with(Effect::Unwind { extra: undo_for(u) }),
             },
         },
 

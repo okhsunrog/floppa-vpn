@@ -157,6 +157,10 @@ pub enum ExtraUndo {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnwindReport {
+    /// When the last undo returned. The world is judged against a look taken *after* this: one
+    /// started while the unwind was still running can have seen a tunnel this unwind then
+    /// stopped, and reading it as "still running" cost an extra teardown and a burnt retry.
+    pub finished_at: std::time::Instant,
     pub stack_empty: bool,
     /// Steps whose undo never succeeded, with the last error. Non-empty means the machine is not
     /// fully restored and the user should be told.
@@ -349,6 +353,7 @@ pub async fn unwind(
     }
     info!(residual = residual.len(), "unwind complete");
     UnwindReport {
+        finished_at: std::time::Instant::now(),
         stack_empty: stack.steps.is_empty(),
         residual,
     }

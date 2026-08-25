@@ -280,11 +280,23 @@ struct Harness {
 
 impl Harness {
     fn spawn(policy: Policy) -> Self {
-        Self::spawn_with_store(policy, ConfigStore::in_memory(configs()))
+        Self::spawn_with(policy, ConfigStore::in_memory(configs()), None)
     }
 
     fn spawn_with_store(policy: Policy, store: ConfigStore) -> Self {
+        Self::spawn_with(policy, store, None)
+    }
+
+    /// A world where a tunnel is already running before the actor exists — Android after the UI
+    /// process was swiped away, or an always-on start. The only way to reach adoption through the
+    /// real loop.
+    fn spawn_adopting(policy: Policy, running: RunningTunnel) -> Self {
+        Self::spawn_with(policy, ConfigStore::in_memory(configs()), Some(running))
+    }
+
+    fn spawn_with(policy: Policy, store: ConfigStore, running: Option<RunningTunnel>) -> Self {
         let backend = Arc::new(FakeBackend::default());
+        *backend.running.lock().unwrap() = running;
         let platform = Arc::new(FakePlatform::new());
         let (cmd_tx, cmd_rx) = mpsc::channel(super::CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
@@ -690,4 +702,43 @@ async fn looks_that_went_stale_while_the_actor_was_stalled_do_not_tear_down_a_he
         "and the last, fresh look is what it kept"
     );
     assert_eq!(h.backend.stops(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn disconnecting_an_adopted_tunnel_stops_it_before_down_is_resolved() {
+    // Adoption takes no rollback stack — there is nothing of ours to undo — so the teardown of an
+    // adopted tunnel used to be an unwind of an empty stack: it stopped nothing, resolved Down
+    // and published Disconnected while the tunnel was still up, and left row 2 to notice the
+    // tunnel a second later and kill it then. On a logout that second was enough for the configs
+    // and the autostart bundle to be wiped under a live tunnel.
+    let mut h = Harness::spawn_adopting(
+        policy(),
+        RunningTunnel {
+            protocol: Protocol::WireGuard,
+            generation: None,
+            endpoint: "127.0.0.1:51820".into(),
+            address: "10.0.0.2/32".into(),
+            connected_secs: Some(42),
+            params: None,
+            autonomous: false,
+        },
+    );
+
+    let state = h
+        .wait_for("the surviving tunnel to be adopted", |s| {
+            s.phase == Phase::Connected
+        })
+        .await;
+    assert!(state.adopted, "we did not start it");
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0, "nor rebuild it");
+
+    let down = h.set(IntentRequest::Down).await;
+    assert_eq!(h.outcome(down).await, CycleOutcome::Down);
+    // Read with nothing awaited in between, so this is the state at the instant Down resolved.
+    assert_eq!(
+        h.backend.stops(),
+        1,
+        "the tunnel is stopped by the teardown"
+    );
+    assert!(h.backend.running().is_none());
 }

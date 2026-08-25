@@ -102,9 +102,6 @@ pub struct TunnelActor {
     // ---- in-flight work ----
     attempt: Option<AttemptHandle>,
     unwind: Option<JoinHandle<()>>,
-    /// When the in-flight unwind started, so its result is judged against a later look at the
-    /// world rather than one taken before it ran.
-    unwind_started: Option<Instant>,
 
     // ---- bookkeeping ----
     next_epoch: u64,
@@ -199,7 +196,6 @@ impl TunnelActor {
             app,
             attempt: None,
             unwind: None,
-            unwind_started: None,
             next_epoch: 1,
             #[cfg(target_os = "android")]
             generations: crate::vpn::autostart::ServiceGenerations::new(),
@@ -528,10 +524,11 @@ impl TunnelActor {
                     // It has already unwound its own ladder — so the teardown it belonged to is
                     // complete, and is judged exactly like one the actor ran itself.
                     let finished = UnwindReport {
+                        finished_at: now,
                         stack_empty: true,
                         residual: Vec::new(),
                     };
-                    let world = self.judge_unwind(now);
+                    let world = self.judge_unwind(&finished, now);
                     let decision = reconcile::on_unwind_done(
                         &self.status,
                         &self.intent,
@@ -559,7 +556,7 @@ impl TunnelActor {
     fn on_unwind_done(&mut self, report: UnwindReport) {
         self.unwind = None;
         let now = Instant::now();
-        let world = self.judge_unwind(now);
+        let world = self.judge_unwind(&report, now);
         let decision = reconcile::on_unwind_done(
             &self.status,
             &self.intent,
@@ -571,7 +568,7 @@ impl TunnelActor {
         self.apply(decision, now);
     }
 
-    /// The world a finished teardown is judged against: only a look taken *after* it started.
+    /// The world a finished teardown is judged against: only a look taken *after* it finished.
     ///
     /// An observation from before the unwind says nothing about whether it worked, and every
     /// retry here happens in microseconds — far faster than the poll interval — so re-checking
@@ -580,11 +577,16 @@ impl TunnelActor {
     /// rows, which re-observe. One judge for both the actor's own unwinds and an attempt's
     /// self-unwind: the latter used to be judged against the stale look, and so paid for an extra
     /// stop and a burnt retry every time.
-    fn judge_unwind(&mut self, now: Instant) -> World {
-        match self.unwind_started.take() {
-            Some(started) if self.last_obs.observed_at < started => World::Dark,
-            _ => World::classify(&self.last_obs, now, &self.policy),
+    ///
+    /// The cutoff is the unwind's *end*, not its start. A desktop unwind of a real stack is four
+    /// privileged calls before the backend is stopped, so a look that began in the middle of it
+    /// saw a tunnel that the same unwind went on to stop — and step 0 of the table read that as
+    /// "the teardown did not work", ran another one, and spent a retry on an artefact of timing.
+    fn judge_unwind(&self, report: &UnwindReport, now: Instant) -> World {
+        if self.last_obs.observed_at < report.finished_at {
+            return World::Dark;
         }
+        World::classify(&self.last_obs, now, &self.policy)
     }
 
     /// Pick up whatever a crashed attempt or a previous process left recorded in the journal.
@@ -730,10 +732,9 @@ impl TunnelActor {
                 Some(handle) => {
                     // Signal only. The task is never dropped: it unwinds its own stack to
                     // completion and reports, which is the whole reason no failure path in this
-                    // file performs teardown. Its unwind starts now, so its report is judged
-                    // against a look taken from now on.
+                    // file performs teardown. Its report is judged like any other unwind's, from
+                    // the moment it lands.
                     handle.cancel.cancel();
-                    self.unwind_started = Some(Instant::now());
                 }
                 // The attempt already reported. Fall through to an unwind of an empty stack, which
                 // is a no-op that still drives the state machine forward.
@@ -750,7 +751,6 @@ impl TunnelActor {
                 let backend = self.backend.clone();
                 let retries = self.policy.undo_retries;
                 let tx = self.cmd_tx.clone();
-                self.unwind_started = Some(Instant::now());
                 self.unwind = Some(tokio::spawn(async move {
                     let report = unwind(
                         &mut stack,

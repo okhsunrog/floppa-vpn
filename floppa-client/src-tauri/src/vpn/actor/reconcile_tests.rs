@@ -1087,6 +1087,7 @@ fn the_last_probe_of_a_budgeted_cycle_schedules_another_pass() {
 
 fn clean() -> UnwindReport {
     UnwindReport {
+        finished_at: std::time::Instant::now(),
         stack_empty: true,
         residual: Vec::new(),
     }
