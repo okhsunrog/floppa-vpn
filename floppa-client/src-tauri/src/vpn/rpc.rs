@@ -3,62 +3,31 @@
 //! The service trait is Android-only, because tarpc is an Android-only dependency. The payload type
 //! is not gated: it is plain data, and gating it would mean its tests compile on one target only.
 //!
-//! # Rule: every type on this wire has a bincode round-trip test
+//! # Rule: every type on this wire round-trips through the wire's own codec
 //!
-//! The transport is bincode (`tokio_serde::formats::Bincode`), which is not self-describing. Any
-//! serde shape that needs the format to describe itself — `deserialize_with` that reads a
-//! different shape than `serialize_with` writes, `#[serde(untagged)]`, `#[serde(tag = …)]`
-//! (internally/adjacently tagged enums), `#[serde(flatten)]`, `deserialize_any` — encodes fine
-//! and fails to *decode* inside the framed transport, where it surfaces as "the connection to
-//! the server was already shutdown" rather than as a decode error anyone can catch. That shipped
-//! once (the AmneziaWG `I` slots). So: every argument and return type of every `VpnRpc` method,
-//! in every variant, round-trips through bincode in `tests::wire_coverage` below. Adding a
-//! method or a field means adding it there.
+//! The transport used to be bincode, which is not self-describing: any serde shape that needs the
+//! format to describe itself — `deserialize_with` that reads a different shape than
+//! `serialize_with` writes, `#[serde(untagged)]`, `#[serde(tag = …)]` (internally or adjacently
+//! tagged enums), `#[serde(flatten)]`, `deserialize_any` — encoded fine and failed to *decode*
+//! inside the framed transport, where it surfaced as "the connection to the server was already
+//! shutdown" rather than as a decode error anyone could catch. That shipped once, as the
+//! AmneziaWG `I` slots, and broke every AmneziaWG connect on device.
+//!
+//! The transport is now JSON (`tokio_serde::formats::Json`), which is self-describing, so that
+//! whole class is gone. It had to go: this wire now carries the actor's own vocabulary —
+//! `TunnelState`, and through it `CycleOutcome`, `AttemptError`, `BackendError`, `IntentError`,
+//! every one of them an internally tagged enum — and mirroring all of that into bincode-safe
+//! shapes would have been a tax on every future field.
+//!
+//! The rule the class of bug earned keeps its force, generalised: **every argument and return type
+//! of every `VpnRpc` method, in every variant, round-trips through the codec that is actually on
+//! the wire**, in `tests::wire_coverage` below. Adding a method or a field means adding it there.
+//! JSON has one hazard of its own and the tests pin it: `serde_json` writes a non-finite `f64` as
+//! `null` and then refuses to read it back.
 
 use crate::vpn::actor::types::TunnelParams;
 use crate::vpn::protocol::Protocol;
 use serde::{Deserialize, Serialize};
-
-/// The tunnel config as it crosses the process boundary.
-///
-/// Deliberately a separate type from [`ProtocolConfig`](crate::vpn::state::ProtocolConfig), which
-/// is adjacently tagged (`#[serde(tag = "protocol", content = "config")]`) because its JSON form
-/// is what sits in users' keyrings and must keep parsing.
-///
-/// Adjacent and internal tagging both need a self-describing format to *deserialize*: serde
-/// buffers the content and re-reads it once it has seen the tag. bincode is not self-describing,
-/// so the encode succeeds and the decode does not — and it fails inside the framed transport, so
-/// it surfaces as "could not read from the transport" rather than as a decode error anyone can
-/// catch. This enum is externally tagged, which bincode encodes as a plain variant index.
-// Same shape as `ProtocolConfig`: the AmneziaWG variant is the largest by construction.
-#[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum WireConfig {
-    WireGuard(crate::vpn::state::WgConfig),
-    AmneziaWg(crate::vpn::state::AwgConfig),
-    Vless(crate::vpn::state::VlessVpnConfig),
-}
-
-impl From<&crate::vpn::state::ProtocolConfig> for WireConfig {
-    fn from(config: &crate::vpn::state::ProtocolConfig) -> Self {
-        use crate::vpn::state::ProtocolConfig;
-        match config {
-            ProtocolConfig::WireGuard(wg) => Self::WireGuard(wg.clone()),
-            ProtocolConfig::AmneziaWg(awg) => Self::AmneziaWg(awg.clone()),
-            ProtocolConfig::Vless(vless) => Self::Vless(vless.clone()),
-        }
-    }
-}
-
-impl From<WireConfig> for crate::vpn::state::ProtocolConfig {
-    fn from(config: WireConfig) -> Self {
-        match config {
-            WireConfig::WireGuard(wg) => Self::WireGuard(wg),
-            WireConfig::AmneziaWg(awg) => Self::AmneziaWg(awg),
-            WireConfig::Vless(vless) => Self::Vless(vless),
-        }
-    }
-}
 
 /// The identity of a running tunnel, as reported by the process that owns it.
 ///
@@ -146,6 +115,11 @@ pub trait VpnRpc {
     /// and it means a failure to start comes back here as a reason instead of being logged and
     /// then inferred from a timeout.
     ///
+    /// It travels in its *persisted* shape. That used to be impossible: adjacent tagging needs a
+    /// self-describing format to deserialize, so a mirror type (`WireConfig`) existed purely to
+    /// spell the same three variants in a way bincode could decode. With a JSON transport the
+    /// mirror is dead weight, and one shape means one place for a config to be wrong.
+    ///
     /// `generation` identifies the request; a call for a generation the service has moved past is
     /// rejected rather than obeyed.
     /// `endpoint` is the already-resolved `ip:port`. It is resolved by the caller because by the
@@ -155,7 +129,7 @@ pub trait VpnRpc {
     /// so that whoever finds this tunnel later learns what it routes from its owner.
     async fn start_tunnel(
         generation: u64,
-        config: WireConfig,
+        config: crate::vpn::state::ProtocolConfig,
         endpoint: String,
         params: TunnelParams,
     ) -> Result<(), String>;
@@ -202,52 +176,56 @@ AllowedIPs = 0.0.0.0/0
         WgConfig::from_config_str(WG_CONFIG).expect("fixture must parse")
     }
 
-    /// The wire uses bincode, so anything crossing it has to survive bincode specifically —
-    /// not just "serde works".
+    /// Through the codec that is actually on the wire — `tokio_serde::formats::Json` is
+    /// `serde_json` over the framed bytes — rather than through "serde works in general", which
+    /// is what let a shape that only JSON forgives ship on a transport that did not.
     fn roundtrip<T>(value: &T) -> Result<T, String>
     where
         T: serde::Serialize + serde::de::DeserializeOwned,
     {
-        let bytes = bincode::serialize(value).map_err(|e| format!("encode: {e}"))?;
-        bincode::deserialize(&bytes).map_err(|e| format!("decode: {e}"))
+        let bytes = serde_json::to_vec(value).map_err(|e| format!("encode: {e}"))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("decode: {e}"))
     }
 
+    /// The persisted shape *is* the wire shape now. It could not be while the transport was
+    /// bincode — adjacent tagging needs a self-describing format to deserialize — which is the
+    /// whole reason a mirror type existed.
     #[test]
-    fn the_wire_config_survives_bincode() {
-        let sent = WireConfig::WireGuard(wg());
-        let received = roundtrip(&sent).expect("the wire type must round-trip");
-        let restored: ProtocolConfig = received.into();
+    fn the_persisted_config_survives_the_wire() {
+        let sent = ProtocolConfig::WireGuard(wg());
+        let received = roundtrip(&sent).expect("the config must round-trip");
         assert_eq!(
-            restored.protocol(),
+            received.protocol(),
             crate::vpn::protocol::Protocol::WireGuard
         );
-        assert_eq!(restored.endpoint_str(), "vpn.example.com:51820");
+        assert_eq!(received.endpoint_str(), "vpn.example.com:51820");
     }
 
     /// The AmneziaWG variant is the one that actually shipped broken: its `I` slots used to
-    /// deserialize as `Option` while serializing as `String`, which JSON forgives and bincode
-    /// does not — every AmneziaWG `start_tunnel` failed to decode at the service.
+    /// deserialize as `Option` while serializing as `String` — a shape JSON forgives and the
+    /// bincode transport of the time did not, so every AmneziaWG `start_tunnel` failed to decode
+    /// at the service. The slots are symmetric now and stay covered whatever the codec is.
     #[test]
-    fn the_awg_wire_config_survives_bincode() {
+    fn the_awg_config_survives_the_wire() {
         let obfuscation = floppa_tunnel_config::AwgObfuscation {
             i2: String::new(),
             i3: "<b 0xdeadbeef>".into(),
             ..Default::default()
         };
-        let sent = WireConfig::AmneziaWg(crate::vpn::state::AwgConfig {
+        let sent = ProtocolConfig::AmneziaWg(crate::vpn::state::AwgConfig {
             wg: wg(),
             obfuscation: obfuscation.clone(),
         });
-        let received = roundtrip(&sent).expect("the AmneziaWG wire type must round-trip");
+        let received = roundtrip(&sent).expect("the AmneziaWG config must round-trip");
         match received {
-            WireConfig::AmneziaWg(awg) => assert_eq!(awg.obfuscation, obfuscation),
+            ProtocolConfig::AmneziaWg(awg) => assert_eq!(awg.obfuscation, obfuscation),
             other => panic!("wrong variant: {other:?}"),
         }
     }
 
     /// Every argument and return type of every `VpnRpc` method, in every variant that can be
-    /// constructed, through bincode. Ordered by the trait: get_full_info, start_tunnel, stop,
-    /// ping, set_log_config, start_log_capture, stop_log_capture.
+    /// constructed, through the wire's codec. Ordered by the trait: get_full_info, start_tunnel,
+    /// stop, ping, probe, set_log_config, start_log_capture, stop_log_capture.
     mod wire_coverage {
         use super::*;
         use crate::logging::{LogConfig, LogProfile};
@@ -259,7 +237,7 @@ AllowedIPs = 0.0.0.0/0
         where
             T: serde::Serialize + serde::de::DeserializeOwned,
         {
-            roundtrip(value).unwrap_or_else(|e| panic!("{what} must survive bincode: {e}"))
+            roundtrip(value).unwrap_or_else(|e| panic!("{what} must survive the wire: {e}"))
         }
 
         /// Types without `PartialEq` are compared through their JSON form.
@@ -364,12 +342,12 @@ AllowedIPs = 0.0.0.0/0
             // config: every protocol; AmneziaWG with the default preset, with custom slots, and
             // with every slot unset (the shape that used to break).
             let configs = [
-                WireConfig::WireGuard(wg()),
-                WireConfig::AmneziaWg(AwgConfig {
+                ProtocolConfig::WireGuard(wg()),
+                ProtocolConfig::AmneziaWg(AwgConfig {
                     wg: wg(),
                     obfuscation: AwgObfuscation::default(),
                 }),
-                WireConfig::AmneziaWg(AwgConfig {
+                ProtocolConfig::AmneziaWg(AwgConfig {
                     wg: wg(),
                     obfuscation: AwgObfuscation {
                         i1: String::new(),
@@ -377,14 +355,14 @@ AllowedIPs = 0.0.0.0/0
                         ..AwgObfuscation::default()
                     },
                 }),
-                WireConfig::AmneziaWg(AwgConfig {
+                ProtocolConfig::AmneziaWg(AwgConfig {
                     wg: wg(),
                     obfuscation: AwgObfuscation {
                         i1: String::new(),
                         ..AwgObfuscation::default()
                     },
                 }),
-                WireConfig::Vless(VlessVpnConfig {
+                ProtocolConfig::Vless(VlessVpnConfig {
                     uri: "vless://uuid@203.0.113.7:443?security=reality".into(),
                     uuid: "0b6f9e9a-1c2d-4e5f-8a9b-0c1d2e3f4a5b".into(),
                     server_addr: "203.0.113.7:443".into(),
@@ -397,7 +375,7 @@ AllowedIPs = 0.0.0.0/0
                     mtu: Some(1500),
                     allowed_ips: "0.0.0.0/0, ::/0".into(),
                 }),
-                WireConfig::Vless(VlessVpnConfig {
+                ProtocolConfig::Vless(VlessVpnConfig {
                     uri: String::new(),
                     uuid: String::new(),
                     server_addr: "h:1".into(),
@@ -412,10 +390,10 @@ AllowedIPs = 0.0.0.0/0
                 }),
             ];
             for (i, config) in configs.iter().enumerate() {
-                let back = survives(&format!("WireConfig #{i}"), config);
+                let back = survives(&format!("ProtocolConfig #{i}"), config);
                 assert!(
                     same_json(&back, config),
-                    "WireConfig #{i} changed in transit"
+                    "ProtocolConfig #{i} changed in transit"
                 );
             }
             // endpoint
@@ -474,21 +452,7 @@ AllowedIPs = 0.0.0.0/0
     }
 
     #[test]
-    fn the_persisted_config_does_not_survive_bincode() {
-        // Not a quirk to work around — the reason WireConfig exists. ProtocolConfig is adjacently
-        // tagged because its JSON form is in users' keyrings, and adjacent tagging needs a
-        // self-describing format to deserialize. Sending it over this wire encoded fine and then
-        // failed to decode *inside the framed transport*, which surfaced as "could not read from
-        // the transport" — a connection error, with nothing pointing at the real cause.
-        let sent = ProtocolConfig::WireGuard(wg());
-        assert!(
-            roundtrip(&sent).is_err(),
-            "if this ever passes, bincode has become self-describing and WireConfig can go"
-        );
-    }
-
-    #[test]
-    fn the_tunnel_info_survives_bincode_with_its_params() {
+    fn the_tunnel_info_survives_the_wire_with_its_params() {
         use crate::vpn::actor::types::SplitMode;
         let sent = TunnelInfo {
             running: Some(RunningInfo {
@@ -512,10 +476,25 @@ AllowedIPs = 0.0.0.0/0
         assert_eq!(received, sent);
     }
 
+    /// JSON's own hazard, and the only one this transport has: `serde_json` writes a non-finite
+    /// `f64` as `null` and then refuses to read it back. The rates are the only floats that cross,
+    /// and `SpeedTracker` never divides by an interval under 100 ms — so they are finite by
+    /// construction, and this is here to fail if that ever stops being true.
     #[test]
-    fn converting_to_the_wire_and_back_preserves_the_protocol() {
-        let original = ProtocolConfig::WireGuard(wg());
-        let restored: ProtocolConfig = WireConfig::from(&original).into();
-        assert_eq!(restored.protocol(), original.protocol());
+    fn the_only_floats_on_the_wire_are_finite() {
+        use crate::vpn::state::SpeedTracker;
+
+        let mut speed = SpeedTracker::new();
+        // First sample is the baseline; the second is computed over a near-zero interval, which is
+        // exactly where a division would produce an infinity.
+        speed.update(0, 0);
+        let (tx, rx) = speed.update(u64::MAX, u64::MAX);
+        assert!(tx.is_finite() && rx.is_finite(), "{tx} {rx}");
+
+        let encoded = serde_json::to_string(&[f64::INFINITY]).unwrap();
+        assert!(
+            serde_json::from_str::<[f64; 1]>(&encoded).is_err(),
+            "if this ever passes, JSON has learned about infinities and the guard above can go"
+        );
     }
 }

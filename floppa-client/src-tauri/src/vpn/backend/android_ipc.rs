@@ -93,8 +93,7 @@ impl AndroidIpcBackend {
             })?;
 
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
-        let transport =
-            tarpc::serde_transport::new(framed, tokio_serde::formats::Bincode::default());
+        let transport = tarpc::serde_transport::new(framed, tokio_serde::formats::Json::default());
 
         let client = VpnRpcClient::new(tarpc::client::Config::default(), transport).spawn();
         debug!("opened a new connection to the VPN service");
@@ -168,9 +167,14 @@ impl VpnBackend for AndroidIpcBackend {
         // polls that only ask about it.
         debug!(%generation, "sending start_tunnel");
         let ctx = Self::deadline(std::time::Duration::from_secs(15));
-        let wire = crate::vpn::rpc::WireConfig::from(config);
         match client
-            .start_tunnel(ctx, generation, wire, endpoint.to_string(), params.clone())
+            .start_tunnel(
+                ctx,
+                generation,
+                config.clone(),
+                endpoint.to_string(),
+                params.clone(),
+            )
             .await
         {
             Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),

@@ -158,7 +158,7 @@ impl VpnRpc for VpnRpcServer {
         self,
         _ctx: Context,
         generation: u64,
-        config: crate::vpn::rpc::WireConfig,
+        config: ProtocolConfig,
         endpoint: String,
         params: TunnelParams,
     ) -> Result<(), String> {
@@ -175,7 +175,7 @@ impl VpnRpc for VpnRpcServer {
         bring_up(
             &self.service,
             &self.tunnel_manager,
-            config.into(),
+            config,
             endpoint,
             Started {
                 params,
@@ -239,8 +239,7 @@ pub fn start_server(
     super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream, cancel| {
         debug!("UI process connected to RPC server");
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
-        let transport =
-            tarpc::serde_transport::new(framed, tokio_serde::formats::Bincode::default());
+        let transport = tarpc::serde_transport::new(framed, tokio_serde::formats::Json::default());
         let channel = tarpc::server::BaseChannel::with_defaults(transport);
         let server = server.clone();
         tokio::spawn(async move {

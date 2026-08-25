@@ -111,9 +111,9 @@ impl TunSpec {
 
 /// What an autonomous start rebuilds.
 ///
-/// `config` is the persisted [`ProtocolConfig`] shape — adjacently tagged, JSON — rather than the
-/// bincode-only `WireConfig`: this file is JSON, and the tag that names the protocol is what makes
-/// the file self-describing. `endpoint` is the literal the connect resolved to, so a start under
+/// `config` is the persisted [`ProtocolConfig`] shape, adjacently tagged: the tag that names the
+/// protocol is what makes the file self-describing, and it is now the shape the RPC carries too.
+/// `endpoint` is the literal the connect resolved to, so a start under
 /// lockdown, where nothing can be resolved because nothing is allowed on the network yet, still has
 /// an address to dial.
 #[derive(Debug, Clone, Serialize, Deserialize)]
