@@ -588,16 +588,22 @@ pub async fn create_peer(
         .map(|o| o.protocol)
         .unwrap_or(Protocol::WireGuard);
 
-    // Resolve the subnet for this protocol up front (also validates AmneziaWG is configured).
-    let subnet = match protocol {
-        Protocol::WireGuard => ctx.config.wireguard.client_subnet.clone(),
-        Protocol::AmneziaWg => ctx
-            .config
-            .amneziawg
-            .as_ref()
-            .ok_or(FloppaError::AmneziaWgNotConfigured)?
-            .client_subnet
-            .clone(),
+    // Resolve everything protocol-specific up front, BEFORE any row is written: an AmneziaWG
+    // peer must not be committed only to fail on a missing server key afterwards (the daemon
+    // would then try to serve a peer nobody can connect to).
+    let (subnet, awg) = match protocol {
+        Protocol::WireGuard => (ctx.config.wireguard.client_subnet.clone(), None),
+        Protocol::AmneziaWg => {
+            let awg = ctx
+                .config
+                .amneziawg
+                .as_ref()
+                .ok_or(FloppaError::AmneziaWgNotConfigured)?;
+            let awg_public_key = ctx
+                .awg_public_key
+                .ok_or(FloppaError::AmneziaWgNotConfigured)?;
+            (awg.client_subnet.clone(), Some((awg, awg_public_key)))
+        }
     };
 
     // Transaction: check limit + allocate resources + insert peer atomically
@@ -726,23 +732,15 @@ pub async fn create_peer(
 
     tx.commit().await?;
 
-    let config = match protocol {
-        Protocol::WireGuard => generate_wg_config(
+    let config = match awg {
+        None => generate_wg_config(
             private_key.as_base64(),
             &assigned_ip,
             ctx.config,
             ctx.wg_public_key,
         ),
-        Protocol::AmneziaWg => {
-            let awg = ctx
-                .config
-                .amneziawg
-                .as_ref()
-                .ok_or(FloppaError::AmneziaWgNotConfigured)?;
-            let awg_pub = ctx
-                .awg_public_key
-                .ok_or(FloppaError::AmneziaWgNotConfigured)?;
-            generate_awg_config(private_key.as_base64(), &assigned_ip, awg, awg_pub)
+        Some((awg, awg_public_key)) => {
+            generate_awg_config(private_key.as_base64(), &assigned_ip, awg, awg_public_key)
         }
     };
 
@@ -1917,6 +1915,47 @@ mod tests {
         let peer_b = peer_b.unwrap();
 
         assert_ne!(peer_a.assigned_ip, peer_b.assigned_ip);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_create_awg_peer_without_server_key_writes_nothing(pool: DbPool) {
+        use crate::config::{AmneziaWgConfig, AwgObfuscation};
+        let mut config = test_config();
+        config.amneziawg = Some(AmneziaWgConfig {
+            interface: "awg-test".into(),
+            endpoint: "vpn.test.com:51821".into(),
+            listen_port: None,
+            client_subnet: "10.101.0.0/24".into(),
+            server_ip: None,
+            dns: vec!["1.1.1.1".into()],
+            allowed_ips: "0.0.0.0/0, ::/0".into(),
+            mtu: 1280,
+            rate_limit: None,
+            obfuscation: AwgObfuscation::default(),
+        });
+        // [amneziawg] is configured but the server has no awg_private_key → no public key.
+        let ctx = test_ctx(&pool, &config);
+        let plan_id = get_basic_plan_id(&pool).await;
+        let user_id = seed_user(&pool, 11111).await;
+        seed_subscription(&pool, user_id, plan_id).await;
+
+        let result = create_peer(
+            &ctx,
+            user_id,
+            Some(CreatePeerOptions {
+                installation_id: None,
+                protocol: Protocol::AmneziaWg,
+            }),
+        )
+        .await;
+        assert!(matches!(result, Err(FloppaError::AmneziaWgNotConfigured)));
+
+        // The check happens before the transaction: no orphan peer row for the daemon to serve.
+        let peers = sqlx::query_scalar!("SELECT COUNT(*) FROM peers WHERE user_id = $1", user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(peers, Some(0));
     }
 
     // ── find_peer_by_device_id ──
