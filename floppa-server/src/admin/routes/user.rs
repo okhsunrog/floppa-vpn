@@ -6,11 +6,13 @@ use axum::{
 };
 use chrono::Utc;
 use floppa_core::{
-    FloppaError, PeerSyncStatus, Protocol, SubscriptionSource, decrypt_private_key, services,
+    FloppaError, PeerSyncStatus, Protocol, SessionKind, SessionRecord, SubscriptionSource,
+    decrypt_private_key, services,
 };
 use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::admin::{
     auth::AuthUser,
@@ -224,6 +226,52 @@ pub struct InstallationResponse {
     created_at: chrono::DateTime<Utc>,
 }
 
+/// One live login of a user, as shown in "Devices & sessions".
+#[derive(Serialize, ToSchema)]
+pub struct SessionInfo {
+    id: Uuid,
+    /// Which login path opened it.
+    kind: SessionKind,
+    created_at: chrono::DateTime<Utc>,
+    /// Bumped by authenticated requests, at most once an hour.
+    last_seen_at: chrono::DateTime<Utc>,
+    /// Device description recorded when the app registered its installation on this session.
+    label: Option<String>,
+    installation_id: Option<i64>,
+    device_name: Option<String>,
+    platform: Option<String>,
+    /// True for the session the request itself was made with.
+    current: bool,
+}
+
+impl SessionInfo {
+    pub(super) fn from_record(record: SessionRecord, current: Option<Uuid>) -> Self {
+        Self {
+            current: current == Some(record.id),
+            id: record.id,
+            kind: record.kind,
+            created_at: record.created_at,
+            last_seen_at: record.last_seen_at,
+            label: record.label,
+            installation_id: record.installation_id,
+            device_name: record.device_name,
+            platform: record.platform,
+        }
+    }
+}
+
+/// The label a session gets from the installation that reported itself on it:
+/// `"<platform> · <device name>"`, whichever halves are known.
+pub(super) fn session_label(platform: Option<&str>, device_name: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = [platform, device_name]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
+}
+
 /// Get current authenticated user info
 #[utoipa::path(
     get,
@@ -311,6 +359,78 @@ pub(super) async fn set_my_credential(
     Json(req): Json<SetCredentialRequest>,
 ) -> Result<StatusCode, ApiError> {
     services::set_credential_for_user(&state.pool, auth.user_id, &req.login, &req.password).await?;
+    // A changed password signs out every other device. A legacy token has no session to keep,
+    // so a caller on one is signed out too and logs in again with the new password.
+    services::revoke_sessions_except(&state.pool, auth.user_id, auth.session_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// List the current user's live sessions (devices), most recently seen first.
+#[utoipa::path(
+    get,
+    path = "/me/sessions",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = Vec<SessionInfo>),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn get_my_sessions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<SessionInfo>>, ApiError> {
+    let sessions =
+        services::list_sessions(&state.pool, auth.user_id, super::session_max_idle(&state))
+            .await?
+            .into_iter()
+            .map(|record| SessionInfo::from_record(record, auth.session_id))
+            .collect();
+    Ok(Json(sessions))
+}
+
+/// Sign out one of the current user's sessions. Signing out the current one works too; the
+/// next request with that token gets a 401.
+#[utoipa::path(
+    delete,
+    path = "/me/sessions/{id}",
+    tag = "user",
+    security(("bearer" = [])),
+    params(("id" = Uuid, Path, description = "Session ID")),
+    responses(
+        (status = 204, description = "Session revoked"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 404, body = ApiError, description = "No such live session"),
+    )
+)]
+pub(super) async fn delete_my_session(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    if !services::revoke_session(&state.pool, session_id, Some(auth.user_id)).await? {
+        return Err(ApiError::not_found("Session not found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Sign out everywhere: every session of the current user is revoked, the caller's included,
+/// and tokens issued before sessions existed stop working too.
+#[utoipa::path(
+    post,
+    path = "/me/sessions/revoke-all",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 204, description = "All sessions revoked"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn revoke_all_my_sessions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<StatusCode, ApiError> {
+    services::revoke_sessions_except(&state.pool, auth.user_id, None).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -428,6 +548,23 @@ pub(super) async fn upsert_my_installation(
         req.app_version.as_deref(),
     )
     .await?;
+
+    // The device reporting itself is the device holding this session: bind them, so the
+    // session list can name it and deleting the installation signs it out.
+    if let Some(session_id) = auth.session_id {
+        services::bind_session_installation(
+            &state.pool,
+            session_id,
+            auth.user_id,
+            installation.id,
+            session_label(
+                installation.platform.as_deref(),
+                installation.device_name.as_deref(),
+            )
+            .as_deref(),
+        )
+        .await?;
+    }
 
     Ok(Json(InstallationResponse {
         id: installation.id,
@@ -816,4 +953,26 @@ pub(super) async fn regenerate_my_vless_config(
     let uri = services::generate_vless_uri(&uuid.to_string(), &state.config, reality_public_key)?;
 
     Ok(Json(VlessConfigResponse { uri }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_label;
+
+    #[test]
+    fn session_label_joins_the_known_halves() {
+        assert_eq!(
+            session_label(Some("android"), Some("Pixel 7")).as_deref(),
+            Some("android · Pixel 7")
+        );
+        assert_eq!(
+            session_label(None, Some("Pixel 7")).as_deref(),
+            Some("Pixel 7")
+        );
+        assert_eq!(
+            session_label(Some("linux"), Some(" ")).as_deref(),
+            Some("linux")
+        );
+        assert_eq!(session_label(None, None), None);
+    }
 }

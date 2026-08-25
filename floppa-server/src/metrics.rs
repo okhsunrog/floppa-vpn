@@ -30,6 +30,7 @@ const HTTP_IN_FLIGHT: &str = "http_requests_in_flight";
 const RATE_LIMITED: &str = "auth_rate_limited_total";
 const UPGRADE_REQUIRED: &str = "client_upgrade_required_total";
 const TOKENS_REFRESHED: &str = "auth_tokens_refreshed_total";
+const TOKENS_REJECTED: &str = "auth_tokens_rejected_total";
 const SERVER_ERRORS: &str = "api_server_errors_total";
 const VM_QUERY_FAILURES: &str = "vm_query_failures_total";
 const BOT_UPDATES: &str = "bot_updates_total";
@@ -77,6 +78,11 @@ pub fn install_exporter() -> anyhow::Result<()> {
         TOKENS_REFRESHED,
         Unit::Count,
         "JWTs re-issued by the sliding-session middleware"
+    );
+    describe_counter!(
+        TOKENS_REJECTED,
+        Unit::Count,
+        "Correctly signed JWTs refused by the user/session check, by reason"
     );
     describe_counter!(
         SERVER_ERRORS,
@@ -138,6 +144,11 @@ pub fn upgrade_required() {
 
 pub fn token_refreshed() {
     counter!(TOKENS_REFRESHED).increment(1);
+}
+
+/// A correctly signed token was refused by the session/user check, by reason.
+pub fn token_rejected(reason: &'static str) {
+    counter!(TOKENS_REJECTED, "reason" => reason).increment(1);
 }
 
 pub fn server_error(error: &'static str) {

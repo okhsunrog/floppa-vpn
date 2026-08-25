@@ -7,7 +7,7 @@ use axum::{
     response::Html,
 };
 use chrono::{Duration, Utc};
-use floppa_core::services;
+use floppa_core::{SessionKind, services};
 use rand::random;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
@@ -149,12 +149,19 @@ fn html_escape_attr(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Build a JWT + AuthResponse from an already-resolved user. Single point that signs the JWT;
-/// both the Telegram path and the credential (login+password) path converge here.
-fn build_auth_response(state: &AppState, user: AuthUserInfo) -> Result<AuthResponse, ApiError> {
+/// Open a session for an already-resolved user and sign the JWT that names it. Single point
+/// that issues tokens: every login path (Telegram widget, Mini App, deep link, credential)
+/// converges here, so every token is revocable through its session.
+async fn build_auth_response(
+    state: &AppState,
+    user: AuthUserInfo,
+    kind: SessionKind,
+) -> Result<AuthResponse, ApiError> {
+    let session_id = services::create_session(&state.pool, user.id, kind).await?;
     let token = create_jwt(
         user.id,
         user.is_admin,
+        session_id,
         &state.auth_secrets.jwt_secret,
         state.auth_config.jwt_expiration_hours,
     )
@@ -163,13 +170,14 @@ fn build_auth_response(state: &AppState, user: AuthUserInfo) -> Result<AuthRespo
     Ok(AuthResponse { token, user })
 }
 
-/// Upsert a Telegram user and create a JWT auth response.
-async fn upsert_and_create_jwt(
+/// Upsert a Telegram user; the caller decides when to open the session (see
+/// [`build_auth_response`]).
+async fn upsert_telegram_user(
     state: &AppState,
     telegram_id: i64,
     username: Option<&str>,
     profile: services::TelegramProfile<'_>,
-) -> Result<AuthResponse, ApiError> {
+) -> Result<AuthUserInfo, ApiError> {
     let is_config_admin = state.auth_secrets.admin_telegram_ids.contains(&telegram_id);
 
     let result =
@@ -181,13 +189,14 @@ async fn upsert_and_create_jwt(
     // unreachable from clients in Russia, so we serve avatars from our own origin.
     super::avatar::spawn_refresh_if_stale(state, result.id, telegram_id, result.photo_url.clone());
 
-    build_auth_response(state, AuthUserInfo::from_upsert(result, Some(telegram_id)))
+    Ok(AuthUserInfo::from_upsert(result, Some(telegram_id)))
 }
 
+/// Verify a Login Widget payload and upsert the user behind it.
 async fn authenticate_telegram_user(
     state: &AppState,
     auth_data: TelegramAuthData,
-) -> Result<AuthResponse, ApiError> {
+) -> Result<AuthUserInfo, ApiError> {
     let bot_token = state
         .secrets
         .bot
@@ -199,7 +208,7 @@ async fn authenticate_telegram_user(
         return Err(ApiError::unauthorized());
     }
 
-    upsert_and_create_jwt(
+    upsert_telegram_user(
         state,
         auth_data.id,
         auth_data.username.as_deref(),
@@ -337,16 +346,18 @@ pub(super) async fn telegram_deep_link_callback(
         auth_date: query.auth_date,
         hash: query.hash,
     };
-    let auth_response = authenticate_telegram_user(&state, auth_data).await?;
+    let user = authenticate_telegram_user(&state, auth_data).await?;
 
+    // The session is opened when the app exchanges the code, not here: a code that is never
+    // exchanged (page closed mid-flow) must not leave a phantom device in the user's list.
     let login_code = generate_nonce();
     state.telegram_login_codes.write().await.insert(
         now,
         login_code.clone(),
         super::PendingTelegramLoginCode {
-            auth_response,
+            user,
             expires_at: now + Duration::minutes(2),
-            consumed_at: None,
+            exchanged: None,
         },
     );
 
@@ -481,16 +492,23 @@ pub(super) async fn exchange_telegram_login_code(
     )?;
 
     let now = Utc::now();
-    let auth_response = {
-        let mut login_codes = state.telegram_login_codes.write().await;
-        // A consumed code stays exchangeable for a short grace window (`TtlMap` drops it after)
-        // so the client can retry when the first response was lost mid-flight, e.g. the webview
-        // got suspended during the browser → app switch on mobile.
-        let pending = login_codes
-            .get_mut(now, &request.code)
-            .ok_or_else(ApiError::unauthorized)?;
-        pending.consumed_at.get_or_insert(now);
-        pending.auth_response.clone()
+    // A consumed code stays exchangeable for a short grace window (`TtlMap` drops it after)
+    // so the client can retry when the first response was lost mid-flight, e.g. the webview
+    // got suspended during the browser → app switch on mobile. The retry gets the very same
+    // token: the session is opened once, on the first exchange. The map lock is held across
+    // that one INSERT so two racing exchanges cannot open two sessions.
+    let mut login_codes = state.telegram_login_codes.write().await;
+    let pending = login_codes
+        .get_mut(now, &request.code)
+        .ok_or_else(ApiError::unauthorized)?;
+    let auth_response = match &pending.exchanged {
+        Some((_, auth_response)) => auth_response.clone(),
+        None => {
+            let auth_response =
+                build_auth_response(&state, pending.user.clone(), SessionKind::DeepLink).await?;
+            pending.exchanged = Some((now, auth_response.clone()));
+            auth_response
+        }
     };
 
     Ok(Json(auth_response))
@@ -512,8 +530,10 @@ pub(super) async fn telegram_login(
     State(state): State<AppState>,
     Json(auth_data): Json<TelegramAuthData>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let auth_response = authenticate_telegram_user(&state, auth_data).await?;
-    Ok(Json(auth_response))
+    let user = authenticate_telegram_user(&state, auth_data).await?;
+    Ok(Json(
+        build_auth_response(&state, user, SessionKind::TelegramWidget).await?,
+    ))
 }
 
 /// Authenticate via Telegram Mini App initData
@@ -542,7 +562,7 @@ pub(super) async fn telegram_mini_app_auth(
     let mini_app_user: MiniAppUser = verify_telegram_mini_app(&request.init_data, bot_token)
         .ok_or_else(ApiError::unauthorized)?;
 
-    let auth_response = upsert_and_create_jwt(
+    let user = upsert_telegram_user(
         &state,
         mini_app_user.id,
         mini_app_user.username.as_deref(),
@@ -555,7 +575,9 @@ pub(super) async fn telegram_mini_app_auth(
     )
     .await?;
 
-    Ok(Json(auth_response))
+    Ok(Json(
+        build_auth_response(&state, user, SessionKind::MiniApp).await?,
+    ))
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -611,10 +633,10 @@ pub(super) async fn register_account(
     )?;
 
     let result = services::create_credential_user(&state.pool, &req.login, &req.password).await?;
-    Ok(Json(build_auth_response(
-        &state,
-        AuthUserInfo::from_upsert(result, None),
-    )?))
+    let user = AuthUserInfo::from_upsert(result, None);
+    Ok(Json(
+        build_auth_response(&state, user, SessionKind::Credential).await?,
+    ))
 }
 
 /// Log in with a login + password.
@@ -654,7 +676,9 @@ pub(super) async fn login_account(
 
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
     let user = fetch_auth_user_info(&state, user_id).await?;
-    Ok(Json(build_auth_response(&state, user)?))
+    Ok(Json(
+        build_auth_response(&state, user, SessionKind::Credential).await?,
+    ))
 }
 
 #[cfg(test)]

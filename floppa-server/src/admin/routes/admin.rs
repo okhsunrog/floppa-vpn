@@ -11,6 +11,7 @@ use floppa_core::{
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 use crate::admin::{
     auth::AdminUser,
@@ -18,7 +19,7 @@ use crate::admin::{
     vm_client::{self, Traffic, TrafficMetric},
 };
 
-use super::AppState;
+use super::{AppState, user::SessionInfo};
 
 #[derive(Serialize, ToSchema)]
 pub struct Stats {
@@ -295,10 +296,102 @@ pub(super) async fn set_user_credential(
 ) -> Result<impl IntoResponse, ApiError> {
     require_user(&state, id).await?;
     services::set_credential_for_user(&state.pool, id, &req.login, &req.password).await?;
+    // An admin reset is a recovery: whoever holds the account's existing logins is out.
+    let revoked = services::revoke_sessions_except(&state.pool, id, None).await?;
     tracing::warn!(
-        "Admin {} set a recovery credential for user {}",
+        "Admin {} set a recovery credential for user {} ({revoked} sessions revoked)",
         admin.0.user_id,
         id
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// List a user's live sessions (admin only). `current` is always false here: the list is
+/// about the user's tokens, not the admin's.
+#[utoipa::path(
+    get,
+    path = "/users/{id}/sessions",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "User ID")),
+    responses(
+        (status = 200, body = Vec<SessionInfo>),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "User not found"),
+    )
+)]
+pub(super) async fn list_user_sessions(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<SessionInfo>>, ApiError> {
+    require_user(&state, id).await?;
+    let sessions = services::list_sessions(&state.pool, id, super::session_max_idle(&state))
+        .await?
+        .into_iter()
+        .map(|record| SessionInfo::from_record(record, None))
+        .collect();
+    Ok(Json(sessions))
+}
+
+/// Revoke one of a user's sessions (admin only).
+#[utoipa::path(
+    delete,
+    path = "/users/{id}/sessions/{sid}",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(
+        ("id" = i64, Path, description = "User ID"),
+        ("sid" = Uuid, Path, description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Session revoked"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "No such live session for this user"),
+    )
+)]
+pub(super) async fn delete_user_session(
+    admin: AdminUser,
+    State(state): State<AppState>,
+    Path((id, session_id)): Path<(i64, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    if !services::revoke_session(&state.pool, session_id, Some(id)).await? {
+        return Err(ApiError::not_found("Session not found"));
+    }
+    tracing::warn!(
+        "Admin {} revoked session {session_id} of user {id}",
+        admin.0.user_id
+    );
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Sign a user out everywhere (admin only): every session is revoked and tokens issued before
+/// sessions existed stop working too.
+#[utoipa::path(
+    post,
+    path = "/users/{id}/sessions/revoke-all",
+    tag = "admin",
+    security(("bearer" = [])),
+    params(("id" = i64, Path, description = "User ID")),
+    responses(
+        (status = 204, description = "All sessions revoked"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 403, body = ApiError, description = "Not an admin"),
+        (status = 404, body = ApiError, description = "User not found"),
+    )
+)]
+pub(super) async fn revoke_all_user_sessions(
+    admin: AdminUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    require_user(&state, id).await?;
+    let revoked = services::revoke_sessions_except(&state.pool, id, None).await?;
+    tracing::warn!(
+        "Admin {} signed user {id} out everywhere ({revoked} sessions revoked)",
+        admin.0.user_id
     );
     Ok(StatusCode::NO_CONTENT)
 }
@@ -847,7 +940,8 @@ pub(super) async fn list_installations(
 }
 
 /// Delete an app installation (admin only). Its live peers are queued for removal — a device
-/// that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
+/// that is gone must not keep a tunnel or a peer slot — and detached before the row goes, and
+/// the sessions the device held are revoked.
 #[utoipa::path(
     delete,
     path = "/installations/{id}",
@@ -855,7 +949,7 @@ pub(super) async fn list_installations(
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "Installation ID")),
     responses(
-        (status = 200, description = "Installation deleted, its peers queued for removal"),
+        (status = 200, description = "Installation deleted, its peers queued for removal and its sessions revoked"),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 403, body = ApiError, description = "Not an admin"),
         (status = 404, body = ApiError, description = "Installation not found"),
@@ -869,6 +963,7 @@ pub(super) async fn delete_installation(
     let mut tx = state.pool.begin().await?;
 
     services::release_installation_peers(&mut tx, id).await?;
+    services::revoke_installation_sessions(&mut *tx, id).await?;
 
     let result = sqlx::query!("DELETE FROM app_installations WHERE id = $1", id)
         .execute(&mut *tx)

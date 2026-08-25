@@ -75,11 +75,13 @@ struct PendingTelegramLoginState {
 
 #[derive(Clone)]
 struct PendingTelegramLoginCode {
-    auth_response: auth::AuthResponse,
+    /// The user the widget authenticated; the session and token are minted on exchange.
+    user: auth::AuthUserInfo,
     expires_at: DateTime<Utc>,
-    /// Set on first exchange. The code stays exchangeable for a short grace window afterwards so
-    /// the client can retry when the response was lost mid-flight (app switch on mobile).
-    consumed_at: Option<DateTime<Utc>>,
+    /// Set on first exchange: when, and the response that was issued. The code stays
+    /// exchangeable for a short grace window afterwards so the client can retry when the
+    /// response was lost mid-flight (app switch on mobile) — and gets the same token back.
+    exchanged: Option<(DateTime<Utc>, auth::AuthResponse)>,
 }
 
 /// An entry of a [`TtlMap`].
@@ -106,8 +108,9 @@ impl Expiring for PendingTelegramLoginCode {
     fn is_live(&self, now: DateTime<Utc>) -> bool {
         self.expires_at > now
             && self
-                .consumed_at
-                .is_none_or(|consumed| now - consumed < LOGIN_CODE_EXCHANGE_GRACE)
+                .exchanged
+                .as_ref()
+                .is_none_or(|(consumed, _)| now - *consumed < LOGIN_CODE_EXCHANGE_GRACE)
     }
 }
 
@@ -217,6 +220,8 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(user::start_telegram_link))
     .routes(routes!(user::poll_telegram_link))
     .routes(routes!(user::upsert_my_installation))
+    .routes(routes!(user::get_my_sessions, user::revoke_all_my_sessions))
+    .routes(routes!(user::delete_my_session))
     .routes(routes!(user::get_my_peers, user::create_my_peer))
     .routes(routes!(user::delete_my_peer))
     .routes(routes!(user::get_my_peer_config))
@@ -232,6 +237,11 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(admin::list_users, admin::create_user))
     .routes(routes!(admin::get_user))
     .routes(routes!(admin::set_user_credential))
+    .routes(routes!(
+        admin::list_user_sessions,
+        admin::revoke_all_user_sessions
+    ))
+    .routes(routes!(admin::delete_user_session))
     .routes(routes!(admin::set_subscription))
     .routes(routes!(admin::delete_subscription))
     .routes(routes!(admin::remove_peer))
@@ -282,8 +292,18 @@ async fn version_check_middleware(
 /// Sliding session: once a valid token is older than this, any successful authed request
 /// gets a fresh full-lifetime token in the `x-refreshed-token` response header. An active
 /// user therefore never hits JWT expiry; re-login is only needed after being away longer
-/// than `jwt_expiration_hours`.
+/// than `jwt_expiration_hours`. The refreshed token keeps the same session (`jti`), so
+/// revoking that session kills every token it ever produced.
 const TOKEN_REFRESH_AFTER_SECS: i64 = 24 * 3600;
+
+/// How long a session may go unseen before its token has certainly expired: the token is
+/// refreshed on activity and activity bumps `last_seen_at` (at most
+/// [`SESSION_TOUCH_AFTER`](crate::admin::auth::SESSION_TOUCH_AFTER) late), so a session idle
+/// longer than this cannot be used any more and is left out of session lists.
+pub(crate) fn session_max_idle(state: &AppState) -> Duration {
+    Duration::hours(state.auth_config.jwt_expiration_hours as i64)
+        + crate::admin::auth::SESSION_TOUCH_AFTER
+}
 
 pub(crate) const REFRESHED_TOKEN_HEADER: &str = "x-refreshed-token";
 
@@ -325,9 +345,30 @@ async fn token_refresh_middleware(
         }
     };
 
+    // The session travels with the token. A legacy token (issued before sessions) gets one
+    // here — the handler just accepted it — so an active old client becomes revocable
+    // without logging in again.
+    let session_id = match claims.jti {
+        Some(session_id) => session_id,
+        None => match floppa_core::services::create_session(
+            &state.pool,
+            claims.sub,
+            floppa_core::SessionKind::Legacy,
+        )
+        .await
+        {
+            Ok(session_id) => session_id,
+            Err(e) => {
+                tracing::warn!(user_id = claims.sub, error = %e, "token refresh skipped");
+                return response;
+            }
+        },
+    };
+
     if let Ok(fresh) = crate::admin::auth::create_jwt(
         claims.sub,
         is_admin,
+        session_id,
         &state.auth_secrets.jwt_secret,
         state.auth_config.jwt_expiration_hours,
     ) && let Ok(value) = axum::http::HeaderValue::from_str(&fresh)
@@ -470,6 +511,7 @@ mod tests {
     };
     use floppa_core::config::{AuthSecrets, WireGuardConfig};
     use tower::ServiceExt;
+    use uuid::Uuid;
 
     const JWT_SECRET: &str = "test-jwt-secret";
 
@@ -516,12 +558,15 @@ mod tests {
         .expect("test state is valid")
     }
 
-    fn token(sub: i64, is_admin: bool, issued: DateTime<Utc>) -> String {
+    /// A token as the server would sign it; `session` is `None` for a legacy (pre-session)
+    /// token.
+    fn token(sub: i64, is_admin: bool, issued: DateTime<Utc>, session: Option<Uuid>) -> String {
         let claims = crate::admin::auth::Claims {
             sub,
             admin: is_admin,
             exp: (issued + Duration::days(30)).timestamp(),
             iat: issued.timestamp(),
+            jti: session,
         };
         jsonwebtoken::encode(
             &jsonwebtoken::Header::default(),
@@ -531,12 +576,17 @@ mod tests {
         .unwrap()
     }
 
-    async fn get(
+    fn bearer(token: &str) -> String {
+        format!("Bearer {token}")
+    }
+
+    async fn request(
         router: &axum::Router,
+        method: axum::http::Method,
         uri: &str,
         headers: &[(&str, &str)],
     ) -> axum::response::Response {
-        let mut req = Request::builder().uri(uri);
+        let mut req = Request::builder().method(method).uri(uri);
         for (k, v) in headers {
             req = req.header(*k, *v);
         }
@@ -545,6 +595,57 @@ mod tests {
             .oneshot(req.body(Body::empty()).unwrap())
             .await
             .unwrap()
+    }
+
+    async fn get(
+        router: &axum::Router,
+        uri: &str,
+        headers: &[(&str, &str)],
+    ) -> axum::response::Response {
+        request(router, axum::http::Method::GET, uri, headers).await
+    }
+
+    /// An authenticated request made with `token`.
+    async fn authed(
+        router: &axum::Router,
+        method: axum::http::Method,
+        uri: &str,
+        token: &str,
+    ) -> axum::response::Response {
+        request(
+            router,
+            method,
+            uri,
+            &[(header::AUTHORIZATION.as_str(), &bearer(token))],
+        )
+        .await
+    }
+
+    async fn json_body(resp: axum::response::Response) -> serde_json::Value {
+        serde_json::from_slice(&to_bytes(resp.into_body(), 1 << 16).await.unwrap()).unwrap()
+    }
+
+    async fn seed_user(pool: &DbPool, telegram_id: i64, is_admin: bool) -> i64 {
+        sqlx::query_scalar!(
+            "INSERT INTO users (telegram_id, username, is_admin) VALUES ($1, 'u', $2) RETURNING id",
+            telegram_id,
+            is_admin,
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn open_session(pool: &DbPool, user_id: i64) -> Uuid {
+        floppa_core::services::create_session(pool, user_id, floppa_core::SessionKind::DeepLink)
+            .await
+            .unwrap()
+    }
+
+    fn refreshed_token(resp: &axum::response::Response) -> Option<String> {
+        resp.headers()
+            .get(REFRESHED_TOKEN_HEADER)
+            .map(|v| v.to_str().unwrap().to_owned())
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -654,63 +755,298 @@ mod tests {
 
     #[sqlx::test(migrations = "../migrations")]
     async fn stale_tokens_are_refreshed_from_the_database(pool: DbPool) {
-        let user_id = sqlx::query_scalar!(
-            "INSERT INTO users (telegram_id, username) VALUES (1, 'u') RETURNING id"
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let user_id = seed_user(&pool, 1, false).await;
+        let session = open_session(&pool, user_id).await;
         let router = create_router(test_state(pool.clone(), None));
-        let bearer = |t: String| format!("Bearer {t}");
 
         // Fresh token: authenticated, nothing to refresh.
-        let resp = get(
+        let resp = authed(
             &router,
+            axum::http::Method::GET,
             "/me",
-            &[(
-                header::AUTHORIZATION.as_str(),
-                &bearer(token(user_id, false, Utc::now())),
-            )],
+            &token(user_id, false, Utc::now(), Some(session)),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
-        assert!(resp.headers().get(REFRESHED_TOKEN_HEADER).is_none());
+        assert!(refreshed_token(&resp).is_none());
 
         // Old token, and the user was promoted since it was issued: the refreshed token must
-        // carry the flag as stored, not as claimed.
+        // carry the flag as stored, not as claimed — and stay on the same session.
         sqlx::query!("UPDATE users SET is_admin = true WHERE id = $1", user_id)
             .execute(&pool)
             .await
             .unwrap();
-        let old = token(user_id, false, Utc::now() - Duration::days(2));
-        let resp = get(
-            &router,
-            "/me",
-            &[(header::AUTHORIZATION.as_str(), &bearer(old))],
-        )
-        .await;
+        let old = token(
+            user_id,
+            false,
+            Utc::now() - Duration::days(2),
+            Some(session),
+        );
+        let resp = authed(&router, axum::http::Method::GET, "/me", &old).await;
         assert_eq!(resp.status(), StatusCode::OK);
-        let fresh = resp
-            .headers()
-            .get(REFRESHED_TOKEN_HEADER)
-            .expect("refreshed token")
-            .to_str()
-            .unwrap()
-            .to_owned();
+        let fresh = refreshed_token(&resp).expect("refreshed token");
         let claims = crate::admin::auth::verify_jwt(&fresh, JWT_SECRET).unwrap();
         assert_eq!(claims.sub, user_id);
         assert!(claims.admin);
         assert!(claims.iat > (Utc::now() - Duration::minutes(1)).timestamp());
+        assert_eq!(claims.jti, Some(session));
+
+        // An old legacy token (no session) is accepted, and its refresh moves it onto a new
+        // `legacy` session so it becomes revocable.
+        let legacy = token(user_id, false, Utc::now() - Duration::days(2), None);
+        let resp = authed(&router, axum::http::Method::GET, "/me", &legacy).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let claims =
+            crate::admin::auth::verify_jwt(&refreshed_token(&resp).unwrap(), JWT_SECRET).unwrap();
+        let migrated = claims.jti.expect("refreshed legacy token has a session");
+        let kind = sqlx::query_scalar!(
+            r#"SELECT kind AS "kind: floppa_core::SessionKind" FROM sessions
+               WHERE id = $1 AND user_id = $2"#,
+            migrated,
+            user_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kind, floppa_core::SessionKind::Legacy);
 
         // A valid token whose user is gone: 401, and no refresh to keep it alive.
-        let ghost = token(user_id + 1_000_000, false, Utc::now() - Duration::days(2));
-        let resp = get(
+        let ghost = token(
+            user_id + 1_000_000,
+            false,
+            Utc::now() - Duration::days(2),
+            None,
+        );
+        let resp = authed(&router, axum::http::Method::GET, "/me", &ghost).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(refreshed_token(&resp).is_none());
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn sessions_gate_tokens(pool: DbPool) {
+        use axum::http::Method;
+
+        let user_id = seed_user(&pool, 1, false).await;
+        let other_id = seed_user(&pool, 2, false).await;
+        let phone = open_session(&pool, user_id).await;
+        let laptop = open_session(&pool, user_id).await;
+        let others = open_session(&pool, other_id).await;
+        let router = create_router(test_state(pool.clone(), None));
+        let now = Utc::now();
+
+        // The session list names the caller's own session.
+        let resp = authed(
             &router,
+            Method::GET,
+            "/me/sessions",
+            &token(user_id, false, now, Some(phone)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let list = json_body(resp).await;
+        let list = list.as_array().unwrap();
+        assert_eq!(list.len(), 2);
+        let current: Vec<&serde_json::Value> =
+            list.iter().filter(|s| s["current"] == true).collect();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0]["id"], phone.to_string());
+        assert_eq!(current[0]["kind"], "deep_link");
+
+        // A jti that names no row, or another user's row, is refused.
+        for (label, session) in [("missing", Uuid::new_v4()), ("someone else's", others)] {
+            let resp = authed(
+                &router,
+                Method::GET,
+                "/me",
+                &token(user_id, false, now, Some(session)),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{label}");
+        }
+
+        // Signing out the laptop from the phone: the laptop's token dies, the phone's lives.
+        let resp = authed(
+            &router,
+            Method::DELETE,
+            &format!("/me/sessions/{laptop}"),
+            &token(user_id, false, now, Some(phone)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let resp = authed(
+            &router,
+            Method::GET,
             "/me",
-            &[(header::AUTHORIZATION.as_str(), &bearer(ghost))],
+            &token(user_id, false, now, Some(laptop)),
         )
         .await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        assert!(resp.headers().get(REFRESHED_TOKEN_HEADER).is_none());
+        assert!(refreshed_token(&resp).is_none());
+        let resp = authed(
+            &router,
+            Method::GET,
+            "/me",
+            &token(user_id, false, now, Some(phone)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Gone means gone: a second sign-out is a 404, and so is someone else's session.
+        for session in [laptop, others] {
+            let resp = authed(
+                &router,
+                Method::DELETE,
+                &format!("/me/sessions/{session}"),
+                &token(user_id, false, now, Some(phone)),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        }
+
+        // Legacy tokens are accepted until "sign out everywhere" moves the cutoff past them.
+        let legacy = token(user_id, false, now - Duration::minutes(5), None);
+        let resp = authed(&router, Method::GET, "/me", &legacy).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = authed(
+            &router,
+            Method::POST,
+            "/me/sessions/revoke-all",
+            &token(user_id, false, now, Some(phone)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        for (label, t) in [
+            (
+                "caller's own session",
+                token(user_id, false, now, Some(phone)),
+            ),
+            ("legacy token", legacy),
+        ] {
+            let resp = authed(&router, Method::GET, "/me", &t).await;
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{label}");
+        }
+        // A session opened after the cutoff is unaffected by it, even with an older iat on
+        // its token (the row, not the cutoff, governs session-backed tokens).
+        let fresh = open_session(&pool, user_id).await;
+        let resp = authed(
+            &router,
+            Method::GET,
+            "/me",
+            &token(user_id, false, now - Duration::minutes(5), Some(fresh)),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // The other user's legacy tokens are untouched.
+        let resp = authed(
+            &router,
+            Method::GET,
+            "/me",
+            &token(other_id, false, now - Duration::minutes(5), None),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn active_sessions_are_touched_at_most_hourly(pool: DbPool) {
+        let user_id = seed_user(&pool, 1, false).await;
+        let session = open_session(&pool, user_id).await;
+        let router = create_router(test_state(pool.clone(), None));
+        let t = token(user_id, false, Utc::now(), Some(session));
+        let last_seen = |pool: DbPool| async move {
+            sqlx::query_scalar!("SELECT last_seen_at FROM sessions WHERE id = $1", session)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+
+        // Just created: a request does not write.
+        let before = last_seen(pool.clone()).await;
+        authed(&router, axum::http::Method::GET, "/me", &t).await;
+        assert_eq!(last_seen(pool.clone()).await, before);
+
+        // Stale by more than the touch interval: bumped.
+        sqlx::query!(
+            "UPDATE sessions SET last_seen_at = NOW() - INTERVAL '2 hours' WHERE id = $1",
+            session
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        authed(&router, axum::http::Method::GET, "/me", &t).await;
+        assert!(last_seen(pool).await > before - Duration::minutes(1));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn admins_manage_other_users_sessions(pool: DbPool) {
+        use axum::http::Method;
+
+        let admin_id = seed_user(&pool, 1, true).await;
+        let user_id = seed_user(&pool, 2, false).await;
+        let admin_session = open_session(&pool, admin_id).await;
+        let user_session = open_session(&pool, user_id).await;
+        let router = create_router(test_state(pool.clone(), None));
+        let now = Utc::now();
+        let admin = token(admin_id, true, now, Some(admin_session));
+        let user = token(user_id, false, now, Some(user_session));
+
+        // Not for regular users.
+        let resp = authed(
+            &router,
+            Method::GET,
+            &format!("/users/{user_id}/sessions"),
+            &user,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+
+        let resp = authed(
+            &router,
+            Method::GET,
+            &format!("/users/{user_id}/sessions"),
+            &admin,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let list = json_body(resp).await;
+        assert_eq!(list[0]["id"], user_session.to_string());
+        assert_eq!(list[0]["current"], false);
+        let resp = authed(&router, Method::GET, "/users/999999/sessions", &admin).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+        // The session id must belong to the user in the path.
+        let resp = authed(
+            &router,
+            Method::DELETE,
+            &format!("/users/{user_id}/sessions/{admin_session}"),
+            &admin,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let resp = authed(
+            &router,
+            Method::DELETE,
+            &format!("/users/{user_id}/sessions/{user_session}"),
+            &admin,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let resp = authed(&router, Method::GET, "/me", &user).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        // Sign out everywhere also kills the user's legacy tokens, and only theirs.
+        let user_legacy = token(user_id, false, now - Duration::minutes(5), None);
+        let admin_legacy = token(admin_id, true, now - Duration::minutes(5), None);
+        let resp = authed(
+            &router,
+            Method::POST,
+            &format!("/users/{user_id}/sessions/revoke-all"),
+            &admin,
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let resp = authed(&router, Method::GET, "/me", &user_legacy).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = authed(&router, Method::GET, "/me", &admin_legacy).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 }
