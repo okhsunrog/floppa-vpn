@@ -2,6 +2,7 @@
   "name": "floppa-face",
   "version": "0.0.0",
   "private": true,
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"

@@ -255,4 +255,4 @@ See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide. Ansible deploys acro
 
 ## License
 
-[GPL-3.0](LICENSE)
+[GPL-3.0-or-later](LICENSE)

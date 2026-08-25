@@ -2,6 +2,7 @@
 name = "floppa-vless"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
