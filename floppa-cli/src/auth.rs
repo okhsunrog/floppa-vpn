@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
 
-use crate::api::ApiClient;
+use crate::api::{ApiClient, ApiClientError};
 
 /// The uid/gid of the user behind `sudo`, so files created in their home stay theirs.
 struct SudoUser {
@@ -216,7 +216,10 @@ pub async fn login(api_url: &str, tokens: &TokenSource) -> Result<()> {
         })??;
 
     // Exchange code for JWT
-    let auth = ApiClient::exchange_code(api_url, &code).await?;
+    let auth = match ApiClient::exchange_code(api_url, &code).await {
+        Err(ApiClientError::Unauthorized) => bail!("Login code expired or invalid. Try again."),
+        other => other?,
+    };
     tokens.save(&auth.token)?;
 
     let name = auth

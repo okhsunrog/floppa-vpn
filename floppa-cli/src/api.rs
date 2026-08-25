@@ -1,4 +1,3 @@
-use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -152,6 +151,82 @@ struct ExchangeCodeRequest {
     code: String,
 }
 
+/// Error body the server sends with every non-2xx status.
+#[derive(Debug, Deserialize)]
+struct ErrorBody {
+    message: String,
+}
+
+/// Failures talking to the server, by what the caller can do about them. The message is the
+/// server's own where it sent one.
+#[derive(Debug, thiserror::Error)]
+pub enum ApiClientError {
+    #[error("Authentication failed. Token may be expired. Run `floppa-cli login` again.")]
+    Unauthorized,
+    /// 402: no active subscription.
+    #[error("{0}")]
+    PaymentRequired(String),
+    /// 403: plan limit reached.
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    NotFound(String),
+    /// 409: e.g. a peer already exists for this device and protocol.
+    #[error("{0}")]
+    Conflict(String),
+    #[error("{what} failed: {status} ({message})")]
+    Status {
+        what: &'static str,
+        status: reqwest::StatusCode,
+        message: String,
+    },
+    #[error("Failed to reach API: {0}")]
+    Transport(#[from] reqwest::Error),
+    #[error("Failed to parse {what} response: {source}")]
+    Decode {
+        what: &'static str,
+        source: reqwest::Error,
+    },
+}
+
+/// Map a non-success status to the typed error, with the server's message when there is one.
+async fn check(
+    resp: reqwest::Response,
+    what: &'static str,
+) -> Result<reqwest::Response, ApiClientError> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp);
+    }
+    let body = resp.text().await.unwrap_or_default();
+    let message = match serde_json::from_str::<ErrorBody>(&body) {
+        Ok(body) => body.message,
+        Err(_) if body.trim().is_empty() => status.canonical_reason().unwrap_or("").to_string(),
+        Err(_) => body.trim().to_string(),
+    };
+    Err(match status.as_u16() {
+        401 => ApiClientError::Unauthorized,
+        402 => ApiClientError::PaymentRequired(message),
+        403 => ApiClientError::Forbidden(message),
+        404 => ApiClientError::NotFound(message),
+        409 => ApiClientError::Conflict(message),
+        _ => ApiClientError::Status {
+            what,
+            status,
+            message,
+        },
+    })
+}
+
+async fn json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+    what: &'static str,
+) -> Result<T, ApiClientError> {
+    resp.json()
+        .await
+        .map_err(|source| ApiClientError::Decode { what, source })
+}
+
 impl ApiClient {
     pub fn new(base_url: &str, token: &str) -> Self {
         Self {
@@ -165,44 +240,28 @@ impl ApiClient {
         format!("{}{}", self.base_url, path)
     }
 
-    pub async fn get_me(&self) -> Result<MeResponse> {
+    async fn get(
+        &self,
+        path: &str,
+        what: &'static str,
+    ) -> Result<reqwest::Response, ApiClientError> {
         let resp = self
             .client
-            .get(self.url("/me"))
-            .bearer_auth(&self.token)
-            .send()
-            .await
-            .context("Failed to reach API")?;
-
-        if resp.status() == 401 {
-            bail!("Authentication failed. Token may be expired. Run `floppa-cli login` again.");
-        }
-        if !resp.status().is_success() {
-            bail!("GET /me failed: {}", resp.status());
-        }
-
-        resp.json().await.context("Failed to parse /me response")
-    }
-
-    pub async fn list_peers(&self) -> Result<Vec<MyPeer>> {
-        let resp = self
-            .client
-            .get(self.url("/me/peers"))
+            .get(self.url(path))
             .bearer_auth(&self.token)
             .send()
             .await?;
+        check(resp, what).await
+    }
 
-        if resp.status() == 401 {
-            bail!("Authentication failed. Run `floppa-cli login` again.");
-        }
-        if !resp.status().is_success() {
-            bail!("GET /me/peers failed: {}", resp.status());
-        }
+    pub async fn get_me(&self) -> Result<MeResponse, ApiClientError> {
+        const WHAT: &str = "GET /me";
+        json(self.get("/me", WHAT).await?, WHAT).await
+    }
 
-        let body: MyPeersResponse = resp
-            .json()
-            .await
-            .context("Failed to parse peers response")?;
+    pub async fn list_peers(&self) -> Result<Vec<MyPeer>, ApiClientError> {
+        const WHAT: &str = "GET /me/peers";
+        let body: MyPeersResponse = json(self.get("/me/peers", WHAT).await?, WHAT).await?;
         Ok(body.peers)
     }
 
@@ -210,7 +269,8 @@ impl ApiClient {
         &self,
         device: &DeviceIdentity,
         protocol: Protocol,
-    ) -> Result<CreatePeerResponse> {
+    ) -> Result<CreatePeerResponse, ApiClientError> {
+        const WHAT: &str = "POST /me/peers";
         let resp = self
             .client
             .post(self.url("/me/peers"))
@@ -222,35 +282,16 @@ impl ApiClient {
             })
             .send()
             .await?;
-
-        if resp.status() == 402 {
-            bail!("No active subscription. Cannot create peer.");
-        }
-        if resp.status() == 403 {
-            bail!("Peer limit reached for your plan.");
-        }
-        if !resp.status().is_success() {
-            bail!("POST /me/peers failed: {}", resp.status());
-        }
-
-        resp.json()
-            .await
-            .context("Failed to parse create peer response")
+        json(check(resp, WHAT).await?, WHAT).await
     }
 
-    pub async fn get_peer_config(&self, peer_id: i64) -> Result<String> {
-        let resp = self
-            .client
-            .get(self.url(&format!("/me/peers/{peer_id}/config")))
-            .bearer_auth(&self.token)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            bail!("GET /me/peers/{}/config failed: {}", peer_id, resp.status());
-        }
-
-        resp.text().await.context("Failed to read config response")
+    pub async fn get_peer_config(&self, peer_id: i64) -> Result<String, ApiClientError> {
+        const WHAT: &str = "GET /me/peers/{id}/config";
+        self.get(&format!("/me/peers/{peer_id}/config"), WHAT)
+            .await?
+            .text()
+            .await
+            .map_err(|source| ApiClientError::Decode { what: WHAT, source })
     }
 
     /// The current user's peer for this device and `protocol`, if any (`None` on 404).
@@ -258,34 +299,22 @@ impl ApiClient {
         &self,
         device_id: &str,
         protocol: Protocol,
-    ) -> Result<Option<MyPeer>> {
-        let resp = self
-            .client
-            .get(self.url(&format!(
-                "/me/peers/by-device/{device_id}?protocol={protocol}"
-            )))
-            .bearer_auth(&self.token)
-            .send()
-            .await?;
-
-        if resp.status() == 401 {
-            bail!("Authentication failed. Run `floppa-cli login` again.");
+    ) -> Result<Option<MyPeer>, ApiClientError> {
+        const WHAT: &str = "GET /me/peers/by-device/{id}";
+        let path = format!("/me/peers/by-device/{device_id}?protocol={protocol}");
+        match self.get(&path, WHAT).await {
+            Ok(resp) => json(resp, WHAT).await.map(Some),
+            Err(ApiClientError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
         }
-        if resp.status() == 404 {
-            return Ok(None);
-        }
-        if !resp.status().is_success() {
-            bail!("GET /me/peers/by-device failed: {}", resp.status());
-        }
-
-        resp.json()
-            .await
-            .map(Some)
-            .context("Failed to parse peer response")
     }
 
     /// Config for `protocol`: the VLESS URI, or this device's peer config (created on first use).
-    pub async fn config_for(&self, protocol: Protocol, device: &DeviceIdentity) -> Result<String> {
+    pub async fn config_for(
+        &self,
+        protocol: Protocol,
+        device: &DeviceIdentity,
+    ) -> Result<String, ApiClientError> {
         match protocol {
             Protocol::Vless => self.get_vless_config().await,
             Protocol::WireGuard | Protocol::AmneziaWg => {
@@ -301,7 +330,7 @@ impl ApiClient {
         &self,
         protocol: Protocol,
         device: &DeviceIdentity,
-    ) -> Result<String> {
+    ) -> Result<String, ApiClientError> {
         if let Some(peer) = self.get_peer_by_device(&device.id, protocol).await?
             && peer.sync_status.is_live()
         {
@@ -319,55 +348,27 @@ impl ApiClient {
     }
 
     /// Fetch VLESS config for the current user.
-    pub async fn get_vless_config(&self) -> Result<String> {
-        let resp = self
-            .client
-            .get(self.url("/me/vless-config"))
-            .bearer_auth(&self.token)
-            .send()
-            .await?;
-
-        if resp.status() == 401 {
-            bail!("Authentication failed. Run `floppa-cli login` again.");
-        }
-        if resp.status() == 404 {
-            bail!("VLESS not available on this server.");
-        }
-        if !resp.status().is_success() {
-            bail!("GET /me/vless-config failed: {}", resp.status());
-        }
-
-        let vless: VlessConfigResponse = resp
-            .json()
-            .await
-            .context("Failed to parse VLESS config response")?;
+    pub async fn get_vless_config(&self) -> Result<String, ApiClientError> {
+        const WHAT: &str = "GET /me/vless-config";
+        let vless: VlessConfigResponse =
+            json(self.get("/me/vless-config", WHAT).await?, WHAT).await?;
         Ok(vless.uri)
     }
 
     /// Exchange a one-time login code for a JWT token (no auth required).
-    pub async fn exchange_code(base_url: &str, code: &str) -> Result<AuthResponse> {
-        let client = reqwest::Client::new();
+    pub async fn exchange_code(base_url: &str, code: &str) -> Result<AuthResponse, ApiClientError> {
+        const WHAT: &str = "POST /auth/telegram/exchange-code";
         let url = format!(
             "{}/auth/telegram/exchange-code",
             base_url.trim_end_matches('/')
         );
-
-        let resp = client
+        let resp = reqwest::Client::new()
             .post(&url)
             .json(&ExchangeCodeRequest {
                 code: code.to_string(),
             })
             .send()
-            .await
-            .context("Failed to exchange login code")?;
-
-        if resp.status() == 401 {
-            bail!("Login code expired or invalid. Try again.");
-        }
-        if !resp.status().is_success() {
-            bail!("Code exchange failed: {}", resp.status());
-        }
-
-        resp.json().await.context("Failed to parse auth response")
+            .await?;
+        json(check(resp, WHAT).await?, WHAT).await
     }
 }

@@ -1202,6 +1202,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shoes-lite",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-appender",
