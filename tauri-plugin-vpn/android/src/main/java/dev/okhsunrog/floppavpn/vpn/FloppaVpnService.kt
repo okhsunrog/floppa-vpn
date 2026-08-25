@@ -345,12 +345,22 @@ class FloppaVpnService : VpnService() {
         // If allowedApps is set, only those apps go through VPN.
         // If disallowedApps is set, all apps except those go through VPN.
         if (allowedApps.isNotEmpty()) {
+            var included = 0
             for (app in allowedApps) {
                 try {
                     builder.addAllowedApplication(app)
+                    included++
                 } catch (e: Exception) {
                     Log.w(TAG, "Cannot include app: $app", e)
                 }
+            }
+            // A builder with no allowed application routes *every* app, which is the opposite
+            // of what the user asked for. Refuse rather than silently widen the tunnel — this
+            // happens when every selected app has since been uninstalled.
+            if (included == 0) {
+                throw IllegalStateException(
+                    "none of the ${allowedApps.size} apps selected for the tunnel are installed"
+                )
             }
         } else {
             for (app in disallowedApps) {
