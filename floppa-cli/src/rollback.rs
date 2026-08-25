@@ -7,34 +7,33 @@
 
 use anyhow::Result;
 
-use crate::dns;
+use crate::dns::DnsBackup;
 use crate::net::{self, AppliedNetworking};
 
 pub struct Rollback {
     networking: Option<AppliedNetworking>,
-    restore_dns: bool,
+    dns: Option<DnsBackup>,
 }
 
 impl Rollback {
     pub fn new(networking: AppliedNetworking) -> Self {
         Self {
             networking: Some(networking),
-            restore_dns: false,
+            dns: None,
         }
     }
 
-    /// Mark DNS as changed. Call it *before* writing, so a write that fails halfway is still
-    /// rolled back.
-    pub fn dns_changed(&mut self) {
-        self.restore_dns = true;
+    /// Record what `dns::apply` changed, so it is restored with the routes.
+    pub fn set_dns(&mut self, backup: DnsBackup) {
+        self.dns = Some(backup);
     }
 
     /// Restore DNS and tear down the routes. Each step runs even if the previous one failed;
     /// the errors are collected. Afterwards the guard is disarmed: `Drop` does nothing more.
     pub fn run(&mut self) -> Result<()> {
         let mut errors = Vec::new();
-        if std::mem::take(&mut self.restore_dns)
-            && let Err(e) = dns::restore_dns()
+        if let Some(dns) = self.dns.take()
+            && let Err(e) = dns.restore()
         {
             errors.push(e);
         }
@@ -47,7 +46,7 @@ impl Rollback {
     }
 
     fn is_armed(&self) -> bool {
-        self.restore_dns || self.networking.is_some()
+        self.dns.is_some() || self.networking.is_some()
     }
 }
 

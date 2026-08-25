@@ -229,9 +229,9 @@ async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> R
     eprintln!("VPN IP: {}", addr.ip());
     eprintln!("Endpoint: {}", wg_config.peer_endpoint);
 
-    if !no_dns && !wg_config.dns_servers().is_empty() {
-        rollback.dns_changed();
-        dns::set_dns(&wg_config)?;
+    let dns_servers = wg_config.dns_servers();
+    if !no_dns && !dns_servers.is_empty() {
+        rollback.set_dns(dns::apply(interface, &dns_servers)?);
     }
 
     wait_then_disconnect(rollback, Tunnel::WireGuard(device)).await
@@ -259,8 +259,7 @@ async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Resul
     if !no_dns && let Some(ref dns) = config.dns {
         let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
         if !servers.is_empty() {
-            rollback.dns_changed();
-            dns::write_dns(&servers)?;
+            rollback.set_dns(dns::apply(interface, &servers)?);
         }
     }
 
