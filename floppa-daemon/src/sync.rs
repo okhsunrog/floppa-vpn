@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use floppa_core::{Config, DbPool, Protocol};
 use sqlx::postgres::PgListener;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -24,6 +24,9 @@ struct ProtoTarget {
 struct SyncContext {
     pool: DbPool,
     targets: Vec<ProtoTarget>,
+    /// `pending_add` peers already reported as having no configured interface, so the
+    /// periodic sync does not repeat the warning every 15 s for as long as they sit there.
+    unroutable_reported: Mutex<HashSet<i64>>,
 }
 
 impl SyncContext {
@@ -60,12 +63,34 @@ impl SyncContext {
             });
         }
 
-        Self { pool, targets }
+        Self {
+            pool,
+            targets,
+            unroutable_reported: Mutex::new(HashSet::new()),
+        }
     }
 
     /// The interface target for a peer's protocol, if that protocol is configured.
     fn target(&self, protocol: Protocol) -> Option<&ProtoTarget> {
         self.targets.iter().find(|t| t.protocol == protocol)
+    }
+
+    /// Warn that a `pending_add` peer's protocol has no interface on this host — once per
+    /// peer, since it stays pending (and gets re-read by every sync) until the protocol is
+    /// configured or the peer is removed.
+    fn warn_unroutable_once(&self, peer_id: i64, protocol: Protocol) {
+        let first_time = self
+            .unroutable_reported
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(peer_id);
+        if first_time {
+            warn!(
+                peer_id,
+                protocol = protocol.as_db_str(),
+                "No configured interface for peer protocol — peer stays pending_add"
+            );
+        }
     }
 
     /// Whether any interface has tc rate limiting enabled.
@@ -369,11 +394,7 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
 
     for peer in pending_add {
         let Some(target) = ctx.target(peer.protocol) else {
-            error!(
-                peer_id = peer.id,
-                protocol = peer.protocol.as_db_str(),
-                "No configured interface for peer protocol — skipping"
-            );
+            ctx.warn_unroutable_once(peer.id, peer.protocol);
             continue;
         };
 
@@ -432,11 +453,14 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
 
     for peer in pending_remove {
         let Some(target) = ctx.target(peer.protocol) else {
-            error!(
+            // Never added on this host, so there is nothing to tear down; leaving the row
+            // pending would keep its IP and key reserved forever.
+            warn!(
                 peer_id = peer.id,
                 protocol = peer.protocol.as_db_str(),
-                "No configured interface for peer protocol — skipping removal"
+                "No configured interface for peer protocol — nothing to tear down, marking removed"
             );
+            mark_peer_removed(&ctx.pool, peer.id).await;
             continue;
         };
 
@@ -452,19 +476,25 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
             continue;
         }
 
-        match sqlx::query!(
-            "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
-            peer.id
-        )
-        .execute(&ctx.pool)
-        .await
-        {
-            Ok(_) => info!(peer_id = peer.id, "Peer removed successfully"),
-            Err(e) => error!(peer_id = peer.id, error = %e, "Failed to mark peer removed"),
-        }
+        mark_peer_removed(&ctx.pool, peer.id).await;
     }
 
     Ok(())
+}
+
+/// Flip a `pending_remove` row to `removed`, logging either way: a failed UPDATE just leaves
+/// the peer for the next sync to retry.
+async fn mark_peer_removed(pool: &DbPool, peer_id: i64) {
+    match sqlx::query!(
+        "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
+        peer_id
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(_) => info!(peer_id, "Peer removed successfully"),
+        Err(e) => error!(peer_id, error = %e, "Failed to mark peer removed"),
+    }
 }
 
 /// Periodic tasks: pick up pending peers whose NOTIFY was missed, update traffic
