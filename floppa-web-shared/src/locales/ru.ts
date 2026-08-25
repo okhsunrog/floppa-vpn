@@ -460,6 +460,7 @@ export default {
     noSubscription: 'Нет активной подписки',
     peerLimitReached:
       'Достигнут лимит конфигов. Удалите конфиг в «Мои конфиги», чтобы освободить место.',
+    peerCreateFailed: 'Сервер отказался создать конфиг: {detail}',
     reconnecting: 'Соединение потеряно. Переподключение ({current}/{max})...',
     retryingIn: 'Следующая попытка через {seconds} с',
 

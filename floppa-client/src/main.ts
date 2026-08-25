@@ -186,25 +186,39 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+class DeepLinkExchangeError extends Error {
+  constructor(
+    /** HTTP status of the refusal, or `undefined` when the server was never reached. */
+    readonly status: number | undefined,
+    detail: string,
+  ) {
+    super(status === undefined ? `no response: ${detail}` : `HTTP ${status}: ${detail}`)
+    this.name = 'DeepLinkExchangeError'
+  }
+}
+
 /** Exchange with retries on transient (network/5xx) failures. 4xx means the code is
  * invalid or burned — retrying can't help, so those fail immediately. */
 async function exchangeWithRetry(code: string) {
   for (let attempt = 1; ; attempt++) {
-    try {
-      const { data: response } = await exchangeTelegramLoginCode({
-        body: { code },
-        throwOnError: true,
-      })
-      return response
-    } catch (e) {
-      const status = (e as { status?: number })?.status
-      const transient = status === undefined || status >= 500
-      if (!transient || attempt >= EXCHANGE_ATTEMPTS) {
-        throw e
-      }
-      void warn(`[web] Deep-link code exchange attempt ${attempt} failed, retrying: ${String(e)}`)
-      await sleep(EXCHANGE_RETRY_DELAY_MS)
+    // `throwOnError: false` keeps `response`: the thrown value would be the error body (or a
+    // bare TypeError when offline), and neither carries the status this decision needs.
+    const { data, error, response } = await exchangeTelegramLoginCode({
+      body: { code },
+      throwOnError: false,
+    })
+    if (data) return data
+
+    // Offline, `error` is the fetch TypeError rather than an ApiError; both carry `message`.
+    const failure = new DeepLinkExchangeError(response?.status, error?.message ?? 'unknown error')
+    const transient = failure.status === undefined || failure.status >= 500
+    if (!transient || attempt >= EXCHANGE_ATTEMPTS) {
+      throw failure
     }
+    void warn(
+      `[web] Deep-link code exchange attempt ${attempt} failed, retrying: ${failure.message}`,
+    )
+    await sleep(EXCHANGE_RETRY_DELAY_MS)
   }
 }
 

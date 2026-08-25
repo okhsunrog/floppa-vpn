@@ -3,9 +3,10 @@ import { onMounted, ref, computed, watch } from 'vue'
 import vpnConnectedImg from '../assets/vpn-connected.png?inline'
 import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
-import { useQuery, useMutation } from '@pinia/colada'
-import { getMeQuery, createMyPeerMutation } from 'floppa-web-shared/client/@pinia/colada.gen'
+import { useQuery } from '@pinia/colada'
+import { getMeQuery } from 'floppa-web-shared/client/@pinia/colada.gen'
 import {
+  createMyPeer,
   getMyPeerByDevice,
   getMyPeerConfig,
   getMyVlessConfig,
@@ -24,12 +25,13 @@ const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
-const setupErrorKey = ref<string | null>(null)
+const setupErrorKey = ref<SyncErrorKey | null>(null)
+const setupErrorDetail = ref<string | null>(null)
 const setupPhase = ref<'idle' | 'offline'>('idle')
 let syncGeneration = 0
 
 const setupError = computed<string | null>(() => {
-  if (setupErrorKey.value) return t(setupErrorKey.value)
+  if (setupErrorKey.value) return t(setupErrorKey.value, { detail: setupErrorDetail.value ?? '' })
   return null
 })
 
@@ -61,7 +63,6 @@ const reprovisioning = ref(false)
 const busy = computed(() => vpn.isBusy || reprovisioning.value)
 
 const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
-const createPeerMut = useMutation(createMyPeerMutation())
 
 // Clear offline banner when server becomes reachable again
 watch(meQueryError, (err) => {
@@ -70,10 +71,31 @@ watch(meQueryError, (err) => {
   }
 })
 
+/** Locale keys a failed server sync can be reported under. */
+type SyncErrorKey = 'vpn.noSubscription' | 'vpn.peerLimitReached' | 'vpn.peerCreateFailed'
+
 type SyncResult =
   | { outcome: 'ok' }
-  | { outcome: 'error'; errorKey: string }
+  | { outcome: 'error'; errorKey: SyncErrorKey; detail?: string }
   | { outcome: 'offline' }
+
+/**
+ * Whether this device has no peer for `protocol`, as opposed to us failing to find out.
+ *
+ * Only a 404 means "no peer". A network failure leaves `data` empty too, and reading that as
+ * "no peer" is what used to make an offline start create a duplicate — or, in the reconnect
+ * path, re-provision a peer that was never gone.
+ */
+type PeerLookup = { found: 'yes'; id: number } | { found: 'no' } | { found: 'unknown' }
+
+async function lookupPeer(protocol: Protocol): Promise<PeerLookup> {
+  const { data: peer, response } = await getMyPeerByDevice({
+    path: { device_id: vpn.deviceId! },
+    query: { protocol },
+  })
+  if (peer) return { found: 'yes', id: peer.id }
+  return response?.status === 404 ? { found: 'no' } : { found: 'unknown' }
+}
 
 /**
  * Fetch (and optionally create) the wg-family peer for `protocol`, loading its config into the
@@ -81,19 +103,18 @@ type SyncResult =
  * consumes a peer slot). Returns an error outcome on subscription/limit failures during create.
  */
 async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promise<SyncResult> {
-  const { data: peer } = await getMyPeerByDevice({
-    path: { device_id: vpn.deviceId! },
-    query: { protocol },
-  })
+  const lookup = await lookupPeer(protocol)
 
-  if (peer) {
+  if (lookup.found === 'yes') {
     const { data: configStr } = await getMyPeerConfig({
-      path: { id: peer.id },
+      path: { id: lookup.id },
       throwOnError: true,
     })
     await vpn.importConfig(configStr)
     return { outcome: 'ok' }
   }
+
+  if (lookup.found === 'unknown') return { outcome: 'offline' }
 
   if (!allowCreate) return { outcome: 'ok' }
 
@@ -101,22 +122,39 @@ async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promi
     return { outcome: 'error', errorKey: 'vpn.noSubscription' }
   }
 
-  try {
-    const response = await createPeerMut.mutateAsync({
-      body: {
-        device_id: vpn.deviceId,
-        device_name: vpn.deviceName,
-        protocol,
-      },
-    })
-    await vpn.importConfig(response.config)
+  // Not the Pinia Colada mutation: it re-throws the error body untyped, and `response` — the
+  // only thing that tells a server refusal from no server at all — is lost on the way.
+  const {
+    data: created,
+    error,
+    response,
+  } = await createMyPeer({
+    body: {
+      device_id: vpn.deviceId,
+      device_name: vpn.deviceName,
+      protocol,
+    },
+    throwOnError: false,
+  })
+  if (created) {
+    await vpn.importConfig(created.config)
     return { outcome: 'ok' }
-  } catch (e: unknown) {
-    const errorCode = (e as Record<string, unknown>)?.error
-    if (errorCode === 'no_active_subscription' || errorCode === 'subscription_expired') {
+  }
+  if (!response) return { outcome: 'offline' }
+
+  // Error codes as `floppa-server/src/admin/error.rs` names them.
+  switch (error?.error) {
+    case 'no_active_subscription':
+    case 'subscription_expired':
       return { outcome: 'error', errorKey: 'vpn.noSubscription' }
-    }
-    return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
+    case 'peer_limit_reached':
+      return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
+    default:
+      return {
+        outcome: 'error',
+        errorKey: 'vpn.peerCreateFailed',
+        detail: error?.error ?? `HTTP ${response.status}`,
+      }
   }
 }
 
@@ -195,6 +233,7 @@ function applySyncResult(result: SyncResult) {
     case 'error':
       setupPhase.value = 'idle'
       setupErrorKey.value = result.errorKey
+      setupErrorDetail.value = result.detail ?? null
       break
     case 'offline':
       setupPhase.value = 'offline'
@@ -204,6 +243,7 @@ function applySyncResult(result: SyncResult) {
 
 async function setupAutoPeer() {
   setupErrorKey.value = null
+  setupErrorDetail.value = null
 
   const thisGeneration = ++syncGeneration
 
@@ -289,21 +329,28 @@ async function handleOutcome(outcome: CycleOutcome | null) {
   reprovisioning.value = true
   try {
     console.info('[VpnCard] checking whether the peer still exists on the server...')
-    const { data: peer } = await getMyPeerByDevice({
-      path: { device_id: vpn.deviceId },
-      query: { protocol: verifyFailed },
-    })
-    if (!peer) {
-      console.info('[VpnCard] peer is gone, recreating it')
-      await setupAutoPeer()
-      if (vpn.hasConfig) {
-        console.info('[VpnCard] got a new config, reconnecting')
-        await vpn.connect()
-      }
-    } else {
-      console.info('[VpnCard] the peer exists, so the problem is elsewhere')
-      vpn.error = t('vpn.connectionFailed')
+    const lookup = await lookupPeer(verifyFailed)
+    switch (lookup.found) {
+      case 'no':
+        console.info('[VpnCard] peer is gone, recreating it')
+        await setupAutoPeer()
+        if (vpn.hasConfig) {
+          console.info('[VpnCard] got a new config, reconnecting')
+          await vpn.connect()
+        }
+        break
+      case 'yes':
+        console.info('[VpnCard] the peer exists, so the problem is elsewhere')
+        vpn.error = t('vpn.connectionFailed')
+        break
+      case 'unknown':
+        console.warn('[VpnCard] could not reach the server to check the peer')
+        vpn.error = t('vpn.connectionFailed')
+        break
     }
+  } catch (e) {
+    console.error('[VpnCard] peer check failed:', e)
+    vpn.error = t('vpn.connectionFailed')
   } finally {
     reprovisioning.value = false
   }

@@ -459,6 +459,7 @@ export default {
     noSubscription: 'No active subscription',
     peerLimitReached:
       'You have reached your config limit. Delete a config from "My Configs" to free up a slot.',
+    peerCreateFailed: 'The server refused to create a config: {detail}',
     reconnecting: 'Connection lost. Reconnecting ({current}/{max})...',
     retryingIn: 'Next attempt in {seconds}s',
 
