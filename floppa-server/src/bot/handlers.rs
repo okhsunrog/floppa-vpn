@@ -594,8 +594,12 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
 
         // Calculate proration
         let current_sub = billing::get_current_subscription(&pool, user_id).await?;
-        let proration =
-            billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
+        let proration = billing::calculate_proration(
+            current_sub.as_ref(),
+            plan.price_stars,
+            plan.period_days,
+            Utc::now(),
+        );
 
         bot.answer_callback_query(q.id.clone()).await?;
 
@@ -706,8 +710,12 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
 
     // Re-verify amount matches current proration
     let current_sub = billing::get_current_subscription(&pool, user.id).await?;
-    let proration =
-        billing::calculate_proration(current_sub.as_ref(), plan.price_stars, plan.period_days);
+    let proration = billing::calculate_proration(
+        current_sub.as_ref(),
+        plan.price_stars,
+        plan.period_days,
+        Utc::now(),
+    );
 
     if q.total_amount as i32 != proration.payable_stars {
         bot.answer_pre_checkout_query(q.id.clone(), false)
@@ -779,7 +787,8 @@ async fn handle_successful_payment(
 
     // Re-calculate proration for accurate credit recording
     let current_sub = billing::get_current_subscription(&pool, user_id).await?;
-    let proration = billing::calculate_proration(current_sub.as_ref(), price_stars, period_days);
+    let proration =
+        billing::calculate_proration(current_sub.as_ref(), price_stars, period_days, Utc::now());
 
     match billing::complete_payment(
         &pool,

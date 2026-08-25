@@ -2,7 +2,7 @@
 
 use crate::DbPool;
 use crate::error::Result;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 /// A plan available for purchase with Stars.
 pub struct PurchasablePlan {
@@ -88,21 +88,23 @@ pub async fn get_current_subscription(
     }))
 }
 
-/// Calculate proration credit and payable amount.
+/// Calculate proration credit and payable amount as of `now`.
 ///
-/// Only paid plans with a finite expiry date generate credit.
-/// Trial, free, and permanent subscriptions give zero credit.
+/// Only paid plans with a finite expiry date generate credit; trial, free, and permanent
+/// subscriptions give zero credit. The remaining value is prorated by the second (a
+/// subscription with 14 days 23 h left is not "14 days"), rounded down to whole Stars.
 pub fn calculate_proration(
     current_sub: Option<&CurrentSubscription>,
     new_plan_price_stars: i32,
     new_plan_period_days: i32,
+    now: DateTime<Utc>,
 ) -> ProrationResult {
     let credit_stars = match current_sub {
         Some(sub) => match (sub.price_stars, sub.period_days, sub.expires_at) {
             (Some(price), Some(period), Some(expires)) if price > 0 && period > 0 => {
-                let now = Utc::now();
-                let remaining_days = (expires - now).num_days().max(0);
-                (price as i64 * remaining_days / period as i64) as i32
+                let remaining_secs = (expires - now).num_seconds().max(0);
+                let period_secs = i64::from(period) * 86_400;
+                (i64::from(price) * remaining_secs / period_secs) as i32
             }
             _ => 0,
         },
@@ -281,9 +283,13 @@ mod tests {
 
     // ── Pure function tests (no DB) ──
 
+    fn now() -> DateTime<Utc> {
+        "2026-03-01T12:00:00Z".parse().unwrap()
+    }
+
     #[test]
     fn test_proration_no_current_sub() {
-        let result = calculate_proration(None, 250, 30);
+        let result = calculate_proration(None, 250, 30, now());
         assert_eq!(result.credit_stars, 0);
         assert_eq!(result.payable_stars, 250);
     }
@@ -295,27 +301,41 @@ mod tests {
             plan_id: 1,
             price_stars: None, // trial has no price
             period_days: Some(7),
-            expires_at: Some(Utc::now() + Duration::days(5)),
+            expires_at: Some(now() + Duration::days(5)),
         };
-        let result = calculate_proration(Some(&sub), 250, 30);
+        let result = calculate_proration(Some(&sub), 250, 30, now());
         assert_eq!(result.credit_stars, 0);
         assert_eq!(result.payable_stars, 250);
     }
 
     #[test]
     fn test_proration_paid_sub_half_remaining() {
-        // Add 1 minute buffer to avoid num_days() rounding down due to sub-second timing
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
             price_stars: Some(300),
             period_days: Some(30),
-            expires_at: Some(Utc::now() + Duration::days(15) + Duration::minutes(1)),
+            expires_at: Some(now() + Duration::days(15)),
         };
         // credit = 300 * 15 / 30 = 150
-        let result = calculate_proration(Some(&sub), 250, 30);
+        let result = calculate_proration(Some(&sub), 250, 30, now());
         assert_eq!(result.credit_stars, 150);
         assert_eq!(result.payable_stars, 100);
+    }
+
+    #[test]
+    fn test_proration_counts_partial_days() {
+        // 14 days 12 h left of a 30-day, 300-Star plan: 300 * 14.5 / 30 = 145, not 140.
+        let sub = CurrentSubscription {
+            subscription_id: 1,
+            plan_id: 1,
+            price_stars: Some(300),
+            period_days: Some(30),
+            expires_at: Some(now() + Duration::days(14) + Duration::hours(12)),
+        };
+        let result = calculate_proration(Some(&sub), 250, 30, now());
+        assert_eq!(result.credit_stars, 145);
+        assert_eq!(result.payable_stars, 105);
     }
 
     #[test]
@@ -325,10 +345,10 @@ mod tests {
             plan_id: 2,
             price_stars: Some(300),
             period_days: Some(30),
-            expires_at: Some(Utc::now() + Duration::days(28) + Duration::minutes(1)),
+            expires_at: Some(now() + Duration::days(28)),
         };
         // credit = 300 * 28 / 30 = 280
-        let result = calculate_proration(Some(&sub), 100, 30);
+        let result = calculate_proration(Some(&sub), 100, 30, now());
         assert_eq!(result.credit_stars, 280);
         assert_eq!(result.payable_stars, 0); // clamped to 0
         // 280 credit buys 280 * 30 / 100 = 84 days of the cheaper plan
@@ -344,7 +364,7 @@ mod tests {
             period_days: Some(30),
             expires_at: None, // permanent
         };
-        let result = calculate_proration(Some(&sub), 250, 30);
+        let result = calculate_proration(Some(&sub), 250, 30, now());
         assert_eq!(result.credit_stars, 0);
         assert_eq!(result.payable_stars, 250);
     }
@@ -356,9 +376,9 @@ mod tests {
             plan_id: 1,
             price_stars: Some(100),
             period_days: Some(30),
-            expires_at: Some(Utc::now() - Duration::days(1)),
+            expires_at: Some(now() - Duration::days(1)),
         };
-        let result = calculate_proration(Some(&sub), 250, 30);
+        let result = calculate_proration(Some(&sub), 250, 30, now());
         assert_eq!(result.credit_stars, 0);
         assert_eq!(result.payable_stars, 250);
     }
@@ -370,9 +390,9 @@ mod tests {
             plan_id: 1,
             price_stars: Some(0), // free plan
             period_days: Some(30),
-            expires_at: Some(Utc::now() + Duration::days(15)),
+            expires_at: Some(now() + Duration::days(15)),
         };
-        let result = calculate_proration(Some(&sub), 250, 30);
+        let result = calculate_proration(Some(&sub), 250, 30, now());
         assert_eq!(result.credit_stars, 0);
         assert_eq!(result.payable_stars, 250);
     }
