@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET vless_uuid = COALESCE(vless_uuid, $1)\n           WHERE id = $2 RETURNING vless_uuid AS \"vless_uuid!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "vless_uuid!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "vless_uuid"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "07f2c8a52c8e2ec50bc36e85cc214330f8fb26378e725a012502754f2acf5eba"
+}

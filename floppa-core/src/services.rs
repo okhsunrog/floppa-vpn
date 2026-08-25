@@ -5,10 +5,11 @@ use crate::models::{PeerSyncStatus, Protocol, SubscriptionSource};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
-use sqlx::PgTransaction;
+use sqlx::{PgExecutor, PgTransaction};
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use tracing::warn;
+use uuid::Uuid;
 
 /// Result of user upsert operation.
 #[derive(Debug)]
@@ -846,6 +847,50 @@ where
         .filter(|ip| *ip != subnet.network() && *ip != subnet.broadcast())
         .find(|ip| !taken.contains(ip))
         .ok_or(FloppaError::NoAvailableIps)
+}
+
+/// Return the user's VLESS UUID, minting one if the user has none yet.
+///
+/// Get-or-create in a single statement: `COALESCE(vless_uuid, $new)` under the row lock the
+/// UPDATE takes, so two concurrent first requests (the app and the bot, say) agree on one UUID
+/// instead of the second overwriting the first. Assigning a UUID fires the `vless_user_changed`
+/// notify that floppa-vless listens for.
+pub async fn ensure_vless_uuid(executor: impl PgExecutor<'_>, user_id: i64) -> Result<Uuid> {
+    let candidate = Uuid::new_v4().to_string();
+    let stored = sqlx::query_scalar!(
+        r#"UPDATE users SET vless_uuid = COALESCE(vless_uuid, $1)
+           WHERE id = $2 RETURNING vless_uuid AS "vless_uuid!""#,
+        candidate,
+        user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(stored.parse()?)
+}
+
+/// Queue a peer for removal by the daemon: `active`/`pending_add` → `pending_remove`.
+///
+/// `owner` restricts the change to a peer of that user (the self-service path); `None` is the
+/// admin path. Returns whether a row changed — `false` means the peer does not exist, belongs to
+/// someone else, or is already on its way out (`pending_remove`/`removed`), all of which callers
+/// treat as "nothing to do" rather than an error.
+pub async fn mark_peer_for_removal(
+    executor: impl PgExecutor<'_>,
+    peer_id: i64,
+    owner: Option<i64>,
+) -> Result<bool> {
+    let result = sqlx::query!(
+        r#"UPDATE peers SET sync_status = $1
+           WHERE id = $2
+             AND ($3::bigint IS NULL OR user_id = $3)
+             AND sync_status IN ('active', 'pending_add')"#,
+        PeerSyncStatus::PendingRemove as _,
+        peer_id,
+        owner,
+    )
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 /// Find an active peer by device_id + protocol for a given user (via app_installations JOIN).
@@ -2163,6 +2208,107 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(peers, Some(0));
+    }
+
+    // ── ensure_vless_uuid ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_ensure_vless_uuid_is_stable_and_race_free(pool: DbPool) {
+        let user_id = seed_user(&pool, 11111).await;
+
+        // Two concurrent first calls agree on one UUID.
+        let (a, b) = tokio::join!(
+            ensure_vless_uuid(&pool, user_id),
+            ensure_vless_uuid(&pool, user_id),
+        );
+        let (a, b) = (a.unwrap(), b.unwrap());
+        assert_eq!(a, b);
+
+        // Later calls return the stored one; the column holds its hyphenated text form.
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(ensure_vless_uuid(&mut *tx, user_id).await.unwrap(), a);
+        tx.commit().await.unwrap();
+        let stored = sqlx::query_scalar!("SELECT vless_uuid FROM users WHERE id = $1", user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some(a.to_string().as_str()));
+
+        // Unknown user → a database "no rows" error, not a minted UUID.
+        assert!(matches!(
+            ensure_vless_uuid(&pool, -1).await,
+            Err(FloppaError::Database(sqlx::Error::RowNotFound))
+        ));
+    }
+
+    // ── mark_peer_for_removal ──
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_mark_peer_for_removal_transitions(pool: DbPool) {
+        let owner = seed_user(&pool, 11111).await;
+        let stranger = seed_user(&pool, 22222).await;
+        let insert = |key: &'static str, ip: &'static str, status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar!(
+                    "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status) \
+                     VALUES ($1, $2, $3, $4) RETURNING id",
+                    owner,
+                    key,
+                    ip,
+                    status,
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let active = insert("k-active", "10.0.0.2", "active").await;
+        let pending_add = insert("k-pending", "10.0.0.3", "pending_add").await;
+        let removed = insert("k-removed", "10.0.0.4", "removed").await;
+
+        // Wrong owner → untouched.
+        assert!(
+            !mark_peer_for_removal(&pool, active, Some(stranger))
+                .await
+                .unwrap()
+        );
+        // Right owner → pending_remove; a second call is a no-op.
+        assert!(
+            mark_peer_for_removal(&pool, active, Some(owner))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !mark_peer_for_removal(&pool, active, Some(owner))
+                .await
+                .unwrap()
+        );
+        // Admin path (no owner) also covers peers the daemon has not added yet.
+        assert!(
+            mark_peer_for_removal(&pool, pending_add, None)
+                .await
+                .unwrap()
+        );
+        // Already removed / unknown → nothing to do.
+        assert!(!mark_peer_for_removal(&pool, removed, None).await.unwrap());
+        assert!(!mark_peer_for_removal(&pool, -1, None).await.unwrap());
+
+        let statuses: Vec<PeerSyncStatus> = sqlx::query_scalar!(
+            r#"SELECT sync_status AS "s: PeerSyncStatus" FROM peers WHERE user_id = $1 ORDER BY id"#,
+            owner
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            statuses,
+            vec![
+                PeerSyncStatus::PendingRemove,
+                PeerSyncStatus::PendingRemove,
+                PeerSyncStatus::Removed
+            ]
+        );
     }
 
     // ── find_peer_by_device_id ──

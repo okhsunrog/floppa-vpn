@@ -44,6 +44,9 @@ pub enum FloppaError {
     #[error("Blocking task failed: {0}")]
     BlockingTask(#[from] tokio::task::JoinError),
 
+    #[error("Stored UUID is malformed: {0}")]
+    MalformedUuid(#[from] uuid::Error),
+
     #[error("VLESS not configured on this server")]
     VlessNotConfigured,
 

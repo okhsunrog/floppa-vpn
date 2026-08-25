@@ -122,6 +122,7 @@ impl From<FloppaError> for ApiError {
             | FloppaError::Key(_)
             | FloppaError::PasswordHash(_)
             | FloppaError::BlockingTask(_)
+            | FloppaError::MalformedUuid(_)
             | FloppaError::Config(_) => Self {
                 error: "internal_error".into(),
                 message: format!("{e}"),

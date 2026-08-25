@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers SET sync_status = $1\n           WHERE id = $2\n             AND ($3::bigint IS NULL OR user_id = $3)\n             AND sync_status IN ('active', 'pending_add')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1bdec57e6add179a4bb5cfa4e1060134a0c346d9dc58f30c6fadb90652fbf39c"
+}
