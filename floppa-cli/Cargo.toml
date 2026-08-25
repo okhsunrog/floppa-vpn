@@ -23,5 +23,6 @@ tracing-appender = "0.2.4"
 uuid = { version = "1.25.0", features = ["v4"] }
 url = "2.5.8"
 thiserror.workspace = true
+base64.workspace = true
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }
