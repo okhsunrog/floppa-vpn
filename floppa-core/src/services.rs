@@ -178,7 +178,7 @@ pub async fn create_credential_user(
 ) -> Result<UpsertResult> {
     let (uid, display) = normalize_login(login)?;
     crate::password::validate_password(password)?;
-    let secret_hash = crate::password::hash_password(password)?;
+    let secret_hash = crate::password::hash_password(password).await?;
 
     let mut tx = pool.begin().await?;
 
@@ -244,15 +244,14 @@ pub async fn find_user_by_credential(pool: &DbPool, login: &str, password: &str)
     .await?;
 
     let Some(r) = row else {
-        crate::password::dummy_verify(password);
+        crate::password::dummy_verify(password).await;
         return Err(FloppaError::InvalidCredentials);
     };
 
-    let ok = r
-        .secret_hash
-        .as_deref()
-        .map(|h| crate::password::verify_password(password, h))
-        .unwrap_or(false);
+    let ok = match r.secret_hash.as_deref() {
+        Some(phc) => crate::password::verify_password(password, phc).await,
+        None => false,
+    };
 
     if !ok {
         return Err(FloppaError::InvalidCredentials);
@@ -282,7 +281,7 @@ pub async fn set_credential_for_user(
 ) -> Result<()> {
     let (uid, _display) = normalize_login(login)?;
     crate::password::validate_password(password)?;
-    let secret_hash = crate::password::hash_password(password)?;
+    let secret_hash = crate::password::hash_password(password).await?;
 
     let res = sqlx::query!(
         r#"INSERT INTO auth_identities (user_id, provider, provider_uid, secret_hash)

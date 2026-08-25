@@ -41,6 +41,9 @@ pub enum FloppaError {
     #[error("Password hashing error: {0}")]
     PasswordHash(#[from] argon2::password_hash::Error),
 
+    #[error("Blocking task failed: {0}")]
+    BlockingTask(#[from] tokio::task::JoinError),
+
     #[error("VLESS not configured on this server")]
     VlessNotConfigured,
 

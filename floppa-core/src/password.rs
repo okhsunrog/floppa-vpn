@@ -39,16 +39,33 @@ pub fn validate_password(password: &str) -> Result<()> {
 }
 
 /// Hash a plaintext password into a PHC string (Argon2id, random salt).
-pub fn hash_password(password: &str) -> Result<String> {
+///
+/// Argon2id with the default parameters (19 MiB, t=2) takes tens of milliseconds, so the work
+/// runs on the blocking pool rather than stalling a runtime worker.
+pub async fn hash_password(password: &str) -> Result<String> {
+    let password = password.to_owned();
+    tokio::task::spawn_blocking(move || hash_password_sync(&password)).await?
+}
+
+fn hash_password_sync(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
     let hash = Argon2::default().hash_password(password.as_bytes(), &salt)?;
     Ok(hash.to_string())
 }
 
-/// Verify a plaintext password against a stored PHC string.
+/// Verify a plaintext password against a stored PHC string, on the blocking pool.
 ///
-/// Fails closed: a malformed/unparseable hash returns `false`, never an error.
-pub fn verify_password(password: &str, phc: &str) -> bool {
+/// Fails closed: a malformed/unparseable hash (or a panicked verification task) returns
+/// `false`, never an error.
+pub async fn verify_password(password: &str, phc: &str) -> bool {
+    let password = password.to_owned();
+    let phc = phc.to_owned();
+    tokio::task::spawn_blocking(move || verify_password_sync(&password, &phc))
+        .await
+        .unwrap_or(false)
+}
+
+fn verify_password_sync(password: &str, phc: &str) -> bool {
     match PasswordHash::new(phc) {
         Ok(parsed) => Argon2::default()
             .verify_password(password.as_bytes(), &parsed)
@@ -63,29 +80,30 @@ pub fn verify_password(password: &str, phc: &str) -> bool {
 fn dummy_hash() -> &'static str {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| {
-        hash_password("dummy-password-for-constant-time-verify").expect("dummy hash must build")
+        hash_password_sync("dummy-password-for-constant-time-verify")
+            .expect("dummy hash must build")
     })
 }
 
 /// Run a verify against the dummy hash purely for timing parity. Result is ignored.
-pub fn dummy_verify(password: &str) {
-    let _ = verify_password(password, dummy_hash());
+pub async fn dummy_verify(password: &str) {
+    let _ = verify_password(password, dummy_hash()).await;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn hash_then_verify_roundtrip() {
-        let phc = hash_password("correct horse battery staple").unwrap();
-        assert!(verify_password("correct horse battery staple", &phc));
+    #[tokio::test]
+    async fn hash_then_verify_roundtrip() {
+        let phc = hash_password("correct horse battery staple").await.unwrap();
+        assert!(verify_password("correct horse battery staple", &phc).await);
     }
 
-    #[test]
-    fn wrong_password_fails() {
-        let phc = hash_password("s3cret").unwrap();
-        assert!(!verify_password("wrong", &phc));
+    #[tokio::test]
+    async fn wrong_password_fails() {
+        let phc = hash_password("s3cret").await.unwrap();
+        assert!(!verify_password("wrong", &phc).await);
     }
 
     #[test]
@@ -108,9 +126,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn malformed_hash_fails_closed() {
-        assert!(!verify_password("whatever", "not-a-phc-string"));
-        assert!(!verify_password("whatever", ""));
+    #[tokio::test]
+    async fn malformed_hash_fails_closed() {
+        assert!(!verify_password("whatever", "not-a-phc-string").await);
+        assert!(!verify_password("whatever", "").await);
     }
 }

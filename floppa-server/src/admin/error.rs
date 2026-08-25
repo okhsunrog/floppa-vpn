@@ -121,6 +121,7 @@ impl From<FloppaError> for ApiError {
             FloppaError::Crypto(_)
             | FloppaError::Key(_)
             | FloppaError::PasswordHash(_)
+            | FloppaError::BlockingTask(_)
             | FloppaError::Config(_) => Self {
                 error: "internal_error".into(),
                 message: format!("{e}"),
