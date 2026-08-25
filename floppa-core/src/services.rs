@@ -32,10 +32,11 @@ pub struct TelegramProfile<'a> {
     pub photo_url: Option<&'a str>,
 }
 
-/// Upsert a Telegram user and auto-grant a basic trial subscription if they haven't used one.
+/// Upsert a Telegram user and auto-grant the one-time real trial if they haven't used one.
 ///
-/// - Inserts or updates the user row.
-/// - If `trial_used_at` is NULL, finds the "basic" plan and creates a 7-day subscription.
+/// - Inserts or updates the user row (profile fields only fill in when provided).
+/// - If `trial_used_at` is NULL, grants the "basic" plan for its `trial_minutes`
+///   (see [`grant_real_trial_if_unused`]).
 pub async fn upsert_user(
     pool: &DbPool,
     telegram_id: i64,

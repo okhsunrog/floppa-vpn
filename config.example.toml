@@ -82,5 +82,3 @@ jwt_expiration_hours = 168  # 1 week (optional, default is 168)
 # sni = "www.microsoft.com"              # REALITY SNI for camouflage
 # short_id = "abcdef1234567890"           # REALITY short ID (hex)
 # flow = "xtls-rprx-vision"              # Flow control (default: xtls-rprx-vision)
-# dns = ["1.1.1.1", "8.8.8.8"]
-# allowed_ips = "0.0.0.0/0, ::/0"

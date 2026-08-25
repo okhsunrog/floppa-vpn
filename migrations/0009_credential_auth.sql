@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS auth_identities (
 CREATE INDEX IF NOT EXISTS idx_auth_identities_user_id ON auth_identities(user_id);
 
 -- ============================================================
--- 3. Dedicated low-limit taster plan (non-public; duration comes from config, not the plan).
+-- 3. Dedicated low-limit taster plan (non-public). Its duration originally came from app config;
+--    since 0013 it lives on the plan itself (plans.trial_minutes).
 -- ============================================================
 INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public)
 VALUES ('taster', 'Taster', 5, 1, false)

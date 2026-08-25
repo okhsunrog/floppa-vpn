@@ -292,10 +292,6 @@ pub struct VlessConfig {
     /// Flow control (default: "xtls-rprx-vision")
     #[serde(default = "default_vless_flow")]
     pub flow: String,
-    /// DNS servers for client configs
-    pub dns: Vec<String>,
-    /// Allowed IPs for client configs (typically "0.0.0.0/0, ::/0")
-    pub allowed_ips: String,
 }
 
 fn default_vless_flow() -> String {
