@@ -12,6 +12,7 @@ import {
 import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { describeUnknown } from '../utils/errors'
+import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
 
@@ -48,8 +49,16 @@ export const useVpnStore = defineStore(
     /** The mirror. Replaced wholesale by refresh(); never edited piecemeal. */
     const state = ref<TunnelState>(emptyState())
 
-    /** True only while a command is in flight — distinct from the tunnel itself being busy. */
-    const requesting = ref(false)
+    /**
+     * How many of our commands are in flight — distinct from the tunnel itself being busy.
+     *
+     * A counter, not a flag: Cancel starts a disconnect while a connect is still waiting on its
+     * own cycle, and the connect's `finally` cleared the flag while the disconnect was still
+     * running. Nothing visibly broke, because the phase covers that window, but a flag that says
+     * "no request in flight" while one is means the next thing to read it will be wrong.
+     */
+    const inFlight = ref(0)
+    const requesting = computed(() => inFlight.value > 0)
 
     /** See `VpnError`. Cleared by the next request; set through `setError` from outside. */
     const error = ref<VpnError | null>(null)
@@ -95,6 +104,33 @@ export const useVpnStore = defineStore(
     const attempt = computed(() => state.value.attempt)
     const retry = computed(() => state.value.retry)
     const lastOutcome = computed(() => state.value.last_outcome)
+
+    /**
+     * The last outcome anyone has taken responsibility for.
+     *
+     * Kept here rather than in the card that reads it: `last_outcome` is sticky until the next
+     * accepted intent, and the record used to be a local of `VpnCard`, so returning to the
+     * dashboard re-handled an outcome from minutes ago — a peer lookup every time, and a connect
+     * nobody asked for if that lookup said the peer was gone.
+     */
+    const handled = ref<HandledOutcome | null>(null)
+
+    function markOutcomeHandled(epoch: number, outcome: CycleOutcome) {
+      handled.value = { epoch, outcome: outcome.outcome, seq: state.value.seq }
+    }
+
+    /**
+     * The outcome of a cycle nobody has dealt with, or null.
+     *
+     * A caller that awaited its own cycle marks what it got, so what is left here is what nobody
+     * asked for: a tunnel that dropped and could not be brought back, a rebuild that ran out of
+     * protocols, a teardown that could not be confirmed.
+     */
+    const unhandledOutcome = computed<CycleOutcome | null>(() => {
+      const outcome = state.value.last_outcome
+      if (!outcome) return null
+      return isUnhandledOutcome(handled.value, state.value.epoch, outcome) ? outcome : null
+    })
 
     async function initPlatform() {
       try {
@@ -209,10 +245,38 @@ export const useVpnStore = defineStore(
         ? [...settings.protocolOrder]
         : [manualProtocol.value].filter((p): p is Protocol => !!p)
 
+      return await request(() => commands.tunnelSetIntentUp(order, params()))
+    }
+
+    /**
+     * Also the cancel button: stopping an attempt is a change of intent, not a separate action.
+     *
+     * Returns its outcome like `connect` does. It used to throw the result of `tunnelAwaitCycle`
+     * away, so `unwind_failed` — a teardown that could not be confirmed, which is the one moment
+     * the machine may be left configured — reached nobody, and the UI showed a plain
+     * "Disconnected".
+     */
+    async function disconnect(): Promise<CycleOutcome | null> {
+      return await request(() => commands.tunnelSetIntentDown())
+    }
+
+    /**
+     * Send an intent and wait for the cycle it starts.
+     *
+     * One body for both directions, because they differ only in the intent: accept it, mirror the
+     * new state, wait for a terminal outcome, mirror again. Every failure lands in `error` —
+     * including an `actor_gone` from the wait, which used to return null silently while the same
+     * error from the accept was shown.
+     */
+    async function request(
+      send: () => Promise<
+        { status: 'ok'; data: { epoch: number } } | { status: 'error'; error: VpnError }
+      >,
+    ): Promise<CycleOutcome | null> {
       error.value = null
-      requesting.value = true
+      inFlight.value += 1
       try {
-        const accepted = await commands.tunnelSetIntentUp(order, params())
+        const accepted = await send()
         if (accepted.status === 'error') {
           error.value = accepted.error
           return null
@@ -221,32 +285,19 @@ export const useVpnStore = defineStore(
 
         const outcome = await commands.tunnelAwaitCycle(accepted.data.epoch)
         await refresh()
-        return outcome.status === 'ok' ? outcome.data : null
+        if (outcome.status === 'error') {
+          error.value = outcome.error
+          return null
+        }
+        // Whoever called this is about to deal with it, so the unsolicited-outcome watcher must
+        // not deal with it as well.
+        markOutcomeHandled(accepted.data.epoch, outcome.data)
+        return outcome.data
       } catch (e) {
         error.value = { kind: 'unexpected', detail: describeUnknown(e) }
         return null
       } finally {
-        requesting.value = false
-      }
-    }
-
-    /** Also the cancel button: stopping an attempt is a change of intent, not a separate action. */
-    async function disconnect() {
-      error.value = null
-      requesting.value = true
-      try {
-        const accepted = await commands.tunnelSetIntentDown()
-        if (accepted.status === 'error') {
-          error.value = accepted.error
-          return
-        }
-        await refresh()
-        await commands.tunnelAwaitCycle(accepted.data.epoch)
-        await refresh()
-      } catch (e) {
-        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
-      } finally {
-        requesting.value = false
+        inFlight.value -= 1
       }
     }
 
@@ -305,6 +356,8 @@ export const useVpnStore = defineStore(
       attempt,
       retry,
       lastOutcome,
+      unhandledOutcome,
+      markOutcomeHandled,
       splitDirty,
       params,
       init,

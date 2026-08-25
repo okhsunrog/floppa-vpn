@@ -11,7 +11,7 @@ import type { Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
 import { usePeerProvisioning } from '../composables/usePeerProvisioning'
-import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
+import { needsAttention } from '../utils/outcomes'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
@@ -70,8 +70,10 @@ onMounted(async () => {
 
 async function handleConnect() {
   // Cancelling an attempt and disconnecting a tunnel are the same request: a change of intent.
+  // Its outcome matters too — a teardown that could not be confirmed is the one case where the
+  // machine may be left configured, and it used to be discarded.
   if (vpn.isConnected || vpn.isCancellable) {
-    await vpn.disconnect()
+    await handleOutcome(await vpn.disconnect())
     return
   }
   await handleOutcome(await vpn.connect())
@@ -92,25 +94,22 @@ async function reconnectForSplit() {
  *
  * When a live tunnel drops, the actor reconnects on its own — there is no caller awaiting that
  * epoch, so if it eventually gives up, nothing would ever surface it. This watcher is the only
- * consumer of those. It remembers the `{ epoch, outcome }` pair it handled so a state refresh
- * cannot make it fire twice, and only that pair: the epoch alone is shared with the `connected`
- * that preceded the loss, and keying on it was what silenced `lost_gave_up` for good. Whether a
- * command of ours is in flight is irrelevant — `handleConnect` only ever receives the outcome
- * that ends its own cycle, never the loss of a tunnel that cycle already delivered.
+ * consumer of those. Which ones have already been dealt with is the store's business now: the
+ * record used to live here, and it was reset by every remount, so returning to the dashboard
+ * re-handled a `lost_gave_up` from minutes ago.
+ *
+ * Every ending without a tunnel is handled, not only `lost_gave_up`: a reconnect that ran out of
+ * protocols reports `exhausted`, and a teardown that could not be confirmed reports
+ * `unwind_failed`. Both have words in the locale and neither used to reach anyone.
  */
-let handledOutcome: HandledOutcome | null = null
 watch(
-  () => vpn.lastOutcome,
+  () => vpn.unhandledOutcome,
   async (outcome) => {
     if (!outcome) return
-    const epoch = vpn.state.epoch
-    if (!isUnhandledOutcome(handledOutcome, epoch, outcome)) return
-    handledOutcome = { epoch, outcome: outcome.outcome }
-
-    if (outcome.outcome === 'lost_gave_up') {
-      console.info('[VpnCard] the tunnel dropped and reconnecting gave up')
-      await handleOutcome(outcome)
-    }
+    vpn.markOutcomeHandled(vpn.state.epoch, outcome)
+    if (!needsAttention(outcome)) return
+    console.info(`[VpnCard] a cycle nobody awaited ended: ${outcome.outcome}`)
+    await handleOutcome(outcome)
   },
 )
 

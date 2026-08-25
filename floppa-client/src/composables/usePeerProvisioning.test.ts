@@ -6,6 +6,7 @@ import {
   emptySetupState,
   lookupPeer,
   planOutcomeResponse,
+  planWithoutReprovision,
   reprovisionPeer,
   syncPeers,
   syncWgFamilyPeer,
@@ -445,6 +446,30 @@ describe('planOutcomeResponse', () => {
       planOutcomeResponse({ outcome: 'exhausted', failures: [timedOut, cancelled] }).action,
     ).toBe('ignore')
     expect(planOutcomeResponse({ outcome: 'exhausted', failures: [] }).action).toBe('ignore')
+  })
+})
+
+describe('planWithoutReprovision', () => {
+  it('shows a failure instead of looking the peer up again', () => {
+    // The connect that follows a re-provisioning: the peer was just recreated, so a second
+    // verification failure is not evidence that it is missing — and checking again would loop.
+    expect(
+      planWithoutReprovision({ outcome: 'lost_gave_up', protocol: 'wireguard', passes: 3 }),
+    ).toEqual({ action: 'show_error', error: { kind: 'connection_failed' } })
+    expect(
+      planWithoutReprovision({
+        outcome: 'exhausted',
+        failures: [{ protocol: 'amneziawg', error: { kind: 'verify_failed' as const }, pass: 1 }],
+      }),
+    ).toEqual({ action: 'show_error', error: { kind: 'connection_failed' } })
+  })
+
+  it('leaves every other plan alone', () => {
+    expect(planWithoutReprovision({ outcome: 'unwind_failed' })).toEqual({
+      action: 'show_error',
+      error: { kind: 'unwind_failed' },
+    })
+    expect(planWithoutReprovision({ outcome: 'cancelled' }).action).toBe('ignore')
   })
 })
 

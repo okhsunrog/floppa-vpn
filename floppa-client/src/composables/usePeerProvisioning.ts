@@ -333,35 +333,64 @@ export type OutcomeAction =
  * which is what the old code assumed and got wrong whenever the order had more than one entry.
  */
 export function planOutcomeResponse(outcome: CycleOutcome): OutcomeAction {
-  if (outcome.outcome === 'unwind_failed') {
-    return { action: 'show_error', error: { kind: 'unwind_failed' } }
-  }
+  // A `switch` over the tag, not a chain of `if`s: a variant added in Rust reaches TypeScript
+  // through the generated union, and the `never` below is what makes forgetting to plan for it a
+  // compile error instead of a silent `ignore`.
+  switch (outcome.outcome) {
+    case 'connected':
+    case 'cancelled':
+    case 'down':
+      return { action: 'ignore' }
 
-  const verifyFailed =
-    outcome.outcome === 'exhausted'
-      ? outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
-      : outcome.outcome === 'lost_gave_up'
-        ? outcome.protocol
-        : undefined
+    case 'unwind_failed':
+      return { action: 'show_error', error: { kind: 'unwind_failed' } }
 
-  // Nothing to re-provision: the probes failed for reasons a new peer would not fix. Show the
-  // last probe's typed error — it is the one for the protocol the user most likely cares about,
-  // and every kind it can carry has words in the locale.
-  if (outcome.outcome === 'exhausted' && !verifyFailed) {
-    const failure = outcome.failures.at(-1)
-    if (failure && failure.error.kind !== 'cancelled') {
-      return { action: 'show_error', error: { kind: 'attempt_failed', failure } }
+    case 'exhausted': {
+      const verifyFailed = outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
+      if (!verifyFailed) {
+        // Nothing to re-provision: the probes failed for reasons a new peer would not fix. Show
+        // the last probe's typed error — it is the one for the protocol the user most likely
+        // cares about, and every kind it can carry has words in the locale.
+        const failure = outcome.failures.at(-1)
+        if (failure && failure.error.kind !== 'cancelled') {
+          return { action: 'show_error', error: { kind: 'attempt_failed', failure } }
+        }
+        return { action: 'ignore' }
+      }
+      return planForVerifyFailure(verifyFailed)
     }
-    return { action: 'ignore' }
-  }
 
-  // VLESS has no per-device peer to look up: its config is per-user and never deleted by a
-  // peer removal, so a failed VLESS verification is not a "peer gone" signal.
-  if (verifyFailed === 'vless') {
-    return { action: 'show_error', error: { kind: 'connection_failed' } }
+    case 'lost_gave_up':
+      return planForVerifyFailure(outcome.protocol)
+
+    default: {
+      const unplanned: never = outcome
+      return unplanned
+    }
   }
-  if (!verifyFailed) return { action: 'ignore' }
-  return { action: 'reprovision', protocol: verifyFailed }
+}
+
+/** VLESS has no per-device peer to look up: its config is per-user and never deleted by a peer
+ * removal, so a failed VLESS verification is not a "peer gone" signal. */
+function planForVerifyFailure(protocol: Protocol): OutcomeAction {
+  return protocol === 'vless'
+    ? { action: 'show_error', error: { kind: 'connection_failed' } }
+    : { action: 'reprovision', protocol }
+}
+
+/**
+ * The same plan with re-provisioning ruled out.
+ *
+ * For the connect that follows a re-provisioning: the peer has just been recreated, so another
+ * verification failure is not evidence that it is missing, and looking it up again would loop.
+ * The failure is still shown — which it was not: that connect's outcome was discarded entirely,
+ * so a new peer that also failed to verify left the user at "Disconnected" with no reason given.
+ */
+export function planWithoutReprovision(outcome: CycleOutcome): OutcomeAction {
+  const plan = planOutcomeResponse(outcome)
+  return plan.action === 'reprovision'
+    ? { action: 'show_error', error: { kind: 'connection_failed' } }
+    : plan
 }
 
 export type ReprovisionOutcome =
@@ -458,18 +487,27 @@ export function usePeerProvisioning() {
     await sequencer.run(syncPeers(deps(deviceId)))
   }
 
+  /** Carry out everything a plan can ask for except re-provisioning, which needs the sequencer. */
+  function apply(plan: OutcomeAction): void {
+    if (plan.action === 'show_error') vpn.setError(plan.error)
+  }
+
   /** React to a cycle that ended without connecting. */
   async function handleOutcome(outcome: CycleOutcome | null): Promise<void> {
     if (!outcome) return
     const plan = planOutcomeResponse(outcome)
-    if (plan.action === 'ignore') return
-    if (plan.action === 'show_error') {
-      vpn.setError(plan.error)
+    if (plan.action !== 'reprovision') {
+      apply(plan)
       return
     }
 
     const deviceId = vpn.deviceId
-    if (!deviceId) return
+    if (!deviceId) {
+      // No device identity means no peer to look up. Say so rather than returning in silence and
+      // leaving the card with a disabled button and no explanation.
+      vpn.setError({ kind: 'unexpected', detail: 'this device has no identity yet' })
+      return
+    }
 
     reprovisioning.value = true
     try {
@@ -477,7 +515,10 @@ export function usePeerProvisioning() {
         lookup: () => lookupPeer(api, deviceId, plan.protocol),
         resync: setupAutoPeer,
         hasConfig: () => vpn.hasConfig,
-        reconnect: async () => void (await vpn.connect()),
+        reconnect: async () => {
+          const again = await vpn.connect()
+          if (again) apply(planWithoutReprovision(again))
+        },
       })
       if (result === 'peer_exists' || result === 'unreachable') {
         vpn.setError({ kind: 'connection_failed' })
