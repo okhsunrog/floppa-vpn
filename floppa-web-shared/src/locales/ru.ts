@@ -532,6 +532,8 @@ export default {
       attemptFailed: '{protocol}: {reason}',
       attempt: {
         permissionDenied: 'разрешение на VPN не выдано.',
+        consentUnavailable:
+          'не удалось показать запрос разрешения на VPN. Откройте приложение и попробуйте снова.',
         noConfig: 'нет конфига для {protocol}.',
         platformUnavailable: 'платформа VPN недоступна: {detail}',
         resolveFailed: 'не удалось разрешить адрес сервера {host}: {detail}',

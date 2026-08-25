@@ -23,6 +23,12 @@ use specta::Type;
 pub enum AttemptError {
     #[error("VPN permission denied by the user")]
     PermissionDenied,
+    /// The consent dialog was asked for and never answered: Android refuses to start an activity
+    /// for a process that is in the background, and the activity can also be recreated while the
+    /// dialog is up, which loses the reply. Neither is a refusal, and neither is fixed by trying
+    /// the next protocol — so, like a refusal, it ends the cycle.
+    #[error("the VPN consent dialog did not answer")]
+    ConsentUnavailable,
     #[error("no stored config for {protocol}")]
     NoConfig { protocol: Protocol },
     #[error("network helper unavailable: {detail}")]
@@ -59,6 +65,7 @@ impl AttemptError {
         matches!(
             self,
             Self::PermissionDenied
+                | Self::ConsentUnavailable
                 | Self::PlatformUnavailable { .. }
                 | Self::Cancelled
                 | Self::Crashed { .. }
@@ -144,6 +151,7 @@ mod tests {
     #[test]
     fn consent_and_helper_failures_stop_the_cycle_but_a_bad_peer_does_not() {
         assert!(AttemptError::PermissionDenied.is_fatal_for_cycle());
+        assert!(AttemptError::ConsentUnavailable.is_fatal_for_cycle());
         assert!(
             AttemptError::PlatformUnavailable {
                 detail: String::new()

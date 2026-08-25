@@ -532,6 +532,8 @@ export default {
       attemptFailed: '{protocol}: {reason}',
       attempt: {
         permissionDenied: 'VPN permission was not granted.',
+        consentUnavailable:
+          'the VPN permission dialog could not be shown. Open the app and try again.',
         noConfig: 'no config for {protocol}.',
         platformUnavailable: 'the VPN platform is unavailable: {detail}',
         resolveFailed: 'could not resolve the server address {host}: {detail}',

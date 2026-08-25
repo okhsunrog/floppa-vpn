@@ -74,18 +74,30 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         // No eventCallback setup needed — the UI process communicates via tarpc.
     }
 
+    /**
+     * Ask for VPN consent, showing the system dialog only when there is none yet.
+     *
+     * `VpnService.prepare` returning null *is* the answer: consent already exists, so nothing is
+     * shown and the caller is resolved on the spot. When a dialog is needed, starting it can fail —
+     * Android refuses to start an activity for a process that is in the background — and that has
+     * to come back as a rejection. It used to be thrown, so the caller was left waiting on a reply
+     * that was never coming, and the Rust side had no way to tell that from a dialog a person
+     * simply had not answered yet.
+     */
     @Command
     fun prepareVpn(invoke: Invoke) {
         val intent = VpnService.prepare(activity)
-        val ret = JSObject()
-
-        if (intent != null) {
-            // Need to request permission — use Tauri's activity result API
-            startActivityForResult(invoke, intent, "vpnPermissionResult")
-        } else {
-            // Already have permission
+        if (intent == null) {
+            val ret = JSObject()
             ret.put("granted", true)
             invoke.resolve(ret)
+            return
+        }
+        try {
+            startActivityForResult(invoke, intent, "vpnPermissionResult")
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "could not show the VPN consent dialog", e)
+            invoke.reject("Could not show the VPN consent dialog: ${e.message}")
         }
     }
 

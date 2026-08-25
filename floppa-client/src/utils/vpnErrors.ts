@@ -43,6 +43,7 @@ export const VPN_ERROR_KEYS: Record<Exclude<VpnErrorKind, 'attempt_failed'>, str
 /** Why one probe failed, as reported by the actor. */
 export const ATTEMPT_ERROR_KEYS: Record<AttemptError['kind'], string> = {
   permission_denied: 'vpn.errors.attempt.permissionDenied',
+  consent_unavailable: 'vpn.errors.attempt.consentUnavailable',
   no_config: 'vpn.errors.attempt.noConfig',
   platform_unavailable: 'vpn.errors.attempt.platformUnavailable',
   resolve_failed: 'vpn.errors.attempt.resolveFailed',

@@ -22,6 +22,14 @@ pub struct Policy {
     pub dark_grace: Duration,
     /// Wall-clock budget for one attempt, ladder and verification included.
     pub attempt_budget: Duration,
+    /// How long the Android consent dialog may go unanswered before the attempt gives up on it.
+    ///
+    /// It is not "how long a person may take to read it" — a dialog a person is looking at is
+    /// answered, and the attempt budget is what bounds that. It bounds the case where no dialog
+    /// was ever shown: Android refuses to start an activity from a background process, so the
+    /// call simply never returns, and without this the attempt sat there until the actor
+    /// cancelled it.
+    pub consent_budget: Duration,
     pub verify_wg: Duration,
     pub verify_vless: Duration,
     /// Passes over the order for a cold, user-initiated connect. One means fail fast.
@@ -46,6 +54,7 @@ impl Default for Policy {
             obs_stale_after: Duration::from_secs(3),
             dark_grace: Duration::ZERO,
             attempt_budget: Duration::from_secs(25),
+            consent_budget: Duration::from_secs(20),
             verify_wg: Duration::from_secs(5),
             verify_vless: Duration::from_secs(10),
             cold_passes: 1,

@@ -33,14 +33,36 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
 
     // 1. Consent --------------------------------------------------------------------------
-    let granted = ctx
-        .app
-        .vpn()
-        .prepare()
-        .await
-        .map_err(|e| AttemptError::PlatformUnavailable {
-            detail: format!("VPN prepare failed: {e}"),
-        })?;
+    //
+    // The one step of this ladder that waits on a person, and the one that could wait forever.
+    // `prepare()` resolves from the activity result of the system consent dialog; when the UI
+    // process is in the background Android refuses to start that activity, and when the activity
+    // is recreated while the dialog is up the reply is lost — either way the future never
+    // completes. Cancellation is checked *between* steps, so nothing rescued it: the attempt
+    // budget moved the actor to Unwinding, Unwinding has no deadline and absorbs every intent,
+    // and the app was stuck until it was restarted.
+    //
+    // So: honour cancellation here rather than only around here, and bound the wait. Both
+    // endings are typed and both are fatal for the cycle — asking three protocols in a row for
+    // consent that cannot be given is three dialogs nobody sees.
+    let granted = tokio::select! {
+        biased;
+        _ = ctx.cancel.cancelled() => return Err(AttemptError::Cancelled),
+        answer = tokio::time::timeout(ctx.policy.consent_budget, ctx.app.vpn().prepare()) => {
+            match answer {
+                Ok(Ok(granted)) => granted,
+                Ok(Err(e)) => {
+                    return Err(AttemptError::PlatformUnavailable {
+                        detail: format!("VPN prepare failed: {e}"),
+                    });
+                }
+                Err(_) => {
+                    error!("the VPN consent dialog never answered");
+                    return Err(AttemptError::ConsentUnavailable);
+                }
+            }
+        }
+    };
     if !granted {
         return Err(AttemptError::PermissionDenied);
     }
