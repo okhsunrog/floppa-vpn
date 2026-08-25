@@ -1,48 +1,31 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch } from 'vue'
+import { onMounted, computed, watch } from 'vue'
 import vpnConnectedImg from '../assets/vpn-connected.png?inline'
 import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
-import { useQuery } from '@pinia/colada'
-import { getMeQuery } from 'floppa-web-shared/client/@pinia/colada.gen'
-import {
-  createMyPeer,
-  getMyPeerByDevice,
-  getMyPeerConfig,
-  getMyVlessConfig,
-  getPublicConfig,
-  upsertMyInstallation,
-} from 'floppa-web-shared/client/sdk.gen'
-import {
-  ConnectionIndicator,
-  describeError,
-  formatBytes,
-  formatDuration,
-  formatSpeed,
-  isApiError,
-} from 'floppa-web-shared'
-import { platform } from '@tauri-apps/plugin-os'
+import { ConnectionIndicator, formatBytes, formatDuration, formatSpeed } from 'floppa-web-shared'
 import { useNow } from '@vueuse/core'
 import { useVpnStore } from '../stores/vpnStore'
 import { describeVpnError } from '../utils/vpnErrors'
-import type { CycleOutcome, Protocol } from '../bindings'
+import type { Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
+import { usePeerProvisioning } from '../composables/usePeerProvisioning'
 import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
-const setupErrorKey = ref<SyncErrorKey | null>(null)
-const setupErrorDetail = ref<string | null>(null)
-const setupPhase = ref<'idle' | 'offline'>('idle')
-let syncGeneration = 0
-
-const setupError = computed<string | null>(() => {
-  if (setupErrorKey.value) return t(setupErrorKey.value, { detail: setupErrorDetail.value ?? '' })
-  return null
-})
+const {
+  setupPhase,
+  setupError,
+  reprovisioning,
+  meQueryError,
+  noteServerReachable,
+  setupAutoPeer,
+  handleOutcome,
+} = usePeerProvisioning()
 
 /** The store's typed error, worded. */
 const vpnErrorText = computed<string | null>(() =>
@@ -59,14 +42,6 @@ watch(
 )
 
 /**
- * True while we are talking to the server about re-provisioning a peer.
- *
- * Owned here rather than in the store because it is not a tunnel state: the tunnel is genuinely
- * idle during it.
- */
-const reprovisioning = ref(false)
-
-/**
  * The one thing the button reads.
  *
  * `reprovisioning` used to reach only the label, so the button read "Connecting" with no spinner
@@ -76,231 +51,10 @@ const reprovisioning = ref(false)
  */
 const busy = computed(() => vpn.isBusy || reprovisioning.value)
 
-const { data: me, refresh: refreshMe, error: meQueryError } = useQuery(getMeQuery())
-
 // Clear offline banner when server becomes reachable again
 watch(meQueryError, (err) => {
-  if (!err && setupPhase.value === 'offline') {
-    setupPhase.value = 'idle'
-  }
+  if (!err) noteServerReachable()
 })
-
-/** Locale keys a failed server sync can be reported under. */
-type SyncErrorKey = 'vpn.noSubscription' | 'vpn.peerLimitReached' | 'vpn.peerCreateFailed'
-
-type SyncResult =
-  | { outcome: 'ok' }
-  | { outcome: 'error'; errorKey: SyncErrorKey; detail?: string }
-  | { outcome: 'offline' }
-
-/**
- * Whether this device has no peer for `protocol`, as opposed to us failing to find out.
- *
- * Only a 404 means "no peer". A network failure leaves `data` empty too, and reading that as
- * "no peer" is what used to make an offline start create a duplicate — or, in the reconnect
- * path, re-provision a peer that was never gone.
- */
-type PeerLookup = { found: 'yes'; id: number } | { found: 'no' } | { found: 'unknown' }
-
-/** The protocols that are backed by a per-device peer row on the server (VLESS is per-user). */
-type WgFamilyProtocol = Exclude<Protocol, 'vless'>
-
-async function lookupPeer(protocol: WgFamilyProtocol): Promise<PeerLookup> {
-  const { data: peer, response } = await getMyPeerByDevice({
-    path: { device_id: vpn.deviceId! },
-    query: { protocol },
-  })
-  if (peer) return { found: 'yes', id: peer.id }
-  return response?.status === 404 ? { found: 'no' } : { found: 'unknown' }
-}
-
-/**
- * Fetch (and optionally create) the wg-family peer for `protocol`, loading its config into the
- * VPN store. `allowCreate=false` only loads a pre-existing peer (so the secondary protocol never
- * consumes a peer slot). Returns an error outcome on subscription/limit failures during create.
- */
-async function syncWgFamilyPeer(
-  protocol: WgFamilyProtocol,
-  allowCreate: boolean,
-): Promise<SyncResult> {
-  const lookup = await lookupPeer(protocol)
-
-  if (lookup.found === 'yes') {
-    const { data: configStr } = await getMyPeerConfig({
-      path: { id: lookup.id },
-      throwOnError: true,
-    })
-    await vpn.importConfig(configStr)
-    return { outcome: 'ok' }
-  }
-
-  if (lookup.found === 'unknown') return { outcome: 'offline' }
-
-  if (!allowCreate) return { outcome: 'ok' }
-
-  if (!me.value?.subscription) {
-    return { outcome: 'error', errorKey: 'vpn.noSubscription' }
-  }
-
-  // Not the Pinia Colada mutation: it re-throws the error body untyped, and `response` — the
-  // only thing that tells a server refusal from no server at all — is lost on the way.
-  const {
-    data: created,
-    error,
-    response,
-  } = await createMyPeer({
-    body: {
-      device_id: vpn.deviceId,
-      device_name: vpn.deviceName,
-      protocol,
-    },
-    throwOnError: false,
-  })
-  if (created) {
-    await vpn.importConfig(created.config)
-    return { outcome: 'ok' }
-  }
-  if (!response) return { outcome: 'offline' }
-
-  // Error codes as `floppa-server/src/admin/error.rs` names them. `isApiError` narrows the code
-  // to the `ApiErrorCode` union, so a misspelled case here is a type error rather than a branch
-  // that never matches.
-  if (isApiError(error)) {
-    switch (error.error) {
-      case 'no_active_subscription':
-        return { outcome: 'error', errorKey: 'vpn.noSubscription' }
-      case 'peer_limit_reached':
-        return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
-    }
-  }
-  return {
-    outcome: 'error',
-    errorKey: 'vpn.peerCreateFailed',
-    detail: describeError(error, `HTTP ${response.status}`, t),
-  }
-}
-
-async function doServerSync(): Promise<SyncResult> {
-  try {
-    await refreshMe()
-
-    // If the server is unreachable, refreshMe silently fails (Pinia Colada
-    // doesn't throw). Check query error before proceeding — otherwise
-    // getMyPeerByDevice returns { data: undefined } on network error,
-    // which looks identical to a 404 and would wrongly revoke cached config.
-    if (meQueryError.value) {
-      return { outcome: 'offline' }
-    }
-
-    // Register/update this device installation
-    try {
-      await upsertMyInstallation({
-        body: {
-          device_id: vpn.deviceId!,
-          device_name: vpn.deviceName ?? undefined,
-          platform: platform(),
-          app_version: __APP_VERSION__,
-        },
-      })
-    } catch {
-      // Non-critical — continue with peer sync even if installation upsert fails
-    }
-
-    // AmneziaWG is the default wg-family protocol when the server offers it; WireGuard otherwise.
-    let amneziaAvailable = false
-    try {
-      const { data: pub } = await getPublicConfig()
-      amneziaAvailable = pub?.amneziawg_available ?? false
-    } catch {
-      // Couldn't reach /config — fall back to plain WireGuard.
-    }
-    const primary = amneziaAvailable ? 'amneziawg' : 'wireguard'
-    const secondary = primary === 'amneziawg' ? 'wireguard' : 'amneziawg'
-
-    // 1. Provision the primary (default) wg-family peer — must succeed.
-    const primaryResult = await syncWgFamilyPeer(primary, true)
-    if (primaryResult.outcome === 'error') return primaryResult
-
-    // 2. Also provision the secondary wg-family protocol when the server offers it. A device is a
-    //    single peer-limit slot, so holding both WireGuard and AmneziaWG is free — this gives the
-    //    user all switcher positions. Best-effort: don't fail the sync if the bonus peer can't be made.
-    // The secondary wg protocol is only ever available when AmneziaWG is offered: if it isn't,
-    // the primary is WireGuard and the secondary would be the absent AmneziaWG.
-    await syncWgFamilyPeer(secondary, amneziaAvailable)
-
-    // 3. Fetch VLESS config (per-user, no peer slot). A server that does not offer VLESS says so
-    //    with `vless_not_configured`, which is not a failure of ours; anything else is worth a
-    //    log line but must not fail the sync — the wg-family peer above is what matters.
-    try {
-      const { data: vlessConfig, error: vlessError } = await getMyVlessConfig()
-      if (vlessConfig?.uri) {
-        await vpn.importConfig(vlessConfig.uri)
-      } else if (isApiError(vlessError) && vlessError.error !== 'vless_not_configured') {
-        console.warn('[VpnCard] VLESS config refused:', vlessError.error, vlessError.message)
-      }
-    } catch (e) {
-      console.warn('[VpnCard] VLESS config unavailable:', e)
-    }
-
-    // Importing configs no longer changes which protocol a connect would use, so there is
-    // nothing to restore here — that used to be necessary only because storing and choosing
-    // were the same operation.
-    return { outcome: 'ok' }
-  } catch {
-    return { outcome: 'offline' }
-  }
-}
-
-function applySyncResult(result: SyncResult) {
-  switch (result.outcome) {
-    case 'ok':
-      setupPhase.value = 'idle'
-      break
-    case 'error':
-      setupPhase.value = 'idle'
-      setupErrorKey.value = result.errorKey
-      setupErrorDetail.value = result.detail ?? null
-      break
-    case 'offline':
-      setupPhase.value = 'offline'
-      break
-  }
-}
-
-async function setupAutoPeer() {
-  setupErrorKey.value = null
-  setupErrorDetail.value = null
-
-  const thisGeneration = ++syncGeneration
-
-  const timeoutPromise = new Promise<'timeout'>((resolve) =>
-    setTimeout(() => resolve('timeout'), 5000),
-  )
-
-  const syncPromise = doServerSync()
-  const winner = await Promise.race([
-    syncPromise.then((result) => ({ type: 'sync' as const, result })),
-    timeoutPromise.then(() => ({ type: 'timeout' as const })),
-  ])
-
-  // Stale guard — discard if a newer call was made
-  if (thisGeneration !== syncGeneration) return
-
-  if (winner.type === 'sync') {
-    applySyncResult(winner.result)
-  } else {
-    setupPhase.value = 'offline'
-
-    // Let the background sync finish; apply only if it succeeded
-    syncPromise.then((result) => {
-      if (thisGeneration !== syncGeneration) return
-      if (setupPhase.value !== 'offline') return
-      if (result.outcome === 'ok' || result.outcome === 'error') {
-        applySyncResult(result)
-      }
-    })
-  }
-}
 
 onMounted(async () => {
   // Started at app scope in main.ts; this only waits for the device identity and first snapshot.
@@ -321,78 +75,6 @@ async function handleConnect() {
     return
   }
   await handleOutcome(await vpn.connect())
-}
-
-/**
- * React to a cycle that ended without connecting.
- *
- * The one thing this cannot do is decide *why* it failed — that comes typed from the actor. A
- * protocol whose verification failed is the signal that its peer may have been deleted
- * server-side, and it is looked up by name rather than by "whichever protocol was tried last",
- * which is what the old code assumed and got wrong whenever the order had more than one entry.
- */
-async function handleOutcome(outcome: CycleOutcome | null) {
-  if (!outcome) return
-
-  const verifyFailed =
-    outcome.outcome === 'exhausted'
-      ? outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
-      : outcome.outcome === 'lost_gave_up'
-        ? outcome.protocol
-        : undefined
-
-  if (outcome.outcome === 'unwind_failed') {
-    vpn.setError({ kind: 'unwind_failed' })
-    return
-  }
-
-  // Nothing to re-provision: the probes failed for reasons a new peer would not fix. Show the
-  // last probe's typed error — it is the one for the protocol the user most likely cares about,
-  // and every kind it can carry has words in the locale.
-  if (outcome.outcome === 'exhausted' && !verifyFailed) {
-    const failure = outcome.failures.at(-1)
-    if (failure && failure.error.kind !== 'cancelled') {
-      vpn.setError({ kind: 'attempt_failed', failure })
-    }
-    return
-  }
-
-  // VLESS has no per-device peer to look up: its config is per-user and never deleted by a
-  // peer removal, so a failed VLESS verification is not a "peer gone" signal.
-  if (verifyFailed === 'vless') {
-    vpn.setError({ kind: 'connection_failed' })
-    return
-  }
-  if (!verifyFailed || !vpn.deviceId) return
-
-  reprovisioning.value = true
-  try {
-    console.info('[VpnCard] checking whether the peer still exists on the server...')
-    const lookup = await lookupPeer(verifyFailed)
-    switch (lookup.found) {
-      case 'no':
-        console.info('[VpnCard] peer is gone, recreating it')
-        await setupAutoPeer()
-        if (vpn.hasConfig) {
-          console.info('[VpnCard] got a new config, reconnecting')
-          await vpn.connect()
-        }
-        break
-      case 'yes':
-        console.info('[VpnCard] the peer exists, so the problem is elsewhere')
-        vpn.setError({ kind: 'connection_failed' })
-        break
-      case 'unknown':
-        console.warn('[VpnCard] could not reach the server to check the peer')
-        vpn.setError({ kind: 'connection_failed' })
-        break
-    }
-  } catch (e) {
-    console.error('[VpnCard] peer check failed:', e)
-    vpn.setError({ kind: 'connection_failed' })
-  } finally {
-    reprovisioning.value = false
-  }
 }
 
 /**
