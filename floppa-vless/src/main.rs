@@ -39,12 +39,14 @@ async fn main() -> anyhow::Result<()> {
 
     info!("floppa-vless starting on {}", config.server.listen_addr);
 
-    // Start Prometheus metrics exporter
+    // Prometheus exporter. Loopback only, like the daemon's :9101 and the server's :9102:
+    // the sole consumer is the VictoriaMetrics on this host, which scrapes 127.0.0.1:9103
+    // (cloud-forge promscrape.yml); Grafana reads VictoriaMetrics, never the exporters.
     metrics_exporter_prometheus::PrometheusBuilder::new()
-        .with_http_listener(([0, 0, 0, 0], 9103))
+        .with_http_listener(([127, 0, 0, 1], 9103))
         .install()
         .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
-    info!("Metrics exporter listening on 0.0.0.0:9103");
+    info!("Metrics exporter listening on 127.0.0.1:9103");
 
     // Database connection
     let pool = PgPoolOptions::new()
