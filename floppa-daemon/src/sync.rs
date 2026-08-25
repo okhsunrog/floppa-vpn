@@ -376,11 +376,9 @@ async fn reapply_rate_limits(ctx: &SyncContext) -> Result<()> {
     let peers = sqlx::query!(
         r#"
         SELECT p.id, p.assigned_ip AS "assigned_ip!", p.protocol AS "protocol: Protocol",
-               pl.default_speed_limit_mbps AS speed_limit_mbps
+               cs.speed_limit_mbps
         FROM peers p
-        LEFT JOIN subscriptions s ON s.user_id = p.user_id
-          AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        LEFT JOIN plans pl ON s.plan_id = pl.id
+        LEFT JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active
         WHERE p.sync_status = 'active'
         "#,
     )
@@ -424,11 +422,9 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
         r#"
         SELECT p.id, p.public_key AS "public_key!", p.assigned_ip AS "assigned_ip!", p.user_id,
                p.protocol AS "protocol: Protocol",
-               pl.default_speed_limit_mbps AS speed_limit_mbps
+               cs.id AS subscription_id, cs.speed_limit_mbps
         FROM peers p
-        LEFT JOIN subscriptions s ON s.user_id = p.user_id
-          AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        LEFT JOIN plans pl ON s.plan_id = pl.id
+        LEFT JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active
         WHERE p.sync_status = 'pending_add'
         "#,
     )
@@ -436,6 +432,16 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
     .await?;
 
     for peer in pending_add {
+        // No active subscription is not "unlimited": the peer is as good as expired and
+        // check_expired_subscriptions queues it for removal this same tick. Never let it through.
+        if peer.subscription_id.is_none() {
+            debug!(
+                peer_id = peer.id,
+                user_id = peer.user_id,
+                "Skipping pending peer: user has no active subscription"
+            );
+            continue;
+        }
         let Some(target) = ctx.target(peer.protocol) else {
             ctx.warn_unroutable_once(peer.id, peer.protocol);
             continue;
@@ -580,11 +586,9 @@ async fn update_user_rate_limit(ctx: &SyncContext, user_id: i64) -> Result<()> {
     let peers = sqlx::query!(
         r#"
         SELECT p.id, p.assigned_ip AS "assigned_ip!", p.protocol AS "protocol: Protocol",
-               pl.default_speed_limit_mbps AS speed_limit_mbps
+               cs.speed_limit_mbps
         FROM peers p
-        LEFT JOIN subscriptions s ON s.user_id = p.user_id
-          AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        LEFT JOIN plans pl ON s.plan_id = pl.id
+        LEFT JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active
         WHERE p.user_id = $1 AND p.sync_status = 'active'
         "#,
         user_id,
@@ -742,24 +746,20 @@ async fn load_peer_user_map(pool: &DbPool) -> Result<HashMap<String, (i64, i64)>
 }
 
 async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
-    let now = Utc::now();
-
-    // Find peers of users without a valid subscription. pending_add is included:
-    // a peer stuck there (interface down at the time) must not be let through
-    // once the interface is back if its subscription has meanwhile expired.
+    // Find peers of users without an active subscription — expired, or never had one (the
+    // same thing to the daemon). pending_add is included: a peer stuck there (interface down
+    // at the time) must not be let through once the interface is back if its subscription
+    // has meanwhile expired.
     let expired = sqlx::query_scalar!(
         r#"
-        SELECT DISTINCT p.id
+        SELECT p.id
         FROM peers p
-        JOIN users u ON p.user_id = u.id
         WHERE p.sync_status IN ('active', 'pending_add')
         AND NOT EXISTS (
-            SELECT 1 FROM subscriptions s
-            WHERE s.user_id = u.id
-            AND (s.expires_at IS NULL OR s.expires_at > $1)
+            SELECT 1 FROM current_subscriptions cs
+            WHERE cs.user_id = p.user_id AND cs.is_active
         )
         "#,
-        now,
     )
     .fetch_all(pool)
     .await?;

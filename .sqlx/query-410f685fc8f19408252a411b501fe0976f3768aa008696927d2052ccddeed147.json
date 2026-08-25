@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT p.id\n        FROM peers p\n        WHERE p.sync_status IN ('active', 'pending_add')\n        AND NOT EXISTS (\n            SELECT 1 FROM current_subscriptions cs\n            WHERE cs.user_id = p.user_id AND cs.is_active\n        )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "410f685fc8f19408252a411b501fe0976f3768aa008696927d2052ccddeed147"
+}

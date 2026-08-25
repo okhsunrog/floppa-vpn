@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.assigned_ip AS \"assigned_ip!\", p.protocol AS \"protocol: Protocol\",\n               pl.default_speed_limit_mbps AS speed_limit_mbps\n        FROM peers p\n        LEFT JOIN subscriptions s ON s.user_id = p.user_id\n          AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LEFT JOIN plans pl ON s.plan_id = pl.id\n        WHERE p.sync_status = 'active'\n        ",
+  "query": "\n        SELECT p.id, p.assigned_ip AS \"assigned_ip!\", p.protocol AS \"protocol: Protocol\",\n               cs.speed_limit_mbps\n        FROM peers p\n        LEFT JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active\n        WHERE p.user_id = $1 AND p.sync_status = 'active'\n        ",
   "describe": {
     "columns": [
       {
@@ -42,14 +42,16 @@
         "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "plans",
-            "name": "default_speed_limit_mbps"
+            "table": "current_subscriptions",
+            "name": "speed_limit_mbps"
           }
         }
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8"
+      ]
     },
     "nullable": [
       false,
@@ -58,5 +60,5 @@
       true
     ]
   },
-  "hash": "31640a4d62f5d1bfd1471fa87ef2f80fa6441767542a4c6d128ccc3b8bb9292c"
+  "hash": "37982e73c407cf7c8122bcc3bc41d677cb79efbf435c8b419af485f73caa9128"
 }
