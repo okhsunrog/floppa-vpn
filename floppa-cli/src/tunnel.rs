@@ -6,8 +6,9 @@ use gotatun::udp::socket::UdpSocketFactory;
 use gotatun::x25519;
 use ipnetwork::IpNetwork;
 use std::net::SocketAddr;
-use std::process::Command;
 use std::str::FromStr;
+
+use crate::net;
 
 pub const DEFAULT_INTERFACE_NAME: &str = "floppa0";
 
@@ -233,7 +234,7 @@ impl WgConfig {
         }
     }
 
-    async fn peer_socket_addr(&self) -> Result<SocketAddr> {
+    pub async fn peer_socket_addr(&self) -> Result<SocketAddr> {
         tokio::net::lookup_host(&self.peer_endpoint)
             .await?
             .next()
@@ -244,7 +245,7 @@ impl WgConfig {
         Ok(IpNetwork::from_str(&self.address)?)
     }
 
-    fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
+    pub fn allowed_ips_networks(&self) -> Vec<IpNetwork> {
         self.allowed_ips
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
@@ -297,63 +298,13 @@ fn build_gotatun_awg(obf: &AwgObfuscation) -> Result<gotatun::noise::awg::AwgCon
     Ok(a)
 }
 
-fn run_ip(args: &[&str]) -> Result<()> {
-    let output = Command::new("ip").args(args).output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(anyhow!("ip {} failed: {}", args.join(" "), stderr.trim()))
-    }
-}
-
-fn get_default_gateway() -> Result<Option<String>> {
-    let output = Command::new("ip")
-        .args(["route", "show", "default"])
-        .output()?;
-    let route_output = String::from_utf8_lossy(&output.stdout);
-    Ok(route_output
-        .split_whitespace()
-        .skip_while(|&w| w != "via")
-        .nth(1)
-        .map(|s| s.to_string()))
-}
-
-pub async fn configure_networking(config: &WgConfig, interface: &str) -> Result<()> {
+/// Assign the tunnel address and MTU to the TUN interface and bring it up.
+pub fn bring_up_interface(config: &WgConfig, interface: &str) -> Result<IpNetwork> {
     let addr = config.address_network()?;
-
-    run_ip(&["addr", "add", &addr.to_string(), "dev", interface])?;
-    run_ip(&["link", "set", interface, "mtu", &config.mtu().to_string()])?;
-    run_ip(&["link", "set", interface, "up"])?;
-
-    // Add host route for WG endpoint via default gateway to prevent routing loop
-    let endpoint = config.peer_socket_addr().await?;
-    if let Some(gateway) = get_default_gateway()? {
-        let endpoint_route = format!("{}/32", endpoint.ip());
-        run_ip(&["route", "add", &endpoint_route, "via", &gateway])?;
-        eprintln!("Endpoint route: {} via {}", endpoint_route, gateway);
-    }
-
-    // Add routes for allowed IPs
-    for network in config.allowed_ips_networks() {
-        if network.prefix() == 0 {
-            if network.is_ipv4() {
-                run_ip(&["route", "add", "0.0.0.0/1", "dev", interface])?;
-                run_ip(&["route", "add", "128.0.0.0/1", "dev", interface])?;
-            } else {
-                let _ = run_ip(&["route", "add", "::/1", "dev", interface]);
-                let _ = run_ip(&["route", "add", "8000::/1", "dev", interface]);
-            }
-        } else {
-            run_ip(&["route", "add", &network.to_string(), "dev", interface])?;
-        }
-    }
-
-    let ip = addr.ip();
-    eprintln!("VPN IP: {ip}");
-    eprintln!("Endpoint: {}", config.peer_endpoint);
-
-    Ok(())
+    net::run_ip(&["addr", "add", &addr.to_string(), "dev", interface])?;
+    net::run_ip(&["link", "set", interface, "mtu", &config.mtu().to_string()])?;
+    net::run_ip(&["link", "set", interface, "up"])?;
+    Ok(addr)
 }
 
 pub async fn create_tunnel(config: &WgConfig, interface: &str) -> Result<FloppaDevice> {

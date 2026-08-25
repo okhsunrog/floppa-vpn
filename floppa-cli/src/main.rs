@@ -1,6 +1,7 @@
 mod api;
 mod auth;
 mod dns;
+mod net;
 mod tunnel;
 mod vless;
 
@@ -191,28 +192,45 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// The running tunnel, whichever protocol backs it.
+enum Tunnel {
+    WireGuard(tunnel::FloppaDevice),
+    Vless(shoes_lite::api::VlessTunnel),
+}
+
+impl Tunnel {
+    async fn stop(self) -> Result<()> {
+        match self {
+            Tunnel::WireGuard(device) => {
+                device.stop().await;
+                Ok(())
+            }
+            Tunnel::Vless(tunnel) => tunnel
+                .stop()
+                .await
+                .map_err(|e| anyhow::anyhow!("VLESS tunnel stop failed: {e}")),
+        }
+    }
+}
+
 async fn connect_wireguard(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
     let wg_config = tunnel::WgConfig::from_config_str(config_str)?;
     eprintln!("Creating WireGuard tunnel on {interface}...");
     let device = tunnel::create_tunnel(&wg_config, interface).await?;
     eprintln!("Configuring networking...");
-    tunnel::configure_networking(&wg_config, interface).await?;
+    let addr = tunnel::bring_up_interface(&wg_config, interface)?;
+    let endpoint = wg_config.peer_socket_addr().await?;
+    let applied =
+        net::configure_routes(endpoint.ip(), &wg_config.allowed_ips_networks(), interface)?;
+    eprintln!("VPN IP: {}", addr.ip());
+    eprintln!("Endpoint: {}", wg_config.peer_endpoint);
 
-    if !no_dns {
+    let dns_changed = !no_dns && {
         dns::set_dns(&wg_config)?;
-    }
+        !wg_config.dns_servers().is_empty()
+    };
 
-    println!("READY");
-    eprintln!("Connected! Press Ctrl+C to disconnect.");
-    tokio::signal::ctrl_c().await?;
-
-    eprintln!("\nDisconnecting...");
-    if !no_dns {
-        dns::restore_dns()?;
-    }
-    device.stop().await;
-    eprintln!("Disconnected.");
-    Ok(())
+    wait_then_disconnect(applied, dns_changed, Tunnel::WireGuard(device)).await
 }
 
 async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Result<()> {
@@ -225,27 +243,56 @@ async fn connect_vless(config_str: &str, interface: &str, no_dns: bool) -> Resul
     let tunnel = vless::create_tunnel(&config, interface).await?;
 
     eprintln!("Configuring networking...");
-    vless::configure_networking(&config, interface).await?;
+    let endpoint = vless::endpoint_ip(&config).await?;
+    let applied =
+        net::configure_routes(endpoint, &vless::allowed_ips_networks(&config), interface)?;
+    eprintln!("VPN IP: {}", config.address.as_deref().unwrap_or("unknown"));
+    eprintln!("Endpoint: {}", config.server_addr);
 
-    if !no_dns {
-        // Write DNS servers from config
-        if let Some(ref dns) = config.dns {
-            let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
-            if !servers.is_empty() {
-                dns::write_dns(&servers)?;
-            }
+    let mut dns_changed = false;
+    if !no_dns && let Some(ref dns) = config.dns {
+        let servers: Vec<String> = dns.split(',').map(|s| s.trim().to_string()).collect();
+        if !servers.is_empty() {
+            dns::write_dns(&servers)?;
+            dns_changed = true;
         }
     }
 
+    wait_then_disconnect(applied, dns_changed, Tunnel::Vless(tunnel)).await
+}
+
+/// Announce readiness, block until the user asks to stop, then tear everything down.
+async fn wait_then_disconnect(
+    applied: net::AppliedNetworking,
+    dns_changed: bool,
+    tunnel: Tunnel,
+) -> Result<()> {
     println!("READY");
     eprintln!("Connected! Press Ctrl+C to disconnect.");
     tokio::signal::ctrl_c().await?;
 
     eprintln!("\nDisconnecting...");
-    if !no_dns {
-        dns::restore_dns()?;
-    }
-    tunnel.stop().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    disconnect(applied, dns_changed, tunnel).await?;
     eprintln!("Disconnected.");
     Ok(())
+}
+
+/// Undo the connection. DNS restore, route teardown and tunnel stop are independent: each runs
+/// even if the previous one failed, and the failures are reported together.
+async fn disconnect(
+    mut applied: net::AppliedNetworking,
+    dns_changed: bool,
+    tunnel: Tunnel,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    if dns_changed && let Err(e) = dns::restore_dns() {
+        errors.push(e);
+    }
+    if let Err(e) = applied.teardown() {
+        errors.push(e);
+    }
+    if let Err(e) = tunnel.stop().await {
+        errors.push(e);
+    }
+    net::collect_errors(errors)
 }
