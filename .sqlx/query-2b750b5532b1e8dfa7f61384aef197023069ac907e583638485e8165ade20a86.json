@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)\n        VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL DO UPDATE SET\n            username = $2,\n            first_name = COALESCE($3, users.first_name),\n            last_name = COALESCE($4, users.last_name),\n            photo_url = COALESCE($5, users.photo_url),\n            is_admin = users.is_admin OR $6\n        RETURNING id, username, first_name, last_name, photo_url, is_admin, trial_used_at\n        ",
+  "query": "\n        INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)\n        VALUES ($1, $2, $3, $4, $5, $6)\n        ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL DO UPDATE SET\n            username = COALESCE($2, users.username),\n            first_name = COALESCE($3, users.first_name),\n            last_name = COALESCE($4, users.last_name),\n            photo_url = COALESCE($5, users.photo_url),\n            is_admin = users.is_admin OR $6\n        RETURNING id, username, first_name, last_name, photo_url, is_admin, trial_used_at\n        ",
   "describe": {
     "columns": [
       {
@@ -101,5 +101,5 @@
       true
     ]
   },
-  "hash": "c6d970aa33706e6442e6ea505ba428bac43e996b4a648c05d79e3960f17d0f78"
+  "hash": "2b750b5532b1e8dfa7f61384aef197023069ac907e583638485e8165ade20a86"
 }

@@ -46,7 +46,7 @@ pub async fn upsert_user(
         INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)
         VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL DO UPDATE SET
-            username = $2,
+            username = COALESCE($2, users.username),
             first_name = COALESCE($3, users.first_name),
             last_name = COALESCE($4, users.last_name),
             photo_url = COALESCE($5, users.photo_url),
@@ -1556,6 +1556,39 @@ mod tests {
         assert_eq!(result.first_name.as_deref(), Some("Alice"));
         assert_eq!(result.last_name.as_deref(), Some("Smith"));
         assert_eq!(result.photo_url.as_deref(), Some("https://photo.url"));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_upsert_without_username_keeps_existing(pool: DbPool) {
+        get_basic_plan_id(&pool).await;
+
+        // A credential account that later linked Telegram keeps its login as `username`; a
+        // /start from a Telegram profile without a public @username must not wipe it.
+        let user = create_credential_user(&pool, "MyLogin", "password123")
+            .await
+            .unwrap();
+        sqlx::query!("UPDATE users SET telegram_id = 4242 WHERE id = $1", user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let result = upsert_user(&pool, 4242, None, TelegramProfile::default(), false)
+            .await
+            .unwrap();
+        assert_eq!(result.id, user.id);
+        assert_eq!(result.username.as_deref(), Some("MyLogin"));
+
+        // A real Telegram username still replaces it.
+        let result = upsert_user(
+            &pool,
+            4242,
+            Some("tg_name"),
+            TelegramProfile::default(),
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.username.as_deref(), Some("tg_name"));
     }
 
     #[sqlx::test(migrations = "../migrations")]
