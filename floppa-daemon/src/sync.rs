@@ -56,6 +56,9 @@ fn proto_targets(config: &Config) -> Vec<ProtoTarget> {
     targets
 }
 
+/// Notification channels the daemon subscribes to.
+const LISTEN_CHANNELS: [&str; 2] = ["peer_changed", "subscription_changed"];
+
 /// Main synchronization loop using PostgreSQL LISTEN/NOTIFY
 /// - Listens for 'peer_changed' notifications for immediate sync
 /// - Periodic sync for traffic stats and expired subscriptions
@@ -67,6 +70,11 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
             crate::tc::setup_tc(&target.interface, target.total_bandwidth_mbps)?;
         }
     }
+
+    // Subscribe BEFORE the initial sync: a peer created while we reconcile would
+    // otherwise fire a NOTIFY nobody is listening to, and stay pending until the
+    // next periodic sync.
+    let listener = connect_listener(pool).await?;
 
     // Initial sync on startup
     info!("Running initial sync");
@@ -86,12 +94,12 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     let pool_clone = pool.clone();
     let config_clone = config.clone();
     let listener_handle = tokio::spawn(async move {
-        if let Err(e) = listen_for_changes(&pool_clone, &config_clone).await {
+        if let Err(e) = listen_for_changes(listener, &pool_clone, &config_clone).await {
             error!(error = %e, "Listener task failed");
         }
     });
 
-    // Periodic tasks (traffic stats, subscription checks)
+    // Periodic tasks (pending peers safety net, traffic stats, subscription checks)
     let periodic_handle = tokio::spawn({
         let pool = pool.clone();
         let config = config.clone();
@@ -193,16 +201,39 @@ async fn restore_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Listen for PostgreSQL notifications and sync immediately
-async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
+/// Open a dedicated LISTEN connection subscribed to all daemon channels.
+async fn connect_listener(pool: &DbPool) -> Result<PgListener> {
     let mut listener = PgListener::connect_with(pool).await?;
-    listener.listen("peer_changed").await?;
-    listener.listen("subscription_changed").await?;
-    info!("Listening for peer_changed and subscription_changed notifications");
+    listener.listen_all(LISTEN_CHANNELS).await?;
+    info!(channels = ?LISTEN_CHANNELS, "Listening for notifications");
+    Ok(listener)
+}
 
+/// Catch up on everything that may have happened while no LISTEN connection was
+/// open: pending peers and (ephemeral) tc limits that a missed
+/// `subscription_changed` would have updated.
+async fn resync_after_reconnect(pool: &DbPool, config: &Config) {
+    if let Err(e) = sync_peers(pool, config).await {
+        error!(error = %e, "Failed to sync peers after reconnect");
+    }
+    if let Err(e) = reapply_rate_limits(pool, config).await {
+        error!(error = %e, "Failed to reapply rate limits after reconnect");
+    }
+}
+
+/// Listen for PostgreSQL notifications and sync immediately.
+///
+/// Uses `try_recv` rather than `recv`: sqlx reconnects transparently on a dropped
+/// connection, but notifications sent while it was down are gone for good.
+/// `try_recv` surfaces that as `Ok(None)`, which is our cue for a full resync.
+async fn listen_for_changes(
+    mut listener: PgListener,
+    pool: &DbPool,
+    config: &Config,
+) -> Result<()> {
     loop {
-        match listener.recv().await {
-            Ok(notification) => {
+        match listener.try_recv().await {
+            Ok(Some(notification)) => {
                 debug!(
                     channel = notification.channel(),
                     payload = ?notification.payload(),
@@ -226,24 +257,21 @@ async fn listen_for_changes(pool: &DbPool, config: &Config) -> Result<()> {
                     _ => {}
                 }
             }
+            Ok(None) => {
+                warn!("PgListener connection was lost and re-established; resyncing");
+                resync_after_reconnect(pool, config).await;
+            }
             Err(e) => {
                 error!(error = %e, "Listener error, reconnecting...");
                 let mut backoff = Duration::from_secs(1);
                 loop {
                     tokio::time::sleep(backoff).await;
-                    match PgListener::connect_with(pool).await {
-                        Ok(mut new_listener) => {
-                            if new_listener.listen("peer_changed").await.is_ok()
-                                && new_listener.listen("subscription_changed").await.is_ok()
-                            {
-                                listener = new_listener;
-                                info!("PgListener reconnected successfully");
-                                // Catch up on any notifications missed during disconnection
-                                if let Err(e) = sync_peers(pool, config).await {
-                                    error!(error = %e, "Failed to sync peers after reconnect");
-                                }
-                                break;
-                            }
+                    match connect_listener(pool).await {
+                        Ok(new_listener) => {
+                            listener = new_listener;
+                            info!("PgListener reconnected successfully");
+                            resync_after_reconnect(pool, config).await;
+                            break;
                         }
                         Err(e) => {
                             warn!(
@@ -480,13 +508,15 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Periodic tasks: update traffic stats, check expired subscriptions
+/// Periodic tasks: pick up pending peers whose NOTIFY was missed, update traffic
+/// stats, check expired subscriptions.
 async fn periodic_sync(
     pool: &DbPool,
     config: &Config,
     prev_wg_counters: &mut HashMap<String, (u64, u64)>,
     peer_user_map: &HashMap<String, (i64, i64)>,
 ) -> Result<()> {
+    sync_peers(pool, config).await?;
     update_traffic_stats(pool, config, prev_wg_counters, peer_user_map).await?;
     check_expired_subscriptions(pool).await?;
     Ok(())
