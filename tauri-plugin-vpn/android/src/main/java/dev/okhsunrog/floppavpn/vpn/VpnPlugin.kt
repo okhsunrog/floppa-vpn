@@ -138,23 +138,38 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /**
+     * Stop the service out of band.
+     *
+     * The normal stop is the RPC `stop`, after which the service stops itself. This path exists
+     * for the instance the RPC cannot reach: a bind that failed, a socket file that went missing.
+     * ACTION_STOP is delivered to onStartCommand of whichever instance is alive and runs the same
+     * shutdown sequence there (nativeStop, cleanup, stopSelf). `startService` is refused while the
+     * app is in the background (API 26+), so `stopService` — the plain API, and what `startVpn`
+     * uses to clear a previous instance — is the fallback. Rejects only if both are refused.
+     */
     @Command
     fun stopVpn(invoke: Invoke) {
-        // Send a START intent with ACTION_STOP to the :vpn process.
-        // stopService() doesn't reliably trigger onDestroy() for a foreground VpnService
-        // in a separate process, but startService() with a custom action IS delivered
-        // to onStartCommand(), where the service calls nativeStop() + stopSelf().
-        val intent =
+        val stopIntent =
             Intent(activity, FloppaVpnService::class.java).apply {
                 action = FloppaVpnService.ACTION_STOP
             }
         try {
-            activity.startService(intent)
+            activity.startService(stopIntent)
             Log.i("VpnPlugin", "stopVpn: sent ACTION_STOP intent")
+            invoke.resolve()
+            return
         } catch (e: Exception) {
-            Log.e("VpnPlugin", "stopVpn: failed to send stop intent", e)
+            Log.w("VpnPlugin", "stopVpn: ACTION_STOP refused, falling back to stopService", e)
         }
-        invoke.resolve()
+        try {
+            val wasRunning = activity.stopService(Intent(activity, FloppaVpnService::class.java))
+            Log.i("VpnPlugin", "stopVpn: stopService called (was running: $wasRunning)")
+            invoke.resolve()
+        } catch (e: Exception) {
+            Log.e("VpnPlugin", "stopVpn: stopService failed", e)
+            invoke.reject("Failed to stop VPN service: ${e.message}")
+        }
     }
 
     /**

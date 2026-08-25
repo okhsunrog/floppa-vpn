@@ -6,12 +6,27 @@
 
 use super::rpc_server::{self, RpcServerHandle};
 use super::tunnel::{self, TunnelManager};
+use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM};
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
 use tracing::{debug, error, info, warn};
+
+/// What a JNI entry point can fail with.
+///
+/// `nativeStartServer` resolves these into a `java.lang.RuntimeException`, so Kotlin sees a start
+/// that failed as a thrown exception rather than as a call that returned normally.
+#[derive(Debug, thiserror::Error)]
+enum EntryError {
+    #[error(transparent)]
+    Jni(#[from] jni::errors::Error),
+    #[error("a global lock in the :vpn process is poisoned")]
+    Poisoned,
+    #[error("failed to start the RPC server: {0}")]
+    ServerStart(String),
+}
 
 /// Global state for the VPN process
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -220,6 +235,11 @@ impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
 /// had not come up yet. The only recourse was a blind timeout, and the reason for the failure was
 /// logged here and never reached the caller. Binding first makes "up and idle", "failed, and here
 /// is why" and "not up at all" three different observations.
+///
+/// A failure to bind is thrown to Kotlin as a `RuntimeException`. It used to be logged and
+/// swallowed, and the service — already foreground and holding an established TUN with a default
+/// route into it — carried on as if it had started, with nothing listening on the socket and no
+/// in-band way to stop it.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartServer<'local>(
     mut env: EnvUnowned<'local>,
@@ -228,15 +248,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
     socket_path: JString<'local>,
     epoch: jlong,
 ) {
-    let _ = env.with_env(|env: &mut Env<'local>| -> Result<(), jni::errors::Error> {
-        // Store/update VpnService reference for protect() calls
-        {
-            let global_ref = env.new_global_ref(this)?;
-            if let Ok(mut guard) = VPN_SERVICE_REF.lock() {
-                *guard = Some(global_ref);
-            }
-        }
-
+    env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
         let epoch = epoch as u64;
         info!("nativeStartServer: fd={tun_fd}, socket={socket_path_str}, epoch={epoch}");
@@ -249,26 +261,29 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
         let tunnel_manager = get_tunnel_manager();
         let service = Arc::new(rpc_server::ServiceState::new(epoch, tun_fd as RawFd));
 
-        runtime.block_on(async {
-            match rpc_server::start_server(&socket_path_str, tunnel_manager.clone(), service) {
-                Ok(handle) => {
-                    if let Ok(mut guard) = RPC_HANDLE.lock() {
-                        if let Some(old) = guard.take() {
-                            old.shutdown();
-                        }
-                        *guard = Some(handle);
-                    }
-                    if let Ok(mut guard) = SERVER_EPOCH.lock() {
-                        *guard = epoch;
-                    }
-                    info!("tarpc RPC server started, waiting for a tunnel request");
-                }
-                Err(e) => error!("Failed to start tarpc server: {e}"),
-            }
-        });
+        // Bind first. Nothing global is touched until the bind has succeeded, so a failed start
+        // leaves the previous generation (if any) exactly as it was.
+        let _enter = runtime.enter();
+        let handle = rpc_server::start_server(&socket_path_str, tunnel_manager, service)
+            .map_err(EntryError::ServerStart)?;
 
+        // Store/update the VpnService reference for protect() and shutdown calls.
+        let global_ref = env.new_global_ref(this)?;
+        *VPN_SERVICE_REF.lock().map_err(|_| EntryError::Poisoned)? = Some(global_ref);
+
+        // Supersede the previous generation. Its socket file is ours now (see
+        // `RpcServerHandle::shutdown`), so only the accept loop is stopped.
+        let mut guard = RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)?;
+        if let Some(old) = guard.take() {
+            old.shutdown();
+        }
+        *guard = Some(handle);
+        *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)? = epoch;
+
+        info!("tarpc RPC server started, waiting for a tunnel request");
         Ok(())
-    });
+    })
+    .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 /// Called in `FloppaVpnService.onDestroy()` / `onRevoke()`.

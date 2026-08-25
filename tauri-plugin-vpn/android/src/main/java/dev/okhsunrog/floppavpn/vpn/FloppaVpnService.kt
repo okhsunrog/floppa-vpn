@@ -56,6 +56,7 @@ class FloppaVpnService : VpnService() {
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit(logDir: String)
 
+    /** Binds the RPC socket. Throws [RuntimeException] when it cannot. */
     private external fun nativeStartServer(tunFd: Int, socketPath: String, epoch: Long)
 
     /**
@@ -122,7 +123,11 @@ class FloppaVpnService : VpnService() {
             val socketPath = applicationInfo.dataDir + "/vpn.sock"
             nativeStartServer(fd, socketPath, epoch)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start VPN tunnel", e)
+            // nativeStartServer throws when the socket cannot be bound. Whatever failed, the
+            // service is foreground and may be holding an established TUN with a default route
+            // into it; without the RPC nothing can ask it to stop, so it must not stay.
+            Log.e(TAG, "Failed to start VPN service", e)
+            cleanupAndroid()
             stopSelf()
             return START_NOT_STICKY
         }

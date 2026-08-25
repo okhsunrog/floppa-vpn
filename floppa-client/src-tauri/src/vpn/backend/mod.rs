@@ -93,10 +93,10 @@ pub trait VpnBackend: Send + Sync {
 
 /// Create the appropriate VPN backend for the current platform.
 ///
-/// On Android, pass the socket path for tarpc IPC.
+/// On Android, pass the socket path for tarpc IPC and the app handle for the plugin's intent path.
 #[cfg(target_os = "android")]
-pub fn create_backend(socket_path: String) -> Arc<dyn VpnBackend> {
-    Arc::new(android_ipc::AndroidIpcBackend::new(socket_path))
+pub fn create_backend(socket_path: String, app: tauri::AppHandle) -> Arc<dyn VpnBackend> {
+    Arc::new(android_ipc::AndroidIpcBackend::new(socket_path, app))
 }
 
 /// Create the appropriate VPN backend for the current platform.

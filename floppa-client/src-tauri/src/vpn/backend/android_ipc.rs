@@ -20,12 +20,16 @@ use crate::vpn::rpc::VpnRpcClient;
 use crate::vpn::state::ProtocolConfig;
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri_plugin_vpn::VpnExt;
 use tokio::sync::Mutex;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, warn};
 
 pub struct AndroidIpcBackend {
     socket_path: String,
+    /// For the out-of-band stop: the intent path through the plugin is the only way to reach a
+    /// service instance whose RPC socket is not answering.
+    app: tauri::AppHandle,
     client: Mutex<Option<VpnRpcClient>>,
     /// Tracks whether the last connection attempt failed, to suppress repeated log messages.
     /// Only the first failure and recovery are logged.
@@ -33,12 +37,24 @@ pub struct AndroidIpcBackend {
 }
 
 impl AndroidIpcBackend {
-    pub fn new(socket_path: String) -> Self {
+    pub fn new(socket_path: String, app: tauri::AppHandle) -> Self {
         Self {
             socket_path,
+            app,
             client: Mutex::new(None),
             last_connect_failed: AtomicBool::new(false),
         }
+    }
+
+    /// Stop the service through the plugin's intent path rather than the RPC.
+    ///
+    /// Blocking plugin call, so it runs off the async runtime rather than stalling it.
+    async fn stop_by_intent(&self) -> Result<(), String> {
+        let app = self.app.clone();
+        tokio::task::spawn_blocking(move || app.vpn().stop())
+            .await
+            .map_err(|e| format!("stop intent panicked: {e}"))?
+            .map_err(|e| format!("failed to stop the VPN service by intent: {e}"))
     }
 
     /// Get or create a tarpc client connection.
@@ -142,12 +158,15 @@ impl VpnBackend for AndroidIpcBackend {
     async fn stop(&self) -> Result<(), String> {
         let client = match self.get_client_typed().await {
             Ok(client) => client,
-            // Nothing is listening, so there is nothing running to stop: the desired end state is
-            // already true. Reporting that as a failure made the actor re-run a teardown that had
-            // in fact already happened, and then give up on it.
+            // Nothing is listening — which is not the same as nothing running. A service whose
+            // RPC bind failed, or whose socket file was lost, is still foreground and holding an
+            // established TUN with a default route into it, and the RPC is the one thing that
+            // cannot reach it. This used to return Ok("nothing to stop"), leaving that instance
+            // with no in-band way to be stopped at all. The intent path is cheap when the service
+            // really is gone: it starts and immediately stops an empty instance.
             Err((UnreachableCause::NotStarted | UnreachableCause::ConnectRefused, reason)) => {
-                debug!("nothing to stop: {reason}");
-                return Ok(());
+                debug!("RPC unreachable ({reason}); stopping the service by intent");
+                return self.stop_by_intent().await;
             }
             Err((_, reason)) => return Err(reason),
         };

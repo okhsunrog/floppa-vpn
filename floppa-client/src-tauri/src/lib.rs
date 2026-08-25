@@ -221,7 +221,7 @@ pub fn run() {
                     .to_string_lossy()
                     .to_string();
                 info!("Android tarpc socket path: {socket_path}");
-                let backend = vpn::create_backend(socket_path);
+                let backend = vpn::create_backend(socket_path, app.handle().clone());
                 app.manage(backend);
             }
 
