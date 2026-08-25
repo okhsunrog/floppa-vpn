@@ -605,3 +605,36 @@ async fn every_caller_asking_for_a_wipe_is_answered_once_the_tunnel_is_down() {
         "after the tunnel was torn down"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn looks_that_went_stale_while_the_actor_was_stalled_do_not_tear_down_a_healthy_tunnel() {
+    // The failure this guards against: the actor task was held for a few seconds (a keyring
+    // unlock dialog, at the time), the observer kept looking once a second, and when the actor
+    // resumed it replayed the backlog. Every look but the last was older than the staleness
+    // window, so each read as dark — and on desktop, with no darkness grace, the second dark
+    // look declared the peer lost and tore down a tunnel that had been fine the whole time.
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+    let running = h.backend.observe().await.view;
+
+    // Ten looks queue up while the actor cannot run: none of these sends yields to it.
+    let resumed = Instant::now();
+    for age in (1..=10).rev() {
+        h.cmd_tx
+            .try_send(Command::Observed(Box::new(Observation {
+                observed_at: resumed - Duration::from_secs(age),
+                view: running.clone(),
+            })))
+            .expect("queue has room");
+    }
+
+    // Let the actor work through the backlog.
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let state = h.states.borrow().clone();
+    assert_eq!(state.phase, Phase::Connected, "the tunnel was never lost");
+    assert!(
+        state.backend_reachable,
+        "and the last, fresh look is what it kept"
+    );
+    assert_eq!(h.backend.stops(), 0);
+}

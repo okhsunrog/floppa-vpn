@@ -8,6 +8,12 @@
 //! Everything arrives on one channel — external commands and the signals spawned tasks send back —
 //! so `biased` ordering in the loop is the only place priority is expressed. A user pressing Cancel
 //! in the same wakeup as an expiring deadline is handled first, every time.
+//!
+//! Observations share that channel on purpose: a look taken before an attempt started its tunnel
+//! must be handled before that attempt's report, or it reads as "no tunnel" against a fresh Up.
+//! The one thing the queue must not do is replay looks that went stale while this task could not
+//! run — each of those classifies as dark, and on desktop, with no darkness grace, the second one
+//! declared a healthy tunnel lost. A look that is already stale when it is handled is dropped.
 
 pub mod attempt;
 pub mod handle;
@@ -347,6 +353,15 @@ impl TunnelActor {
                 // completed — and the boot placeholder never arrives through this channel, so it
                 // cannot be mistaken for one.
                 self.observed_once = true;
+
+                // A look that went stale in the queue says nothing about now, and the world would
+                // read as dark from it regardless of what it saw. It was superseded, not missed:
+                // the observer keeps looking once a second, so a fresh one is behind it.
+                let age = Instant::now().saturating_duration_since(obs.observed_at);
+                if age > self.policy.obs_stale_after {
+                    debug!(?age, "dropping a look that went stale in the queue");
+                    return Reconcile::No;
+                }
                 self.traffic = self.traffic_of(&obs);
                 self.last_obs = *obs;
                 Reconcile::Yes
