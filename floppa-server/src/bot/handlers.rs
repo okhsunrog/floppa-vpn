@@ -56,10 +56,22 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
         .branch(menu_button_handler)
         .endpoint(fallback);
 
+    // The bot is a personal assistant: messages and button taps coming from groups or channels
+    // are dropped, so `/vless` can never publish someone's private URI to a whole chat and the
+    // fallback never spams a group. Pre-checkout queries carry no chat and are always personal.
+    let private_chats_only = dptree::filter(is_private_chat)
+        .branch(message_handler)
+        .branch(callback_handler);
+
     dptree::entry()
         .branch(pre_checkout_handler)
-        .branch(message_handler)
-        .branch(callback_handler)
+        .branch(private_chats_only)
+}
+
+/// True for updates that originate in a one-to-one chat with the bot. For a callback query this
+/// is the chat of the message the inline keyboard is attached to.
+fn is_private_chat(update: Update) -> bool {
+    update.chat().is_some_and(|chat| chat.is_private())
 }
 
 /// Helper: extract telegram_id and language_code from a message, resolve i18n.
