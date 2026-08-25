@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -45,9 +47,6 @@ class FloppaVpnService : VpnService() {
          */
         const val EXTRA_EPOCH = "epoch"
 
-        // Singleton instance for local protectSocket() calls from JNI
-        @JvmField var instance: FloppaVpnService? = null
-
         init {
             System.loadLibrary("floppa_client_lib")
         }
@@ -72,9 +71,14 @@ class FloppaVpnService : VpnService() {
 
     private var tunInterface: ParcelFileDescriptor? = null
 
+    /**
+     * Every field above is touched on the main thread only. Rust calls [shutdownService] and
+     * [setConnected] from tokio worker threads, so those hop here first.
+     */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     override fun onCreate() {
         super.onCreate()
-        instance = this
         createNotificationChannel()
         val logDir = File(applicationInfo.dataDir, "logs")
         logDir.mkdirs()
@@ -96,7 +100,6 @@ class FloppaVpnService : VpnService() {
             Log.i(TAG, "Received STOP action, shutting down")
             nativeStop(epoch)
             cleanupAndroid()
-            instance = null
             stopSelf()
             return START_NOT_STICKY
         }
@@ -112,6 +115,16 @@ class FloppaVpnService : VpnService() {
             Log.w(TAG, "Start intent is not from the plugin (action=${intent.action}), ignoring")
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // A second start while a TUN is still established. The plugin's stopService() before a
+        // start is asynchronous, and a start that arrives first is delivered to this same
+        // instance. Tear the previous generation down before its descriptor is overwritten —
+        // otherwise the old fd leaked with the old tunnel still reading from it.
+        if (tunInterface != null) {
+            Log.w(TAG, "Start while a tunnel is established; stopping the previous one first")
+            nativeStop(epoch)
+            cleanupAndroid()
         }
 
         // Before anything that can fail or tear down: onDestroy stops by this value, and reading
@@ -157,7 +170,6 @@ class FloppaVpnService : VpnService() {
         // (e.g., system kill). Stop Rust side and clean up.
         nativeStop(epoch)
         cleanupAndroid()
-        instance = null
         super.onDestroy()
     }
 
@@ -165,19 +177,22 @@ class FloppaVpnService : VpnService() {
         Log.i(TAG, "VPN permission revoked")
         nativeStop(epoch)
         cleanupAndroid()
-        instance = null
         super.onRevoke()
     }
 
     /**
-     * Clean up Android-side resources (TUN, foreground notification) and stop the service. Called
-     * from Rust via JNI after the tunnel and RPC server are already stopped, and from
-     * onDestroy/onRevoke for system-initiated shutdowns.
+     * Clean up Android-side resources (TUN, foreground notification) and stop the service.
+     *
+     * Called from Rust via JNI, on a tokio thread, from the RPC `stop` handler after the tunnel is
+     * already stopped. onDestroy then runs nativeStop for this generation, which releases the RPC
+     * server and the service reference.
      */
     fun shutdownService() {
         Log.i(TAG, "shutdownService() called")
-        cleanupAndroid()
-        stopSelf()
+        mainHandler.post {
+            cleanupAndroid()
+            stopSelf()
+        }
     }
 
     private fun cleanupAndroid() {
@@ -240,8 +255,10 @@ class FloppaVpnService : VpnService() {
      * that went on to fail.
      */
     fun setConnected(connected: Boolean) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(connected))
+        mainHandler.post {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, buildNotification(connected))
+        }
     }
 
     /** Create a PendingIntent that opens the app when the notification is tapped. */

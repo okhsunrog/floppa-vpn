@@ -44,6 +44,25 @@ static RPC_HANDLE: Mutex<Option<RpcServerHandle>> = Mutex::new(None);
 /// it does not own.
 static SERVER_EPOCH: Mutex<u64> = Mutex::new(0);
 
+/// Log whatever a JNI entry point that returns nothing to Java ended with.
+///
+/// `with_env` already catches panics — unwinding across the JNI boundary aborts the process — so
+/// what is left is to say what happened instead of discarding it.
+fn log_outcome<T>(entry: &str, outcome: jni::Outcome<T, EntryError>) {
+    match outcome {
+        jni::Outcome::Ok(_) => {}
+        jni::Outcome::Err(e) => error!("{entry} failed: {e}"),
+        jni::Outcome::Panic(payload) => {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "non-string panic payload".to_string());
+            error!("{entry} panicked: {msg}");
+        }
+    }
+}
+
 fn get_runtime() -> &'static tokio::runtime::Runtime {
     TOKIO_RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -191,7 +210,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
     _class: JClass<'local>,
     log_dir: JString<'local>,
 ) {
-    let _ = env.with_env(|env: &mut Env<'local>| -> Result<(), jni::errors::Error> {
+    let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         // Store JavaVM for later JNI calls
         if JAVA_VM.get().is_none() {
             let vm = env.get_java_vm()?;
@@ -210,6 +229,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
         info!("nativeInit: Rust runtime initialized in :vpn process");
         Ok(())
     });
+    log_outcome("nativeInit", outcome.into_outcome());
 }
 
 /// Bridges shoes-lite's SocketProtector trait to the JNI VpnService.protect() callback.
@@ -288,49 +308,59 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
 
 /// Called in `FloppaVpnService.onDestroy()` / `onRevoke()`.
 ///
-/// Stops the tunnel and tarpc server.
+/// Stops the tunnel and tarpc server, and releases the service reference. Runs inside `with_env`
+/// so a panic is caught and logged rather than unwinding into the JVM, which aborts the process.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStop<'local>(
-    _env: EnvUnowned<'local>,
+    mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
     epoch: jlong,
 ) {
-    let epoch = epoch as u64;
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let epoch = epoch as u64;
 
-    // Only tear down our own generation.
-    //
-    // Service instances share this process, and stopping one is asynchronous: the previous
-    // instance's onDestroy routinely arrives after the next instance has already bound its socket.
-    // Without this check it killed the new server roughly 150ms after it came up, and the connect
-    // that was about to use it failed with "the connection was already shutdown" — every time.
-    if let Ok(current) = SERVER_EPOCH.lock()
-        && *current != epoch
-    {
-        info!(
-            "nativeStop: ignoring a stop for epoch {epoch}; this process now serves {}",
-            *current
-        );
-        return;
-    }
-
-    info!("nativeStop: stopping tunnel and RPC server (epoch {epoch})");
-
-    // Shutdown RPC server. This generation owns the socket path (the epoch matched above and
-    // `nativeStartServer` runs on the same main thread), so unlinking is safe here and only here.
-    if let Ok(mut guard) = RPC_HANDLE.lock()
-        && let Some(handle) = guard.take()
-    {
-        handle.shutdown_and_unlink();
-    }
-
-    // Stop tunnel
-    let runtime = get_runtime();
-    let tunnel_manager = get_tunnel_manager();
-    runtime.block_on(async {
-        if let Err(e) = tunnel_manager.stop().await {
-            error!("Failed to stop tunnel: {e}");
+        // Only tear down our own generation.
+        //
+        // Service instances share this process, and stopping one is asynchronous: the previous
+        // instance's onDestroy routinely arrives after the next instance has already bound its
+        // socket. Without this check it killed the new server roughly 150ms after it came up, and
+        // the connect that was about to use it failed with "the connection was already shutdown"
+        // — every time.
+        let current = *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)?;
+        if current != epoch {
+            info!(
+                "nativeStop: ignoring a stop for epoch {epoch}; this process now serves {current}"
+            );
+            return Ok(());
         }
-    });
 
-    info!("nativeStop: cleanup complete");
+        info!("nativeStop: stopping tunnel and RPC server (epoch {epoch})");
+
+        // Shutdown RPC server. This generation owns the socket path (the epoch matched above and
+        // `nativeStartServer` runs on the same main thread), so unlinking is safe here and only
+        // here.
+        if let Some(handle) = RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)?.take() {
+            handle.shutdown_and_unlink();
+        }
+
+        // Stop tunnel
+        let runtime = get_runtime();
+        let tunnel_manager = get_tunnel_manager();
+        runtime.block_on(async {
+            if let Err(e) = tunnel_manager.stop().await {
+                error!("Failed to stop tunnel: {e}");
+            }
+        });
+
+        // The service instance is going away; a global reference kept past this point pinned a
+        // destroyed service in the JVM for the life of the process.
+        VPN_SERVICE_REF
+            .lock()
+            .map_err(|_| EntryError::Poisoned)?
+            .take();
+
+        info!("nativeStop: cleanup complete");
+        Ok(())
+    });
+    log_outcome("nativeStop", outcome.into_outcome());
 }
