@@ -479,5 +479,14 @@ export default {
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',
     server: 'Сервер',
+    errors: {
+      emptyOrder: 'Не выбран протокол для подключения.',
+      noUsableConfig: 'Нет конфига для выбранного протокола. Для настройки нужна связь с сервером.',
+      actorGone: 'Движок VPN не запущен. Перезапустите приложение.',
+      settleTimeout: 'Туннель не стабилизировался вовремя. Попробуйте ещё раз.',
+      emptyConfig: 'Полученный с сервера конфиг пуст.',
+      unparseableConfig: 'Не удалось прочитать конфиг с сервера: {detail}',
+      unexpected: 'Непредвиденная ошибка: {detail}',
+    },
   },
 }

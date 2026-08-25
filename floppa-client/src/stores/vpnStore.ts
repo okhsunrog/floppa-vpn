@@ -3,7 +3,9 @@ import { ref, computed } from 'vue'
 import {
   commands,
   events,
+  type ConfigError,
   type CycleOutcome,
+  type IntentError,
   type Phase,
   type Protocol,
   type TunnelParams,
@@ -23,6 +25,45 @@ import { platform } from '@tauri-apps/plugin-os'
 type Identical<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never
 const _phaseMatchesConnectionStatus: Identical<Phase, ConnectionStatus> = true
 void _phaseMatchesConnectionStatus
+
+/**
+ * Errors that are not about the tunnel: a request the actor refused, a config it could not
+ * store, a call that never reached it — plus what the card concludes after a failed cycle.
+ *
+ * A union keyed on `kind`, never a string: the two Rust halves arrive typed, and the display
+ * side maps every kind to locale text through `VPN_ERROR_KEYS`, so a variant added in Rust
+ * fails to compile here until it has been given words.
+ */
+export type VpnError =
+  | IntentError
+  | ConfigError
+  | { kind: 'connection_failed' }
+  | { kind: 'unexpected'; detail: string }
+
+export type VpnErrorKind = VpnError['kind']
+
+/** Locale key for each error kind; `{detail}` is interpolated where the kind carries one. */
+export const VPN_ERROR_KEYS: Record<VpnErrorKind, string> = {
+  empty_order: 'vpn.errors.emptyOrder',
+  no_usable_config: 'vpn.errors.noUsableConfig',
+  actor_gone: 'vpn.errors.actorGone',
+  settle_timeout: 'vpn.errors.settleTimeout',
+  empty: 'vpn.errors.emptyConfig',
+  unparseable: 'vpn.errors.unparseableConfig',
+  connection_failed: 'vpn.connectionFailed',
+  unexpected: 'vpn.errors.unexpected',
+}
+
+/** What a rejected Tauri invoke carries: a string, an Error, or a serialised object. */
+function describeUnknown(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (typeof e === 'string') return e
+  try {
+    return JSON.stringify(e)
+  } catch {
+    return 'unknown error'
+  }
+}
 
 /**
  * A read-only mirror of the tunnel state the Rust actor publishes.
@@ -50,8 +91,12 @@ export const useVpnStore = defineStore(
     /** True only while a command is in flight — distinct from the tunnel itself being busy. */
     const requesting = ref(false)
 
-    /** Errors that are not about the tunnel: importing a config, reaching the actor. */
-    const error = ref<string | null>(null)
+    /** See `VpnError`. Cleared by the next request; set through `setError` from outside. */
+    const error = ref<VpnError | null>(null)
+
+    function setError(next: VpnError) {
+      error.value = next
+    }
 
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
@@ -172,7 +217,7 @@ export const useVpnStore = defineStore(
       try {
         const accepted = await commands.tunnelSetIntentUp(order, params())
         if (accepted.status === 'error') {
-          error.value = accepted.error.kind
+          error.value = accepted.error
           return null
         }
         await refresh()
@@ -181,7 +226,7 @@ export const useVpnStore = defineStore(
         await refresh()
         return outcome.status === 'ok' ? outcome.data : null
       } catch (e) {
-        error.value = String(e)
+        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
         return null
       } finally {
         requesting.value = false
@@ -195,14 +240,14 @@ export const useVpnStore = defineStore(
       try {
         const accepted = await commands.tunnelSetIntentDown()
         if (accepted.status === 'error') {
-          error.value = accepted.error.kind
+          error.value = accepted.error
           return
         }
         await refresh()
         await commands.tunnelAwaitCycle(accepted.data.epoch)
         await refresh()
       } catch (e) {
-        error.value = String(e)
+        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
       } finally {
         requesting.value = false
       }
@@ -214,12 +259,12 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.importConfig(raw)
         if (result.status === 'error') {
-          error.value = result.error.kind
+          error.value = result.error
           return
         }
         await refresh()
       } catch (e) {
-        error.value = String(e)
+        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
       }
     }
 
@@ -234,7 +279,7 @@ export const useVpnStore = defineStore(
       requesting.value = true
       try {
         const result = await commands.clearConfigs()
-        if (result.status === 'error') error.value = result.error.kind
+        if (result.status === 'error') error.value = result.error
         await refresh()
       } finally {
         requesting.value = false
@@ -244,6 +289,7 @@ export const useVpnStore = defineStore(
     return {
       state,
       error,
+      setError,
       requesting,
       phase,
       isConnected,

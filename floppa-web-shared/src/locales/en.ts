@@ -478,5 +478,15 @@ export default {
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',
     server: 'Server',
+    errors: {
+      emptyOrder: 'No protocol selected to connect with.',
+      noUsableConfig:
+        'No config for the selected protocol. Server connection is needed to set it up.',
+      actorGone: 'The VPN engine is not running. Restart the app.',
+      settleTimeout: 'The tunnel did not settle in time. Try again.',
+      emptyConfig: 'The config received from the server is empty.',
+      unparseableConfig: 'The config received from the server could not be read: {detail}',
+      unexpected: 'Unexpected error: {detail}',
+    },
   },
 }

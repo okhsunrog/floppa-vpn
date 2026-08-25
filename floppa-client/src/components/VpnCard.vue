@@ -15,7 +15,7 @@ import {
 } from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { platform } from '@tauri-apps/plugin-os'
-import { useVpnStore } from '../stores/vpnStore'
+import { useVpnStore, VPN_ERROR_KEYS } from '../stores/vpnStore'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
@@ -33,6 +33,13 @@ let syncGeneration = 0
 const setupError = computed<string | null>(() => {
   if (setupErrorKey.value) return t(setupErrorKey.value, { detail: setupErrorDetail.value ?? '' })
   return null
+})
+
+/** The store's typed error, worded. The only place a `VpnError` becomes text. */
+const vpnErrorText = computed<string | null>(() => {
+  const err = vpn.error
+  if (!err) return null
+  return t(VPN_ERROR_KEYS[err.kind], 'detail' in err ? { detail: err.detail } : {})
 })
 
 // Show prompts after first successful connection on Android
@@ -341,16 +348,16 @@ async function handleOutcome(outcome: CycleOutcome | null) {
         break
       case 'yes':
         console.info('[VpnCard] the peer exists, so the problem is elsewhere')
-        vpn.error = t('vpn.connectionFailed')
+        vpn.setError({ kind: 'connection_failed' })
         break
       case 'unknown':
         console.warn('[VpnCard] could not reach the server to check the peer')
-        vpn.error = t('vpn.connectionFailed')
+        vpn.setError({ kind: 'connection_failed' })
         break
     }
   } catch (e) {
     console.error('[VpnCard] peer check failed:', e)
-    vpn.error = t('vpn.connectionFailed')
+    vpn.setError({ kind: 'connection_failed' })
   } finally {
     reprovisioning.value = false
   }
@@ -541,7 +548,12 @@ const healthDotClass = computed(() => {
         </span>
       </div>
 
-      <UAlert v-if="vpn.error" color="error" :title="vpn.error" class="mt-2 w-full max-w-sm" />
+      <UAlert
+        v-if="vpnErrorText"
+        color="error"
+        :title="vpnErrorText"
+        class="mt-2 w-full max-w-sm"
+      />
       <UAlert
         v-else-if="setupError"
         color="warning"
