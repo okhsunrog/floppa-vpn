@@ -588,30 +588,6 @@ async fn attach_telegram_in_tx(
     Ok(Some(session_user_id))
 }
 
-/// Attach a free Telegram identity to the account that minted `code`, spending the code in the
-/// same transaction, then grant the one-time real trial. The caller must have checked that no
-/// other account owns the Telegram (see [`begin_telegram_link`], which does).
-///
-/// Returns the trial granted (if any) inside `Some`, or `None` when another request spent the
-/// code first (or the account is no longer attachable) — nothing is changed in that case.
-pub async fn attach_telegram(
-    pool: &DbPool,
-    code: &str,
-    identity: TelegramIdentity<'_>,
-) -> Result<Option<Option<TrialGrant>>> {
-    let mut tx = pool.begin().await?;
-    let Some(session_user_id) = attach_telegram_in_tx(&mut tx, code, identity).await? else {
-        tx.rollback().await?;
-        return Ok(None);
-    };
-    tx.commit().await?;
-
-    // Trial claiming is independently idempotent; identity attachment and code consumption are
-    // the security-sensitive pair that must commit together.
-    let trial = grant_real_trial_if_unused(pool, session_user_id).await?;
-    Ok(Some(trial))
-}
-
 async fn summarize_account(executor: impl PgExecutor<'_>, user_id: i64) -> Result<AccountSummary> {
     let row = sqlx::query!(
         r#"SELECT
@@ -674,13 +650,18 @@ pub async fn begin_telegram_link(
             }))
         }
         None => {
-            // Release the code lock; `attach_telegram` re-locks it in its own transaction so a
-            // concurrent `/start` with the same code still sees exactly one winner.
-            tx.rollback().await?;
-            Ok(match attach_telegram(pool, code, identity).await? {
-                Some(trial) => LinkStart::Attached { trial },
-                None => LinkStart::InvalidCode,
-            })
+            // Attach under the same code lock and in the same transaction as the ownership
+            // check above, so nobody can claim this Telegram in between. Trial claiming is
+            // independently idempotent; identity attachment and code consumption are the
+            // security-sensitive pair that must commit together.
+            let Some(session_user_id) = attach_telegram_in_tx(&mut tx, code, identity).await?
+            else {
+                tx.rollback().await?;
+                return Ok(LinkStart::InvalidCode);
+            };
+            tx.commit().await?;
+            let trial = grant_real_trial_if_unused(pool, session_user_id).await?;
+            Ok(LinkStart::Attached { trial })
         }
     }
 }
@@ -748,7 +729,12 @@ pub async fn confirm_telegram_merge(
 /// Returns `Ok(true)` on a successful merge, `Ok(false)` if the preconditions no longer hold
 /// (a race — survivor already has a Telegram, or the husk lost it); the transaction makes no
 /// changes in that case.
-pub async fn merge_telegram_into_session(
+///
+/// Production code only merges through [`confirm_telegram_merge`], where the link code that
+/// authorised it is spent in the same transaction; this pool-level wrapper exists for the
+/// merge tests alone and must not become a way around the code.
+#[cfg(test)]
+async fn merge_telegram_into_session(
     pool: &DbPool,
     survivor_id: i64,
     husk_id: i64,
@@ -1792,19 +1778,20 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../migrations")]
-    async fn test_attach_telegram_grants_real_trial(pool: DbPool) {
+    async fn begin_telegram_link_attaches_and_grants_real_trial(pool: DbPool) {
         get_basic_plan_id(&pool).await;
         let user = create_credential_user(&pool, "newbie", "password123")
             .await
             .unwrap();
         mint_link_code(&pool, user.id, "code-1").await;
 
-        let attached = attach_telegram(&pool, "code-1", identity(55555))
+        let LinkStart::Attached { trial } = begin_telegram_link(&pool, "code-1", identity(55555))
             .await
-            .unwrap();
-        let trial = attached
-            .expect("code was live")
-            .expect("real trial granted");
+            .unwrap()
+        else {
+            panic!("a live code and a free Telegram attach");
+        };
+        let trial = trial.expect("real trial granted");
         assert_eq!(trial.plan_display_name, "Basic");
 
         let row = sqlx::query!(
@@ -1835,10 +1822,12 @@ mod tests {
         );
 
         // The code is spent: a second Telegram cannot take the same account.
-        let again = attach_telegram(&pool, "code-1", identity(66666))
-            .await
-            .unwrap();
-        assert_eq!(again, None);
+        assert_eq!(
+            begin_telegram_link(&pool, "code-1", identity(66666))
+                .await
+                .unwrap(),
+            LinkStart::InvalidCode
+        );
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -1852,14 +1841,16 @@ mod tests {
         mint_link_code(&pool, user_id, "one-time-code").await;
 
         let (first, second) = tokio::join!(
-            attach_telegram(&pool, "one-time-code", identity(11111)),
-            attach_telegram(&pool, "one-time-code", identity(22222)),
+            begin_telegram_link(&pool, "one-time-code", identity(11111)),
+            begin_telegram_link(&pool, "one-time-code", identity(22222)),
         );
-        let winners = [first.unwrap(), second.unwrap()]
-            .into_iter()
-            .filter(Option::is_some)
+        let outcomes = [first.unwrap(), second.unwrap()];
+        let winners = outcomes
+            .iter()
+            .filter(|o| matches!(o, LinkStart::Attached { .. }))
             .count();
-        assert_eq!(winners, 1);
+        assert_eq!(winners, 1, "{outcomes:?}");
+        assert!(outcomes.contains(&LinkStart::InvalidCode), "{outcomes:?}");
 
         let telegram_id =
             sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", user_id)
