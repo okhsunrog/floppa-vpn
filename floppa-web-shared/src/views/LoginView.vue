@@ -25,6 +25,8 @@ const props = withDefaults(
     deepLinkBusy?: boolean
     /** True when the last deep-link login exchange failed. */
     deepLinkFailed?: boolean
+    /** The server's worded refusal, when the failure was one; shown under the generic text. */
+    deepLinkFailureDetail?: string
   }>(),
   {
     authMode: 'widget',
@@ -124,7 +126,7 @@ async function handleTelegramAuth(data: TelegramAuthData) {
     auth.setAuth(response.token, response.user)
     router.push('/')
   } catch (e) {
-    loginError.value = describeError(e, t('login.loginFailed'))
+    loginError.value = describeError(e, t('login.loginFailed'), t)
   }
 }
 
@@ -179,7 +181,12 @@ async function handleManualCode() {
         </template>
 
         <template v-else>
-          <UAlert v-if="props.deepLinkFailed" color="error" :title="t('login.deepLinkFailed')" />
+          <UAlert
+            v-if="props.deepLinkFailed"
+            color="error"
+            :title="t('login.deepLinkFailed')"
+            :description="props.deepLinkFailureDetail"
+          />
           <!-- Tab toggle: Account (primary) / Telegram (secondary) -->
           <div class="flex gap-1 p-1 rounded-lg bg-[var(--ui-bg-elevated)]">
             <UButton

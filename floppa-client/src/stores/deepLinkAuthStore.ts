@@ -8,21 +8,32 @@ import { ref } from 'vue'
 export const useDeepLinkAuthStore = defineStore('deepLinkAuth', () => {
   const exchanging = ref(false)
   const failed = ref(false)
+  /** Why the last exchange failed, already worded for the user; null when it did not fail. */
+  const failureDetail = ref<string | null>(null)
 
   function start() {
     exchanging.value = true
     failed.value = false
+    failureDetail.value = null
   }
 
-  function finish(ok: boolean) {
+  function succeed() {
     exchanging.value = false
-    failed.value = !ok
+    failed.value = false
+    failureDetail.value = null
+  }
+
+  function fail(detail: string | null) {
+    exchanging.value = false
+    failed.value = true
+    failureDetail.value = detail
   }
 
   function reset() {
     exchanging.value = false
     failed.value = false
+    failureDetail.value = null
   }
 
-  return { exchanging, failed, start, finish, reset }
+  return { exchanging, failed, failureDetail, start, succeed, fail, reset }
 })

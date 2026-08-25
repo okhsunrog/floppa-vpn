@@ -32,6 +32,7 @@
     "./views": "./src/views/index.ts",
     "./views/*": "./src/views/*",
     "./router": "./src/router/index.ts",
+    "./locales/*": "./src/locales/*",
     "./changelog.json": "./src/changelog.json"
   },
   "files": [

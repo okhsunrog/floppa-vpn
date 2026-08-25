@@ -13,6 +13,7 @@ import {
   type SplitMode,
 } from '../bindings'
 import ProtocolSettingsModal from '../components/ProtocolSettingsModal.vue'
+import { describeUnknown } from '../utils/errors'
 
 const protocolModalOpen = ref(false)
 
@@ -188,7 +189,7 @@ onMounted(async () => {
     console.error('Failed to load the log settings:', e)
     toast.add({
       title: t('settings.logConfigLoadFailed'),
-      description: e instanceof Error ? e.message : String(e),
+      description: describeUnknown(e),
       color: 'error',
     })
   }

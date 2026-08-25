@@ -125,7 +125,7 @@ async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('userPeers.createFailed')),
+      description: describeError(e, t('userPeers.createFailed'), t),
       color: 'error',
     })
   }
@@ -147,7 +147,7 @@ async function doDeletePeer() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('userPeers.deleteFailed')),
+        description: describeError(e, t('userPeers.deleteFailed'), t),
         color: 'error',
       })
     }
@@ -167,7 +167,7 @@ async function showConfig(peer: MyPeer) {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('userPeers.createFailed')),
+      description: describeError(e, t('userPeers.createFailed'), t),
       color: 'error',
     })
   }
@@ -253,7 +253,7 @@ async function showVlessConfig() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('userPeers.vlessLoadFailed')),
+      description: describeError(e, t('userPeers.vlessLoadFailed'), t),
       color: 'error',
     })
   } finally {
@@ -278,7 +278,7 @@ async function doRegenerateVless() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('userPeers.vlessRegenerateFailed')),
+      description: describeError(e, t('userPeers.vlessRegenerateFailed'), t),
       color: 'error',
     })
   }

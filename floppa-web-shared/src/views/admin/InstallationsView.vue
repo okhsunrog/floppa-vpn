@@ -60,7 +60,7 @@ async function doDelete() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('adminInstallations.deleteFailed')),
+        description: describeError(e, t('adminInstallations.deleteFailed'), t),
         color: 'error',
       })
     }

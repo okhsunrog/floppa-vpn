@@ -180,7 +180,7 @@ async function savePlan() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('adminPlans.saveFailed')),
+      description: describeError(e, t('adminPlans.saveFailed'), t),
       color: 'error',
     })
   }
@@ -202,7 +202,7 @@ async function doDeletePlan() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('adminPlans.deleteFailed')),
+        description: describeError(e, t('adminPlans.deleteFailed'), t),
         color: 'error',
       })
     }

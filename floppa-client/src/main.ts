@@ -4,10 +4,17 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 import { PiniaColada } from '@pinia/colada'
 import { createRouter, createWebHistory } from 'vue-router'
 import ui from '@nuxt/ui/vue-plugin'
-import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
-import { createSharedI18n, installApiInterceptors, useAuthStore } from 'floppa-web-shared'
+import {
+  createSharedI18n,
+  describeError,
+  installApiInterceptors,
+  isApiError,
+  isTauri,
+  useAuthStore,
+  type ApiErrorCode,
+} from 'floppa-web-shared'
 import { useUpdateStore } from './stores/updateStore'
 import { useDeepLinkAuthStore } from './stores/deepLinkAuthStore'
 import { commands } from './bindings'
@@ -81,8 +88,10 @@ app.use(PiniaColada)
 // Set active pinia so stores can be used outside component setup (Pinia 3 requirement)
 setActivePinia(pinia)
 
-// Setup i18n and Nuxt UI
-app.use(createSharedI18n())
+// Setup i18n and Nuxt UI. The instance is kept: the deep-link exchange runs outside any
+// component and words its failures for the login screen.
+const i18n = createSharedI18n()
+app.use(i18n)
 app.use(ui)
 
 // Configure shared API client with auth interceptors
@@ -148,9 +157,16 @@ class DeepLinkExchangeError extends Error {
   constructor(
     /** HTTP status of the refusal, or `undefined` when the server was never reached. */
     readonly status: number | undefined,
-    detail: string,
+    /** The server's error code when the refusal was an API error. */
+    readonly code: ApiErrorCode | undefined,
+    /** What the user can be told: the server's worded refusal, or the transport failure. */
+    readonly detail: string,
   ) {
-    super(status === undefined ? `no response: ${detail}` : `HTTP ${status}: ${detail}`)
+    super(
+      status === undefined
+        ? `no response: ${detail}`
+        : `HTTP ${status}${code ? ` ${code}` : ''}: ${detail}`,
+    )
     this.name = 'DeepLinkExchangeError'
   }
 }
@@ -167,8 +183,13 @@ async function exchangeWithRetry(code: string) {
     })
     if (data) return data
 
-    // Offline, `error` is the fetch TypeError rather than an ApiError; both carry `message`.
-    const failure = new DeepLinkExchangeError(response?.status, error?.message ?? 'unknown error')
+    // Offline, `error` is the fetch TypeError rather than an ApiError: its message is the only
+    // description of the transport failure, so it is the fallback rather than a generic string.
+    const failure = new DeepLinkExchangeError(
+      response?.status,
+      isApiError(error) ? error.error : undefined,
+      describeError(error, error instanceof Error ? error.message : 'unknown error', i18n.global.t),
+    )
     const transient = failure.status === undefined || failure.status >= 500
     if (!transient || attempt >= EXCHANGE_ATTEMPTS) {
       throw failure
@@ -197,11 +218,14 @@ async function handleDeepLinkUrls(urls: string[]) {
       const response = await exchangeWithRetry(code)
       authStore.setAuth(response.token, response.user)
       processedDeepLinkCodes.add(code)
-      deepLinkAuth.finish(true)
+      deepLinkAuth.succeed()
       await router.push('/')
       void info('[web] Deep-link login completed.')
     } catch (e) {
-      deepLinkAuth.finish(false)
+      // A refusal the server worded (an expired code, a rate limit) is worth showing; an
+      // unreachable server is not — the generic "did not complete" text already says that.
+      const refused = e instanceof DeepLinkExchangeError && e.status !== undefined
+      deepLinkAuth.fail(refused ? e.detail : null)
       void error(`[web] Failed to exchange deep-link login code: ${String(e)}`)
     } finally {
       processingDeepLinkCodes.delete(code)

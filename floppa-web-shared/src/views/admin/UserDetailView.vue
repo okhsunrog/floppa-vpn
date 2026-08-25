@@ -132,7 +132,7 @@ async function setUserCredential() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('adminUserDetail.credentialFailed')),
+      description: describeError(e, t('adminUserDetail.credentialFailed'), t),
       color: 'error',
     })
   }
@@ -234,7 +234,7 @@ async function setSubscription() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('adminUserDetail.changeFailed')),
+      description: describeError(e, t('adminUserDetail.changeFailed'), t),
       color: 'error',
     })
   }
@@ -253,7 +253,7 @@ async function deleteSubscription() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: describeError(e, t('adminUserDetail.deleteFailed')),
+      description: describeError(e, t('adminUserDetail.deleteFailed'), t),
       color: 'error',
     })
   }
@@ -275,7 +275,7 @@ async function doRemovePeer() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('adminUserDetail.removeFailed')),
+        description: describeError(e, t('adminUserDetail.removeFailed'), t),
         color: 'error',
       })
     }

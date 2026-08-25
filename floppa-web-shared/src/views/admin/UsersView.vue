@@ -147,7 +147,7 @@ async function addUser() {
     const msg =
       isApiError(e) && e.error === 'conflict'
         ? t('adminUsers.userExists')
-        : describeError(e, t('adminUsers.createFailed'))
+        : describeError(e, t('adminUsers.createFailed'), t)
     toast.add({ title: t('common.error'), description: msg, color: 'error' })
   }
 }

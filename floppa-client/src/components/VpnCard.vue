@@ -13,10 +13,18 @@ import {
   getPublicConfig,
   upsertMyInstallation,
 } from 'floppa-web-shared/client/sdk.gen'
-import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
+import {
+  ConnectionIndicator,
+  describeError,
+  formatBytes,
+  formatDuration,
+  formatSpeed,
+  isApiError,
+} from 'floppa-web-shared'
 import { platform } from '@tauri-apps/plugin-os'
 import { useNow } from '@vueuse/core'
-import { useVpnStore, VPN_ERROR_KEYS } from '../stores/vpnStore'
+import { useVpnStore } from '../stores/vpnStore'
+import { describeVpnError } from '../utils/vpnErrors'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
@@ -36,12 +44,10 @@ const setupError = computed<string | null>(() => {
   return null
 })
 
-/** The store's typed error, worded. The only place a `VpnError` becomes text. */
-const vpnErrorText = computed<string | null>(() => {
-  const err = vpn.error
-  if (!err) return null
-  return t(VPN_ERROR_KEYS[err.kind], 'detail' in err ? { detail: err.detail } : {})
-})
+/** The store's typed error, worded. */
+const vpnErrorText = computed<string | null>(() =>
+  vpn.error ? describeVpnError(vpn.error, t) : null,
+)
 
 // Show prompts after first successful connection on Android
 watch(
@@ -156,19 +162,21 @@ async function syncWgFamilyPeer(
   }
   if (!response) return { outcome: 'offline' }
 
-  // Error codes as `floppa-server/src/admin/error.rs` names them.
-  switch (error?.error) {
-    case 'no_active_subscription':
-    case 'subscription_expired':
-      return { outcome: 'error', errorKey: 'vpn.noSubscription' }
-    case 'peer_limit_reached':
-      return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
-    default:
-      return {
-        outcome: 'error',
-        errorKey: 'vpn.peerCreateFailed',
-        detail: error?.error ?? `HTTP ${response.status}`,
-      }
+  // Error codes as `floppa-server/src/admin/error.rs` names them. `isApiError` narrows the code
+  // to the `ApiErrorCode` union, so a misspelled case here is a type error rather than a branch
+  // that never matches.
+  if (isApiError(error)) {
+    switch (error.error) {
+      case 'no_active_subscription':
+        return { outcome: 'error', errorKey: 'vpn.noSubscription' }
+      case 'peer_limit_reached':
+        return { outcome: 'error', errorKey: 'vpn.peerLimitReached' }
+    }
+  }
+  return {
+    outcome: 'error',
+    errorKey: 'vpn.peerCreateFailed',
+    detail: describeError(error, `HTTP ${response.status}`, t),
   }
 }
 
@@ -220,14 +228,18 @@ async function doServerSync(): Promise<SyncResult> {
     // the primary is WireGuard and the secondary would be the absent AmneziaWG.
     await syncWgFamilyPeer(secondary, amneziaAvailable)
 
-    // 3. Fetch VLESS config (per-user, no peer slot)
+    // 3. Fetch VLESS config (per-user, no peer slot). A server that does not offer VLESS says so
+    //    with `vless_not_configured`, which is not a failure of ours; anything else is worth a
+    //    log line but must not fail the sync — the wg-family peer above is what matters.
     try {
-      const { data: vlessConfig } = await getMyVlessConfig()
+      const { data: vlessConfig, error: vlessError } = await getMyVlessConfig()
       if (vlessConfig?.uri) {
         await vpn.importConfig(vlessConfig.uri)
+      } else if (isApiError(vlessError) && vlessError.error !== 'vless_not_configured') {
+        console.warn('[VpnCard] VLESS config refused:', vlessError.error, vlessError.message)
       }
-    } catch {
-      // VLESS not available on server — skip silently
+    } catch (e) {
+      console.warn('[VpnCard] VLESS config unavailable:', e)
     }
 
     // Importing configs no longer changes which protocol a connect would use, so there is
@@ -329,9 +341,29 @@ async function handleOutcome(outcome: CycleOutcome | null) {
         ? outcome.protocol
         : undefined
 
+  if (outcome.outcome === 'unwind_failed') {
+    vpn.setError({ kind: 'unwind_failed' })
+    return
+  }
+
+  // Nothing to re-provision: the probes failed for reasons a new peer would not fix. Show the
+  // last probe's typed error — it is the one for the protocol the user most likely cares about,
+  // and every kind it can carry has words in the locale.
+  if (outcome.outcome === 'exhausted' && !verifyFailed) {
+    const failure = outcome.failures.at(-1)
+    if (failure && failure.error.kind !== 'cancelled') {
+      vpn.setError({ kind: 'attempt_failed', failure })
+    }
+    return
+  }
+
   // VLESS has no per-device peer to look up: its config is per-user and never deleted by a
   // peer removal, so a failed VLESS verification is not a "peer gone" signal.
-  if (!verifyFailed || verifyFailed === 'vless' || !vpn.deviceId) return
+  if (verifyFailed === 'vless') {
+    vpn.setError({ kind: 'connection_failed' })
+    return
+  }
+  if (!verifyFailed || !vpn.deviceId) return
 
   reprovisioning.value = true
   try {

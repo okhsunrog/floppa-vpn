@@ -60,7 +60,7 @@ async function doDeletePeer() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('adminPeers.deleteFailed')),
+        description: describeError(e, t('adminPeers.deleteFailed'), t),
         color: 'error',
       })
     }

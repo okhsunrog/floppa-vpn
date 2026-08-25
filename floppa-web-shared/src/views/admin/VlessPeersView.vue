@@ -59,7 +59,7 @@ async function doRegenerate() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: describeError(e, t('adminVless.regenerateFailed')),
+        description: describeError(e, t('adminVless.regenerateFailed'), t),
         color: 'error',
       })
     }
