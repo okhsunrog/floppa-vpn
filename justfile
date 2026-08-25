@@ -139,6 +139,7 @@ server-check:
     cargo fmt --check
     echo "clippy (workspace)..."
     cargo clippy --quiet -- -D warnings
+    just machete
     echo "tests (workspace)..."
     output=$(cargo test --quiet 2>&1) || { echo "$output"; exit 1; }
     echo "frontend: format + lint + types..."
@@ -160,6 +161,15 @@ fmt:
     echo "frontend: format + lint..."
     run vp check --fix
     just fmt-kotlin
+
+# Unused dependencies. One run at the root walks every Cargo.toml below it, so this covers the
+# workspace as well as floppa-client/src-tauri and tauri-plugin-vpn, which the workspace excludes.
+machete:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "cargo machete..."
+    command -v cargo-machete >/dev/null || { echo "cargo-machete is not installed: cargo install cargo-machete"; exit 1; }
+    out=$(cargo machete 2>&1) || { echo "$out"; exit 1; }
 
 # Lint (without auto-fix)
 lint:

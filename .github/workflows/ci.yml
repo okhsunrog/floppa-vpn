@@ -59,6 +59,13 @@ jobs:
       - name: Clippy (workspace)
         run: cargo clippy -- -D warnings
 
+      # Prebuilt binary, so this costs seconds. One run at the root covers the workspace and the
+      # two crates it excludes (floppa-client/src-tauri, tauri-plugin-vpn) — same as `just machete`.
+      - uses: taiki-e/install-action@cargo-machete
+
+      - name: Unused dependencies
+        run: cargo machete
+
   test:
     name: Test & sqlx
     needs: frontend
