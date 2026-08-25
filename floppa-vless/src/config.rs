@@ -1,7 +1,8 @@
 //! floppa-vless server configuration.
 //!
-//! Separate from floppa-core's Config because floppa-vless runs on
-//! the EU VPS with different requirements (no WireGuard, no bot, no auth).
+//! Separate from floppa-core's Config: floppa-vless runs on the Moscow VPS next to
+//! the daemon and server (behind HAProxy, sharing their database), but needs none of
+//! their config — no WireGuard, no bot, no auth — only REALITY and its own intervals.
 
 use serde::Deserialize;
 use std::path::Path;
@@ -33,7 +34,7 @@ pub struct RealitySection {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrafficSection {
-    /// How often to flush traffic stats to DB (in seconds)
+    /// How often to flush per-user traffic counters into the Prometheus metrics (in seconds)
     #[serde(default = "default_flush_interval")]
     pub flush_interval_secs: u64,
     /// How often to do a full registry sync from DB (in seconds)
