@@ -158,9 +158,17 @@ export function installAuthGuard(router: Router, options: AuthGuardOptions = {})
     const auth = useAuthStore()
     installLogoutRedirect(auth)
 
-    // If in Mini App and a different Telegram account opened the app, force re-login
+    // If in Mini App and a different Telegram account opened the app, force re-login.
+    // `auth.telegramId` is only recorded for sessions that came in through Telegram; a
+    // login+password session opened inside the Mini App has none, and that is not a
+    // mismatch — treating it as one made credential login impossible inside Telegram.
     const tgUserId = getTelegramUserIdFromInitData()
-    if (tgUserId !== null && auth.isAuthenticated && auth.telegramId !== tgUserId) {
+    if (
+      tgUserId !== null &&
+      auth.isAuthenticated &&
+      auth.telegramId !== null &&
+      auth.telegramId !== tgUserId
+    ) {
       auth.logout()
     }
 
