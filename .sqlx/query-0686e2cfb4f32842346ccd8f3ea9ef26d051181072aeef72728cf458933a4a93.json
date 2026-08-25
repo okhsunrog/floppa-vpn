@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT DISTINCT p.id\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        WHERE p.sync_status IN ('active', 'pending_add')\n        AND NOT EXISTS (\n            SELECT 1 FROM subscriptions s\n            WHERE s.user_id = u.id\n            AND (s.expires_at IS NULL OR s.expires_at > $1)\n        )\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0686e2cfb4f32842346ccd8f3ea9ef26d051181072aeef72728cf458933a4a93"
+}

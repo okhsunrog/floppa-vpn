@@ -616,13 +616,15 @@ async fn load_peer_user_map(pool: &DbPool) -> Result<HashMap<String, (i64, i64)>
 async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
     let now = Utc::now();
 
-    // Find users with expired subscriptions and active peers
+    // Find peers of users without a valid subscription. pending_add is included:
+    // a peer stuck there (interface down at the time) must not be let through
+    // once the interface is back if its subscription has meanwhile expired.
     let expired = sqlx::query_scalar!(
         r#"
         SELECT DISTINCT p.id
         FROM peers p
         JOIN users u ON p.user_id = u.id
-        WHERE p.sync_status = 'active'
+        WHERE p.sync_status IN ('active', 'pending_add')
         AND NOT EXISTS (
             SELECT 1 FROM subscriptions s
             WHERE s.user_id = u.id
