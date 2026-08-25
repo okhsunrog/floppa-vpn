@@ -15,6 +15,10 @@ pub mod reconcile;
 pub mod types;
 pub mod view;
 
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "actor_tests.rs"]
+mod tests;
+
 use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
@@ -22,7 +26,7 @@ use self::types::{
     Observation, Policy, Status, TunnelState, UpIntent, World,
 };
 use crate::vpn::backend::VpnBackend;
-use crate::vpn::platform::PlatformImpl;
+use crate::vpn::platform::{Platform, PlatformImpl};
 use crate::vpn::protocol::{InterfaceName, Protocol};
 use crate::vpn::rollback::{Journal, RollbackStack, UnwindReport, unwind};
 use crate::vpn::state::SpeedTracker;
@@ -69,7 +73,7 @@ pub struct TunnelActor {
 
     // ---- collaborators ----
     backend: Arc<dyn VpnBackend>,
-    platform: Arc<PlatformImpl>,
+    platform: Arc<dyn Platform>,
     policy: Policy,
     iface: InterfaceName,
     journal: Option<Journal>,
@@ -122,39 +126,66 @@ impl TunnelActor {
             // runs on a blocking thread, and the loop starts only once it is done — so nothing
             // queues behind it, and the actor task itself never blocks.
             let configs = ConfigStore::load().await;
-            let actor = Self {
-                status: Status::Idle,
-                intent: Intent::default(),
-                held_stack: RollbackStack::default(),
-                configs,
-                speed: SpeedTracker::new(),
-                last_obs: Observation::unknown(Instant::now()),
-                observed_once: false,
+            let actor = Self::new(
                 backend,
                 platform,
-                policy,
-                iface: InterfaceName::default(),
                 journal,
+                policy,
+                configs,
+                actor_tx,
+                state_tx,
                 #[cfg(target_os = "android")]
                 app,
-                attempt: None,
-                unwind: None,
-                unwind_started: None,
-                cancel_issued: false,
-                next_epoch: 1,
-                seq: 0,
-                last_outcome: None,
-                recent_outcomes: VecDeque::new(),
-                cycle_waiters: Vec::new(),
-                quiescent_waiters: Vec::new(),
-                pending_clear: None,
-                cmd_tx: actor_tx,
-                state_tx,
-            };
+            );
             actor.run(cmd_rx).await;
         });
 
         TunnelHandle::new(cmd_tx, state_rx)
+    }
+
+    /// Assemble the actor. Everything that touches the outside world — the backend, the platform,
+    /// the journal and the config store — is handed in, which is what lets the tests drive the
+    /// real loop against fakes.
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        backend: Arc<dyn VpnBackend>,
+        platform: Arc<dyn Platform>,
+        journal: Option<Journal>,
+        policy: Policy,
+        configs: ConfigStore,
+        cmd_tx: mpsc::Sender<Command>,
+        state_tx: watch::Sender<TunnelState>,
+        #[cfg(target_os = "android")] app: tauri::AppHandle,
+    ) -> Self {
+        Self {
+            status: Status::Idle,
+            intent: Intent::default(),
+            held_stack: RollbackStack::default(),
+            configs,
+            speed: SpeedTracker::new(),
+            last_obs: Observation::unknown(Instant::now()),
+            observed_once: false,
+            backend,
+            platform,
+            policy,
+            iface: InterfaceName::default(),
+            journal,
+            #[cfg(target_os = "android")]
+            app,
+            attempt: None,
+            unwind: None,
+            unwind_started: None,
+            cancel_issued: false,
+            next_epoch: 1,
+            seq: 0,
+            last_outcome: None,
+            recent_outcomes: VecDeque::new(),
+            cycle_waiters: Vec::new(),
+            quiescent_waiters: Vec::new(),
+            pending_clear: None,
+            cmd_tx,
+            state_tx,
+        }
     }
 
     async fn run(mut self, mut cmds: mpsc::Receiver<Command>) {

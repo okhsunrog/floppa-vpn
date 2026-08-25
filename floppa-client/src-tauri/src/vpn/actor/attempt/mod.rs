@@ -23,7 +23,7 @@ use super::types::{
     AttemptError, AttemptPhase, AttemptResult, IntentEpoch, Policy, TunnelParams, WorldView,
 };
 use crate::vpn::backend::VpnBackend;
-use crate::vpn::platform::PlatformImpl;
+use crate::vpn::platform::Platform;
 use crate::vpn::protocol::{InterfaceName, Protocol};
 use crate::vpn::rollback::{Journal, RollbackStack, unwind};
 use crate::vpn::state::ProtocolConfig;
@@ -41,7 +41,7 @@ pub struct AttemptCtx {
     pub iface: InterfaceName,
     pub params: TunnelParams,
     pub backend: Arc<dyn VpnBackend>,
-    pub platform: Arc<PlatformImpl>,
+    pub platform: Arc<dyn Platform>,
     pub journal: Option<Journal>,
     pub policy: Policy,
     pub cancel: CancellationToken,

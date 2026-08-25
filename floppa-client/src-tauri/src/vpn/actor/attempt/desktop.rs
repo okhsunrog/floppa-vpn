@@ -6,7 +6,7 @@
 
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, DnsFailurePolicy, UpStatus};
-use crate::vpn::platform::{Platform, PlatformError};
+use crate::vpn::platform::PlatformError;
 use crate::vpn::rollback::{RollbackStack, Step, StepKind, split_default};
 use tracing::{error, info};
 
