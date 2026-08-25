@@ -136,7 +136,9 @@ impl Default for Intent {
 pub struct Cycle {
     pub epoch: IntentEpoch,
     pub order: Vec<Protocol>,
-    pub params: Option<TunnelParams>,
+    /// What every attempt of this cycle builds. Required: a cycle exists to start tunnels, and a
+    /// tunnel cannot be started without knowing its split rules.
+    pub params: TunnelParams,
     /// Index into `order` of the protocol currently being probed.
     pub index: usize,
     /// How many complete passes over `order` have already been burnt.
@@ -150,24 +152,27 @@ pub struct Cycle {
 }
 
 impl Cycle {
-    pub fn start(up: &UpIntent, policy: &Policy) -> Self {
-        Self {
+    /// `None` for an intent that carries no params: it cannot build a tunnel, only adopt one, so
+    /// there is no cycle to run for it. Every caller-issued Up produces `Some`.
+    pub fn start(up: &UpIntent, policy: &Policy) -> Option<Self> {
+        let params = up.params.clone()?;
+        Some(Self {
             epoch: up.epoch,
             order: up.order.clone(),
-            params: up.params.clone(),
+            params,
             index: 0,
             pass: 0,
             passes_allowed: policy.cold_passes,
             failures: Vec::new(),
-        }
+        })
     }
 
     /// Born from a lost tunnel, so it gets the reconnect budget rather than the cold one.
-    pub fn reconnect(up: &UpIntent, policy: &Policy) -> Self {
-        Self {
+    pub fn reconnect(up: &UpIntent, policy: &Policy) -> Option<Self> {
+        Self::start(up, policy).map(|cycle| Self {
             passes_allowed: policy.reconnect_passes,
-            ..Self::start(up, policy)
-        }
+            ..cycle
+        })
     }
 
     pub fn protocol(&self) -> Protocol {
@@ -867,9 +872,13 @@ mod tests {
     fn cycle_walks_the_order_then_starts_another_pass() {
         let policy = Policy::default();
         let mut cycle = Cycle::start(
-            &up(&[Protocol::AmneziaWg, Protocol::WireGuard], None),
+            &up(
+                &[Protocol::AmneziaWg, Protocol::WireGuard],
+                Some(TunnelParams::default()),
+            ),
             &policy,
-        );
+        )
+        .expect("an intent with params starts a cycle");
         assert_eq!(cycle.protocol(), Protocol::AmneziaWg);
         assert!(!cycle.is_last_probe());
 
@@ -886,14 +895,22 @@ mod tests {
     #[test]
     fn a_cold_connect_gets_one_pass_and_a_reconnect_gets_the_full_budget() {
         let policy = Policy::default();
+        let intent = up(&[Protocol::AmneziaWg], Some(TunnelParams::default()));
+        let cold = Cycle::start(&intent, &policy).unwrap();
+        let reconnect = Cycle::reconnect(&intent, &policy).unwrap();
+        assert_eq!(cold.passes_allowed, 1);
+        assert_eq!(reconnect.passes_allowed, policy.reconnect_passes);
+        assert!(!cold.has_budget());
+        assert!(reconnect.has_budget());
+    }
+
+    #[test]
+    fn an_intent_without_params_has_no_cycle_to_run() {
+        // It can adopt a tunnel; it cannot build one, because it does not know the split rules.
+        let policy = Policy::default();
         let intent = up(&[Protocol::AmneziaWg], None);
-        assert_eq!(Cycle::start(&intent, &policy).passes_allowed, 1);
-        assert_eq!(
-            Cycle::reconnect(&intent, &policy).passes_allowed,
-            policy.reconnect_passes
-        );
-        assert!(!Cycle::start(&intent, &policy).has_budget());
-        assert!(Cycle::reconnect(&intent, &policy).has_budget());
+        assert!(Cycle::start(&intent, &policy).is_none());
+        assert!(Cycle::reconnect(&intent, &policy).is_none());
     }
 
     #[test]

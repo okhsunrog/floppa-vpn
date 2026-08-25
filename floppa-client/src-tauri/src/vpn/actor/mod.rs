@@ -87,7 +87,6 @@ pub struct TunnelActor {
     /// When the in-flight unwind started, so its result is judged against a later look at the
     /// world rather than one taken before it ran.
     unwind_started: Option<Instant>,
-    cancel_issued: bool,
 
     // ---- bookkeeping ----
     next_epoch: u64,
@@ -175,7 +174,6 @@ impl TunnelActor {
             attempt: None,
             unwind: None,
             unwind_started: None,
-            cancel_issued: false,
             next_epoch: 1,
             seq: 0,
             last_outcome: None,
@@ -425,7 +423,6 @@ impl TunnelActor {
             return;
         }
         self.attempt = None;
-        self.cancel_issued = false;
 
         let now = Instant::now();
 
@@ -596,6 +593,7 @@ impl TunnelActor {
                 protocol,
                 epoch,
                 index,
+                params,
             } => {
                 debug_assert!(self.attempt.is_none(), "beginning while an attempt is live");
 
@@ -631,7 +629,7 @@ impl TunnelActor {
                     protocol,
                     config,
                     iface: self.iface.clone(),
-                    params: self.intent.params().cloned().unwrap_or_default(),
+                    params,
                     backend: self.backend.clone(),
                     platform: self.platform.clone(),
                     journal: self.journal.clone(),
@@ -647,20 +645,18 @@ impl TunnelActor {
                     index,
                     cancel,
                 });
-                self.cancel_issued = false;
             }
 
+            // Issued at most once per attempt: it is the effect of leaving Connecting, and
+            // Unwinding absorbs everything until the attempt has reported.
             Effect::CancelAttempt => match &self.attempt {
                 Some(handle) => {
-                    if !self.cancel_issued {
-                        self.cancel_issued = true;
-                        // Signal only. The task is never dropped: it unwinds its own stack to
-                        // completion and reports, which is the whole reason no failure path in
-                        // this file performs teardown. Its unwind starts now, so its report is
-                        // judged against a look taken from now on.
-                        handle.cancel.cancel();
-                        self.unwind_started = Some(Instant::now());
-                    }
+                    // Signal only. The task is never dropped: it unwinds its own stack to
+                    // completion and reports, which is the whole reason no failure path in this
+                    // file performs teardown. Its unwind starts now, so its report is judged
+                    // against a look taken from now on.
+                    handle.cancel.cancel();
+                    self.unwind_started = Some(Instant::now());
                 }
                 // The attempt already reported. Fall through to an unwind of an empty stack, which
                 // is a no-op that still drives the state machine forward.

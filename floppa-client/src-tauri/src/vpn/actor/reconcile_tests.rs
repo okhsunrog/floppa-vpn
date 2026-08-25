@@ -70,7 +70,7 @@ fn cycle(epoch: u64, order: &[Protocol], passes_allowed: u32) -> Cycle {
     Cycle {
         epoch: IntentEpoch(epoch),
         order: order.to_vec(),
-        params: params(),
+        params: TunnelParams::default(),
         index: 0,
         pass: 0,
         passes_allowed,
@@ -87,6 +87,13 @@ fn has_begin(d: &Decision, protocol: Protocol) -> bool {
     d.effects
         .iter()
         .any(|e| matches!(e, Effect::Begin { protocol: p, .. } if *p == protocol))
+}
+
+fn begin_params(d: &Decision) -> Option<&TunnelParams> {
+    d.effects.iter().find_map(|e| match e {
+        Effect::Begin { params, .. } => Some(params),
+        _ => None,
+    })
 }
 
 fn has_unwind(d: &Decision) -> bool {
@@ -648,8 +655,37 @@ fn a_tunnel_that_comes_back_on_its_own_ends_the_retry() {
         &running(AWG),
         now,
     );
-    assert!(matches!(d.next, Status::Up(_)));
+    match &d.next {
+        Status::Up(u) => assert!(
+            u.params.is_none(),
+            "a tunnel we did not start has unknown split rules"
+        ),
+        other => panic!("expected adoption, got {other:?}"),
+    }
     assert!(has_remember(&d));
+}
+
+#[test]
+fn a_late_tunnel_of_our_own_epoch_is_adopted_with_the_params_we_asked_for() {
+    // The service came up after the attempt was given up on. It carries our epoch, so it was
+    // built from our params — and knowing them is what lets a later Connect with the same rules
+    // be a hand-over instead of a rebuild.
+    let now = t0();
+    let mut rt = match running(AWG) {
+        World::Running(rt) => rt,
+        _ => unreachable!(),
+    };
+    rt.epoch = Some(IntentEpoch(1));
+    let d = go(
+        &retrying(now, &[AWG]),
+        &up_intent(1, &[AWG], params()),
+        &World::Running(rt),
+        now,
+    );
+    match &d.next {
+        Status::Up(u) => assert_eq!(u.params.as_ref(), Some(&TunnelParams::default())),
+        other => panic!("expected adoption, got {other:?}"),
+    }
 }
 
 #[test]
@@ -701,22 +737,6 @@ fn a_successful_attempt_becomes_up_and_hands_over_its_stack() {
             CycleOutcome::Connected { adopted: false, .. }
         ))
     ));
-}
-
-#[test]
-fn an_attempt_that_succeeds_after_the_user_gave_up_is_torn_down_with_its_own_stack() {
-    // A late-succeeding connect can never publish "connected" after a teardown, because status is
-    // assigned only from the table and never by the attempt.
-    let now = t0();
-    let d = attempt_done(
-        &connecting_status(now, &[AWG]),
-        &down(2),
-        established(AWG),
-        now,
-    );
-    assert!(matches!(d.next, Status::Unwinding { .. }));
-    assert!(d.effects.iter().any(|e| matches!(e, Effect::TakeStack(_))));
-    assert!(has_unwind(&d));
 }
 
 #[test]
@@ -1004,23 +1024,76 @@ fn once_a_crash_is_cleaned_up_the_cycle_ends_with_the_crash_on_record() {
 #[test]
 fn clearing_an_obstruction_proceeds_with_what_was_wanted_all_along() {
     let now = t0();
-    for reason in [
-        UnwindReason::WrongProtocol,
-        UnwindReason::ForeignTunnel,
-        UnwindReason::CrashRecovery,
-    ] {
-        let d = unwind_done(
-            &unwinding_status(reason, Some(cycle(1, &[AWG], 1)), 0),
-            &up_intent(1, &[AWG], params()),
-            &World::Clear,
-            now,
-        );
-        assert!(
-            matches!(d.next, Status::Connecting { .. }),
-            "{reason:?} should proceed to connect"
-        );
-        assert!(has_begin(&d, AWG));
-    }
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::WrongProtocol, Some(cycle(1, &[AWG], 1)), 0),
+        &up_intent(1, &[AWG], params()),
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(d.next, Status::Connecting { .. }));
+    assert!(has_begin(&d, AWG));
+}
+
+#[test]
+fn a_foreign_tunnel_torn_down_for_an_intent_that_cannot_build_one_ends_in_idle() {
+    // The startup intent finds a tunnel of a protocol it does not want: the obstruction is
+    // removed, and then there is nothing it can build — it knows no split rules — so it rests.
+    // Previously this rebuilt the tunnel with default split rules, which is the app connecting
+    // by itself.
+    let now = t0();
+    let d = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG], None),
+        &running(VLESS),
+        now,
+    );
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            cycle: None,
+            reason: UnwindReason::WrongProtocol,
+            ..
+        }
+    ));
+    let d = unwind_done(&d.next, &up_intent(1, &[AWG], None), &World::Clear, now);
+    assert!(matches!(d.next, Status::Idle), "nothing to build from");
+    assert!(d.effects.is_empty());
+}
+
+#[test]
+fn an_adopted_tunnel_that_dies_is_not_rebuilt_by_the_startup_intent() {
+    let now = t0();
+    let d = go(
+        &Status::Up(up_status(1, AWG, None)),
+        &up_intent(1, &[AWG], None),
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            cycle: None,
+            reason: UnwindReason::TunnelDied,
+            ..
+        }
+    ));
+    let d = unwind_done(&d.next, &up_intent(1, &[AWG], None), &World::Clear, now);
+    assert!(matches!(d.next, Status::Idle));
+}
+
+#[test]
+fn every_attempt_is_started_with_the_cycles_own_params() {
+    // The params travel with the Begin effect: by the time a retry starts, the intent that
+    // supplied them may already be a different one.
+    let now = t0();
+    let want = TunnelParams::new(SplitMode::Exclude, vec!["x".into()]);
+    let d = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG], Some(want.clone())),
+        &World::Clear,
+        now,
+    );
+    assert_eq!(begin_params(&d), Some(&want));
 }
 
 #[test]

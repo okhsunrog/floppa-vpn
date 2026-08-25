@@ -18,7 +18,8 @@
 
 use super::types::{
     AttemptError, AttemptFailure, AttemptPhase, AttemptResult, Cycle, CycleOutcome, Intent,
-    IntentEpoch, Policy, Status, UnwindReason, UpIntent, UpStatus, World,
+    IntentEpoch, Policy, RunningTunnel, Status, TunnelParams, UnwindReason, UpIntent, UpStatus,
+    World,
 };
 use crate::vpn::protocol::Protocol;
 use crate::vpn::rollback::{ExtraUndo, RollbackStack, UnwindReport};
@@ -28,11 +29,14 @@ use std::time::Instant;
 /// names them, which is what keeps the table pure.
 #[derive(Debug)]
 pub enum Effect {
-    /// Spawn an attempt task for this protocol.
+    /// Spawn an attempt task for this protocol, building exactly `params`. The params travel
+    /// with the effect rather than being read off the intent: by the time a retry begins, the
+    /// intent may already be a different one.
     Begin {
         protocol: Protocol,
         epoch: IntentEpoch,
         index: usize,
+        params: TunnelParams,
     },
     /// Fire the in-flight attempt's cancellation token. Never drops the task: it must be given the
     /// chance to unwind its own partial ladder and report back.
@@ -112,6 +116,7 @@ fn connecting(cycle: Cycle, now: Instant, policy: &Policy) -> Decision {
         protocol: cycle.protocol(),
         epoch: cycle.epoch,
         index: cycle.index,
+        params: cycle.params.clone(),
     };
     Decision::to(Status::Connecting {
         cycle,
@@ -139,21 +144,28 @@ fn unwinding(cycle: Option<Cycle>, reason: UnwindReason) -> Status {
 /// This is what the startup intent uses. Treating it as an ordinary Up made the app connect by
 /// itself on every launch.
 fn start_or_idle(up: &UpIntent, now: Instant, policy: &Policy) -> Decision {
-    if up.params.is_none() {
-        return Decision::to(Status::Idle);
+    match Cycle::start(up, policy) {
+        Some(cycle) => connecting(cycle, now, policy),
+        None => Decision::to(Status::Idle),
     }
-    connecting(Cycle::start(up, policy), now, policy)
 }
 
-/// Adopt a tunnel someone else is running.
-fn adopt(up: &UpIntent, rt: &super::types::RunningTunnel, now_unix: i64) -> Decision {
+/// Adopt a running tunnel. `params` is what it was built with when that is known — it is our
+/// own, started by an attempt of the same epoch that we had already given up on — and `None`
+/// for a tunnel we did not start, whose split rules cannot be known.
+fn adopt(
+    up: &UpIntent,
+    rt: &RunningTunnel,
+    params: Option<TunnelParams>,
+    now_unix: i64,
+) -> Decision {
     let connected_at = rt
         .connected_secs
         .map_or(now_unix, |secs| now_unix - secs as i64);
     Decision::to(Status::Up(UpStatus {
         epoch: up.epoch,
         protocol: rt.protocol,
-        params: None,
+        params,
         adopted: true,
         server_endpoint: rt.endpoint.clone(),
         assigned_ip: rt.address.clone(),
@@ -201,13 +213,15 @@ pub fn reconcile(
                 // 5a: only the bootstrap intent adopts. It is the one that carries no params,
                 // because it is not asking for any particular tunnel — just for whatever is there.
                 if up.accepts(rt.protocol) && up.params.is_none() {
-                    adopt(up, rt, now_unix)
+                    adopt(up, rt, None, now_unix)
                 } else {
                     // 5b, 6: we cannot know what split rules a tunnel we did not start was built
                     // with, so a caller who asked for specific rules gets a rebuild. Silently
-                    // keeping a tunnel with the wrong split rules is a data-leak-shaped bug.
+                    // keeping a tunnel with the wrong split rules is a data-leak-shaped bug. An
+                    // intent without params has no cycle: the obstruction is removed and it
+                    // goes back to Idle rather than building something it cannot specify.
                     Decision::to(unwinding(
-                        Some(Cycle::start(up, policy)),
+                        Cycle::start(up, policy),
                         UnwindReason::WrongProtocol,
                     ))
                     .with(Effect::Unwind {
@@ -281,14 +295,14 @@ pub fn reconcile(
                     ..u.clone()
                 })),
                 World::Clear => Decision::to(unwinding(
-                    Some(Cycle::reconnect(up, policy)),
+                    Cycle::reconnect(up, policy),
                     UnwindReason::TunnelDied,
                 ))
                 .with(Effect::Unwind { extra: None }),
             },
             // 16
             (Rel::Newer(up), _) => Decision::to(unwinding(
-                Some(Cycle::start(up, policy)),
+                Cycle::start(up, policy),
                 UnwindReason::IntentChanged,
             ))
             .with(Effect::Unwind { extra: None }),
@@ -315,15 +329,17 @@ pub fn reconcile(
             }
             // 18: something else is running a different protocol than the one we started.
             (Rel::Same(up), World::Running(_)) => Decision::to(unwinding(
-                Some(Cycle::reconnect(up, policy)),
+                Cycle::reconnect(up, policy),
                 UnwindReason::Usurped,
             ))
             .with(Effect::Unwind {
                 extra: Some(ExtraUndo::StopBackend),
             }),
-            // 19: a live answer saying "not running" is a confirmed stop, on every platform.
+            // 19: a live answer saying "not running" is a confirmed stop, on every platform. An
+            // adopted tunnel that dies leaves the startup intent with nothing to rebuild from,
+            // so its cycle is `None` and the teardown ends in Idle.
             (Rel::Same(up), World::Clear) => Decision::to(unwinding(
-                Some(Cycle::reconnect(up, policy)),
+                Cycle::reconnect(up, policy),
                 UnwindReason::TunnelDied,
             ))
             .with(Effect::Unwind { extra: None }),
@@ -339,7 +355,7 @@ pub fn reconcile(
                     Decision::stay(status)
                 }
                 Some(_) => Decision::to(unwinding(
-                    Some(Cycle::reconnect(up, policy)),
+                    Cycle::reconnect(up, policy),
                     UnwindReason::PeerLost,
                 ))
                 .with(Effect::Unwind { extra: None }),
@@ -361,16 +377,16 @@ pub fn reconcile(
                 outcome: CycleOutcome::Cancelled,
             }),
             // 25
-            (Rel::Newer(up), _) => {
-                let stale = cycle.epoch;
-                connecting(Cycle::start(up, policy), now, policy).with(Effect::Resolve {
-                    epoch: stale,
-                    outcome: CycleOutcome::Cancelled,
-                })
-            }
-            // 26: the tunnel came back on its own while we were waiting to retry.
+            (Rel::Newer(up), _) => start_or_idle(up, now, policy).with(Effect::Resolve {
+                epoch: cycle.epoch,
+                outcome: CycleOutcome::Cancelled,
+            }),
+            // 26: a tunnel appeared while we were waiting to retry. If it carries this cycle's
+            // epoch it is ours — an attempt that was given up on but whose service came up late
+            // — so its params are known. Otherwise it is somebody's, and they are not.
             (Rel::Same(up), World::Running(rt)) if cycle.order.contains(&rt.protocol) => {
-                adopt(up, rt, now_unix)
+                let params = (rt.epoch == Some(cycle.epoch)).then(|| cycle.params.clone());
+                adopt(up, rt, params, now_unix)
             }
             // 27
             (Rel::Same(_), World::Running(_)) => {
@@ -412,6 +428,11 @@ pub fn on_attempt_done(
         return Decision::stay(status);
     };
 
+    // The intent is always the one this cycle is working on. An intent change ticks the table
+    // synchronously, before any further command is read, and rows 8, 9 and 11 leave Connecting
+    // for Unwinding on the spot — so a report that finds the intent changed is routed to
+    // `on_unwind_done` by the actor and never reaches this function. The `Down`/`Newer` arms
+    // below are therefore unreachable; they keep the match total and fail safe.
     match result {
         AttemptResult::Established { view, stack } => match relate(status, intent) {
             // A1
@@ -432,22 +453,19 @@ pub fn on_attempt_done(
                     },
                 })
             }
-            // A2: it succeeded, but nobody wants it any more. Take the stack so the teardown can
-            // undo exactly what the attempt applied.
-            Rel::Down => Decision::to(unwinding(None, UnwindReason::IntentDown))
-                .with(Effect::TakeStack(stack))
-                .with(Effect::Unwind { extra: None }),
-            // A3
-            Rel::Newer(up) => Decision::to(unwinding(
-                Some(Cycle::start(up, policy)),
-                UnwindReason::IntentChanged,
-            ))
-            .with(Effect::TakeStack(stack))
-            .with(Effect::Resolve {
-                epoch: cycle.epoch,
-                outcome: CycleOutcome::Cancelled,
-            })
-            .with(Effect::Unwind { extra: None }),
+            Rel::Down | Rel::Newer(_) => {
+                debug_assert!(
+                    false,
+                    "an intent change leaves Connecting before any report"
+                );
+                Decision::to(unwinding(None, UnwindReason::IntentChanged))
+                    .with(Effect::TakeStack(stack))
+                    .with(Effect::Resolve {
+                        epoch: cycle.epoch,
+                        outcome: CycleOutcome::Cancelled,
+                    })
+                    .with(Effect::Unwind { extra: None })
+            }
         },
 
         AttemptResult::Failed(error) => {
@@ -483,16 +501,13 @@ pub fn on_attempt_done(
             }
 
             match relate(status, intent) {
-                // A5
-                Rel::Down => Decision::to(Status::Idle).with(Effect::Resolve {
-                    epoch: cycle.epoch,
-                    outcome: CycleOutcome::Cancelled,
-                }),
-                // A6
-                Rel::Newer(up) => {
-                    let stale = cycle.epoch;
-                    connecting(Cycle::start(up, policy), now, policy).with(Effect::Resolve {
-                        epoch: stale,
+                Rel::Down | Rel::Newer(_) => {
+                    debug_assert!(
+                        false,
+                        "an intent change leaves Connecting before any report"
+                    );
+                    Decision::to(Status::Idle).with(Effect::Resolve {
+                        epoch: cycle.epoch,
                         outcome: CycleOutcome::Cancelled,
                     })
                 }
@@ -602,7 +617,7 @@ pub fn on_unwind_done(
         }
         // U2
         Rel::Newer(up) => {
-            let decision = connecting(Cycle::start(up, policy), now, policy);
+            let decision = start_or_idle(up, now, policy);
             match cycle {
                 Some(c) => decision.with(Effect::Resolve {
                     epoch: c.epoch,
@@ -683,9 +698,13 @@ pub fn on_unwind_done(
                     }
                 }
                 // U9: the obstruction is gone, so proceed with what we wanted all along.
-                UnwindReason::WrongProtocol
-                | UnwindReason::ForeignTunnel
-                | UnwindReason::CrashRecovery => connecting(cycle, now, policy),
+                UnwindReason::WrongProtocol => connecting(cycle, now, policy),
+                // Both are only ever entered with no cycle (rows 2 and bootstrap), and a status
+                // without a cycle has no epoch for an intent to be `Same` as.
+                UnwindReason::ForeignTunnel | UnwindReason::CrashRecovery => {
+                    debug_assert!(false, "{reason:?} never carries a cycle");
+                    connecting(cycle, now, policy)
+                }
             }
         }
     }

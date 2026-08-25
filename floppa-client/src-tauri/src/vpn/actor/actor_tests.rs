@@ -45,6 +45,8 @@ struct FakeBackend {
     running: std::sync::Mutex<Option<RunningTunnel>>,
     starts: AtomicUsize,
     stops: AtomicUsize,
+    /// Refuse every start, as a peer that was deleted server-side would look from here.
+    refuse_starts: AtomicBool,
 }
 
 impl FakeBackend {
@@ -67,6 +69,9 @@ impl VpnBackend for FakeBackend {
         endpoint: SocketAddr,
     ) -> Result<(), String> {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        if self.refuse_starts.load(Ordering::SeqCst) {
+            return Err("start refused".into());
+        }
         *self.running.lock().unwrap() = Some(RunningTunnel {
             protocol: config.protocol(),
             epoch: None,
@@ -555,4 +560,28 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
         0,
         "the stale Running look must not drive a re-unwind; a fresh look decides what happens next"
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_tunnel_that_dies_with_no_reconnect_budget_reports_lost_gave_up_on_the_same_epoch() {
+    // The outcome the UI dedups on: Connected and LostGaveUp arrive on the *same* epoch, because
+    // the intent never changed. Anything keyed on the epoch alone swallows the second one.
+    let mut h = Harness::spawn(Policy {
+        reconnect_passes: 1,
+        ..policy()
+    });
+    let epoch = h.connect().await;
+
+    // The tunnel disappears underneath us, and nothing can bring it back.
+    h.backend.refuse_starts.store(true, Ordering::SeqCst);
+    *h.backend.running.lock().unwrap() = None;
+
+    let state = h
+        .wait_for("lost_gave_up", |s| {
+            matches!(s.last_outcome, Some(CycleOutcome::LostGaveUp { .. }))
+        })
+        .await;
+    assert_eq!(state.epoch, epoch, "same epoch as the Connected before it");
+    assert_eq!(state.phase, Phase::Disconnected);
+    assert_eq!(state.intent, IntentView::Down, "the intent is demoted");
 }

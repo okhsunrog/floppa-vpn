@@ -194,7 +194,7 @@ mod tests {
         Cycle {
             epoch: IntentEpoch(1),
             order: order.to_vec(),
-            params: None,
+            params: TunnelParams::default(),
             index: 0,
             pass: 0,
             passes_allowed: 3,
