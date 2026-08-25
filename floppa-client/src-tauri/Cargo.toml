@@ -26,67 +26,30 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = { version = "0.0.12" }
 tauri-specta = { git = "https://github.com/specta-rs/tauri-specta", rev = "40a7b831b0493ac2be7bc7bfd55980d5a6802044", features = ["typescript", "derive"] }
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio = { version = "1", features = ["full"] }
 thiserror = "2"
-chrono = { version = "0.4", features = ["serde"] }
-dirs = "6"
 async-trait = "0.1"
-ipnetwork = { version = "0.21", features = ["serde"] }
-
-# gotatun - WireGuard implementation (fork of Mullvad's boringtun)
-gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-2026-08-25", features = ["device", "tun"] }
-# Uncomment for local development, comment out before commit/push:
-# gotatun = { path = "../../../rust/gotatun/gotatun", features = ["device", "tun"] }
-tun = { version = "0.8", features = ["async"] }
 
 # VPN plugin for mobile platforms
 tauri-plugin-vpn = { path = "../../tauri-plugin-vpn" }
-# Config parsing, AmneziaWG parameters and route helpers shared with floppa-cli
-floppa-tunnel-config = { path = "../../floppa-tunnel-config", features = ["gotatun"] }
 tauri-plugin-deep-link = "2"
-hostname = "0.4.2"
 tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "29"
 # VLESS+REALITY protocol support
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
-flate2 = "1.1.9"
-tar = "0.4.44"
-tokio-util = { version = "0.7.18", features = ["rt"] }
 floppa-api-client = { version = "0.1.0", path = "../../floppa-api-client" }
+floppa-vpn-core = { version = "0.1.0", path = "../../floppa-vpn-core" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3.6.3", features = ["linux-native-async-persistent"] }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3.6.3", features = ["windows-native"] }
-# 0.7.40 carries the "hide the console window" change this used to be forked for; upstream took
-# it in as "refactor run_command function", so the [patch.crates-io] override is gone.
-wintun-bindings = "0.7.40"
-
+# The keyring, the tunnels, the socket and the platform layer are all `floppa-vpn-core`'s
+# dependencies now; what is left here is the JNI bridge Kotlin calls and the desktop app shell.
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22.3"
-tracing-logcat = "0.1.0"
-
-# The actor's boundary over a socket. Unix rather than Android, for two reasons: the tests that
-# drive a real socket then run on the host, where they are actually watched; and splitting the
-# desktop app into a privileged helper and a UI later needs this exact machinery, not a second
-# copy of it. Windows keeps its actor in-process, so it needs none of this.
-[target.'cfg(unix)'.dependencies]
-futures = "0.3.32"
-tarpc = { version = "0.38.0", features = ["serde-transport", "tokio1", "unix"] }
-tokio-serde = { version = "0.9.0", features = ["json"] }
-tokio-util = { version = "0.7.18", features = ["codec"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
-
-[target.'cfg(not(target_os = "android"))'.dependencies]
-keyring = { version = "3.6.3", features = ["crypto-rust"] }
-uuid = { version = "1.25.0", features = ["v4"] }
 
 [profile.release]
 strip = true

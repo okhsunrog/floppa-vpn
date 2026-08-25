@@ -1485,25 +1485,15 @@ name = "floppa-client"
 version = "0.5.1"
 dependencies = [
  "async-trait",
- "chrono",
- "dirs",
- "flate2",
  "floppa-api-client",
- "floppa-tunnel-config",
- "futures",
- "gotatun",
- "hostname",
- "ipnetwork",
+ "floppa-vpn-core",
  "jni 0.22.4",
- "keyring",
  "serde",
  "serde_json",
  "shoes-lite",
  "specta",
  "specta-serde",
  "specta-typescript",
- "tar",
- "tarpc",
  "tauri",
  "tauri-build",
  "tauri-plugin-android-fs",
@@ -1518,14 +1508,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
- "tokio-serde",
- "tokio-util",
  "tracing",
- "tracing-logcat",
- "tracing-subscriber",
- "tun",
- "uuid",
- "wintun-bindings",
 ]
 
 [[package]]
@@ -1537,6 +1520,40 @@ dependencies = [
  "ipnetwork",
  "serde",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "floppa-vpn-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dirs",
+ "flate2",
+ "floppa-tunnel-config",
+ "futures",
+ "gotatun",
+ "hostname",
+ "ipnetwork",
+ "jni 0.22.4",
+ "keyring",
+ "serde",
+ "serde_json",
+ "shoes-lite",
+ "specta",
+ "tar",
+ "tarpc",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tokio-serde",
+ "tokio-util",
+ "tracing",
+ "tracing-logcat",
+ "tracing-subscriber",
+ "tun",
+ "uuid",
+ "wintun-bindings",
 ]
 
 [[package]]
@@ -5994,6 +6011,7 @@ dependencies = [
  "signal-hook-registry",
  "socket2",
  "tokio-macros",
+ "tracing",
  "windows-sys 0.61.2",
 ]
 
@@ -7445,6 +7463,7 @@ dependencies = [
  "serde_repr",
  "sha1",
  "static_assertions",
+ "tokio",
  "tracing",
  "uds_windows",
  "windows-sys 0.52.0",

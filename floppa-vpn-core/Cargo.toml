@@ -1,0 +1,67 @@
+[package]
+name = "floppa-vpn-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The client-side VPN: the connection actor, the tunnel backends, the platform layer and the rollback journal — shared by floppa-cli and the Tauri app"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tokio = { workspace = true, features = ["full"] }
+thiserror.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+dirs = "6"
+async-trait = "0.1"
+ipnetwork = { version = "0.21", features = ["serde"] }
+gotatun.workspace = true
+tun = { version = "0.8", features = ["async"] }
+floppa-tunnel-config = { workspace = true, features = ["gotatun"] }
+shoes-lite.workspace = true
+hostname = "0.4.2"
+tempfile = "3.26.0"
+flate2 = "1.1.9"
+tar = "0.4.44"
+tokio-util = { version = "0.7.18", features = ["rt"] }
+# Not optional, and not behind a feature. The connection vocabulary derives `specta::Type` in
+# thirteen places so the app can generate `bindings.ts` from it; making those conditional buys a
+# build-time dependency the CLI does not run and costs thirteen `cfg_attr`s that would silently
+# drift out of step. The exact version is pinned because it is a release candidate and must
+# resolve to the same crate the app's `tauri-specta` uses — two speccas and the export breaks.
+specta = { version = "=2.0.0-rc.25", features = ["derive"] }
+uuid = { version = "1.25.0", features = ["v4"] }
+tokio-serde = { version = "0.9.0", features = ["json"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The runtime and the crypto backend are named here rather than left to feature unification.
+# `linux-native-async-persistent` pulls secret-service but picks neither, and the app only built
+# because something else in its tree happened to turn `tokio` on — which is not a dependency
+# anybody declared and not one that would survive a change elsewhere.
+keyring = { version = "3.6.3", features = [
+    "linux-native-async-persistent",
+    "crypto-rust",
+    "tokio",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3.6.3", features = ["windows-native"] }
+wintun-bindings = "0.7.40"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.3"
+tracing-logcat = "0.1.0"
+
+# The actor's boundary over a socket. Unix rather than Android, for two reasons: the tests that
+# drive a real socket then run on the host, where they are actually watched; and splitting the
+# desktop app into a privileged helper and a UI later needs this exact machinery, not a second
+# copy of it. Windows keeps its actor in-process, so it needs none of this.
+[target.'cfg(unix)'.dependencies]
+futures = "0.3.32"
+tarpc = { version = "0.38.0", features = ["serde-transport", "tokio1", "unix"] }
+
+[dev-dependencies]
+specta-serde = "0.0.12"
+specta-typescript = "0.0.12"
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }

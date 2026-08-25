@@ -1,4 +1,8 @@
-pub mod logging;
+/// One tracing setup for both processes, and the diagnostic captures on top of it. Shared with
+/// `floppa-cli`, so re-exported rather than referenced through the crate name.
+pub mod logging {
+    pub use floppa_vpn_core::logging::*;
+}
 pub mod provision;
 pub mod vpn;
 

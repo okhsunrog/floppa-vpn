@@ -1,48 +1,32 @@
-pub mod actor;
-pub mod autostart;
-pub mod backend;
+//! The app's VPN surface: the shared core, plus the parts that only exist inside a Tauri app.
+//!
+//! Everything about *the tunnel* — the actor, the backends, the platform layer, the rollback
+//! journal, the config store — lives in `floppa-vpn-core`, where `floppa-cli` uses the same copy.
+//! What is left here is what needs Tauri or the Android plugin to exist at all:
+//!
+//! - [`commands`] — the command surface that crosses into TypeScript.
+//! - [`events`] — the tunnel state, forwarded to the webview.
+//! - [`process`] — making the `:vpn` process exist, which only the plugin's activity can do.
+//! - [`jni_entry`] — what Kotlin calls, and what calls Kotlin back.
+//!
+//! Re-exported wholesale rather than referenced through the crate name, so every `crate::vpn::…`
+//! path in this app keeps meaning what it meant.
+
+pub use floppa_vpn_core::*;
+
 pub mod commands;
-pub mod config;
 pub mod events;
-/// What the tunnel needs from whatever hosts it. Android-only: on desktop the ladder configures
-/// the machine itself, and there is no service to ask.
+/// The JNI implementation of the core's `ServiceHost`. It lives beside [`jni_entry`] rather than
+/// in the core crate because everything it does is call into it, and the bridge has to stay in
+/// the binary that Kotlin loads.
 #[cfg(target_os = "android")]
-pub mod host;
+pub mod host {
+    pub use floppa_vpn_core::host::*;
+    pub mod service;
+}
 #[cfg(target_os = "android")]
 pub mod jni_entry;
-pub mod platform;
-pub mod private_file;
 /// Making the process that holds the actor exist. Android-only: it is the plugin's context and
 /// activity that can do it, and neither exists in `:vpn`.
 #[cfg(target_os = "android")]
 pub mod process;
-pub mod protocol;
-/// The actor over a socket, both ends. Unix rather than Android, so the tests drive a real socket
-/// on the host — and so a later desktop split reuses this rather than growing a second copy.
-#[cfg(unix)]
-pub mod remote;
-pub mod rollback;
-/// The wire itself. Unix-gated like both of its ends: on Windows nothing speaks it, and the
-/// vocabulary the service trait imports would sit there unused.
-#[cfg(unix)]
-pub mod rpc;
-/// Unix-only rather than Android-only, so the accept loop's lifetime rule is tested on the host.
-#[cfg(unix)]
-pub mod rpc_listener;
-#[cfg(unix)]
-pub mod rpc_server;
-/// Unix-only rather than Android-only, so what a generation reports about itself is tested on the
-/// host.
-#[cfg(unix)]
-pub mod service_state;
-pub mod state;
-pub mod store;
-pub mod tunnel;
-pub mod wire;
-
-pub use backend::VpnBackend;
-#[cfg(not(target_os = "android"))]
-pub use backend::create_backend;
-pub use platform::{Platform, PlatformImpl, get_platform};
-pub use protocol::{InterfaceName, Preference, Protocol};
-pub use state::ProtocolConfig;

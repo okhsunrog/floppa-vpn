@@ -11,10 +11,10 @@
 //! makes "still coming up", "failed, and here is why" and "not there at all" three different
 //! answers instead of one timeout.
 
-use super::{HostError, ServiceHost};
-use crate::vpn::autostart::TunSpec;
-use crate::vpn::service_state::ServiceRegistry;
 use async_trait::async_trait;
+use floppa_vpn_core::autostart::TunSpec;
+use floppa_vpn_core::host::{HostError, ServiceHost};
+use floppa_vpn_core::service_state::ServiceRegistry;
 use std::sync::Arc;
 use tracing::info;
 
