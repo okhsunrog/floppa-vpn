@@ -792,6 +792,35 @@ fn exhausting_a_cold_cycle_reports_every_failure_not_just_the_last() {
 }
 
 #[test]
+fn a_crashed_attempt_is_cleaned_up_rather_than_trusted_to_have_unwound() {
+    // Every other failure has already unwound its own ladder. A crash has not: the task died with
+    // its stack, so what the journal recorded is undone and the backend stopped in case it got
+    // that far.
+    let now = t0();
+    let d = attempt_done(
+        &connecting_status(now, &[AWG, WG]),
+        &up_intent(1, &[AWG, WG], params()),
+        AttemptResult::Failed(AttemptError::Crashed {
+            detail: "panicked".into(),
+        }),
+        now,
+    );
+    match &d.next {
+        Status::Unwinding {
+            reason: UnwindReason::AttemptCrashed,
+            cycle: Some(c),
+            ..
+        } => assert!(matches!(c.failures[0].error, AttemptError::Crashed { .. })),
+        other => panic!("expected a crash teardown, got {other:?}"),
+    }
+    assert!(has_stop_foreign(&d));
+    assert!(
+        !has_begin(&d, WG),
+        "a crash is a bug, not a bad peer: the next protocol is not tried on a dirty machine"
+    );
+}
+
+#[test]
 fn the_last_probe_of_a_budgeted_cycle_schedules_another_pass() {
     let now = t0();
     let status = Status::Connecting {
@@ -943,6 +972,33 @@ fn a_lost_tunnel_out_of_budget_reports_that_it_gave_up() {
     );
     assert!(matches!(d.next, Status::Idle));
     assert!(matches!(outcome(&d), Some(CycleOutcome::LostGaveUp { .. })));
+}
+
+#[test]
+fn once_a_crash_is_cleaned_up_the_cycle_ends_with_the_crash_on_record() {
+    let now = t0();
+    let mut c = cycle(1, &[AWG], 1);
+    c.failures.push(AttemptFailure {
+        protocol: AWG,
+        error: AttemptError::Crashed {
+            detail: "panicked".into(),
+        },
+        pass: 0,
+    });
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::AttemptCrashed, Some(c), 0),
+        &up_intent(1, &[AWG], params()),
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(has_demote(&d));
+    match resolved(&d) {
+        Some((IntentEpoch(1), CycleOutcome::Exhausted { failures })) => {
+            assert!(matches!(failures[0].error, AttemptError::Crashed { .. }))
+        }
+        other => panic!("expected the crash reported, got {other:?}"),
+    }
 }
 
 #[test]

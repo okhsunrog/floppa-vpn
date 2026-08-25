@@ -458,6 +458,16 @@ pub fn on_attempt_done(
                 pass: cycle.pass,
             });
 
+            // A0: a crashed task never ran its own unwind. Undo what the journal recorded and
+            // stop the backend it may have started; the cycle ends once that is confirmed.
+            if matches!(error, AttemptError::Crashed { .. }) {
+                return Decision::to(unwinding(Some(cycle), UnwindReason::AttemptCrashed)).with(
+                    Effect::Unwind {
+                        extra: Some(ExtraUndo::StopBackend),
+                    },
+                );
+            }
+
             // A4: a denied consent dialog or a missing helper will not be fixed by trying the next
             // protocol — it will just ask again. Three protocols with a reconnect budget would be
             // up to nine dialogs.
@@ -615,7 +625,7 @@ pub fn on_unwind_done(
                     connecting(cycle, now, policy)
                 }
                 // U4, U5, U6
-                UnwindReason::AttemptFailed | UnwindReason::AttemptTimedOut => {
+                UnwindReason::AttemptTimedOut => {
                     let mut cycle = cycle;
                     if !cycle.is_last_probe() {
                         cycle.advance();
@@ -638,6 +648,16 @@ pub fn on_unwind_done(
                         )
                     }
                 }
+                // U6a: the machine is clean again after a crash; the cycle is over, and the
+                // failure it recorded says why.
+                UnwindReason::AttemptCrashed => Decision::to(Status::Idle)
+                    .with(Effect::DemoteIntent)
+                    .with(Effect::Resolve {
+                        epoch: cycle.epoch,
+                        outcome: CycleOutcome::Exhausted {
+                            failures: cycle.failures,
+                        },
+                    }),
                 // U7, U8: a tunnel that was up and died gets the reconnect budget, not the cold
                 // one — which is what keeps a user-initiated connect failing fast while a dropped
                 // tunnel keeps trying.

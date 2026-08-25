@@ -117,7 +117,13 @@ export type AppInfo = {
  *  failure and an address-parse failure ended up indistinguishable from a dead peer. Every variant
  *  here is constructed at exactly one call site.
  */
-export type AttemptError = { kind: "permission_denied" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; detail: string } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" };
+export type AttemptError = { kind: "permission_denied" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; detail: string } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" } | 
+/**
+ *  The attempt task panicked or was aborted. Synthesised by the actor from the task's join
+ *  error, so a crash can never leave the status waiting for a report that will not come. The
+ *  ladder did *not* unwind itself: whatever it applied is recovered from the journal.
+ */
+{ kind: "crashed"; detail: string };
 
 export type AttemptFailure = {
 	protocol: Protocol,

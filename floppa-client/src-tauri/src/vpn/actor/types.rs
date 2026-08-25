@@ -230,8 +230,10 @@ pub struct UpStatus {
 pub enum UnwindReason {
     IntentDown,
     IntentChanged,
-    AttemptFailed,
     AttemptTimedOut,
+    /// The attempt task died without reporting, so it never unwound its own ladder. Whatever the
+    /// journal recorded is undone here, and the cycle ends: a crash is a bug, not a bad peer.
+    AttemptCrashed,
     /// Confirmed not running while we believed we were up.
     TunnelDied,
     /// Dark for longer than the grace period.
@@ -443,6 +445,11 @@ pub enum AttemptError {
     PeerStartFailed { detail: String },
     #[error("cancelled")]
     Cancelled,
+    /// The attempt task panicked or was aborted. Synthesised by the actor from the task's join
+    /// error, so a crash can never leave the status waiting for a report that will not come. The
+    /// ladder did *not* unwind itself: whatever it applied is recovered from the journal.
+    #[error("the attempt task crashed: {detail}")]
+    Crashed { detail: String },
 }
 
 impl AttemptError {
@@ -453,7 +460,10 @@ impl AttemptError {
     pub const fn is_fatal_for_cycle(&self) -> bool {
         matches!(
             self,
-            Self::PermissionDenied | Self::PlatformUnavailable { .. } | Self::Cancelled
+            Self::PermissionDenied
+                | Self::PlatformUnavailable { .. }
+                | Self::Cancelled
+                | Self::Crashed { .. }
         )
     }
 }
@@ -957,6 +967,12 @@ mod tests {
             .is_fatal_for_cycle()
         );
         assert!(AttemptError::Cancelled.is_fatal_for_cycle());
+        assert!(
+            AttemptError::Crashed {
+                detail: String::new()
+            }
+            .is_fatal_for_cycle()
+        );
         assert!(!AttemptError::VerifyFailed.is_fatal_for_cycle());
         assert!(!AttemptError::TimedOut.is_fatal_for_cycle());
     }

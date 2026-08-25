@@ -109,6 +109,8 @@ impl VpnBackend for FakeBackend {
 struct FakePlatform {
     park_attempts: AtomicBool,
     released: Notify,
+    /// Panic inside the ladder's link step, as a bug in a real platform would.
+    crash_attempts: AtomicBool,
 }
 
 impl FakePlatform {
@@ -116,7 +118,12 @@ impl FakePlatform {
         Self {
             park_attempts: AtomicBool::new(false),
             released: Notify::new(),
+            crash_attempts: AtomicBool::new(false),
         }
+    }
+
+    fn crash_attempts(&self) {
+        self.crash_attempts.store(true, Ordering::SeqCst);
     }
 
     fn park_attempts(&self) {
@@ -141,6 +148,10 @@ impl Platform for FakePlatform {
         Ok(())
     }
     async fn prepare_link(&self, _: &InterfaceName) -> Result<(), PlatformError> {
+        assert!(
+            !self.crash_attempts.load(Ordering::SeqCst),
+            "the fake platform was told to crash the attempt"
+        );
         Ok(())
     }
     async fn release_link(&self, _: &InterfaceName) -> Result<(), PlatformError> {
@@ -486,4 +497,62 @@ async fn a_stale_epochs_outcome_is_not_shown_as_the_current_one() {
         state.last_outcome,
         Some(CycleOutcome::Connected { .. })
     ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_attempt_task_that_panics_still_reports_and_the_cycle_ends() {
+    // The attempt's report is the only thing that leaves Connecting on the success path, and
+    // Unwinding has no deadline by design. A task that dies without reporting used to leave the
+    // status waiting forever; its join error is now the report it failed to send.
+    let mut h = Harness::spawn(policy());
+    h.platform.crash_attempts();
+
+    let epoch = h.set(up()).await;
+    match h.outcome(epoch).await {
+        CycleOutcome::Exhausted { failures } => {
+            assert_eq!(failures.len(), 1);
+            assert!(matches!(failures[0].error, AttemptError::Crashed { .. }));
+        }
+        other => panic!("expected the crash on record, got {other:?}"),
+    }
+    let state = h.wait_for_phase(Phase::Disconnected).await;
+    assert_eq!(state.intent, IntentView::Down, "the intent is demoted");
+    assert!(!state.busy);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stale_one() {
+    // The attempt is parked; meanwhile the world reports a tunnel (one that appeared underneath
+    // us). Cancelling the attempt makes it unwind its own — empty — ladder and report. That report
+    // used to be judged against the observation taken *before* the cancel, which said Running, so
+    // the actor re-ran a teardown with a backend stop it had no reason for, and burnt a retry.
+    let mut h = Harness::spawn(policy());
+    h.platform.park_attempts();
+
+    h.set(up()).await;
+    h.wait_for_phase(Phase::Connecting).await;
+    *h.backend.running.lock().unwrap() = Some(RunningTunnel {
+        protocol: Protocol::WireGuard,
+        epoch: None,
+        endpoint: "127.0.0.1:51820".into(),
+        address: "10.0.0.2/32".into(),
+        connected_secs: Some(1),
+    });
+    // Let the observer see it.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert!(
+        h.states.borrow().phase == Phase::Connecting,
+        "no observation interrupts an attempt"
+    );
+
+    let down_epoch = h.set(IntentRequest::Down).await;
+    h.wait_for_phase(Phase::Disconnecting).await;
+    h.platform.release();
+
+    assert_eq!(h.outcome(down_epoch).await, CycleOutcome::Down);
+    assert_eq!(
+        h.backend.stops(),
+        0,
+        "the stale Running look must not drive a re-unwind; a fresh look decides what happens next"
+    );
 }

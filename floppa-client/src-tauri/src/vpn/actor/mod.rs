@@ -22,8 +22,8 @@ mod tests;
 use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
-    AttemptPhase, AttemptResult, CycleOutcome, Intent, IntentAccepted, IntentEpoch, IntentError,
-    Observation, Policy, Status, TunnelState, UpIntent, World,
+    AttemptError, AttemptPhase, AttemptResult, CycleOutcome, Intent, IntentAccepted, IntentEpoch,
+    IntentError, Observation, Policy, Status, TunnelState, UpIntent, World,
 };
 use crate::vpn::backend::VpnBackend;
 use crate::vpn::platform::{Platform, PlatformImpl};
@@ -226,22 +226,15 @@ impl TunnelActor {
     /// Runs once, before the loop. Recovers anything a previous process left applied, and adopts a
     /// tunnel that outlived us.
     fn bootstrap(&mut self) {
-        if let Some(journal) = &self.journal {
-            let orphaned = journal.read_orphaned();
-            if !orphaned.is_empty() {
-                warn!(
-                    count = orphaned.len(),
-                    "a previous run left network changes applied"
-                );
-                self.held_stack = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
-                self.status = Status::Unwinding {
-                    cycle: None,
-                    reason: types::UnwindReason::CrashRecovery,
-                    tries: 0,
-                };
-                self.exec(Effect::Unwind { extra: None });
-                return;
-            }
+        self.recover_journal();
+        if !self.held_stack.is_empty() {
+            self.status = Status::Unwinding {
+                cycle: None,
+                reason: types::UnwindReason::CrashRecovery,
+                tries: 0,
+            };
+            self.exec(Effect::Unwind { extra: None });
+            return;
         }
 
         // An intent with no params: it asks for "whatever is already there", which is the only
@@ -436,34 +429,50 @@ impl TunnelActor {
 
         let now = Instant::now();
 
+        // A crashed task took its stack down with it. The durable steps are in the journal, so
+        // they are picked up from there — the same recovery as after a crashed process.
+        if let AttemptResult::Failed(AttemptError::Crashed { .. }) = &report.result {
+            self.recover_journal();
+        }
+
         // While unwinding, the attempt was cancelled *by* that unwind, so its report completes the
         // teardown rather than being a connect outcome. This is the only path a late-succeeding
         // connect can take, and it is why one can never publish "connected" after a teardown: the
         // status is written from the tables, never by an attempt.
         if matches!(self.status, Status::Unwinding { .. }) {
-            if let AttemptResult::Established { stack, .. } = report.result {
-                // It won the race and applied things. Take the stack so the teardown undoes
-                // exactly what it did, and let that unwind's completion drive the next step.
-                self.held_stack = stack;
-                self.exec(Effect::Unwind { extra: None });
-                return;
+            match report.result {
+                AttemptResult::Established { stack, .. } => {
+                    // It won the race and applied things. Take the stack so the teardown undoes
+                    // exactly what it did, and let that unwind's completion drive the next step.
+                    self.held_stack = stack;
+                    self.exec(Effect::Unwind { extra: None });
+                }
+                AttemptResult::Failed(AttemptError::Crashed { .. }) => {
+                    // It never unwound anything. Undo what the journal recovered and stop
+                    // whatever it may have started.
+                    self.exec(Effect::Unwind {
+                        extra: Some(crate::vpn::rollback::ExtraUndo::StopBackend),
+                    });
+                }
+                AttemptResult::Failed(_) | AttemptResult::Cancelled => {
+                    // It has already unwound its own ladder — so the teardown it belonged to is
+                    // complete, and is judged exactly like one the actor ran itself.
+                    let finished = UnwindReport {
+                        stack_empty: true,
+                        residual: Vec::new(),
+                    };
+                    let world = self.judge_unwind(now);
+                    let decision = reconcile::on_unwind_done(
+                        &self.status,
+                        &self.intent,
+                        &finished,
+                        &world,
+                        now,
+                        &self.policy,
+                    );
+                    self.apply(decision, now);
+                }
             }
-            // It failed or was cancelled, and has already unwound its own ladder — so the teardown
-            // it belonged to is complete.
-            let finished = UnwindReport {
-                stack_empty: true,
-                residual: Vec::new(),
-            };
-            let world = World::classify(&self.last_obs, now, &self.policy);
-            let decision = reconcile::on_unwind_done(
-                &self.status,
-                &self.intent,
-                &finished,
-                &world,
-                now,
-                &self.policy,
-            );
-            self.apply(decision, now);
             return;
         }
 
@@ -480,19 +489,7 @@ impl TunnelActor {
     fn on_unwind_done(&mut self, report: UnwindReport) {
         self.unwind = None;
         let now = Instant::now();
-
-        // Judge the teardown only against a look taken *after* it ran.
-        //
-        // An observation from before the unwind says nothing about whether it worked, and every
-        // retry here happens in microseconds — far faster than the poll interval — so re-checking
-        // the same pre-teardown observation would fail the same way every time and burn the whole
-        // retry budget in under a millisecond. Treating it as dark falls through to the ordinary
-        // rows, which re-observe.
-        let world = match self.unwind_started {
-            Some(started) if self.last_obs.observed_at < started => World::Dark,
-            _ => World::classify(&self.last_obs, now, &self.policy),
-        };
-        self.unwind_started = None;
+        let world = self.judge_unwind(now);
         let decision = reconcile::on_unwind_done(
             &self.status,
             &self.intent,
@@ -502,6 +499,38 @@ impl TunnelActor {
             &self.policy,
         );
         self.apply(decision, now);
+    }
+
+    /// The world a finished teardown is judged against: only a look taken *after* it started.
+    ///
+    /// An observation from before the unwind says nothing about whether it worked, and every
+    /// retry here happens in microseconds — far faster than the poll interval — so re-checking
+    /// the same pre-teardown observation would fail the same way every time and burn the whole
+    /// retry budget in under a millisecond. Treating it as dark falls through to the ordinary
+    /// rows, which re-observe. One judge for both the actor's own unwinds and an attempt's
+    /// self-unwind: the latter used to be judged against the stale look, and so paid for an extra
+    /// stop and a burnt retry every time.
+    fn judge_unwind(&mut self, now: Instant) -> World {
+        match self.unwind_started.take() {
+            Some(started) if self.last_obs.observed_at < started => World::Dark,
+            _ => World::classify(&self.last_obs, now, &self.policy),
+        }
+    }
+
+    /// Pick up whatever a crashed attempt or a previous process left recorded in the journal.
+    fn recover_journal(&mut self) {
+        let Some(journal) = &self.journal else {
+            return;
+        };
+        let orphaned = journal.read_orphaned();
+        if orphaned.is_empty() {
+            return;
+        }
+        warn!(
+            count = orphaned.len(),
+            "recovering network changes from the journal"
+        );
+        self.held_stack = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
     }
 
     // ---------------------------------------------------------------------- the only writer
@@ -577,12 +606,16 @@ impl TunnelActor {
                     // the status would wait forever.
                     let cancel = CancellationToken::new();
                     let tx = self.cmd_tx.clone();
-                    tokio::spawn(attempt::run_immediate_failure(
-                        tx,
+                    self.spawn_attempt(
                         epoch,
                         index,
-                        types::AttemptError::NoConfig { protocol },
-                    ));
+                        attempt::run_immediate_failure(
+                            tx,
+                            epoch,
+                            index,
+                            types::AttemptError::NoConfig { protocol },
+                        ),
+                    );
                     self.attempt = Some(AttemptHandle {
                         epoch,
                         index,
@@ -608,7 +641,7 @@ impl TunnelActor {
                     #[cfg(target_os = "android")]
                     app: self.app.clone(),
                 };
-                tokio::spawn(attempt::run(ctx));
+                self.spawn_attempt(epoch, index, attempt::run(ctx));
                 self.attempt = Some(AttemptHandle {
                     epoch,
                     index,
@@ -623,8 +656,10 @@ impl TunnelActor {
                         self.cancel_issued = true;
                         // Signal only. The task is never dropped: it unwinds its own stack to
                         // completion and reports, which is the whole reason no failure path in
-                        // this file performs teardown.
+                        // this file performs teardown. Its unwind starts now, so its report is
+                        // judged against a look taken from now on.
                         handle.cancel.cancel();
+                        self.unwind_started = Some(Instant::now());
                     }
                 }
                 // The attempt already reported. Fall through to an unwind of an empty stack, which
@@ -670,6 +705,39 @@ impl TunnelActor {
 
             Effect::Resolve { epoch, outcome } => self.publish_outcome(epoch, outcome),
         }
+    }
+
+    /// Run an attempt task and make sure it reports even if it does not return.
+    ///
+    /// A task that panics, or is aborted with the runtime, sends nothing — and `Unwinding` has
+    /// no deadline, because a teardown holding the only record of what was applied must not be
+    /// abandoned by a timer. Its join error is turned into the report it failed to send, so the
+    /// status can never wait forever on a task that no longer exists.
+    fn spawn_attempt(
+        &self,
+        epoch: IntentEpoch,
+        index: usize,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let join = tokio::spawn(task);
+        let tx = self.cmd_tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = join.await {
+                let detail = if e.is_panic() {
+                    "panicked".to_string()
+                } else {
+                    e.to_string()
+                };
+                tracing::error!(%epoch, index, %detail, "attempt task crashed");
+                let _ = tx
+                    .send(Command::AttemptDone(Box::new(AttemptReport {
+                        epoch,
+                        index,
+                        result: AttemptResult::Failed(AttemptError::Crashed { detail }),
+                    })))
+                    .await;
+            }
+        });
     }
 
     fn publish_outcome(&mut self, epoch: IntentEpoch, outcome: CycleOutcome) {
