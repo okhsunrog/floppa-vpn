@@ -25,7 +25,9 @@ use crate::vpn::rollback::UnwindReport;
 use crate::vpn::store::ConfigError;
 use tokio::sync::{mpsc, oneshot, watch};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Externally tagged, like everything else that crosses to another process: it is the one enum
+/// shape no codec has to be self-describing to read back.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IntentRequest {
     Down,
     /// A Down that must also leave nothing running, whoever started it. Only a wipe asks for it:

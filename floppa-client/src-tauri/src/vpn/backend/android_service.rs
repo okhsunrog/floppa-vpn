@@ -16,12 +16,94 @@ use crate::vpn::actor::types::{
     Observation, RawStats, RunningTunnel, TunnelObservation, TunnelParams, WorldView,
 };
 use crate::vpn::platform::TunParams;
-use crate::vpn::rpc_server::bring_up;
-use crate::vpn::service_state::{ServiceRegistry, Started};
+use crate::vpn::service_state::{GenerationPhase, ServiceRegistry, ServiceState, Started};
 use crate::vpn::state::ProtocolConfig;
 use crate::vpn::tunnel::TunnelManager;
 use async_trait::async_trait;
+use std::net::SocketAddr;
 use std::sync::Arc;
+use tracing::{error, info};
+
+/// Bring a tunnel up on the descriptor the service is holding.
+///
+/// The one start path, whoever asked. What is recorded about the running tunnel — its rules,
+/// whether anyone asked for it — and what the notification says come out of this function alone.
+///
+/// The protocol arrives with the config rather than being recovered by inspecting it, and the
+/// endpoint arrives already resolved: by the time a tunnel is being started, this device's DNS
+/// points into a tunnel that does not exist yet, so resolving here would fail.
+async fn bring_up(
+    service: &ServiceState,
+    tunnel_manager: &TunnelManager,
+    mut config: ProtocolConfig,
+    endpoint: SocketAddr,
+    started: Started,
+) -> Result<(), String> {
+    let tun_fd = match service.take_fd() {
+        Ok(fd) => fd,
+        Err(why) => {
+            let e = why.to_string();
+            service.set_error(e.clone());
+            return Err(e);
+        }
+    };
+
+    // Through the parser rather than by field, so an IPv6 literal is bracketed the way the
+    // `.conf` grammar wants it.
+    let literal = || {
+        endpoint
+            .to_string()
+            .parse::<floppa_tunnel_config::Endpoint>()
+            .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
+    };
+    match &mut config {
+        ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
+        ProtocolConfig::AmneziaWg(awg) => awg.wg.set_endpoint(literal()?),
+        // VLESS dials by address while taking its SNI from `server_name`, so substituting a
+        // literal here does not disturb the REALITY handshake.
+        ProtocolConfig::Vless(vless) => vless.server_addr = endpoint.to_string(),
+    }
+    let result = match &config {
+        ProtocolConfig::Vless(vless) => {
+            tunnel_manager
+                .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
+                .await
+        }
+        ProtocolConfig::AmneziaWg(awg) => {
+            tunnel_manager
+                .start_wireguard_with_fd(&awg.tunnel(), tun_fd)
+                .await
+        }
+        ProtocolConfig::WireGuard(wg) => {
+            tunnel_manager
+                .start_wireguard_with_fd(wg.tunnel(), tun_fd)
+                .await
+        }
+    };
+
+    match result.map_err(|e| e.to_string()) {
+        Ok(()) => {
+            info!(
+                protocol = %config.protocol(),
+                autonomous = started.autonomous,
+                "tunnel started"
+            );
+            service.set_started(started);
+            service.advance_to(GenerationPhase::Started);
+            // The notification has been saying "connecting" since the service came up; this is
+            // the first moment it is entitled to say anything else.
+            crate::vpn::jni_entry::set_service_connected(true);
+            Ok(())
+        }
+        Err(e) => {
+            // Recorded as well as returned: the caller may already have given up, and the next
+            // observation should still say why rather than looking like an idle service.
+            error!("failed to start the tunnel: {e}");
+            service.set_error(e.clone());
+            Err(e)
+        }
+    }
+}
 
 pub struct AndroidServiceBackend {
     tunnel_manager: Arc<TunnelManager>,
