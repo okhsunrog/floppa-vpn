@@ -77,9 +77,12 @@ pub async fn upsert_user(
 
 /// Grant a trial subscription on `plan_name` for the duration stored on that plan
 /// (`trial_minutes`). When `consume_real_trial` is true, atomically claims the user's
-/// one-time `trial_used_at` first and no-ops if it was already used. Returns whether a
+/// one-time `trial_used_at` and no-ops if it was already used. Returns whether a
 /// subscription was granted. No-op (returns false) if the plan is missing or has no
-/// `trial_minutes`.
+/// `trial_minutes` — in which case `trial_used_at` is left untouched.
+///
+/// Plan lookup, the `trial_used_at` claim and the INSERT run in one transaction, so a
+/// failure between them can never burn the one-time trial without granting it.
 async fn grant_trial(
     pool: &DbPool,
     user_id: i64,
@@ -87,23 +90,13 @@ async fn grant_trial(
     source: &str,
     consume_real_trial: bool,
 ) -> Result<bool> {
-    if consume_real_trial {
-        let claimed = sqlx::query!(
-            "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
-            user_id,
-        )
-        .execute(pool)
-        .await?;
-        if claimed.rows_affected() != 1 {
-            return Ok(false);
-        }
-    }
+    let mut tx = pool.begin().await?;
 
     let plan = sqlx::query!(
         "SELECT id, trial_minutes FROM plans WHERE name = $1",
         plan_name
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
     let Some(plan) = plan else {
         return Ok(false);
@@ -111,6 +104,18 @@ async fn grant_trial(
     let Some(minutes) = plan.trial_minutes else {
         return Ok(false);
     };
+
+    if consume_real_trial {
+        let claimed = sqlx::query!(
+            "UPDATE users SET trial_used_at = NOW() WHERE id = $1 AND trial_used_at IS NULL",
+            user_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        if claimed.rows_affected() != 1 {
+            return Ok(false);
+        }
+    }
 
     let now = Utc::now();
     let expires_at = now + Duration::minutes(minutes as i64);
@@ -122,9 +127,10 @@ async fn grant_trial(
         expires_at,
         source,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    tx.commit().await?;
     Ok(true)
 }
 
@@ -1571,6 +1577,14 @@ mod tests {
             .await
             .unwrap();
         assert!(!result.trial_granted);
+
+        // The one-time trial must not be burned when nothing was granted.
+        let trial_used_at =
+            sqlx::query_scalar!("SELECT trial_used_at FROM users WHERE id = $1", result.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(trial_used_at.is_none());
     }
 
     // ── allocate_ip ──
