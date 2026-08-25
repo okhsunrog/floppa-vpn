@@ -75,8 +75,11 @@ Find your gateway: `ip route show default` (the "via" address).
 # does not apply (a plain root shell, `ip netns exec` without sudo), point it at the file:
 export FLOPPA_TOKEN_FILE=/home/<user>/.config/floppa-cli/token   # or --token-file / FLOPPA_TOKEN
 
-# Connect (WireGuard)
+# Connect (AmneziaWG — the default, as in the app)
 ip netns exec floppa-test /path/to/floppa-cli connect
+
+# Connect (plain WireGuard)
+ip netns exec floppa-test /path/to/floppa-cli connect --protocol wireguard
 
 # Connect (VLESS)
 ip netns exec floppa-test /path/to/floppa-cli connect --protocol vless --no-dns --interface floppa0

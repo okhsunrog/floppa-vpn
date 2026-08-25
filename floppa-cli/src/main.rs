@@ -44,8 +44,8 @@ enum Command {
         /// Config file (.conf) or VLESS URI file
         #[arg(long)]
         config: Option<String>,
-        /// Tunnel protocol
-        #[arg(long, value_enum, default_value_t = api::Protocol::WireGuard)]
+        /// Tunnel protocol (AmneziaWG by default, like the app)
+        #[arg(long, value_enum, default_value_t = api::Protocol::AmneziaWg)]
         protocol: api::Protocol,
         /// TUN interface name
         #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
@@ -63,8 +63,8 @@ enum Command {
     },
     /// Fetch and print config (WireGuard/AmneziaWG .conf or VLESS URI)
     Config {
-        /// Tunnel protocol
-        #[arg(long, value_enum, default_value_t = api::Protocol::WireGuard)]
+        /// Tunnel protocol (AmneziaWG by default, like the app)
+        #[arg(long, value_enum, default_value_t = api::Protocol::AmneziaWg)]
         protocol: api::Protocol,
         /// Peer ID (WireGuard/AmneziaWG only; uses first active peer of that protocol if omitted)
         #[arg(long)]

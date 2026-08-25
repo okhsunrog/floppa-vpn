@@ -91,8 +91,8 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
 
 ### CLI Client
 - Standalone WireGuard / AmneziaWG / VLESS client (`floppa-cli`) for headless/server use:
-  `login` (Telegram in the browser), `config`, `connect --protocol wireguard|amneziawg|vless`,
-  `peers`, `logout`
+  `login` (Telegram in the browser), `config`, `connect --protocol wireguard|amneziawg|vless`
+  (AmneziaWG by default, like the app), `peers`, `logout`
 - Login token: `<config dir>/floppa-cli/token` (0600; under `sudo` the invoking user's config dir),
   or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`
 - Device identity generated once and persisted next to the token as `device_id`, so every run
