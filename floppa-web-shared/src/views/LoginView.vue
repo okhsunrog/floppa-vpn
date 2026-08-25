@@ -15,6 +15,7 @@ import type { TelegramAuthData } from '../client/types.gen'
 import { useAuthStore } from '../stores'
 import { describeError, isApiError } from '../utils/apiError'
 import TelegramLoginButton from '../components/TelegramLoginButton.vue'
+import { getTelegramInitData, getTelegramUserId, signalMiniAppReady } from '../utils/telegram'
 
 const props = withDefaults(
   defineProps<{
@@ -66,51 +67,20 @@ const accountPassword = ref('')
 const accountLoading = ref(false)
 const accountError = ref<string | null>(null)
 
-// Detect Telegram Mini App environment
-function getTelegramInitData(): string | null {
-  try {
-    const tg = (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram
-    const initData = tg?.WebApp?.initData
-    return initData && initData.length > 0 ? initData : null
-  } catch {
-    return null
-  }
-}
-
 onMounted(async () => {
   const initData = getTelegramInitData()
   if (!initData) return
 
-  // Signal to Telegram that the app is ready
-  try {
-    const tg = (window as { Telegram?: { WebApp?: { ready?: () => void; expand?: () => void } } })
-      .Telegram
-    tg?.WebApp?.ready?.()
-    tg?.WebApp?.expand?.()
-  } catch {
-    /* ignore */
-  }
+  signalMiniAppReady()
 
-  // Auto-login with Mini App initData
+  // Auto-login with Mini App initData; the Telegram user id is kept for account-switch detection.
   miniAppLoading.value = true
   try {
-    // Extract Telegram user ID for account-switch detection
-    let telegramUserId: number | undefined
-    try {
-      const userJson = new URLSearchParams(initData).get('user')
-      if (userJson) {
-        const id = JSON.parse(userJson).id
-        if (typeof id === 'number') telegramUserId = id
-      }
-    } catch {
-      /* non-critical */
-    }
-
     const { data: response } = await telegramMiniAppAuth({
       body: { init_data: initData },
       throwOnError: true,
     })
-    auth.setAuth(response.token, response.user, telegramUserId)
+    auth.setAuth(response.token, response.user, getTelegramUserId() ?? undefined)
     router.push('/')
   } catch {
     // The error is rendered inside the Telegram tab; make sure that tab is the visible one.

@@ -15,6 +15,8 @@ import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { describeError, formatBytes, formatDate, formatDateTime } from '../../utils'
+import { isTauri } from '../../utils/platform'
+import { isMiniApp as detectMiniApp } from '../../utils/telegram'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -23,9 +25,7 @@ import { useConfirmAction } from '../../composables/adminList'
 const { t } = useI18n()
 const toast = useToast()
 
-const isMiniApp = Boolean(
-  (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData,
-)
+const isMiniApp = detectMiniApp()
 
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
 const { data: publicConfig } = useQuery(getPublicConfigQuery())
@@ -201,7 +201,7 @@ async function downloadConfig() {
   }
 
   // Tauri: platform-specific file saving
-  if ((window as unknown as Record<string, unknown>).__TAURI_INTERNALS__) {
+  if (isTauri()) {
     try {
       if (navigator.userAgent.includes('Android')) {
         // Android: save to Download/FloppaVPN/ via MediaStore

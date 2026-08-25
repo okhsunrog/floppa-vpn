@@ -1,6 +1,7 @@
 import { watch } from 'vue'
 import type { RouteRecordRaw, Router } from 'vue-router'
 import { useAuthStore } from '../stores'
+import { getTelegramInitData, getTelegramUserId } from '../utils/telegram'
 
 export function createAppRoutes(): RouteRecordRaw[] {
   return [
@@ -87,31 +88,6 @@ export function createAppRoutes(): RouteRecordRaw[] {
   ]
 }
 
-/** Raw Mini App initData, or null when not running inside a Telegram Mini App. */
-function getTelegramInitData(): string | null {
-  try {
-    const initData = (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp
-      ?.initData
-    return initData && initData.length > 0 ? initData : null
-  } catch {
-    return null
-  }
-}
-
-/** Parse Telegram user ID from Mini App initData (URL-encoded). */
-function getTelegramUserIdFromInitData(): number | null {
-  try {
-    const initData = getTelegramInitData()
-    if (!initData) return null
-    const userJson = new URLSearchParams(initData).get('user')
-    if (!userJson) return null
-    const id = JSON.parse(userJson).id
-    return typeof id === 'number' ? id : null
-  } catch {
-    return null
-  }
-}
-
 export interface AuthGuardOptions {
   /**
    * Route name to send logged-out visitors to when they hit a protected route.
@@ -162,7 +138,7 @@ export function installAuthGuard(router: Router, options: AuthGuardOptions = {})
     // `auth.telegramId` is only recorded for sessions that came in through Telegram; a
     // login+password session opened inside the Mini App has none, and that is not a
     // mismatch — treating it as one made credential login impossible inside Telegram.
-    const tgUserId = getTelegramUserIdFromInitData()
+    const tgUserId = getTelegramUserId()
     if (
       tgUserId !== null &&
       auth.isAuthenticated &&

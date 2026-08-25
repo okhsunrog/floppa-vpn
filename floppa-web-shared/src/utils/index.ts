@@ -1,4 +1,6 @@
 export * from './apiError'
 export * from './format'
 export * from './openExternal'
+export * from './platform'
+export * from './telegram'
 export * from './renderLinks'

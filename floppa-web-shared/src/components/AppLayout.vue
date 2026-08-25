@@ -8,6 +8,7 @@ import { useQuery } from '@pinia/colada'
 import { getMeQuery } from '../client/@pinia/colada.gen'
 import { useAuthStore } from '../stores'
 import ColorModeButton from './ColorModeButton.vue'
+import { isMiniApp as detectMiniApp } from '../utils/telegram'
 
 const props = withDefaults(
   defineProps<{
@@ -37,9 +38,7 @@ const showBackupNudge = computed(
   () => auth.isAuthenticated && !!me.value?.telegram_linked && !me.value?.has_credential,
 )
 
-const isMiniApp = Boolean(
-  (window as { Telegram?: { WebApp?: { initData?: string } } }).Telegram?.WebApp?.initData,
-)
+const isMiniApp = detectMiniApp()
 const mobileMenuOpen = ref(false)
 
 // Android back button support for sidebar via history API.
