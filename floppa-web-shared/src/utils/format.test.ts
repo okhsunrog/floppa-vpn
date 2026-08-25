@@ -27,6 +27,13 @@ describe('formatDuration', () => {
   ])('formats %i seconds as %s', (seconds, expected) => {
     expect(formatDuration(seconds)).toBe(expected)
   })
+
+  test('trimZeroSeconds drops only a zero seconds part', () => {
+    expect(formatDuration(300, { trimZeroSeconds: true })).toBe('5m')
+    expect(formatDuration(301, { trimZeroSeconds: true })).toBe('5m 1s')
+    expect(formatDuration(300)).toBe('5m 0s')
+    expect(formatDuration(45, { trimZeroSeconds: true })).toBe('45s')
+  })
 })
 
 describe('formatSpeedLimit', () => {

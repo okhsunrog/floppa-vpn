@@ -41,13 +41,21 @@ export function formatDateTime(date: string | Date): string {
   return d.toLocaleString()
 }
 
+export interface FormatDurationOptions {
+  /** Drop a trailing "0s" — "5m" rather than "5m 0s" — for readouts where the seconds are noise. */
+  trimZeroSeconds?: boolean
+}
+
 /**
  * Format duration in seconds to human readable string (e.g., "2h 30m")
  */
-export function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number, options: FormatDurationOptions = {}): string {
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  if (minutes < 60) {
+    const rest = seconds % 60
+    return rest === 0 && options.trimZeroSeconds ? `${minutes}m` : `${minutes}m ${rest}s`
+  }
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ${minutes % 60}m`
   const days = Math.floor(hours / 24)

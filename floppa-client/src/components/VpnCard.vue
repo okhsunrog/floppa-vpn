@@ -15,6 +15,7 @@ import {
 } from 'floppa-web-shared/client/sdk.gen'
 import { formatBytes, formatSpeed, formatDuration, ConnectionIndicator } from 'floppa-web-shared'
 import { platform } from '@tauri-apps/plugin-os'
+import { useNow } from '@vueuse/core'
 import { useVpnStore, VPN_ERROR_KEYS } from '../stores/vpnStore'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -408,18 +409,19 @@ const buttonLabel = computed(() => {
   }
 })
 
-function getConnectionDuration(): string {
-  if (!vpn.state.connected_at) return '--'
-  const seconds = Math.floor(Date.now() / 1000 - vpn.state.connected_at)
-  return formatDuration(seconds)
-}
+// A ticking clock, so the duration counts up on its own. It used to be a function call in the
+// template, which only re-ran when some other part of the state happened to change.
+const now = useNow({ interval: 1000 })
+
+const connectionDuration = computed(() => {
+  const since = vpn.state.connected_at
+  if (!since) return '--'
+  return formatDuration(Math.max(0, Math.floor(now.value.getTime() / 1000 - since)))
+})
 
 function formatLastPacket(secs: number | null | undefined): string {
   if (secs == null || secs < 0) return '--'
-  if (secs < 60) return `${secs}s`
-  const m = Math.floor(secs / 60)
-  const s = secs % 60
-  return s > 0 ? `${m}m ${s}s` : `${m}m`
+  return formatDuration(secs, { trimZeroSeconds: true })
 }
 
 function selectProtocol(proto: Protocol) {
@@ -531,7 +533,7 @@ const healthDotClass = computed(() => {
         <span v-if="vpn.state.server_endpoint">
           {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
         </span>
-        <span>{{ t('vpn.duration') }}: {{ getConnectionDuration() }}</span>
+        <span>{{ t('vpn.duration') }}: {{ connectionDuration }}</span>
         <span class="inline-flex items-center justify-center gap-1.5">
           {{ t('vpn.lastActivity') }}:
           <span class="size-2 rounded-full" :class="healthDotClass" />
