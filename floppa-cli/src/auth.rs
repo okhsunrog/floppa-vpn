@@ -9,7 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use url::Url;
 
-use crate::api::{ApiClient, ApiClientError};
+use floppa_api_client::{ApiClient, DeviceIdentity};
 
 /// The uid/gid of the user behind `sudo`, so files created in their home stay theirs.
 struct SudoUser {
@@ -161,12 +161,6 @@ pub fn session_id(token: &str) -> Option<uuid::Uuid> {
     claims.get("jti")?.as_str()?.parse().ok()
 }
 
-/// What the server tracks a peer by: a stable per-installation UUID plus a display name.
-pub struct DeviceIdentity {
-    pub id: String,
-    pub name: String,
-}
-
 /// The device identity of this CLI installation. The id is generated once and persisted in the
 /// config dir, so every run finds its own peer instead of adopting another device's.
 pub fn device_identity() -> Result<DeviceIdentity> {
@@ -183,8 +177,10 @@ pub fn device_identity() -> Result<DeviceIdentity> {
         }
     };
     Ok(DeviceIdentity {
-        id,
-        name: hostname(),
+        device_id: id,
+        device_name: Some(hostname()),
+        platform: std::env::consts::OS.to_string(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
     })
 }
 
@@ -227,8 +223,8 @@ pub async fn login(api_url: &str, tokens: &TokenSource) -> Result<()> {
         })??;
 
     // Exchange code for JWT
-    let auth = match ApiClient::exchange_code(api_url, &code).await {
-        Err(ApiClientError::Unauthorized) => bail!("Login code expired or invalid. Try again."),
+    let auth = match ApiClient::exchange_login_code(api_url, &code).await {
+        Err(e) if e.is_unauthorized() => bail!("Login code expired or invalid. Try again."),
         other => other?,
     };
     tokens.save(&auth.token)?;

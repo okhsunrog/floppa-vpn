@@ -26,8 +26,8 @@ pub mod schema;
 
 pub use client::{ApiClient, ApiErrorCode, ApiFailure, ProvisionApi, Refusal};
 pub use provision::{
-    ConfigSink, DeviceIdentity, PeerLookup, RepairOutcome, SyncError, SyncResult, lookup_peer,
-    repair_peer, sync_peers, sync_wg_family_peer,
+    ConfigOutcome, ConfigSink, DeviceIdentity, PeerLookup, RepairOutcome, SyncError, SyncResult,
+    config_for_peer, lookup_peer, repair_peer, sync_peers, sync_wg_family_peer,
 };
 /// The protocols that are backed by a per-device peer row.
 ///

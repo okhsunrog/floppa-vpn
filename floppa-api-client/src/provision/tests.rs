@@ -22,6 +22,8 @@ struct FakeApi {
     me_unreachable: bool,
     amneziawg: bool,
     peers: Mutex<Vec<(Protocol, PeerAnswer)>>,
+    /// What `sync_status` a found peer carries. `Active` unless a test says otherwise.
+    peer_status: Option<PeerSyncStatus>,
     /// Consumed by the first `create_peer`; later ones succeed.
     create: Mutex<Option<Result<CreatePeerResponse, ApiFailure>>>,
     vless: Option<String>,
@@ -53,11 +55,11 @@ fn subscription() -> MySubscription {
     }
 }
 
-fn peer(id: i64, protocol: Protocol) -> MyPeer {
+fn peer(id: i64, protocol: Protocol, status: PeerSyncStatus) -> MyPeer {
     MyPeer {
         id,
         assigned_ip: "10.0.0.2".into(),
-        sync_status: PeerSyncStatus::Active,
+        sync_status: status,
         protocol,
         download_bytes: 0,
         upload_bytes: 0,
@@ -102,8 +104,15 @@ impl ProvisionApi for FakeApi {
         protocol: Protocol,
     ) -> Result<Option<MyPeer>, ApiFailure> {
         self.looked_up.lock().unwrap().push(protocol);
-        self.answers(protocol)
-            .map(|found| found.map(|id| peer(id, protocol)))
+        self.answers(protocol).map(|found| {
+            found.map(|id| {
+                peer(
+                    id,
+                    protocol,
+                    self.peer_status.unwrap_or(PeerSyncStatus::Active),
+                )
+            })
+        })
     }
 
     async fn peer_config(&self, id: i64) -> Result<String, ApiFailure> {
@@ -492,5 +501,43 @@ async fn a_repair_that_cannot_reach_the_server_concludes_nothing() {
         repair_peer(&api, &sink, &identity(), Protocol::Amneziawg).await,
         RepairOutcome::Unreachable
     );
+    assert!(api.created.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_peer_on_its_way_out_reads_as_gone_rather_than_as_one_to_connect_over() {
+    // The server has the row, and is in the middle of taking it off the interface. Adopting it
+    // means building a tunnel over a peer that is about to stop answering.
+    let api = FakeApi {
+        subscribed: true,
+        peers: Mutex::new(vec![(Protocol::Wireguard, Ok(Some(11)))]),
+        peer_status: Some(PeerSyncStatus::PendingRemove),
+        ..Default::default()
+    };
+    let sink = FakeSink::default();
+
+    let result =
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
+
+    assert_eq!(result, SyncResult::Ok);
+    assert_eq!(*api.created.lock().unwrap(), vec![Protocol::Wireguard]);
+}
+
+#[tokio::test]
+async fn a_peer_the_daemon_has_not_activated_yet_is_still_this_devices_peer() {
+    // `pending_add` is a peer being created, not one missing: asking for a second would take
+    // another slot from the account's limit for the same device.
+    let api = FakeApi {
+        subscribed: true,
+        peers: Mutex::new(vec![(Protocol::Wireguard, Ok(Some(12)))]),
+        peer_status: Some(PeerSyncStatus::PendingAdd),
+        ..Default::default()
+    };
+    let sink = FakeSink::default();
+
+    let result =
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
+
+    assert_eq!(result, SyncResult::Ok);
     assert!(api.created.lock().unwrap().is_empty());
 }

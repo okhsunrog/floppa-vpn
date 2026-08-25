@@ -10,9 +10,7 @@ gotatun.workspace = true
 floppa-tunnel-config = { workspace = true, features = ["gotatun"] }
 tun = { version = "0.8", features = ["async"] }
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.13", features = ["json"] }
 clap = { version = "4", features = ["derive", "env"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ipnetwork = "0.21"
 anyhow = "1"
@@ -23,7 +21,7 @@ tracing-subscriber.workspace = true
 tracing-appender = "0.2.4"
 uuid = { version = "1.25.0", features = ["v4"] }
 url = "2.5.8"
-thiserror.workspace = true
 base64.workspace = true
+floppa-api-client = { version = "0.1.0", path = "../floppa-api-client" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }

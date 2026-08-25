@@ -1,13 +1,15 @@
-mod api;
 mod auth;
 mod dns;
 mod net;
+mod protocol;
+mod provision;
 mod rollback;
 mod tunnel;
 mod vless;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use floppa_api_client::{ApiClient, ProvisionApi};
 use floppa_tunnel_config::TunnelConfig;
 
 const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
@@ -45,8 +47,8 @@ enum Command {
         #[arg(long)]
         config: Option<String>,
         /// Tunnel protocol (AmneziaWG by default, like the app)
-        #[arg(long, value_enum, default_value_t = api::Protocol::AmneziaWg)]
-        protocol: api::Protocol,
+        #[arg(long, value_enum, default_value_t = protocol::Protocol::AmneziaWg)]
+        protocol: protocol::Protocol,
         /// TUN interface name
         #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
         interface: String,
@@ -64,8 +66,8 @@ enum Command {
     /// Fetch and print config (WireGuard/AmneziaWG .conf or VLESS URI)
     Config {
         /// Tunnel protocol (AmneziaWG by default, like the app)
-        #[arg(long, value_enum, default_value_t = api::Protocol::AmneziaWg)]
-        protocol: api::Protocol,
+        #[arg(long, value_enum, default_value_t = protocol::Protocol::AmneziaWg)]
+        protocol: protocol::Protocol,
         /// Peer ID (WireGuard/AmneziaWG only; uses first active peer of that protocol if omitted)
         #[arg(long)]
         peer_id: Option<i64>,
@@ -132,8 +134,8 @@ async fn main() -> Result<()> {
                     .with_context(|| format!("Failed to read config file: {path}"))?,
                 None => {
                     let token = tokens.require()?;
-                    let client = api::ApiClient::new(&api_url, &token);
-                    let me = client.get_me().await?;
+                    let client = ApiClient::new(&api_url, &token)?;
+                    let me = client.me().await?;
                     if let Some(ref sub) = me.subscription {
                         eprintln!(
                             "Plan: {} (speed limit: {})",
@@ -145,9 +147,7 @@ async fn main() -> Result<()> {
                     } else {
                         bail!("No active subscription");
                     }
-                    client
-                        .config_for(protocol, &auth::device_identity()?)
-                        .await?
+                    provision::config_for(&client, protocol, &auth::device_identity()?).await?
                 }
             };
 
@@ -159,7 +159,7 @@ async fn main() -> Result<()> {
         }
         Command::Peers { api_url } => {
             let token = tokens.require()?;
-            let client = api::ApiClient::new(&api_url, &token);
+            let client = ApiClient::new(&api_url, &token)?;
             let peers = client.list_peers().await?;
             if peers.is_empty() {
                 eprintln!("No peers found.");
@@ -186,16 +186,14 @@ async fn main() -> Result<()> {
             api_url,
         } => {
             let token = tokens.require()?;
-            let client = api::ApiClient::new(&api_url, &token);
+            let client = ApiClient::new(&api_url, &token)?;
             let config = match (protocol, peer_id) {
-                (api::Protocol::WireGuard | api::Protocol::AmneziaWg, Some(id)) => {
-                    client.get_peer_config(id).await?
+                (protocol::Protocol::WireGuard | protocol::Protocol::AmneziaWg, Some(id)) => {
+                    client.peer_config(id).await?
                 }
-                (api::Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
+                (protocol::Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
                 (protocol, None) => {
-                    client
-                        .config_for(protocol, &auth::device_identity()?)
-                        .await?
+                    provision::config_for(&client, protocol, &auth::device_identity()?).await?
                 }
             };
             print!("{config}");
@@ -206,15 +204,18 @@ async fn main() -> Result<()> {
             if let Some(token) = tokens.load()? {
                 match auth::session_id(&token) {
                     Some(session_id) => {
-                        match api::ApiClient::new(&api_url, &token)
+                        match ApiClient::new(&api_url, &token)?
                             .delete_session(session_id)
                             .await
                         {
                             Ok(()) => eprintln!("Session ended on the server."),
-                            Err(
-                                api::ApiClientError::Unauthorized
-                                | api::ApiClientError::NotFound(_),
-                            ) => {
+                            // Already gone, one way or another: an expired token, or a session
+                            // signed out from somewhere else. Exactly the one that must still go
+                            // locally.
+                            Err(e)
+                                if e.is_unauthorized()
+                                    || e.refusal().is_some_and(|r| r.status == 404) =>
+                            {
                                 eprintln!("The server had already ended this session.")
                             }
                             Err(e) => eprintln!("Could not end the session on the server: {e}"),

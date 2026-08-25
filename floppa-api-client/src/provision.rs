@@ -15,7 +15,20 @@ use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
 use crate::client::{ApiErrorCode, ApiFailure, ProvisionApi};
-use crate::schema::{CreatePeerRequest, Protocol, UpsertInstallationRequest};
+use crate::schema::{CreatePeerRequest, PeerSyncStatus, Protocol, UpsertInstallationRequest};
+
+impl PeerSyncStatus {
+    /// Whether this peer is usable, or about to be.
+    ///
+    /// `PendingAdd` counts: the daemon is on its way to putting it on the interface, and a client
+    /// that treated it as absent would ask for a second peer while the first was being created.
+    /// `PendingRemove` does not: it is on its way off, and adopting it means connecting over a
+    /// peer that will stop answering — which is exactly the failure the repair path exists to
+    /// clean up after.
+    pub fn is_live(self) -> bool {
+        matches!(self, PeerSyncStatus::PendingAdd | PeerSyncStatus::Active)
+    }
+}
 
 /// Who this device is to the server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,20 +102,75 @@ pub enum PeerLookup {
     Unknown,
 }
 
-/// Ask whether this device has a peer for `protocol`.
+/// Ask whether this device has a *usable* peer for `protocol`.
+///
+/// A peer the server is in the middle of removing answers as [`PeerLookup::Missing`], because for
+/// every purpose a caller has it is: connecting over it means connecting over something that is
+/// about to stop answering.
 pub async fn lookup_peer(
     api: &dyn ProvisionApi,
     device_id: &str,
     protocol: Protocol,
 ) -> PeerLookup {
     match api.peer_by_device(device_id, protocol).await {
-        Ok(Some(peer)) => PeerLookup::Found(peer.id),
+        Ok(Some(peer)) if peer.sync_status.is_live() => PeerLookup::Found(peer.id),
+        Ok(Some(peer)) => {
+            debug!(
+                status = %peer.sync_status,
+                "the {protocol} peer for this device is on its way out; treating it as gone"
+            );
+            PeerLookup::Missing
+        }
         Ok(None) => PeerLookup::Missing,
         Err(e) => {
             debug!("could not ask about the {protocol} peer: {e}");
             PeerLookup::Unknown
         }
     }
+}
+
+/// This device's config for one protocol, as text — the peer created if it has none.
+///
+/// What [`sync_wg_family_peer`] does before it stores anything, and what a client with no config
+/// store of its own (the CLI holds one for the life of a process) wants on its own.
+pub async fn config_for_peer(
+    api: &dyn ProvisionApi,
+    identity: &DeviceIdentity,
+    has_subscription: bool,
+    protocol: Protocol,
+    allow_create: bool,
+) -> ConfigOutcome {
+    match lookup_peer(api, &identity.device_id, protocol).await {
+        PeerLookup::Found(id) => match api.peer_config(id).await {
+            Ok(raw) => ConfigOutcome::Ready(raw),
+            // A peer we have just been told exists, whose config we cannot fetch: the server is
+            // there, but this call did not land. Nothing was concluded about the peer.
+            Err(e) => {
+                warn!("could not fetch the config for peer {id}: {e}");
+                ConfigOutcome::Offline
+            }
+        },
+        PeerLookup::Unknown => ConfigOutcome::Offline,
+        PeerLookup::Missing => {
+            if !allow_create {
+                return ConfigOutcome::NotAsked;
+            }
+            if !has_subscription {
+                return ConfigOutcome::Failed(SyncError::NoSubscription);
+            }
+            create_peer(api, identity, protocol).await
+        }
+    }
+}
+
+/// What came of asking for one protocol's config.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigOutcome {
+    Ready(String),
+    /// There is no peer and none was to be created — the caller said not to.
+    NotAsked,
+    Offline,
+    Failed(SyncError),
 }
 
 /// Fetch — and, when allowed, create — the peer for one protocol, storing its config.
@@ -117,41 +185,25 @@ pub async fn sync_wg_family_peer(
     protocol: Protocol,
     allow_create: bool,
 ) -> SyncResult {
-    match lookup_peer(api, &identity.device_id, protocol).await {
-        PeerLookup::Found(id) => match api.peer_config(id).await {
-            Ok(raw) => match sink.import(raw).await {
-                Ok(()) => SyncResult::Ok,
-                Err(detail) => {
-                    warn!("the server's {protocol} config did not import: {detail}");
-                    SyncResult::Failed(SyncError::CreateFailed { detail })
-                }
-            },
-            // A peer we have just been told exists, whose config we cannot fetch: the server is
-            // there, but this call did not land. Nothing was concluded about the peer.
-            Err(e) => {
-                warn!("could not fetch the config for peer {id}: {e}");
-                SyncResult::Offline
+    match config_for_peer(api, identity, has_subscription, protocol, allow_create).await {
+        ConfigOutcome::Ready(raw) => match sink.import(raw).await {
+            Ok(()) => SyncResult::Ok,
+            Err(detail) => {
+                warn!("the server's {protocol} config did not import: {detail}");
+                SyncResult::Failed(SyncError::CreateFailed { detail })
             }
         },
-        PeerLookup::Unknown => SyncResult::Offline,
-        PeerLookup::Missing => {
-            if !allow_create {
-                return SyncResult::Ok;
-            }
-            if !has_subscription {
-                return SyncResult::Failed(SyncError::NoSubscription);
-            }
-            create_peer(api, sink, identity, protocol).await
-        }
+        ConfigOutcome::NotAsked => SyncResult::Ok,
+        ConfigOutcome::Offline => SyncResult::Offline,
+        ConfigOutcome::Failed(error) => SyncResult::Failed(error),
     }
 }
 
 async fn create_peer(
     api: &dyn ProvisionApi,
-    sink: &dyn ConfigSink,
     identity: &DeviceIdentity,
     protocol: Protocol,
-) -> SyncResult {
+) -> ConfigOutcome {
     let request = CreatePeerRequest {
         device_id: Some(identity.device_id.clone()),
         device_name: identity.device_name.clone(),
@@ -160,19 +212,16 @@ async fn create_peer(
     };
     match api.create_peer(&request).await {
         Ok(created) => {
-            info!(peer = created.id, %protocol, "a peer was created for this device");
-            match sink.import(created.config).await {
-                Ok(()) => SyncResult::Ok,
-                Err(detail) => SyncResult::Failed(SyncError::CreateFailed { detail }),
-            }
+            info!(peer = created.id, %protocol, ip = %created.assigned_ip, "a peer was created for this device");
+            ConfigOutcome::Ready(created.config)
         }
         Err(ApiFailure::Unreachable(why)) => {
             debug!("the peer could not be created: {why}");
-            SyncResult::Offline
+            ConfigOutcome::Offline
         }
         Err(ApiFailure::Refused(refusal)) => {
             warn!("the server refused to create a {protocol} peer: {refusal:?}");
-            SyncResult::Failed(if refusal.is(ApiErrorCode::NoActiveSubscription) {
+            ConfigOutcome::Failed(if refusal.is(ApiErrorCode::NoActiveSubscription) {
                 SyncError::NoSubscription
             } else if refusal.is(ApiErrorCode::PeerLimitReached) {
                 SyncError::PeerLimitReached
