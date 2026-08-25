@@ -29,6 +29,7 @@ uuid = { version = "1.22.0", features = ["serde", "v4"] }
 argon2 = { version = "0.5.3", features = ["std"] }
 url = { version = "2.5.8", features = ["serde"] }
 utoipa.workspace = true
+floppa-tunnel-config.workspace = true
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["migrate"] }
