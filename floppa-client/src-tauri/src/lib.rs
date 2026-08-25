@@ -127,7 +127,6 @@ pub fn run() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_log::Builder::new().skip_logger().build())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .manage(platform.clone())
         .invoke_handler(specta_builder.invoke_handler());
@@ -144,17 +143,6 @@ pub fn run() {
     #[cfg(target_os = "android")]
     {
         builder = builder.plugin(tauri_plugin_android_fs::init());
-    }
-
-    // Desktop-only plugins (not needed on mobile)
-    #[cfg(not(mobile))]
-    {
-        builder = builder
-            .plugin(tauri_plugin_autostart::init(
-                tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-                None,
-            ))
-            .plugin(tauri_plugin_process::init());
     }
 
     // Add VPN plugin on mobile platforms

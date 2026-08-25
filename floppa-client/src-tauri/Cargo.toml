@@ -22,16 +22,12 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-log = { version = "2", features = ["colored"] }
 tauri-plugin-os = "2"
-tauri-plugin-autostart = "2"
-tauri-plugin-process = "2"
-tauri-plugin-shell = "2"
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 specta-typescript = { version = "0.0.12" }
 tauri-specta = { git = "https://github.com/specta-rs/tauri-specta", rev = "40a7b831b0493ac2be7bc7bfd55980d5a6802044", features = ["typescript", "derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio = { version = "1", features = ["full"] }
-anyhow = "1"
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.23"
@@ -48,15 +44,12 @@ tun = { version = "0.8", features = ["async"] }
 # VPN plugin for mobile platforms
 tauri-plugin-vpn = { path = "../../tauri-plugin-vpn" }
 tauri-plugin-deep-link = "2"
-uuid = { version = "1.21.0", features = ["v4"] }
 hostname = "0.4.2"
-keyring = { version = "3.6.3", features = ["crypto-rust"] }
 tauri-plugin-opener = "2.5.3"
 tempfile = "3.26.0"
 tauri-plugin-android-fs = "29"
 # VLESS+REALITY protocol support
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
-logroller = "0.1.10"
 flate2 = "1.1.9"
 tar = "0.4.44"
 tokio-util = { version = "0.7.18", features = ["rt"] }
@@ -64,14 +57,9 @@ tokio-util = { version = "0.7.18", features = ["rt"] }
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.31", features = ["user", "net", "process"] }
 keyring = { version = "3.6.3", features = ["linux-native-async-persistent"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62", features = [
-    "Win32_NetworkManagement_IpHelper",
-    "Win32_Networking_WinSock"
-] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
 # 0.7.40 carries the "hide the console window" change this used to be forked for; upstream took
 # it in as "refactor run_command function", so the [patch.crates-io] override is gone.
@@ -87,6 +75,10 @@ tracing-logcat = "0.1.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+keyring = { version = "3.6.3", features = ["crypto-rust"] }
+uuid = { version = "1.25.0", features = ["v4"] }
 
 [profile.release]
 strip = true
