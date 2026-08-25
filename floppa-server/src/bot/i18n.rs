@@ -3,7 +3,6 @@
 use floppa_core::DbPool;
 use floppa_core::billing::PurchasablePlan;
 
-#[allow(dead_code)]
 pub struct Messages {
     // /start
     pub welcome: &'static str,

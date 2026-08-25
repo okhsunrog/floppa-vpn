@@ -166,9 +166,16 @@ async fn main() -> Result<()> {
     info!("Notification checker started");
 
     // Build teloxide dispatcher
+    // Handlers answer the user themselves before an error reaches this point (see
+    // `bot::handlers::report_errors`); all that is left to do here is log it.
     let handler = bot::handlers::schema();
     let mut dispatcher = Dispatcher::builder(bot, handler)
         .dependencies(dptree::deps![pool, config, secrets, wg_public_key])
+        .error_handler(std::sync::Arc::new(
+            |err: bot::handlers::BotError| async move {
+                error!("Bot handler failed: {err}");
+            },
+        ))
         .enable_ctrlc_handler()
         .build();
 

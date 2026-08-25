@@ -1,18 +1,34 @@
 use crate::bot::i18n;
 use chrono::{Duration, Utc};
+use dptree::di::DependencyMap;
 use floppa_core::{Config, DbPool, Secrets, billing, services};
+use std::ops::ControlFlow;
+use std::sync::Arc;
 use teloxide::{
     dispatching::UpdateHandler,
     prelude::*,
     types::{
         InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup, LabeledPrice,
-        ParseMode, PreCheckoutQuery, SuccessfulPayment, WebAppInfo,
+        ParseMode, PreCheckoutQuery, SuccessfulPayment, UpdateKind, WebAppInfo,
     },
     utils::command::BotCommands,
 };
-use tracing::error;
+use tracing::{error, warn};
 
-type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+/// What a bot handler can fail with. Every variant is unexpected from the user's point of view
+/// (the expected outcomes — invalid link, no subscription, … — are replies, not errors), so
+/// [`report_errors`] answers all of them with the same generic apology before they are logged.
+#[derive(Debug, thiserror::Error)]
+pub enum BotError {
+    #[error(transparent)]
+    Core(#[from] floppa_core::FloppaError),
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+    #[error("Telegram API request failed: {0}")]
+    Telegram(#[from] teloxide::RequestError),
+}
+
+type HandlerResult = Result<(), BotError>;
 
 #[derive(BotCommands, Clone)]
 #[command(rename_rule = "lowercase", description = "Available commands:")]
@@ -29,7 +45,7 @@ pub enum Command {
     Lang,
 }
 
-pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'static>> {
+pub fn schema() -> UpdateHandler<BotError> {
     use dptree::case;
 
     let command_handler = teloxide::filter_command::<Command, _>()
@@ -63,9 +79,71 @@ pub fn schema() -> UpdateHandler<Box<dyn std::error::Error + Send + Sync + 'stat
         .branch(message_handler)
         .branch(callback_handler);
 
-    dptree::entry()
-        .branch(pre_checkout_handler)
-        .branch(private_chats_only)
+    report_errors(
+        dptree::entry()
+            .branch(pre_checkout_handler)
+            .branch(private_chats_only),
+    )
+}
+
+/// Wrap a handler tree so that a failed endpoint still answers the user.
+///
+/// The dispatcher's error handler only ever sees the error value, not the update it came from,
+/// so a failure would otherwise vanish into a log line: the user gets no reply, and a failed
+/// pre-checkout is left unanswered until Telegram gives up on it. This layer runs the inner
+/// tree, and on `Err` replies with `error_generic` in the user's language — declining the
+/// pre-checkout with that text when the update is one — before handing the error on for
+/// logging. The inner tree's signature and update-kind description are kept, so dptree's
+/// type checking and the dispatcher's `allowed_updates` still see the real tree.
+fn report_errors(inner: UpdateHandler<BotError>) -> UpdateHandler<BotError> {
+    let signature = inner.sig().clone();
+    let description = inner.description().clone();
+    dptree::from_fn_with_description(
+        description,
+        move |deps: DependencyMap, cont| {
+            let inner = inner.clone();
+            async move {
+                let flow = inner.execute(deps.clone(), cont).await;
+                if let ControlFlow::Break(Err(err)) = &flow {
+                    let bot: Arc<Bot> = deps.get();
+                    let update: Arc<Update> = deps.get();
+                    let pool: Arc<DbPool> = deps.get();
+                    tell_user_it_failed(&bot, &update, &pool, err).await;
+                }
+                flow
+            }
+        },
+        signature,
+    )
+}
+
+/// Best-effort "something went wrong" reply for the update a handler failed on.
+async fn tell_user_it_failed(bot: &Bot, update: &Update, pool: &DbPool, err: &BotError) {
+    let msgs = match update.from() {
+        Some(user) => {
+            i18n::resolve_lang(pool, user.id.0 as i64, user.language_code.as_deref()).await
+        }
+        None => i18n::for_lang(None),
+    };
+    let sent = match &update.kind {
+        // Not answering a pre-checkout leaves the payment hanging; declining it keeps the
+        // user's Stars untouched and shows them the reason.
+        UpdateKind::PreCheckoutQuery(q) => bot
+            .answer_pre_checkout_query(q.id.clone(), false)
+            .error_message(msgs.error_generic)
+            .await
+            .map(drop),
+        _ => match update.chat() {
+            Some(chat) => bot
+                .send_message(chat.id, msgs.error_generic)
+                .await
+                .map(drop),
+            None => Ok(()),
+        },
+    };
+    if let Err(reply_err) = sent {
+        warn!("Could not report a handler failure ({err}) to the user: {reply_err}");
+    }
 }
 
 /// True for updates that originate in a one-to-one chat with the bot. For a callback query this
@@ -496,6 +574,10 @@ async fn lang(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
 }
 
 async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerResult {
+    // Acknowledge first: the client shows a spinner on the tapped button until the query is
+    // answered, and every early return below would otherwise leave it spinning.
+    bot.answer_callback_query(q.id.clone()).await?;
+
     let data = match q.data.as_deref() {
         Some(d) => d,
         None => return Ok(()),
@@ -514,8 +596,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
 
         let msgs = i18n::for_lang(Some(lang));
 
-        bot.answer_callback_query(q.id.clone()).await?;
-
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.lang_set)
                 .await?;
@@ -523,7 +603,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
     } else if let Some(code) = data.strip_prefix("link_merge:") {
         let telegram_id = q.from.id.0 as i64;
         let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
-        bot.answer_callback_query(q.id.clone()).await?;
 
         // Re-validate the code (it may have expired while the button waited) and re-resolve the husk.
         let pending = sqlx::query!(
@@ -564,7 +643,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
     } else if data == "link_cancel" {
         let telegram_id = q.from.id.0 as i64;
         let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
-        bot.answer_callback_query(q.id.clone()).await?;
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.link_cancelled)
                 .await?;
@@ -612,8 +690,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             plan.period_days,
             Utc::now(),
         );
-
-        bot.answer_callback_query(q.id.clone()).await?;
 
         let chat_id = q
             .message
