@@ -32,7 +32,7 @@ use std::net::IpAddr;
 use tracing::{info, warn};
 
 pub mod journal;
-pub use journal::Journal;
+pub use journal::{Journal, StackId};
 
 /// One reversible mutation of the machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -169,27 +169,47 @@ impl UnwindReport {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RollbackStack {
+    /// Names this stack's records in the journal, so its writes replace only those. Several
+    /// stacks share one journal over time — every attempt has its own, and the actor holds one —
+    /// and what one of them gave up on must not be erased by the next one's bookkeeping.
+    id: StackId,
     steps: Vec<Applied>,
     journal: Option<Journal>,
+}
+
+impl Default for RollbackStack {
+    fn default() -> Self {
+        Self::new(None)
+    }
 }
 
 impl RollbackStack {
     pub fn new(journal: Option<Journal>) -> Self {
         Self {
+            id: StackId::next(),
             steps: Vec::new(),
             journal,
         }
     }
 
-    /// Rebuild a stack from steps a previous process left in its journal.
+    /// Rebuild a stack from steps a previous process — or a crashed attempt — left in the journal.
     ///
     /// The steps are exactly as they were persisted, so unwinding this is indistinguishable from
     /// unwinding the stack that wrote it — which is the point: crash recovery is not a separate
-    /// code path.
+    /// code path. The journal is rewritten as this stack's alone: `steps` is everything it held,
+    /// and the records left under their old stacks would otherwise be recovered a second time.
     pub fn from_orphaned(steps: Vec<Applied>, journal: Option<Journal>) -> Self {
-        Self { steps, journal }
+        let stack = Self {
+            id: StackId::next(),
+            steps,
+            journal,
+        };
+        if let Some(journal) = &stack.journal {
+            journal.claim(stack.id, stack.steps.iter().filter(|a| a.step.durable()));
+        }
+        stack
     }
 
     /// Record a step, persist it if durable, and only then let the caller apply it.
@@ -245,10 +265,12 @@ impl RollbackStack {
     }
 
     /// Persist the durable steps on the stack plus `extra` — steps that have been popped because
-    /// their undo gave up, but whose effect is still on the machine.
+    /// their undo gave up, but whose effect is still on the machine. Only this stack's records
+    /// are replaced; what another stack left in the journal stays.
     fn persist_with(&self, extra: &[Applied]) {
         if let Some(journal) = &self.journal {
             journal.write(
+                self.id,
                 self.steps
                     .iter()
                     .chain(extra.iter())
@@ -293,7 +315,9 @@ pub fn split_default(allowed_ips: &[IpNetwork], include_ipv6: bool) -> Vec<IpNet
 /// must not wedge the caller forever — but it is reported in [`UnwindReport::residual`] so the
 /// failure is visible rather than silent, and if it was durable it stays in the journal so the
 /// next start tries again. Previously the journal was cleared regardless, which turned "the undo
-/// failed" into "nothing is left to undo" the moment the process restarted.
+/// failed" into "nothing is left to undo" the moment the process restarted — and later, when it
+/// was kept, the next attempt's stack overwrote the whole file with its own steps on its first
+/// push, which lost it just the same. Records are per stack now (see [`journal`]).
 pub async fn unwind(
     stack: &mut RollbackStack,
     extra: Option<ExtraUndo>,
@@ -472,8 +496,23 @@ mod tests {
         );
     }
 
-    /// A platform whose route removal always fails, and a backend that never runs.
-    struct StuckRoutes;
+    /// A platform whose route removal fails until released, and a backend that never runs.
+    struct StuckRoutes {
+        stuck: std::sync::atomic::AtomicBool,
+    }
+
+    impl StuckRoutes {
+        fn stuck() -> Self {
+            Self {
+                stuck: std::sync::atomic::AtomicBool::new(true),
+            }
+        }
+
+        /// From now on route removal succeeds — the helper came back, say.
+        fn release(&self) {
+            self.stuck.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
 
     #[async_trait::async_trait]
     impl Platform for StuckRoutes {
@@ -546,9 +585,12 @@ mod tests {
             _: &[IpNetwork],
             _: Option<u32>,
         ) -> Result<(), crate::vpn::platform::PlatformError> {
-            Err(crate::vpn::platform::PlatformError::Failed(
-                "helper refused".into(),
-            ))
+            if self.stuck.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::vpn::platform::PlatformError::Failed(
+                    "helper refused".into(),
+                ));
+            }
+            Ok(())
         }
         async fn capture_dns(
             &self,
@@ -622,7 +664,7 @@ mod tests {
         stack.push(routes.clone());
         stack.confirm_top(routes.clone());
 
-        let report = unwind(&mut stack, None, &StuckRoutes, &NoBackend, 0).await;
+        let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
 
         assert!(
             stack.is_empty(),
@@ -650,7 +692,62 @@ mod tests {
         });
         assert!(Journal::default_path(dir.path()).exists());
 
-        let report = unwind(&mut stack, None, &StuckRoutes, &NoBackend, 0).await;
+        let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
+        assert!(report.is_clean());
+        assert!(!Journal::default_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn a_failed_durable_undo_survives_the_next_stacks_journal_writes() {
+        // The residue of one attempt's unwind used to live in the journal only until the next
+        // attempt — a new stack on the same journal — pushed its first step and overwrote the
+        // file with its own (empty) set of durable steps.
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(Journal::default_path(dir.path()));
+        let platform = StuckRoutes::stuck();
+
+        let routes = Step::Routes {
+            iface: iface(),
+            routes: vec![net("0.0.0.0/1")],
+            if_index: None,
+        };
+        let mut first = RollbackStack::new(Some(journal.clone()));
+        first.push(routes.clone());
+        first.confirm_top(routes.clone());
+        let report = unwind(&mut first, None, &platform, &NoBackend, 0).await;
+        assert_eq!(report.residual.len(), 1);
+
+        // The next attempt: a non-durable push, then a durable one, then a clean unwind.
+        let mut second = RollbackStack::new(Some(journal.clone()));
+        second.push(Step::PrepareLink { iface: iface() });
+        assert_eq!(
+            journal.read_orphaned().len(),
+            1,
+            "the first stack's residue survives the second stack's first write"
+        );
+        let dns = Step::Dns {
+            iface: iface(),
+            snapshot: DnsSnapshot::Resolvectl,
+            if_index: None,
+        };
+        second.push(dns.clone());
+        second.confirm_top(dns);
+        assert_eq!(
+            journal.read_orphaned().len(),
+            2,
+            "both stacks are in the file"
+        );
+        let report = unwind(&mut second, None, &platform, &NoBackend, 0).await;
+        assert!(report.is_clean(), "the second stack had nothing stuck");
+        let left = journal.read_orphaned();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].step, routes, "only the residue is left");
+
+        // The next start: recovery picks it up and, with the helper back, finishes the job.
+        let mut recovered = RollbackStack::from_orphaned(left, Some(journal.clone()));
+        assert_eq!(recovered.len(), 1);
+        platform.release();
+        let report = unwind(&mut recovered, None, &platform, &NoBackend, 0).await;
         assert!(report.is_clean());
         assert!(!Journal::default_path(dir.path()).exists());
     }
