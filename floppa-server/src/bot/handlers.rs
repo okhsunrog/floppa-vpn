@@ -113,11 +113,11 @@ async fn start(
 
     // Follow up with a prominent inline button that launches the Mini App, if configured.
     // (The chat menu button next to the input — set at startup — also opens it.)
-    let web_app_url = config.bot.as_ref().and_then(|b| b.web_app_url.as_deref());
+    let web_app_url = config.bot.as_ref().and_then(|b| b.web_app_url.clone());
     if let Some(url) = web_app_url {
         let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::web_app(
             msgs.open_app,
-            WebAppInfo { url: url.parse()? },
+            WebAppInfo { url },
         )]]);
         bot.send_message(msg.chat.id, msgs.open_app_cta)
             .reply_markup(keyboard)

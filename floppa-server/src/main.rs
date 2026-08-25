@@ -80,11 +80,11 @@ async fn main() -> Result<()> {
 
     // Point the chat menu button (next to the message input) at the Mini App, so the app
     // is always one tap away instead of the default commands list.
-    if let Some(url) = config.bot.as_ref().and_then(|b| b.web_app_url.as_deref()) {
+    if let Some(url) = config.bot.as_ref().and_then(|b| b.web_app_url.clone()) {
         bot.set_chat_menu_button()
             .menu_button(MenuButton::WebApp {
                 text: "Floppa VPN".to_string(),
-                web_app: WebAppInfo { url: url.parse()? },
+                web_app: WebAppInfo { url },
             })
             .await?;
         info!("Chat menu button set to Mini App");

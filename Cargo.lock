@@ -1228,6 +1228,7 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
+ "url",
  "uuid",
  "veil",
  "x25519-dalek 3.0.0",

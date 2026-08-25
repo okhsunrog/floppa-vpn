@@ -303,7 +303,7 @@ pub struct BotConfig {
     /// Bot username (without @) for Telegram Login Widget
     pub username: Option<String>,
     /// Public URL where floppa-face is served (for Telegram Mini App)
-    pub web_app_url: Option<String>,
+    pub web_app_url: Option<url::Url>,
     /// Approximate Stars-to-RUB rate for displaying ruble equivalent in /buy (e.g. 1.8)
     pub stars_rub_rate: Option<f64>,
 }
@@ -572,7 +572,10 @@ mod tests {
         assert_eq!(auth, AuthConfig::default());
 
         let bot = config.bot.expect("[bot] present");
-        assert!(bot.web_app_url.is_some());
+        assert_eq!(
+            bot.web_app_url.as_ref().map(url::Url::as_str),
+            Some("https://vpn.example.com/")
+        );
         assert_eq!(bot.stars_rub_rate, Some(1.8));
 
         assert!(config.vless.is_some());

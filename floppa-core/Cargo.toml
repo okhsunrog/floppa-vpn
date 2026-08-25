@@ -27,6 +27,7 @@ ipnetwork = { version = "0.21.1", features = ["serde"] }
 veil = "0.3.0"
 uuid = { version = "1.22.0", features = ["v4"] }
 argon2 = { version = "0.5.3", features = ["std"] }
+url = { version = "2.5.8", features = ["serde"] }
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["migrate"] }
