@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -204,12 +206,35 @@ class FloppaVpnService : VpnService() {
      */
     private var lastStartId: Int = 0
 
+    /**
+     * The phone's default network changed under a running tunnel: rebind its socket in place. The
+     * tunnel, its descriptor and its routes are unaffected — only the socket was bound to a network
+     * that is now gone.
+     */
+    private external fun nativeNetworkChanged(generation: Long)
+
     private external fun nativeStop(generation: Long)
 
     private var tunInterface: ParcelFileDescriptor? = null
 
     /** Whether this generation was started by the system rather than by the plugin. */
     private var autonomous = false
+
+    /**
+     * Watches which network the tunnel is riding on, for as long as one is up.
+     *
+     * Two things depend on it. `setUnderlyingNetworks` tells the system what the VPN is actually
+     * carried by, which is what makes traffic accounting and "is there a network" correct for every
+     * app inside the tunnel. And a *change* of that network is the single most common way a mobile
+     * tunnel breaks: the socket underneath stays bound to a network that no longer exists, so every
+     * packet falls into a hole while the tunnel still looks perfectly up. Rebinding it here takes a
+     * round trip, needs no UI process, and never changes what is running — so it can never fight
+     * the actor's own recovery, which starts a whole cycle and takes minutes to reach.
+     */
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
+    /** The network the tunnel is currently riding, so only a real change bounces the socket. */
+    private var underlyingNetwork: Network? = null
 
     /**
      * Every field above is touched on the main thread only. Rust calls [shutdownService] and
@@ -365,6 +390,7 @@ class FloppaVpnService : VpnService() {
             val fd = tunInterface?.fd ?: throw IllegalStateException("Failed to get TUN fd")
             Log.i(TAG, "TUN interface created with fd: $fd")
             nativeSetTunFd(generation, fd)
+            watchNetwork(generation)
             afterReady()
         } catch (e: Exception) {
             // The socket is bound, so this is reportable. Leave the generation answering for a
@@ -443,6 +469,7 @@ class FloppaVpnService : VpnService() {
     }
 
     private fun cleanupAndroid() {
+        stopWatchingNetwork()
         stopForeground(STOP_FOREGROUND_REMOVE)
 
         tunInterface?.let { tun ->
@@ -453,6 +480,73 @@ class FloppaVpnService : VpnService() {
                 Log.w(TAG, "Error closing TUN interface", e)
             }
             tunInterface = null
+        }
+    }
+
+    /**
+     * Follow the default network for as long as [generation] owns the tunnel.
+     *
+     * The first `onAvailable` after registering describes the network the tunnel was just built on,
+     * so it is recorded and not acted on; only a *different* network from then on is a roam. The
+     * callback is registered once per generation and removed with the rest of the Android-side
+     * teardown.
+     */
+    private fun watchNetwork(generation: Long) {
+        stopWatchingNetwork()
+        val manager = getSystemService(ConnectivityManager::class.java)
+        if (manager == null) {
+            Log.w(TAG, "No ConnectivityManager: the tunnel will not follow network changes")
+            return
+        }
+        val callback =
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) {
+                    mainHandler.post { onDefaultNetwork(generation, network) }
+                }
+
+                override fun onLost(network: Network) {
+                    // Not acted on: there is nothing to rebind onto until another network
+                    // arrives, and that arrival is an onAvailable.
+                    Log.i(TAG, "Lost network $network")
+                }
+            }
+        try {
+            manager.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not watch the default network", e)
+        }
+    }
+
+    private fun onDefaultNetwork(generation: Long, network: Network) {
+        // A callback outliving its generation belongs to a tunnel that is already gone.
+        if (this.generation != generation) return
+
+        setUnderlyingNetworks(arrayOf(network))
+        val previous = underlyingNetwork
+        underlyingNetwork = network
+        if (previous == null) {
+            Log.i(TAG, "Tunnel is riding $network")
+            return
+        }
+        if (previous == network) return
+
+        Log.i(TAG, "Default network changed: $previous -> $network; rebinding the tunnel")
+        try {
+            nativeNetworkChanged(generation)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not tell the tunnel its network changed", e)
+        }
+    }
+
+    private fun stopWatchingNetwork() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        underlyingNetwork = null
+        try {
+            getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not stop watching the default network", e)
         }
     }
 

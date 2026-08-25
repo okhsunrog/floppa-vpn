@@ -398,6 +398,39 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTun
     .resolve::<ThrowRuntimeExAndDefault>();
 }
 
+/// Called when the phone's default network changed under a running tunnel.
+///
+/// The one recovery that belongs *here* rather than in the actor: the tunnel, its descriptor and
+/// its routes are all still right, and only the socket underneath is bound to a network that no
+/// longer exists. Rebinding it in place is what a roam between Wi-Fi and mobile data needs, and
+/// doing it here means it happens whether or not a UI process is alive to notice.
+///
+/// It never changes what is running, so it cannot fight the actor over the tunnel's identity: the
+/// actor's own recovery starts a whole cycle and takes minutes to reach, this takes a round trip.
+/// Best-effort and generation-guarded: a change reported for an instance that has been superseded
+/// belongs to a tunnel that is already gone.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetworkChanged<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    generation: jlong,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let generation = generation as u64;
+        serving(generation)?;
+        info!("nativeNetworkChanged: rebinding the tunnel of generation {generation}");
+        let manager = get_tunnel_manager();
+        get_runtime().spawn(async move {
+            match manager.network_changed().await {
+                Ok(()) => info!("the tunnel was rebound onto the new network"),
+                Err(e) => warn!("could not rebind the tunnel after the network changed: {e}"),
+            }
+        });
+        Ok(())
+    });
+    log_outcome("nativeNetworkChanged", outcome.into_outcome());
+}
+
 /// Called when `establish()` (or anything else between the bind and the descriptor) failed:
 /// record the reason on the generation so the UI's next poll returns it as `start_error`.
 ///
