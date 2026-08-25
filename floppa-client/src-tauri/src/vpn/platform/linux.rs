@@ -29,26 +29,44 @@ const POLICY_CONTENT: &str =
 /// Deliberately holds no undo state: what was applied lives in the caller's rollback stack. The
 /// previous version kept `original_resolv_conf`, `saved_gateway`, `saved_endpoint_ip` and
 /// `saved_routes` here, which was a second rollback stack competing with the real one.
-pub struct LinuxPlatform {
-    /// Whether systemd-resolved is available.
-    has_resolvectl: bool,
-}
+pub struct LinuxPlatform;
 
 impl LinuxPlatform {
     pub fn new() -> Self {
-        let has_resolvectl = Command::new("resolvectl")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        Self
+    }
 
-        if has_resolvectl {
-            debug!("systemd-resolved available, will use resolvectl for DNS");
-        } else {
-            debug!("resolvectl not available, will modify /etc/resolv.conf directly");
+    /// Is systemd-resolved the thing that owns name resolution right now?
+    ///
+    /// Asked at the moment DNS is about to be touched, not at startup, and asked of the system
+    /// rather than of `$PATH`: on Arch, Debian and Ubuntu Server the `resolvectl` binary is
+    /// installed whether or not the service runs. Deciding by the binary meant `resolvectl dns`
+    /// failed on those hosts, the default `Tolerate` policy shrugged, and the tunnel came up with
+    /// the system's DNS untouched — while the `/etc/resolv.conf` path that would have worked was
+    /// unreachable.
+    fn systemd_resolved_active() -> bool {
+        // The documented sign: /etc/resolv.conf is (a possibly relative) symlink into resolved's
+        // runtime directory.
+        if let Ok(real) = std::fs::canonicalize(RESOLV_CONF)
+            && real.starts_with("/run/systemd/resolve")
+        {
+            debug!("systemd-resolved owns {RESOLV_CONF}");
+            return true;
         }
-
-        Self { has_resolvectl }
+        // Otherwise ask the service itself; `status` fails when it is not running.
+        let running = Command::new("resolvectl")
+            .arg("status")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if running {
+            debug!("systemd-resolved is running; using resolvectl for DNS");
+        } else {
+            debug!("systemd-resolved not active; will replace {RESOLV_CONF} directly");
+        }
+        running
     }
 
     /// Check if the polkit policy and helper are installed and up-to-date.
@@ -200,16 +218,25 @@ impl LinuxPlatform {
     ///
     /// The helper replaces the path rather than `cp`-ing onto it, so a symlink to the resolver's
     /// stub file is never written through.
+    ///
+    /// The temp file goes to `/tmp` explicitly, not `$TMPDIR`: the helper accepts only
+    /// `/tmp/floppa-resolv*` as a source, so on a host with `TMPDIR` set elsewhere every DNS
+    /// configuration used to be refused.
     fn write_resolv_conf(&self, content: &str) -> Result<(), PlatformError> {
         let tmp = tempfile::Builder::new()
             .prefix("floppa-resolv-")
-            .tempfile()
+            .tempfile_in(RESOLV_TEMP_DIR)
             .map_err(|e| {
-                PlatformError::Failed(format!("failed to create temp resolv.conf: {e}"))
+                PlatformError::Failed(format!(
+                    "failed to create temp resolv.conf in {RESOLV_TEMP_DIR}: {e}"
+                ))
             })?;
-        std::fs::write(tmp.path(), content)
-            .map_err(|e| PlatformError::Failed(format!("failed to write temp resolv.conf: {e}")))?;
-        self.run_helper(&["set-resolv-conf", &tmp.path().to_string_lossy()])
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(tmp.path(), content).map_err(|e| {
+            PlatformError::Failed(format!("failed to write temp resolv.conf {path}: {e}"))
+        })?;
+        self.run_helper(&["set-resolv-conf", &path])
+            .map_err(|e| PlatformError::Failed(format!("set-resolv-conf {path}: {e}")))
     }
 
     /// Check if IPv6 is enabled in the kernel.
@@ -370,7 +397,7 @@ impl Platform for LinuxPlatform {
         _iface: &InterfaceName,
         _if_index: Option<u32>,
     ) -> Result<DnsSnapshot, PlatformError> {
-        if self.has_resolvectl {
+        if Self::systemd_resolved_active() {
             return Ok(DnsSnapshot::Resolvectl);
         }
         // Record whether the path is a symlink BEFORE writing, so the restore can put the link
@@ -398,7 +425,7 @@ impl Platform for LinuxPlatform {
         }
         info!("Configuring DNS servers: {servers:?}");
 
-        if self.has_resolvectl {
+        if Self::systemd_resolved_active() {
             let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
             let mut args: Vec<&str> = vec!["set-dns", iface.as_str()];
             args.extend(strs.iter().map(|s| s.as_str()));
@@ -455,6 +482,8 @@ impl Platform for LinuxPlatform {
 }
 
 const RESOLV_CONF: &str = "/etc/resolv.conf";
+/// Must match the prefix `set-resolv-conf` accepts in the helper.
+const RESOLV_TEMP_DIR: &str = "/tmp";
 
 /// The single-host route covering `endpoint`.
 fn endpoint_route(endpoint: IpAddr) -> String {

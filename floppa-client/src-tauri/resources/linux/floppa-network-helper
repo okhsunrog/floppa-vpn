@@ -144,6 +144,11 @@ case "${1:-}" in
         shift 2
         for s in "$@"; do validate_ip "$s"; done
         resolvectl dns "$iface" "$@"
+        # '~.' makes this link the routing domain for every name. Without it the physical link
+        # keeps default-route too, and resolved sends queries that match no routing domain to
+        # ALL default-route links in parallel — so a share of lookups still went to the
+        # provider's resolver. This is what wg-quick's `resolvconf -x` does. `revert` clears it.
+        resolvectl domain "$iface" '~.'
         resolvectl default-route "$iface" true
         ;;
 
