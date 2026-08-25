@@ -51,7 +51,9 @@ pub fn render(
 
     let retry = match status {
         Status::Retrying { cycle, resume_at } => Some(RetryProgress {
-            pass: cycle.pass,
+            // The pass about to run, not the ones already burnt: `cycle.pass` counts backwards
+            // from the user's point of view, and "0/3" is not a thing to show anyone.
+            pass: cycle.pass + 1,
             max: cycle.passes_allowed,
             resume_in_ms: resume_at
                 .saturating_duration_since(now)
@@ -167,6 +169,7 @@ mod tests {
             index: 0,
             pass: 0,
             passes_allowed: 3,
+            born_from_loss: false,
             failures: Vec::new(),
         }
     }

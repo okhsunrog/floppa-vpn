@@ -35,6 +35,15 @@ pub struct Cycle {
     /// One entry per failed probe, across passes. This is what lets the caller find which
     /// protocol reported `verify_failed` — rather than assuming it was the last one tried.
     pub failures: Vec<AttemptFailure>,
+    /// Whether this cycle exists because a tunnel that was up went away.
+    ///
+    /// It is the difference between the two ways a cycle can run out of budget: a cold connect
+    /// that never worked is `Exhausted`, a tunnel that was working and could not be brought back
+    /// is `LostGaveUp`. Without it, the only path that reported `LostGaveUp` was the one where the
+    /// budget was already gone before the first retry — unreachable at the default
+    /// `reconnect_passes`, so a dropped tunnel that gave up reported `Exhausted` for an epoch
+    /// nobody was waiting on, and the user was left silently disconnected.
+    pub born_from_loss: bool,
 }
 
 impl Cycle {
@@ -50,6 +59,7 @@ impl Cycle {
             pass: 0,
             passes_allowed: policy.cold_passes,
             failures: Vec::new(),
+            born_from_loss: false,
         })
     }
 
@@ -57,6 +67,7 @@ impl Cycle {
     pub fn reconnect(up: &UpIntent, policy: &Policy) -> Option<Self> {
         Self::start(up, policy).map(|cycle| Self {
             passes_allowed: policy.reconnect_passes,
+            born_from_loss: true,
             ..cycle
         })
     }
@@ -69,8 +80,26 @@ impl Cycle {
         self.index + 1 >= self.order.len()
     }
 
+    /// Is there a pass left after the one `pass` counts as burnt?
     pub fn has_budget(&self) -> bool {
         self.pass + 1 < self.passes_allowed
+    }
+
+    /// How this cycle ends when its budget is gone.
+    ///
+    /// One place, so every exhaustion path — a failed probe, an expired deadline, either table —
+    /// says the same thing about the same cycle.
+    pub fn gave_up(self) -> super::outcome::CycleOutcome {
+        if self.born_from_loss {
+            super::outcome::CycleOutcome::LostGaveUp {
+                protocol: self.protocol(),
+                passes: self.pass + 1,
+            }
+        } else {
+            super::outcome::CycleOutcome::Exhausted {
+                failures: self.failures,
+            }
+        }
     }
 
     /// Advance to the next protocol, wrapping to the next pass at the end of the order.
@@ -235,6 +264,8 @@ mod tests {
         assert_eq!(reconnect.passes_allowed, policy.reconnect_passes);
         assert!(!cold.has_budget());
         assert!(reconnect.has_budget());
+        assert!(!cold.born_from_loss);
+        assert!(reconnect.born_from_loss);
     }
 
     #[test]

@@ -91,6 +91,15 @@ fn up_status(epoch: u64, protocol: Protocol, params: Option<TunnelParams>) -> Up
     }
 }
 
+/// A cycle born from a tunnel that died: the reconnect budget, and an ending that says so.
+fn reconnect_cycle(epoch: u64, order: &[Protocol], policy: &Policy) -> Cycle {
+    Cycle {
+        born_from_loss: true,
+        passes_allowed: policy.reconnect_passes,
+        ..cycle(epoch, order, policy.reconnect_passes)
+    }
+}
+
 fn cycle(epoch: u64, order: &[Protocol], passes_allowed: u32) -> Cycle {
     Cycle {
         epoch: IntentEpoch(epoch),
@@ -99,6 +108,7 @@ fn cycle(epoch: u64, order: &[Protocol], passes_allowed: u32) -> Cycle {
         index: 0,
         pass: 0,
         passes_allowed,
+        born_from_loss: false,
         failures: Vec::new(),
     }
 }
@@ -1259,7 +1269,7 @@ fn a_lost_tunnel_with_budget_left_retries_rather_than_giving_up() {
 #[test]
 fn a_lost_tunnel_out_of_budget_reports_that_it_gave_up() {
     let now = t0();
-    let mut c = cycle(1, &[AWG], 3);
+    let mut c = reconnect_cycle(1, &[AWG], &policy());
     c.pass = 2;
     let d = unwind_done(
         &unwinding_status(UnwindReason::TunnelDied, Some(c), 0),
@@ -1269,6 +1279,99 @@ fn a_lost_tunnel_out_of_budget_reports_that_it_gave_up() {
     );
     assert!(matches!(d.next, Status::Idle));
     assert!(matches!(outcome(&d), Some(CycleOutcome::LostGaveUp { .. })));
+}
+
+#[test]
+fn a_dropped_tunnel_that_never_comes_back_gives_up_at_the_default_policy() {
+    // The whole reconnect life of a dropped tunnel at `reconnect_passes: 3`, driven through the
+    // two tables. Before this, U7 burnt a pass for the death itself, so only two passes ever ran
+    // — and every failure after the first went through A9, which said `Exhausted`. `LostGaveUp`
+    // was unreachable at the shipped policy, and the frontend, which only reacts to
+    // `LostGaveUp` for a cycle nobody awaited, left the user silently disconnected.
+    let policy = policy();
+    let mut now = t0();
+    let intent = up_intent(1, &[AWG], params());
+
+    // The tunnel is confirmed gone: the unwind that follows starts the reconnect cycle.
+    let d = unwind_done(
+        &unwinding_status(
+            UnwindReason::TunnelDied,
+            Some(reconnect_cycle(1, &[AWG], &policy)),
+            0,
+        ),
+        &intent,
+        &World::Clear,
+        now,
+    );
+    let mut cycle = match d.next {
+        Status::Retrying { cycle, resume_at } => {
+            assert_eq!(cycle.pass, 0, "nothing has been tried yet");
+            now = resume_at;
+            cycle
+        }
+        other => panic!("expected a retry, got {other:?}"),
+    };
+
+    // Three passes actually run, and only then does it give up.
+    for expected_pass in 0..policy.reconnect_passes {
+        assert_eq!(cycle.pass, expected_pass);
+        let status = Status::Connecting {
+            cycle: cycle.clone(),
+            phase: AttemptPhase::Verifying,
+            deadline: now + Duration::from_secs(25),
+        };
+        let d = attempt_done(
+            &status,
+            &intent,
+            AttemptResult::Failed(AttemptError::VerifyFailed),
+            now,
+        );
+        match d.next {
+            Status::Retrying {
+                cycle: next,
+                resume_at,
+            } => {
+                assert!(
+                    expected_pass + 1 < policy.reconnect_passes,
+                    "gave up a pass early"
+                );
+                now = resume_at;
+                cycle = next;
+            }
+            Status::Idle => {
+                assert_eq!(expected_pass + 1, policy.reconnect_passes);
+                assert!(has_demote(&d));
+                match outcome(&d) {
+                    Some(CycleOutcome::LostGaveUp { protocol, passes }) => {
+                        assert_eq!(*protocol, AWG);
+                        assert_eq!(*passes, policy.reconnect_passes);
+                    }
+                    other => panic!("expected LostGaveUp, got {other:?}"),
+                }
+                return;
+            }
+            other => panic!("expected a retry or an ending, got {other:?}"),
+        }
+    }
+    panic!("the cycle never ended");
+}
+
+#[test]
+fn a_cold_connect_that_never_worked_is_exhausted_not_lost() {
+    // The other half of the same rule: nothing was ever up, so there is nothing to have lost.
+    let now = t0();
+    let status = Status::Connecting {
+        cycle: cycle(1, &[AWG], 1),
+        phase: AttemptPhase::Verifying,
+        deadline: now + Duration::from_secs(25),
+    };
+    let d = attempt_done(
+        &status,
+        &up_intent(1, &[AWG], params()),
+        AttemptResult::Failed(AttemptError::VerifyFailed),
+        now,
+    );
+    assert!(matches!(outcome(&d), Some(CycleOutcome::Exhausted { .. })));
 }
 
 #[test]

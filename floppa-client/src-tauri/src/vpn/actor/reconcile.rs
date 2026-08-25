@@ -577,13 +577,14 @@ pub fn on_attempt_done(
                             resume_at: now + backoff,
                         })
                     } else {
-                        // A9
+                        // A9: out of budget. How that reads depends on where the cycle came
+                        // from — a cold connect that never worked is exhausted, a tunnel that
+                        // was up and could not be brought back gave up.
+                        let epoch = cycle.epoch;
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
                             Effect::Resolve {
-                                epoch: cycle.epoch,
-                                outcome: CycleOutcome::Exhausted {
-                                    failures: cycle.failures,
-                                },
+                                epoch,
+                                outcome: cycle.gave_up(),
                             },
                         )
                     }
@@ -705,12 +706,11 @@ pub fn on_unwind_done(
                             resume_at: now + backoff,
                         })
                     } else {
+                        let epoch = cycle.epoch;
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
                             Effect::Resolve {
-                                epoch: cycle.epoch,
-                                outcome: CycleOutcome::Exhausted {
-                                    failures: cycle.failures,
-                                },
+                                epoch,
+                                outcome: cycle.gave_up(),
                             },
                         )
                     }
@@ -731,20 +731,21 @@ pub fn on_unwind_done(
                 UnwindReason::TunnelDied | UnwindReason::PeerLost | UnwindReason::Usurped => {
                     let mut cycle = cycle;
                     if cycle.has_budget() {
+                        // The pass is *not* burnt here: this cycle has not tried anything yet,
+                        // and counting the tunnel's death as a pass spent one of the three the
+                        // policy promises, so `reconnect_passes: 3` only ever ran two.
                         let backoff = policy.backoff(cycle.pass);
                         cycle.index = 0;
-                        cycle.pass += 1;
                         Decision::to(Status::Retrying {
                             cycle,
                             resume_at: now + backoff,
                         })
                     } else {
-                        let protocol = cycle.protocol();
-                        let passes = cycle.pass + 1;
+                        let epoch = cycle.epoch;
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
                             Effect::Resolve {
-                                epoch: cycle.epoch,
-                                outcome: CycleOutcome::LostGaveUp { protocol, passes },
+                                epoch,
+                                outcome: cycle.gave_up(),
                             },
                         )
                     }
