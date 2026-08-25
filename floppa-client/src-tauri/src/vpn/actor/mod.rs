@@ -110,42 +110,49 @@ impl TunnelActor {
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
         let policy = Policy::for_backend(backend.liveness_grace());
 
-        let actor = Self {
-            status: Status::Idle,
-            intent: Intent::default(),
-            held_stack: RollbackStack::default(),
-            configs: ConfigStore::load(),
-            speed: SpeedTracker::new(),
-            last_obs: Observation::unknown(Instant::now()),
-            observed_once: false,
-            backend: backend.clone(),
-            platform,
-            policy: policy.clone(),
-            iface: InterfaceName::default(),
-            journal,
-            #[cfg(target_os = "android")]
-            app: app.clone(),
-            attempt: None,
-            unwind: None,
-            unwind_started: None,
-            cancel_issued: false,
-            next_epoch: 1,
-            seq: 0,
-            last_outcome: None,
-            recent_outcomes: VecDeque::new(),
-            cycle_waiters: Vec::new(),
-            quiescent_waiters: Vec::new(),
-            pending_clear: None,
-            cmd_tx: cmd_tx.clone(),
-            state_tx,
-        };
-
         // Tauri's `setup` runs outside a Tokio runtime context, so these must go through Tauri's
         // runtime handle. Everything the actor spawns afterwards runs inside its own task and can
         // use `tokio::spawn` directly.
-        tauri::async_runtime::spawn(observer(backend, cmd_tx.clone(), policy));
-        tauri::async_runtime::spawn(publisher(state_rx.clone(), app));
-        tauri::async_runtime::spawn(actor.run(cmd_rx));
+        tauri::async_runtime::spawn(observer(backend.clone(), cmd_tx.clone(), policy.clone()));
+        tauri::async_runtime::spawn(publisher(state_rx.clone(), app.clone()));
+
+        let actor_tx = cmd_tx.clone();
+        tauri::async_runtime::spawn(async move {
+            // Reading the OS keyring can block for as long as an unlock dialog stays open. It
+            // runs on a blocking thread, and the loop starts only once it is done — so nothing
+            // queues behind it, and the actor task itself never blocks.
+            let configs = ConfigStore::load().await;
+            let actor = Self {
+                status: Status::Idle,
+                intent: Intent::default(),
+                held_stack: RollbackStack::default(),
+                configs,
+                speed: SpeedTracker::new(),
+                last_obs: Observation::unknown(Instant::now()),
+                observed_once: false,
+                backend,
+                platform,
+                policy,
+                iface: InterfaceName::default(),
+                journal,
+                #[cfg(target_os = "android")]
+                app,
+                attempt: None,
+                unwind: None,
+                unwind_started: None,
+                cancel_issued: false,
+                next_epoch: 1,
+                seq: 0,
+                last_outcome: None,
+                recent_outcomes: VecDeque::new(),
+                cycle_waiters: Vec::new(),
+                quiescent_waiters: Vec::new(),
+                pending_clear: None,
+                cmd_tx: actor_tx,
+                state_tx,
+            };
+            actor.run(cmd_rx).await;
+        });
 
         TunnelHandle::new(cmd_tx, state_rx)
     }

@@ -19,7 +19,8 @@ use crate::vpn::actor::types::{ConfigSummary, ConfigsView};
 use crate::vpn::config as vpn_config;
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tracing::info;
+use tokio::sync::mpsc;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -30,17 +31,90 @@ pub enum ConfigError {
     Unparseable { detail: String },
 }
 
-#[derive(Debug, Default)]
+/// What the persistence task is asked to do. Only the newest request matters: a later save
+/// supersedes an earlier one, and a delete supersedes any save before it.
+#[derive(Debug)]
+enum PersistOp {
+    Save(Box<SavedVpnConfigs>),
+    Delete,
+}
+
+/// Writes configs to the OS keyring or the fallback file from a task of their own.
+///
+/// The keyring is synchronous and can block for as long as it takes the user to answer an unlock
+/// dialog. Doing that on the actor task stalled every command and observation behind it — and a
+/// stall longer than the staleness window read as the tunnel going dark. The actor keeps the
+/// in-memory copy as the source of truth and only *sends* here; each write runs on a blocking
+/// thread, and a burst of writes collapses to the last one.
+#[derive(Debug, Clone)]
+pub struct Persister {
+    /// `None` keeps everything in memory, for tests.
+    tx: Option<mpsc::UnboundedSender<PersistOp>>,
+}
+
+impl Persister {
+    /// Start the persistence task. Must be called from within a Tokio runtime.
+    pub fn spawn() -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<PersistOp>();
+        tokio::spawn(async move {
+            while let Some(mut op) = rx.recv().await {
+                // Coalesce whatever queued up behind a slow write: only the newest state is
+                // worth writing.
+                while let Ok(next) = rx.try_recv() {
+                    op = next;
+                }
+                let written = tokio::task::spawn_blocking(move || match op {
+                    PersistOp::Save(configs) => vpn_config::save_configs(&configs),
+                    PersistOp::Delete => vpn_config::delete_configs(),
+                })
+                .await;
+                if let Err(e) = written {
+                    warn!("config persistence task failed: {e}");
+                }
+            }
+        });
+        Self { tx: Some(tx) }
+    }
+
+    fn send(&self, op: PersistOp) {
+        if let Some(tx) = &self.tx
+            && tx.send(op).is_err()
+        {
+            warn!("config persistence task is gone; the change stays in memory only");
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ConfigStore {
     configs: SavedVpnConfigs,
+    persister: Persister,
 }
 
 impl ConfigStore {
-    /// Load whatever is persisted. A missing or unreadable store is an empty one, never an error:
-    /// the app must still start so the user can import a config.
-    pub fn load() -> Self {
-        let configs = vpn_config::load_configs().unwrap_or_default();
-        Self { configs }
+    /// Load whatever is persisted, from a blocking thread. A missing or unreadable store is an
+    /// empty one, never an error: the app must still start so the user can import a config.
+    pub async fn load() -> Self {
+        let configs = match tokio::task::spawn_blocking(vpn_config::load_configs).await {
+            Ok(loaded) => loaded.unwrap_or_default(),
+            Err(e) => {
+                warn!("loading configs failed: {e}");
+                SavedVpnConfigs::default()
+            }
+        };
+        Self {
+            configs,
+            persister: Persister::spawn(),
+        }
+    }
+
+    /// A store that never touches the keyring or the filesystem.
+    #[cfg(test)]
+    pub(crate) fn in_memory(configs: SavedVpnConfigs) -> Self {
+        Self {
+            configs,
+            persister: Persister { tx: None },
+        }
     }
 
     /// Parse a config string and store it under its own protocol key.
@@ -140,11 +214,12 @@ impl ConfigStore {
 
     pub fn clear(&mut self) {
         self.configs = SavedVpnConfigs::default();
-        vpn_config::delete_configs();
+        self.persister.send(PersistOp::Delete);
     }
 
     fn save(&self) {
-        vpn_config::save_configs(&self.configs);
+        self.persister
+            .send(PersistOp::Save(Box::new(self.configs.clone())));
     }
 }
 
@@ -185,9 +260,8 @@ AllowedIPs = 0.0.0.0/0
 
     const VLESS_URI: &str = "vless://0f7f6d3c-0a1c-4f1e-9d3a-1b2c3d4e5f60@vpn.example.com:443?security=reality&sni=example.com&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123abcd&flow=xtls-rprx-vision#floppa";
 
-    /// A store that never touches the keyring or the filesystem.
     fn store_with(configs: SavedVpnConfigs) -> ConfigStore {
-        ConfigStore { configs }
+        ConfigStore::in_memory(configs)
     }
 
     fn wg() -> WgConfig {
