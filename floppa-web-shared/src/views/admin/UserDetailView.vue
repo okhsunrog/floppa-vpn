@@ -11,6 +11,10 @@ import {
   deleteSubscriptionMutation,
   deleteAdminPeerMutation,
   setUserCredentialMutation,
+  listUserSessionsQuery,
+  listUserSessionsQueryKey,
+  deleteUserSessionMutation,
+  revokeAllUserSessionsMutation,
 } from '../../client/@pinia/colada.gen'
 import { getUserAvatar } from '../../client/sdk.gen'
 import {
@@ -22,10 +26,12 @@ import {
   toIntOrNull,
 } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
+import SessionList from '../../components/SessionList.vue'
 import type { BadgeProps } from '@nuxt/ui'
 import type { SubscriptionSource } from '../../client/types.gen'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import { useConfirmAction } from '../../composables/adminList'
+import { useSessionConfirm } from '../../composables/sessions'
 
 const { t } = useI18n()
 
@@ -110,7 +116,73 @@ const invalidateUser = () => invalidate(getUserQueryKey({ path: { id: userId.val
 const setSubMut = useMutation({ ...setSubscriptionMutation(), onSettled: invalidateUser })
 const deleteSubMut = useMutation({ ...deleteSubscriptionMutation(), onSettled: invalidateUser })
 const deletePeerMut = useMutation({ ...deleteAdminPeerMutation(), onSettled: invalidateUser })
-const setCredMut = useMutation({ ...setUserCredentialMutation(), onSettled: invalidateUser })
+const setCredMut = useMutation({
+  ...setUserCredentialMutation(),
+  // A credential reset signs the user out everywhere.
+  onSettled: () => Promise.all([invalidateUser(), invalidateSessions()]),
+})
+
+// ── Sessions ──
+const invalidateSessions = () =>
+  invalidate(listUserSessionsQueryKey({ path: { id: userId.value } }))
+const { data: sessions, error: sessionsError } = useQuery(() => ({
+  ...listUserSessionsQuery({ path: { id: userId.value } }),
+  enabled: validUserId.value,
+}))
+const revokeSessionMut = useMutation({
+  ...deleteUserSessionMutation(),
+  onSettled: invalidateSessions,
+})
+const revokeAllSessionsMut = useMutation({
+  ...revokeAllUserSessionsMutation(),
+  onSettled: invalidateSessions,
+})
+const {
+  open: revokeSessionOpen,
+  pendingId: revokeSessionPendingId,
+  request: requestRevokeSession,
+  confirm: runRevokeSession,
+} = useSessionConfirm()
+const revokeAllSessionsOpen = ref(false)
+
+async function doRevokeSession() {
+  await runRevokeSession(async (sid) => {
+    if (!user.value) return
+    try {
+      await revokeSessionMut.mutateAsync({ path: { id: user.value.id, sid } })
+      toast.add({
+        title: t('common.success'),
+        description: t('sessions.signedOut'),
+        color: 'success',
+      })
+    } catch (e) {
+      toast.add({
+        title: t('common.error'),
+        description: describeError(e, t('sessions.signOutFailed'), t),
+        color: 'error',
+      })
+    }
+  })
+}
+
+async function doRevokeAllSessions() {
+  if (!user.value) return
+  try {
+    await revokeAllSessionsMut.mutateAsync({ path: { id: user.value.id } })
+    revokeAllSessionsOpen.value = false
+    toast.add({
+      title: t('common.success'),
+      description: t('sessions.signedOutEverywhere'),
+      color: 'success',
+    })
+  } catch (e) {
+    toast.add({
+      title: t('common.error'),
+      description: describeError(e, t('sessions.signOutFailed'), t),
+      color: 'error',
+    })
+  }
+}
 
 // Recovery credential dialog (admin sets a login + password for the user)
 const credDialog = ref(false)
@@ -645,7 +717,82 @@ async function doRemovePeer() {
           {{ t('adminUserDetail.recoveryCredentialHint') }}
         </p>
       </UCard>
+
+      <!-- Sessions Section -->
+      <UCard class="mb-6">
+        <template #header>
+          <div class="flex justify-between items-center gap-3">
+            <div class="flex items-center gap-2 font-semibold">
+              <UIcon name="i-lucide-monitor-smartphone" />
+              {{ t('sessions.adminTitle', { count: sessions?.length ?? 0 }) }}
+            </div>
+            <UButton
+              :label="t('sessions.signOutEverywhere')"
+              icon="i-lucide-log-out"
+              color="error"
+              variant="outline"
+              size="sm"
+              :disabled="!sessions?.length"
+              @click="() => void (revokeAllSessionsOpen = true)"
+            />
+          </div>
+        </template>
+        <UAlert v-if="sessionsError" color="error" :title="sessionsError.message" />
+        <SessionList
+          v-else-if="sessions?.length"
+          :sessions="sessions"
+          :revoking-id="
+            revokeSessionMut.asyncStatus.value === 'loading' ? revokeSessionPendingId : null
+          "
+          @revoke="requestRevokeSession"
+        />
+        <div v-else class="text-center py-8 text-[var(--ui-text-muted)]">
+          {{ t('sessions.empty') }}
+        </div>
+      </UCard>
     </template>
+
+    <!-- Revoke one session -->
+    <UModal v-model:open="revokeSessionOpen" :title="t('sessions.signOut')">
+      <template #body>
+        <p>{{ t('sessions.adminSignOutConfirm') }}</p>
+      </template>
+      <template #footer>
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="() => void (revokeSessionOpen = false)"
+        />
+        <UButton
+          :label="t('sessions.signOut')"
+          color="error"
+          :loading="revokeSessionMut.asyncStatus.value === 'loading'"
+          @click="doRevokeSession"
+        />
+      </template>
+    </UModal>
+
+    <!-- Revoke all sessions -->
+    <UModal v-model:open="revokeAllSessionsOpen" :title="t('sessions.signOutEverywhere')">
+      <template #body>
+        <p>{{ t('sessions.adminSignOutEverywhereConfirm') }}</p>
+      </template>
+      <template #footer>
+        <UButton
+          :label="t('common.cancel')"
+          color="neutral"
+          variant="outline"
+          @click="() => void (revokeAllSessionsOpen = false)"
+        />
+        <UButton
+          :label="t('sessions.signOutEverywhere')"
+          color="error"
+          :loading="revokeAllSessionsMut.asyncStatus.value === 'loading'"
+          @click="doRevokeAllSessions"
+        />
+      </template>
+    </UModal>
 
     <!-- Recovery Credential Dialog -->
     <UModal v-model:open="credDialog" :title="t('adminUserDetail.setCredential')">

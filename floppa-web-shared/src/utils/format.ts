@@ -95,3 +95,30 @@ export function formatSpeedLimit(
 ): string {
   return mbps == null ? unlimitedLabel : `${mbps} Mbps`
 }
+
+const RELATIVE_UNITS: { unit: Intl.RelativeTimeFormatUnit; seconds: number }[] = [
+  { unit: 'year', seconds: 365 * 86400 },
+  { unit: 'month', seconds: 30 * 86400 },
+  { unit: 'week', seconds: 7 * 86400 },
+  { unit: 'day', seconds: 86400 },
+  { unit: 'hour', seconds: 3600 },
+  { unit: 'minute', seconds: 60 },
+]
+
+/**
+ * A past (or future) instant relative to `now`, in the coarsest unit that fits: "5 minutes ago",
+ * "yesterday", "in 2 hours". Anything under a minute reads as "now" (`numeric: 'auto'` in the
+ * locale's own words). `locale` is a BCP 47 tag, normally the active i18n locale.
+ */
+export function formatRelativeTime(
+  date: string | Date,
+  locale: string,
+  now: Date = new Date(),
+): string {
+  const d = typeof date === 'string' ? new Date(date) : date
+  const diff = (d.getTime() - now.getTime()) / 1000
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+  const fit = RELATIVE_UNITS.find(({ seconds }) => Math.abs(diff) >= seconds)
+  if (!fit) return rtf.format(0, 'second')
+  return rtf.format(Math.trunc(diff / fit.seconds), fit.unit)
+}
