@@ -15,6 +15,7 @@ export default {
   traffic: {
     download: 'Download',
     upload: 'Upload',
+    unavailable: 'Traffic statistics are temporarily unavailable',
   },
   common: {
     cancel: 'Cancel',

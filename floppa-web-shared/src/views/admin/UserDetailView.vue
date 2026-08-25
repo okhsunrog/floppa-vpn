@@ -15,7 +15,7 @@ import {
 import { getUserAvatar } from '../../client/sdk.gen'
 import {
   describeError,
-  formatBytes,
+  formatTraffic,
   formatDateTime,
   formatSpeedLimit,
   handleExternalLinkClick,
@@ -97,6 +97,9 @@ const {
   enabled: validUserId.value,
 }))
 const { data: plans, status: plansStatus, error: plansError } = useQuery(listPlansQuery())
+
+// False when the server could not query the metrics backend: every counter is then a zero.
+const trafficAvailable = computed(() => user.value?.traffic_available ?? true)
 
 const loading = computed(() => userStatus.value === 'pending' || plansStatus.value === 'pending')
 const error = computed(() => userError.value || plansError.value)
@@ -393,15 +396,28 @@ async function doRemovePeer() {
           <div class="flex items-center gap-1.5">
             <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
             <span class="text-sm text-[var(--ui-text-muted)]">{{ t('traffic.download') }}</span>
-            <span class="font-medium">{{ formatBytes(user.vless.download_bytes) }}</span>
+            <span class="font-medium">{{
+              formatTraffic(user.vless.download_bytes, trafficAvailable)
+            }}</span>
           </div>
           <div class="flex items-center gap-1.5">
             <UIcon name="i-lucide-arrow-up" class="text-green-500" />
             <span class="text-sm text-[var(--ui-text-muted)]">{{ t('traffic.upload') }}</span>
-            <span class="font-medium">{{ formatBytes(user.vless.upload_bytes) }}</span>
+            <span class="font-medium">{{
+              formatTraffic(user.vless.upload_bytes, trafficAvailable)
+            }}</span>
           </div>
         </div>
       </UCard>
+
+      <UAlert
+        v-if="!trafficAvailable"
+        color="neutral"
+        variant="subtle"
+        icon="i-lucide-bar-chart-3"
+        :title="t('traffic.unavailable')"
+        class="mb-6"
+      />
 
       <!-- Peers Section -->
       <UCard class="mb-6">
@@ -435,11 +451,11 @@ async function doRemovePeer() {
             <div class="flex gap-4 mb-2">
               <div class="flex items-center gap-1">
                 <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
-                <span>{{ formatBytes(peer.download_bytes) }}</span>
+                <span>{{ formatTraffic(peer.download_bytes, trafficAvailable) }}</span>
               </div>
               <div class="flex items-center gap-1">
                 <UIcon name="i-lucide-arrow-up" class="text-green-500" />
-                <span>{{ formatBytes(peer.upload_bytes) }}</span>
+                <span>{{ formatTraffic(peer.upload_bytes, trafficAvailable) }}</span>
               </div>
             </div>
             <div class="text-sm text-[var(--ui-text-muted)] mb-2">
@@ -462,7 +478,7 @@ async function doRemovePeer() {
               }}</small>
               <small>{{
                 t('adminUserDetail.peerTraffic', {
-                  traffic: formatBytes(peer.download_bytes + peer.upload_bytes),
+                  traffic: formatTraffic(peer.download_bytes + peer.upload_bytes, trafficAvailable),
                 })
               }}</small>
             </div>

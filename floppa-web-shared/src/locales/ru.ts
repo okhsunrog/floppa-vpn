@@ -15,6 +15,7 @@ export default {
   traffic: {
     download: 'Скачано',
     upload: 'Загружено',
+    unavailable: 'Статистика трафика временно недоступна',
   },
   common: {
     cancel: 'Отмена',

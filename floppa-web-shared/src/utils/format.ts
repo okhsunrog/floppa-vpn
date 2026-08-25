@@ -1,6 +1,19 @@
 /**
  * Format bytes to human readable string (e.g., "1.5 GB")
  */
+/** Shown in place of a byte counter that is a placeholder, not a measurement. */
+export const TRAFFIC_UNAVAILABLE = '—'
+
+/**
+ * A byte counter from a response that says whether its counters are real. When the server could
+ * not reach the metrics backend it fills every counter with zero and flags the response with
+ * `traffic_available: false`; rendering that zero as "0 B" would claim a measurement that was
+ * never taken.
+ */
+export function formatTraffic(bytes: number, available: boolean): string {
+  return available ? formatBytes(bytes) : TRAFFIC_UNAVAILABLE
+}
+
 export function formatBytes(bytes: number, decimals = 2): string {
   if (bytes === 0) return '0 B'
   const k = 1024

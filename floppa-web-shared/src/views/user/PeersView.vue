@@ -14,7 +14,7 @@ import {
 import { getMyPeerConfig, getMyVlessConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { describeError, formatBytes, formatDate, formatDateTime } from '../../utils'
+import { describeError, formatTraffic, formatDate, formatDateTime } from '../../utils'
 import { isTauri } from '../../utils/platform'
 import { isMiniApp as detectMiniApp } from '../../utils/telegram'
 import StatusBadge from '../../components/StatusBadge.vue'
@@ -43,6 +43,8 @@ const queryErrorMessage = computed(() => {
 
 const peers = computed(() => peersData.value?.peers)
 const vless = computed(() => peersData.value?.vless)
+// False when the server could not query the metrics backend: every counter is then a zero.
+const trafficAvailable = computed(() => peersData.value?.traffic_available ?? true)
 
 // Every peer mutation invalidates the list, so the slot counter and the dashboard stay in sync.
 const invalidate = useInvalidateQueries()
@@ -334,6 +336,14 @@ async function doRegenerateVless() {
       </UCard>
 
       <template v-else>
+        <UAlert
+          v-if="!trafficAvailable"
+          color="neutral"
+          variant="subtle"
+          icon="i-lucide-bar-chart-3"
+          :title="t('traffic.unavailable')"
+          class="mb-4"
+        />
         <!-- VLESS Section -->
         <UCard v-if="vless" class="mb-6">
           <template #header>
@@ -347,7 +357,9 @@ async function doRegenerateVless() {
               <div class="flex items-center gap-2">
                 <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
                 <div>
-                  <span class="font-medium">{{ formatBytes(vless.download_bytes) }}</span>
+                  <span class="font-medium">{{
+                    formatTraffic(vless.download_bytes, trafficAvailable)
+                  }}</span>
                   <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
                     t('traffic.download')
                   }}</span>
@@ -356,7 +368,9 @@ async function doRegenerateVless() {
               <div class="flex items-center gap-2">
                 <UIcon name="i-lucide-arrow-up" class="text-green-500" />
                 <div>
-                  <span class="font-medium">{{ formatBytes(vless.upload_bytes) }}</span>
+                  <span class="font-medium">{{
+                    formatTraffic(vless.upload_bytes, trafficAvailable)
+                  }}</span>
                   <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
                     t('traffic.upload')
                   }}</span>
@@ -421,7 +435,9 @@ async function doRegenerateVless() {
               <div class="flex items-center gap-2">
                 <UIcon name="i-lucide-arrow-down" class="text-[var(--ui-primary)]" />
                 <div>
-                  <span class="font-medium">{{ formatBytes(peer.download_bytes) }}</span>
+                  <span class="font-medium">{{
+                    formatTraffic(peer.download_bytes, trafficAvailable)
+                  }}</span>
                   <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
                     t('traffic.download')
                   }}</span>
@@ -430,7 +446,9 @@ async function doRegenerateVless() {
               <div class="flex items-center gap-2">
                 <UIcon name="i-lucide-arrow-up" class="text-green-500" />
                 <div>
-                  <span class="font-medium">{{ formatBytes(peer.upload_bytes) }}</span>
+                  <span class="font-medium">{{
+                    formatTraffic(peer.upload_bytes, trafficAvailable)
+                  }}</span>
                   <span class="ml-1 text-xs text-[var(--ui-text-muted)]">{{
                     t('traffic.upload')
                   }}</span>

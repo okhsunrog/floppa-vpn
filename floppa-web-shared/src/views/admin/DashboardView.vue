@@ -3,7 +3,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getStatsQuery } from '../../client/@pinia/colada.gen'
-import { formatBytes } from '../../utils'
+import { formatTraffic } from '../../utils'
 import StatsCard from '../../components/StatsCard.vue'
 
 const router = useRouter()
@@ -41,17 +41,20 @@ const { data: stats, status, error } = useQuery(getStatsQuery())
         />
         <StatsCard
           :label="t('adminDashboard.totalDownload')"
-          :value="formatBytes(stats.total_download_bytes)"
+          :value="formatTraffic(stats.total_download_bytes, stats.traffic_available)"
           icon="i-lucide-arrow-down"
           large
         />
         <StatsCard
           :label="t('adminDashboard.totalUpload')"
-          :value="formatBytes(stats.total_upload_bytes)"
+          :value="formatTraffic(stats.total_upload_bytes, stats.traffic_available)"
           icon="i-lucide-arrow-up"
           large
         />
       </div>
+      <p v-if="!stats.traffic_available" class="-mt-6 mb-8 text-xs text-[var(--ui-text-muted)]">
+        {{ t('traffic.unavailable') }}
+      </p>
 
       <div class="grid grid-cols-[repeat(auto-fit,minmax(250px,1fr))] gap-4">
         <UCard

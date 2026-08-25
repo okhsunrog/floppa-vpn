@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery, getMyPeersQuery } from '../../client/@pinia/colada.gen'
 import { useAuthStore } from '../../stores'
-import { formatBytes, formatDate, durationUnit } from '../../utils'
+import { formatTraffic, formatDate, durationUnit } from '../../utils'
 import StatsCard from '../../components/StatsCard.vue'
 
 const props = withDefaults(defineProps<{ skipLoadingSpinner?: boolean }>(), {
@@ -20,6 +20,9 @@ const { data: peers, status: peersStatus, error: peersError } = useQuery(getMyPe
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
 const error = computed(() => meError.value || peersError.value)
+
+// False when the server could not query the metrics backend: the counters are then zeros.
+const trafficAvailable = computed(() => peers.value?.traffic_available ?? true)
 
 const totalTraffic = computed(() => {
   const wg = (peers.value?.wg_download_bytes ?? 0) + (peers.value?.wg_upload_bytes ?? 0)
@@ -179,10 +182,13 @@ const daysRemaining = computed(() => {
             />
             <StatsCard
               :label="t('userDashboard.totalTraffic')"
-              :value="formatBytes(totalTraffic)"
+              :value="formatTraffic(totalTraffic, trafficAvailable)"
               icon="i-lucide-cloud"
             />
           </div>
+          <p v-if="!trafficAvailable" class="mt-2 text-xs text-[var(--ui-text-muted)]">
+            {{ t('traffic.unavailable') }}
+          </p>
         </div>
 
         <!-- Quick Actions -->

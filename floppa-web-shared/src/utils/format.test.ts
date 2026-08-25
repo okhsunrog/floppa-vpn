@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'vite-plus/test'
 
-import { formatBytes, formatDuration, formatSpeed, formatSpeedLimit } from './format'
+import {
+  TRAFFIC_UNAVAILABLE,
+  formatBytes,
+  formatDuration,
+  formatSpeed,
+  formatSpeedLimit,
+  formatTraffic,
+} from './format'
 
 describe('formatBytes', () => {
   test('formats byte quantities and clamps units', () => {
@@ -41,5 +48,16 @@ describe('formatSpeedLimit', () => {
     expect(formatSpeedLimit(100)).toBe('100 Mbps')
     expect(formatSpeedLimit(null)).toBe('Unlimited')
     expect(formatSpeedLimit(undefined, 'Без ограничений')).toBe('Без ограничений')
+  })
+})
+
+describe('formatTraffic', () => {
+  test('renders the counter when the metrics are real', () => {
+    expect(formatTraffic(2048, true)).toBe('2 KB')
+  })
+
+  test('renders a dash instead of a placeholder zero when they are not', () => {
+    expect(formatTraffic(0, false)).toBe(TRAFFIC_UNAVAILABLE)
+    expect(formatTraffic(2048, false)).toBe(TRAFFIC_UNAVAILABLE)
   })
 })
