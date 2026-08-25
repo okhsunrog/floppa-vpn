@@ -275,6 +275,7 @@ export default {
     removePeerConfirm: 'Remove peer {ip}?',
     peerRemoved: 'Peer removed',
     removeFailed: 'Failed to remove peer',
+    notFound: 'User not found',
     device: 'Device: {name}',
     source: 'Source',
     sourceTrial: 'Trial',

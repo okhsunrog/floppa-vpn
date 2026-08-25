@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
@@ -62,21 +62,45 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 
-const userId = Number(route.params.id)
+// Reactive so a route change between two users re-runs the query instead of reusing the id
+// the component was created with. The param is user-editable, so it is validated, not trusted.
+const userId = computed(() => Number(route.params.id))
+const validUserId = computed(() => Number.isInteger(userId.value) && userId.value > 0)
 
 // Server-cached avatar (Telegram CDN is unreachable from clients); fetched as a blob → object URL.
+// Object URLs hold the blob alive until revoked, so the previous one is released on every change
+// and on unmount.
 const avatarSrc = ref<string | undefined>(undefined)
-getUserAvatar({ path: { id: userId }, parseAs: 'blob' })
-  .then(({ data, response }) => {
-    if (response?.ok && data instanceof Blob) avatarSrc.value = URL.createObjectURL(data)
-  })
-  .catch(() => {})
+function releaseAvatar() {
+  if (avatarSrc.value) URL.revokeObjectURL(avatarSrc.value)
+  avatarSrc.value = undefined
+}
+watch(
+  userId,
+  async (id) => {
+    releaseAvatar()
+    if (!validUserId.value) return
+    try {
+      const { data, response } = await getUserAvatar({ path: { id }, parseAs: 'blob' })
+      // The route may have moved on while the request was in flight.
+      if (id !== userId.value || !response?.ok || !(data instanceof Blob)) return
+      avatarSrc.value = URL.createObjectURL(data)
+    } catch {
+      /* no avatar cached — the placeholder icon stays */
+    }
+  },
+  { immediate: true },
+)
+onUnmounted(releaseAvatar)
 
 const {
   data: user,
   status: userStatus,
   error: userError,
-} = useQuery(getUserQuery({ path: { id: userId } }))
+} = useQuery(() => ({
+  ...getUserQuery({ path: { id: userId.value } }),
+  enabled: validUserId.value,
+}))
 const { data: plans, status: plansStatus, error: plansError } = useQuery(listPlansQuery())
 
 const loading = computed(() => userStatus.value === 'pending' || plansStatus.value === 'pending')
@@ -84,7 +108,7 @@ const error = computed(() => userError.value || plansError.value)
 
 // Every change to this user refetches the detail (and any other cached getUser entry).
 const invalidate = useInvalidateQueries()
-const invalidateUser = () => invalidate(getUserQueryKey({ path: { id: userId } }))
+const invalidateUser = () => invalidate(getUserQueryKey({ path: { id: userId.value } }))
 const setSubMut = useMutation({ ...setSubscriptionMutation(), onSettled: invalidateUser })
 const deleteSubMut = useMutation({ ...deleteSubscriptionMutation(), onSettled: invalidateUser })
 const deletePeerMut = useMutation({ ...deleteAdminPeerMutation(), onSettled: invalidateUser })
@@ -275,7 +299,8 @@ async function doRemovePeer() {
       @click="() => void router.push('/admin/users')"
     />
 
-    <div v-if="loading" class="flex justify-center py-12">
+    <UAlert v-if="!validUserId" color="error" :title="t('adminUserDetail.notFound')" />
+    <div v-else-if="loading" class="flex justify-center py-12">
       <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
     </div>
     <UAlert v-else-if="error" color="error" :title="error.message" />

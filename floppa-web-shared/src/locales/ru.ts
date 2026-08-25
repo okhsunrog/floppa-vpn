@@ -274,6 +274,7 @@ export default {
     removePeerConfirm: 'Удалить пир {ip}?',
     peerRemoved: 'Пир удалён',
     removeFailed: 'Не удалось удалить пир',
+    notFound: 'Пользователь не найден',
     device: 'Устройство: {name}',
     source: 'Источник',
     sourceTrial: 'Пробный',
