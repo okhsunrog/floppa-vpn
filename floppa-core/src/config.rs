@@ -312,7 +312,7 @@ pub struct BotConfig {
     pub stars_rub_rate: Option<f64>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct AuthConfig {
     /// JWT token expiration in hours (default: 24 * 7 = 1 week)
     #[serde(default = "default_jwt_expiration_hours")]
@@ -323,6 +323,19 @@ pub struct AuthConfig {
     /// Max credential-login attempts per IP per 15 minutes.
     #[serde(default = "default_login_rate_limit_per_15min")]
     pub login_rate_limit_per_15min: u32,
+}
+
+/// The same values serde fills in for keys missing from `[auth]`, so a config without the
+/// section behaves exactly like an empty one (`derive(Default)` would have produced zeros:
+/// tokens expiring at issue time and every login rate-limited).
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            jwt_expiration_hours: default_jwt_expiration_hours(),
+            register_rate_limit_per_hour: default_register_rate_limit_per_hour(),
+            login_rate_limit_per_15min: default_login_rate_limit_per_15min(),
+        }
+    }
 }
 
 fn default_jwt_expiration_hours() -> u64 {
@@ -489,4 +502,143 @@ pub enum ConfigError {
     Parse(#[from] toml::de::Error),
     #[error("Invalid key: {0}")]
     InvalidKey(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG_EXAMPLE: &str = include_str!("../../config.example.toml");
+    const SECRETS_EXAMPLE: &str = include_str!("../../secrets.example.toml");
+
+    /// Uncomment every `# key = value` and `# [table]` line, leaving prose comments (and doubly
+    /// commented `# # key = ...` lines) alone — i.e. enable every optional section of an example.
+    fn uncomment_optional(example: &str) -> String {
+        example
+            .lines()
+            .map(|line| {
+                let Some(rest) = line.strip_prefix("# ") else {
+                    return line;
+                };
+                let is_table = rest.starts_with('[');
+                let is_key = rest.split_once(" = ").is_some_and(|(key, _)| {
+                    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                });
+                if is_table || is_key { rest } else { line }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn config_example_parses_as_is() {
+        let config: Config = toml::from_str(CONFIG_EXAMPLE).unwrap();
+        assert_eq!(config.wireguard.interface, "wg-floppa");
+        assert_eq!(
+            config.wireguard.client_subnet,
+            "10.100.0.0/24".parse::<Ipv4Network>().unwrap()
+        );
+        assert_eq!(
+            config.wireguard.get_server_ip(),
+            Ipv4Addr::new(10, 100, 0, 1)
+        );
+        assert!(config.amneziawg.is_none());
+        assert!(config.vless.is_none());
+        assert!(config.metrics.is_none());
+        assert!(config.min_client_version.is_none());
+        assert_eq!(
+            config.bot.as_ref().and_then(|b| b.username.as_deref()),
+            Some("YourBotUsername")
+        );
+        assert_eq!(config.auth.map(|a| a.jwt_expiration_hours), Some(168));
+    }
+
+    #[test]
+    fn config_example_parses_with_every_optional_key_enabled() {
+        let toml = uncomment_optional(CONFIG_EXAMPLE);
+        let config: Config = toml::from_str(&toml).unwrap();
+
+        // Top-level optional keys must land at the top level, not inside the last [table].
+        assert_eq!(config.min_client_version.as_deref(), Some("0.2.0"));
+        assert_eq!(config.allowed_origins, vec!["https://vpn.example.com"]);
+
+        let awg = config.amneziawg.expect("[amneziawg] enabled");
+        assert_eq!(
+            awg.client_subnet,
+            "10.101.0.0/24".parse::<Ipv4Network>().unwrap()
+        );
+        assert_eq!(awg.get_server_ip(), Ipv4Addr::new(10, 101, 0, 1));
+        assert_eq!(awg.mtu, 1280);
+        assert_eq!(awg.obfuscation.jc, 6);
+        assert_eq!(awg.obfuscation.h1, "234567-345678");
+
+        let auth = config.auth.expect("[auth] present");
+        assert_eq!(auth, AuthConfig::default());
+
+        let bot = config.bot.expect("[bot] present");
+        assert!(bot.web_app_url.is_some());
+        assert_eq!(bot.stars_rub_rate, Some(1.8));
+
+        assert!(config.vless.is_some());
+        assert_eq!(
+            config.metrics.map(|m| m.victoria_metrics_url).as_deref(),
+            Some("http://127.0.0.1:8428")
+        );
+    }
+
+    #[test]
+    fn secrets_example_parses_as_is_and_fully_enabled() {
+        let secrets: Secrets = toml::from_str(SECRETS_EXAMPLE).unwrap();
+        assert!(secrets.awg_private_key.is_none());
+        assert!(secrets.vless.is_none());
+        assert_eq!(
+            secrets.auth.map(|a| a.admin_telegram_ids),
+            Some(vec![123456789])
+        );
+
+        let secrets: Secrets = toml::from_str(&uncomment_optional(SECRETS_EXAMPLE)).unwrap();
+        assert!(secrets.awg_private_key.is_some());
+        assert!(secrets.vless.is_some());
+    }
+
+    #[test]
+    fn auth_defaults_match_serde_defaults() {
+        // A config without [auth] falls back to AuthConfig::default() in the server; it must be
+        // the same thing as an empty [auth] table.
+        let config: Config = toml::from_str(
+            r#"
+            [wireguard]
+            interface = "wg0"
+            endpoint = "vpn.example.com:51820"
+            client_subnet = "10.100.0.0/24"
+            dns = ["1.1.1.1"]
+            allowed_ips = "0.0.0.0/0"
+            "#,
+        )
+        .unwrap();
+        assert!(config.auth.is_none());
+
+        let empty_section: AuthConfig = toml::from_str("").unwrap();
+        let defaults = AuthConfig::default();
+        assert_eq!(empty_section, defaults);
+        assert_eq!(defaults.jwt_expiration_hours, 24 * 7);
+        assert_eq!(defaults.register_rate_limit_per_hour, 5);
+        assert_eq!(defaults.login_rate_limit_per_15min, 10);
+    }
+
+    #[test]
+    fn invalid_client_subnet_is_a_parse_error() {
+        let err = toml::from_str::<Config>(
+            r#"
+            [wireguard]
+            interface = "wg0"
+            endpoint = "vpn.example.com:51820"
+            client_subnet = "not-a-subnet"
+            dns = ["1.1.1.1"]
+            allowed_ips = "0.0.0.0/0"
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("client_subnet"), "{err}");
+    }
 }

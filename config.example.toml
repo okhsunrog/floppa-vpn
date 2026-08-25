@@ -2,6 +2,15 @@
 # Copy to /etc/floppa-vpn/config.toml (permissions: 0644)
 # Secrets go in secrets.toml (permissions: 0600)
 
+# Top-level keys MUST stay above the first [table]: anything below a table header belongs to
+# that table, and a key placed there is silently ignored.
+
+# Minimum client version (optional). Clients with older X-Client-Version get 426 Upgrade Required.
+# min_client_version = "0.2.0"
+
+# Allowed CORS origins (optional). Empty/absent = permissive.
+# allowed_origins = ["https://vpn.example.com"]
+
 [wireguard]
 interface = "wg-floppa"
 endpoint = "vpn.example.com:51820"
@@ -59,9 +68,8 @@ username = "YourBotUsername"  # Bot username for Telegram Login Widget (without 
 
 [auth]
 jwt_expiration_hours = 168  # 1 week (optional, default is 168)
-
-# Minimum client version (optional). Clients with older X-Client-Version get 426 Upgrade Required.
-# min_client_version = "0.2.0"
+# register_rate_limit_per_hour = 5   # Max registrations per IP per hour (optional)
+# login_rate_limit_per_15min = 10    # Max credential logins per IP per 15 minutes (optional)
 
 # Metrics / VictoriaMetrics (optional)
 # [metrics]
