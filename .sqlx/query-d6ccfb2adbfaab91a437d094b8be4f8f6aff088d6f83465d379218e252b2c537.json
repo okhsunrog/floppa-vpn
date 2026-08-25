@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            (SELECT COUNT(*) FROM users) as \"total_users!\",\n            (SELECT COUNT(*) FROM peers WHERE sync_status = 'active') as \"active_peers!\",\n            (SELECT COUNT(*) FROM subscriptions WHERE expires_at IS NULL OR expires_at > NOW()) as \"active_subscriptions!\",\n            (SELECT COUNT(*) FROM payments WHERE status = 'completed') as \"total_payments!\",\n            (SELECT COALESCE(SUM(amount), 0)::bigint FROM payments WHERE status = 'completed') as \"total_stars_revenue!\"\n        ",
+  "query": "\n        SELECT\n            (SELECT COUNT(*) FROM users) as \"total_users!\",\n            (SELECT COUNT(*) FROM peers WHERE sync_status = 'active') as \"active_peers!\",\n            (SELECT COUNT(*) FROM current_subscriptions WHERE is_active) as \"active_subscriptions!\",\n            (SELECT COUNT(*) FROM payments WHERE status = 'completed') as \"total_payments!\",\n            (SELECT COALESCE(SUM(amount), 0)::bigint FROM payments WHERE status = 'completed') as \"total_stars_revenue!\"\n        ",
   "describe": {
     "columns": [
       {
@@ -45,5 +45,5 @@
       null
     ]
   },
-  "hash": "b23d002837aa71ab0fa1baa8938431ef3ebefbe0b4d436b0948d31fdd3cf55c1"
+  "hash": "d6ccfb2adbfaab91a437d094b8be4f8f6aff088d6f83465d379218e252b2c537"
 }

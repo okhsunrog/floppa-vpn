@@ -54,7 +54,7 @@ pub(super) async fn get_stats(
         SELECT
             (SELECT COUNT(*) FROM users) as "total_users!",
             (SELECT COUNT(*) FROM peers WHERE sync_status = 'active') as "active_peers!",
-            (SELECT COUNT(*) FROM subscriptions WHERE expires_at IS NULL OR expires_at > NOW()) as "active_subscriptions!",
+            (SELECT COUNT(*) FROM current_subscriptions WHERE is_active) as "active_subscriptions!",
             (SELECT COUNT(*) FROM payments WHERE status = 'completed') as "total_payments!",
             (SELECT COALESCE(SUM(amount), 0)::bigint FROM payments WHERE status = 'completed') as "total_stars_revenue!"
         "#,
@@ -148,7 +148,7 @@ pub(super) async fn list_users(
             u.photo_url,
             u.is_admin,
             u.created_at,
-            (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,
+            (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) as active_plan,
             (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!",
             latest_ai.app_version as client_version,
             (u.vless_uuid IS NOT NULL) as "has_vless!"
@@ -649,7 +649,7 @@ pub(super) async fn list_peers(
                p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
                p.protocol AS "protocol: Protocol", p.last_handshake,
                ai.device_name, ai.device_id AS "device_id?", ai.app_version AS client_version,
-               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,
+               (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) AS plan_name,
                (u.vless_uuid IS NOT NULL) AS "has_vless!"
         FROM peers p
         JOIN users u ON p.user_id = u.id
@@ -726,7 +726,7 @@ pub(super) async fn list_vless_peers(
                COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
                latest_ai.device_name,
                latest_ai.app_version,
-               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,
+               (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) AS plan_name,
                EXISTS(SELECT 1 FROM peers p WHERE p.user_id = u.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS "has_wg!"
         FROM users u
         LEFT JOIN LATERAL (

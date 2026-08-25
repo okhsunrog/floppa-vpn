@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            latest_ai.app_version as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        ORDER BY u.created_at DESC\n        ",
+  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            latest_ai.app_version as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        ORDER BY u.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -139,5 +139,5 @@
       null
     ]
   },
-  "hash": "c18f5afb1d4e06d738891f32a07425423a09a80e115e20f1928e5ad5fae63cbf"
+  "hash": "55f40c31b00e721a9a4fa43917074cc33415d90e6c564663bf3b056c08807c4e"
 }

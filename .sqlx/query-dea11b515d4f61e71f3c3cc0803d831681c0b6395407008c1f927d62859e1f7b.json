@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\", ai.app_version AS client_version,\n               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,\n               (u.vless_uuid IS NOT NULL) AS \"has_vless!\"\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.sync_status != $1\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
+  "query": "\n        SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\", ai.app_version AS client_version,\n               (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) AS plan_name,\n               (u.vless_uuid IS NOT NULL) AS \"has_vless!\"\n        FROM peers p\n        JOIN users u ON p.user_id = u.id\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.sync_status != $1\n        ORDER BY p.last_handshake DESC NULLS LAST\n        ",
   "describe": {
     "columns": [
       {
@@ -141,5 +141,5 @@
       null
     ]
   },
-  "hash": "28cd5b0b8d41d042f971885abde9150ca62c0fd732efedcd1dd1e5d1dcf86d43"
+  "hash": "dea11b515d4f61e71f3c3cc0803d831681c0b6395407008c1f927d62859e1f7b"
 }

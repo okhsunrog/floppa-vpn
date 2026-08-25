@@ -256,17 +256,15 @@ pub(super) async fn get_me(
         MySubscription,
         r#"
         SELECT
-            p.name as plan_name,
-            p.display_name as plan_display_name,
-            s.source AS "source: SubscriptionSource",
-            s.starts_at,
-            s.expires_at,
-            p.default_speed_limit_mbps as speed_limit_mbps,
-            p.max_peers
-        FROM subscriptions s
-        JOIN plans p ON s.plan_id = p.id
-        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        LIMIT 1
+            plan_name AS "plan_name!",
+            plan_display_name AS "plan_display_name!",
+            source AS "source!: SubscriptionSource",
+            starts_at AS "starts_at!",
+            expires_at,
+            speed_limit_mbps,
+            max_peers AS "max_peers!"
+        FROM current_subscriptions
+        WHERE user_id = $1 AND is_active
         "#,
         auth.user_id
     )

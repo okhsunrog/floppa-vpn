@@ -1,48 +1,48 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            p.name as plan_name,\n            p.display_name as plan_display_name,\n            s.source AS \"source: SubscriptionSource\",\n            s.starts_at,\n            s.expires_at,\n            p.default_speed_limit_mbps as speed_limit_mbps,\n            p.max_peers\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        LIMIT 1\n        ",
+  "query": "\n        SELECT\n            plan_name AS \"plan_name!\",\n            plan_display_name AS \"plan_display_name!\",\n            source AS \"source!: SubscriptionSource\",\n            starts_at AS \"starts_at!\",\n            expires_at,\n            speed_limit_mbps,\n            max_peers AS \"max_peers!\"\n        FROM current_subscriptions\n        WHERE user_id = $1 AND is_active\n        ",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "plan_name",
+        "name": "plan_name!",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "plans",
-            "name": "name"
+            "table": "current_subscriptions",
+            "name": "plan_name"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "plan_display_name",
+        "name": "plan_display_name!",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "plans",
-            "name": "display_name"
+            "table": "current_subscriptions",
+            "name": "plan_display_name"
           }
         }
       },
       {
         "ordinal": 2,
-        "name": "source: SubscriptionSource",
+        "name": "source!: SubscriptionSource",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "subscriptions",
+            "table": "current_subscriptions",
             "name": "source"
           }
         }
       },
       {
         "ordinal": 3,
-        "name": "starts_at",
+        "name": "starts_at!",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "subscriptions",
+            "table": "current_subscriptions",
             "name": "starts_at"
           }
         }
@@ -53,7 +53,7 @@
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "subscriptions",
+            "table": "current_subscriptions",
             "name": "expires_at"
           }
         }
@@ -64,18 +64,18 @@
         "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "plans",
-            "name": "default_speed_limit_mbps"
+            "table": "current_subscriptions",
+            "name": "speed_limit_mbps"
           }
         }
       },
       {
         "ordinal": 6,
-        "name": "max_peers",
+        "name": "max_peers!",
         "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "plans",
+            "table": "current_subscriptions",
             "name": "max_peers"
           }
         }
@@ -87,14 +87,14 @@
       ]
     },
     "nullable": [
-      false,
-      false,
-      false,
-      false,
       true,
       true,
-      false
+      true,
+      true,
+      true,
+      true,
+      true
     ]
   },
-  "hash": "d4f715fa334b31b9bdb7f7cd0f423fbb418f2b1b49707eae8f8e7663054b8359"
+  "hash": "48e0836ce0b81f6b2b4c6c5784c71dca942f692977fa91eb39b2286a357de521"
 }

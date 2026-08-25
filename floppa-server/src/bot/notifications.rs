@@ -93,13 +93,8 @@ async fn pending_notifications(pool: &DbPool) -> Result<Vec<PendingNotification>
           AND s.expires_at BETWEEN NOW() - INTERVAL '25 hours' AND NOW() + INTERVAL '25 hours'
           -- Advance notice only for subscriptions long enough for "tomorrow" to mean something
           AND (s.expires_at <= NOW() OR s.expires_at - s.starts_at >= $3)
-          -- No newer subscription for this user
-          AND NOT EXISTS (
-              SELECT 1 FROM subscriptions s2
-              WHERE s2.user_id = s.user_id
-                AND s2.id != s.id
-                AND (s2.expires_at IS NULL OR s2.expires_at > s.expires_at)
-          )
+          -- Still the user's subscription (a superseded one ended when it was replaced)
+          AND s.is_current
           -- Not already notified with this kind
           AND NOT EXISTS (
               SELECT 1 FROM notification_log nl
@@ -217,16 +212,24 @@ mod tests {
         .unwrap()
     }
 
-    /// A subscription that started `started_ago` and ends `ends_in` (either may be negative).
+    /// The user's current subscription, started `started_ago` and ending `ends_in` (either may
+    /// be negative). Demotes whatever the user held before, like a real replacement does.
     async fn seed_subscription(
         pool: &DbPool,
         user_id: i64,
         started_ago: PgInterval,
         ends_in: PgInterval,
     ) -> i64 {
+        sqlx::query!(
+            "UPDATE subscriptions SET is_current = false WHERE user_id = $1 AND is_current",
+            user_id
+        )
+        .execute(pool)
+        .await
+        .unwrap();
         sqlx::query_scalar!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at)
-             SELECT $1, id, NOW() - $2::interval, NOW() + $3::interval
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, is_current)
+             SELECT $1, id, NOW() - $2::interval, NOW() + $3::interval, true
              FROM plans WHERE name = 'basic'
              RETURNING id",
             user_id,

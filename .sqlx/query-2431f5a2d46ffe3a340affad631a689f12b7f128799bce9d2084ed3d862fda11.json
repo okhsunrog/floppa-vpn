@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT u.id,\n               COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               latest_ai.device_name,\n               latest_ai.app_version,\n               (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,\n               EXISTS(SELECT 1 FROM peers p WHERE p.user_id = u.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS \"has_wg!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.device_name, ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        WHERE u.vless_uuid IS NOT NULL\n        ORDER BY u.id\n        ",
+  "query": "\n        SELECT u.id,\n               COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,\n               latest_ai.device_name,\n               latest_ai.app_version,\n               (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) AS plan_name,\n               EXISTS(SELECT 1 FROM peers p WHERE p.user_id = u.id AND p.sync_status NOT IN ('removed', 'pending_remove')) AS \"has_wg!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.device_name, ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        WHERE u.vless_uuid IS NOT NULL\n        ORDER BY u.id\n        ",
   "describe": {
     "columns": [
       {
@@ -67,5 +67,5 @@
       null
     ]
   },
-  "hash": "a635dc3369983698358104f9557e3787a29f52386f09fff0cf174401837ac675"
+  "hash": "2431f5a2d46ffe3a340affad631a689f12b7f128799bce9d2084ed3d862fda11"
 }

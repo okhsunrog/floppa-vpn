@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions SET is_current = false WHERE user_id = $1 AND is_current",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6325993628cbfdec922dbd93bd7361f7a5eb86011eb95b0631ba25e7fbd4e912"
+}
