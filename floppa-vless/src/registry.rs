@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tracing::{error, info, warn};
 
-use crate::auth::MultiUserAuthenticator;
+use crate::auth::{MultiUserAuthenticator, RegistryUser};
 
 /// Load all users with VLESS UUIDs and active subscriptions into the authenticator.
 pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> anyhow::Result<()> {
@@ -47,7 +47,11 @@ pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> any
             }
         };
 
-        users.push((uuid_bytes, row.user_id, row.speed_limit_mbps));
+        users.push(RegistryUser {
+            uuid: uuid_bytes,
+            user_id: row.user_id,
+            speed_limit_mbps: row.speed_limit_mbps,
+        });
     }
 
     let count = users.len();

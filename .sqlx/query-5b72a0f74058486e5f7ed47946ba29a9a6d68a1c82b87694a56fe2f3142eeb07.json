@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, public_key AS \"public_key!\", assigned_ip AS \"assigned_ip!\", protocol FROM peers WHERE sync_status = 'pending_remove'",
+  "query": "SELECT id, public_key AS \"public_key!\", assigned_ip AS \"assigned_ip!\",\n                  protocol AS \"protocol: Protocol\"\n           FROM peers WHERE sync_status = 'pending_remove'",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "protocol",
+        "name": "protocol: Protocol",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -58,5 +58,5 @@
       false
     ]
   },
-  "hash": "9528687757f968444b927bd3ef4200b4b63bbccf236b6a49342c289b03602fe0"
+  "hash": "5b72a0f74058486e5f7ed47946ba29a9a6d68a1c82b87694a56fe2f3142eeb07"
 }

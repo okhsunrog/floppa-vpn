@@ -12,6 +12,23 @@ pub struct UserInfo {
     pub limiter: Limiter,
 }
 
+/// One user as loaded from the database for [`MultiUserAuthenticator::sync_users`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryUser {
+    pub uuid: [u8; 16],
+    pub user_id: i64,
+    /// `None` = unlimited.
+    pub speed_limit_mbps: Option<i32>,
+}
+
+/// Bytes moved for one user since the previous flush.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UserTraffic {
+    pub user_id: i64,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+}
+
 /// Multi-user authenticator that checks UUIDs against a DashMap registry.
 ///
 /// Authentication uses constant-time comparison for each entry to prevent
@@ -39,25 +56,25 @@ impl MultiUserAuthenticator {
     /// Uses diff-based update: preserves existing limiters (and their unflushed
     /// traffic counters), updates speed limits when changed, adds new users,
     /// and removes users no longer in the set.
-    pub fn sync_users(&self, new_users: Vec<([u8; 16], i64, Option<i32>)>) {
+    pub fn sync_users(&self, new_users: Vec<RegistryUser>) {
         use rustc_hash::FxHashSet;
 
-        let new_uuids: FxHashSet<[u8; 16]> = new_users.iter().map(|(uuid, _, _)| *uuid).collect();
+        let new_uuids: FxHashSet<[u8; 16]> = new_users.iter().map(|u| u.uuid).collect();
 
         // Remove users not in the new set
         self.users.retain(|uuid, _| new_uuids.contains(uuid));
 
         // Insert new users, update existing ones
-        for (uuid, user_id, speed_limit_mbps) in new_users {
-            let new_speed = mbps_to_bps(speed_limit_mbps);
+        for user in new_users {
+            let new_speed = mbps_to_bps(user.speed_limit_mbps);
             self.users
-                .entry(uuid)
+                .entry(user.uuid)
                 .and_modify(|existing| {
-                    existing.user_id = user_id;
+                    existing.user_id = user.user_id;
                     existing.limiter.update_speed(new_speed);
                 })
                 .or_insert_with(|| UserInfo {
-                    user_id,
+                    user_id: user.user_id,
                     limiter: Limiter::new(new_speed),
                 });
         }
@@ -65,13 +82,17 @@ impl MultiUserAuthenticator {
 
     /// Drain traffic counters from all users' limiters.
     ///
-    /// Returns `(user_id, bytes_read, bytes_written)` for users with non-zero traffic.
-    pub fn flush_traffic(&self) -> Vec<(i64, u64, u64)> {
+    /// Returns an entry for every user with non-zero traffic since the last call.
+    pub fn flush_traffic(&self) -> Vec<UserTraffic> {
         let mut deltas = Vec::new();
         for entry in self.users.iter() {
-            let (read, written) = entry.value().limiter.swap_counters();
-            if read > 0 || written > 0 {
-                deltas.push((entry.value().user_id, read, written));
+            let (bytes_read, bytes_written) = entry.value().limiter.swap_counters();
+            if bytes_read > 0 || bytes_written > 0 {
+                deltas.push(UserTraffic {
+                    user_id: entry.value().user_id,
+                    bytes_read,
+                    bytes_written,
+                });
             }
         }
         deltas

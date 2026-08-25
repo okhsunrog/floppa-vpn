@@ -3,12 +3,44 @@ use chrono::{DateTime, Utc};
 use floppa_core::AmneziaWgConfig;
 use floppa_core::config::AwgObfuscation;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use tracing::{debug, info, warn};
 
-/// Peer statistics: (public_key, tx_bytes, rx_bytes, last_handshake)
-pub type PeerStats = Vec<(String, u64, u64, Option<DateTime<Utc>>)>;
+/// Userspace tool driving an interface: `wg`, or `awg` (a drop-in superset of `wg`
+/// that also speaks the AmneziaWG obfuscation params).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WgTool {
+    Wg,
+    Awg,
+}
+
+impl WgTool {
+    /// Name of the CLI binary.
+    pub fn binary(self) -> &'static str {
+        match self {
+            WgTool::Wg => "wg",
+            WgTool::Awg => "awg",
+        }
+    }
+}
+
+impl fmt::Display for WgTool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.binary())
+    }
+}
+
+/// One peer's counters from `wg show <iface> dump`. Byte directions are the
+/// server's: `rx` is what the peer sent us, `tx` what we sent the peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerStat {
+    pub public_key: String,
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
+    pub last_handshake: Option<DateTime<Utc>>,
+}
 
 /// Check if WireGuard interface exists
 fn interface_exists(interface: &str) -> bool {
@@ -250,8 +282,8 @@ fn parse_showconf_interface(output: &str) -> HashMap<String, String> {
 }
 
 /// Read the live `[Interface]` config of an interface.
-fn read_interface_conf(tool: &str, interface: &str) -> Result<HashMap<String, String>> {
-    let output = Command::new(tool)
+fn read_interface_conf(tool: WgTool, interface: &str) -> Result<HashMap<String, String>> {
+    let output = Command::new(tool.binary())
         .args(["showconf", interface])
         .output()
         .with_context(|| format!("Failed to run {tool} showconf"))?;
@@ -295,7 +327,7 @@ fn awg_params_in_sync(current: &HashMap<String, String>, desired: &[(&str, Strin
 fn reconcile_awg_obfuscation(interface: &str, o: &AwgObfuscation) -> Result<()> {
     let desired = awg_obfuscation_params(o);
 
-    match read_interface_conf("awg", interface) {
+    match read_interface_conf(WgTool::Awg, interface) {
         Ok(current) if awg_params_in_sync(&current, &desired) => {
             debug!(
                 interface,
@@ -330,9 +362,9 @@ fn reconcile_awg_obfuscation(interface: &str, o: &AwgObfuscation) -> Result<()> 
     Ok(())
 }
 
-/// Add a peer to a WireGuard/AmneziaWG interface (`tool` is "wg" or "awg").
-pub fn add_peer(tool: &str, interface: &str, public_key: &str, allowed_ip: &str) -> Result<()> {
-    let status = Command::new(tool)
+/// Add a peer to a WireGuard/AmneziaWG interface.
+pub fn add_peer(tool: WgTool, interface: &str, public_key: &str, allowed_ip: &str) -> Result<()> {
+    let status = Command::new(tool.binary())
         .args([
             "set",
             interface,
@@ -350,9 +382,9 @@ pub fn add_peer(tool: &str, interface: &str, public_key: &str, allowed_ip: &str)
     Ok(())
 }
 
-/// Remove a peer from a WireGuard/AmneziaWG interface (`tool` is "wg" or "awg").
-pub fn remove_peer(tool: &str, interface: &str, public_key: &str) -> Result<()> {
-    let status = Command::new(tool)
+/// Remove a peer from a WireGuard/AmneziaWG interface.
+pub fn remove_peer(tool: WgTool, interface: &str, public_key: &str) -> Result<()> {
+    let status = Command::new(tool.binary())
         .args(["set", interface, "peer", public_key, "remove"])
         .status()?;
 
@@ -363,9 +395,9 @@ pub fn remove_peer(tool: &str, interface: &str, public_key: &str) -> Result<()> 
     Ok(())
 }
 
-/// Get traffic stats for all peers on an interface (`tool` is "wg" or "awg").
-pub fn get_peer_stats(tool: &str, interface: &str) -> Result<PeerStats> {
-    let output = Command::new(tool)
+/// Get traffic stats for all peers on an interface.
+pub fn get_peer_stats(tool: WgTool, interface: &str) -> Result<Vec<PeerStat>> {
+    let output = Command::new(tool.binary())
         .args(["show", interface, "dump"])
         .output()?;
 
@@ -389,7 +421,12 @@ pub fn get_peer_stats(tool: &str, interface: &str) -> Result<PeerStats> {
             let rx_bytes = parts[5].parse().unwrap_or(0);
             let tx_bytes = parts[6].parse().unwrap_or(0);
 
-            stats.push((public_key, tx_bytes, rx_bytes, last_handshake));
+            stats.push(PeerStat {
+                public_key,
+                rx_bytes,
+                tx_bytes,
+                last_handshake,
+            });
         }
     }
 

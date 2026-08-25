@@ -14,10 +14,11 @@ pub fn flush_traffic(auth: &MultiUserAuthenticator) {
         return;
     }
 
-    for (user_id, rx_delta, tx_delta) in &deltas {
-        let uid = user_id.to_string();
-        metrics::counter!("vless_tx_bytes_total", "user_id" => uid.clone()).increment(*tx_delta);
-        metrics::counter!("vless_rx_bytes_total", "user_id" => uid).increment(*rx_delta);
+    for delta in &deltas {
+        let uid = delta.user_id.to_string();
+        metrics::counter!("vless_tx_bytes_total", "user_id" => uid.clone())
+            .increment(delta.bytes_written);
+        metrics::counter!("vless_rx_bytes_total", "user_id" => uid).increment(delta.bytes_read);
     }
 }
 
