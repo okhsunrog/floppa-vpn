@@ -93,11 +93,17 @@ impl RateLimiter {
 
 /// The address a request really came from.
 ///
-/// The server sits behind nginx, which overwrites `X-Real-IP` with the connecting address and
-/// *appends* it to `X-Forwarded-For` — so the trustworthy element of that list is the rightmost
-/// one, never the leftmost (which the client chooses freely). Without either header (no proxy,
-/// e.g. tests or a local run) the TCP peer address is used, so clients never share a bucket.
+/// The server sits behind nginx on the same host, which overwrites `X-Real-IP` with the
+/// connecting address and *appends* it to `X-Forwarded-For` — so the trustworthy element of
+/// that list is the rightmost one, never the leftmost (which the client chooses freely). Those
+/// headers are honoured only when the TCP peer is a loopback address, i.e. the request did come
+/// through that proxy: anything that reaches the listener directly (a VPN client on the
+/// interface, a local run, tests) is keyed by its own peer address, so a forged header cannot
+/// pick the bucket. Without headers the peer address is used as well.
 pub fn client_ip(headers: &HeaderMap, peer: SocketAddr) -> IpAddr {
+    if !peer.ip().is_loopback() {
+        return peer.ip();
+    }
     let header_ip = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
 
     header_ip("x-real-ip")
@@ -124,7 +130,10 @@ mod tests {
     use super::*;
     use axum::http::HeaderValue;
 
-    const PEER: SocketAddr =
+    /// The proxy on the same host.
+    const PEER: SocketAddr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 5555);
+    /// A client that reached the listener directly.
+    const DIRECT_PEER: SocketAddr =
         SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 9)), 5555);
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
@@ -160,9 +169,22 @@ mod tests {
 
     #[test]
     fn falls_back_to_the_peer_address() {
-        assert_eq!(client_ip(&HeaderMap::new(), PEER), ip("10.0.0.9"));
+        assert_eq!(client_ip(&HeaderMap::new(), PEER), ip("127.0.0.1"));
         let h = headers(&[("x-forwarded-for", "not-an-ip"), ("x-real-ip", "")]);
-        assert_eq!(client_ip(&h, PEER), ip("10.0.0.9"));
+        assert_eq!(client_ip(&h, PEER), ip("127.0.0.1"));
+        assert_eq!(client_ip(&HeaderMap::new(), DIRECT_PEER), ip("10.0.0.9"));
+    }
+
+    #[test]
+    fn proxy_headers_from_a_non_loopback_peer_are_ignored() {
+        let h = headers(&[
+            ("x-real-ip", "203.0.113.7"),
+            ("x-forwarded-for", "198.51.100.1, 203.0.113.8"),
+        ]);
+        assert_eq!(client_ip(&h, DIRECT_PEER), ip("10.0.0.9"));
+        // ...but honoured from the proxy, over v6 loopback too.
+        let v6_proxy: SocketAddr = "[::1]:5555".parse().unwrap();
+        assert_eq!(client_ip(&h, v6_proxy), ip("203.0.113.7"));
     }
 
     #[test]
