@@ -536,10 +536,10 @@ pub(super) async fn create_my_peer(
         None
     };
 
-    let options = Some(services::CreatePeerOptions {
+    let options = services::CreatePeerOptions {
         installation_id,
         protocol,
-    });
+    };
 
     let result = services::create_peer(&ctx, auth.user_id, options).await?;
 

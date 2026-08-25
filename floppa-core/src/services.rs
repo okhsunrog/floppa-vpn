@@ -584,11 +584,12 @@ pub struct CreatePeerContext<'a> {
     pub awg_public_key: Option<&'a str>,
 }
 
-/// Client-provided options when creating a peer.
-#[derive(Default)]
+/// Client-provided options when creating a peer. `Default` is a standalone (no installation)
+/// AmneziaWG peer — AmneziaWG is the client default, see [`Protocol`].
+#[derive(Debug, Clone, Copy, Default)]
 pub struct CreatePeerOptions {
     pub installation_id: Option<i64>,
-    /// Tunnel protocol. Defaults to AmneziaWG (the client default).
+    /// Tunnel protocol.
     pub protocol: Protocol,
 }
 
@@ -610,14 +611,12 @@ pub struct CreatePeerResult {
 pub async fn create_peer(
     ctx: &CreatePeerContext<'_>,
     user_id: i64,
-    options: Option<CreatePeerOptions>,
+    options: CreatePeerOptions,
 ) -> Result<CreatePeerResult> {
-    let installation_id = options.as_ref().and_then(|o| o.installation_id);
-    // No options → WireGuard (preserves the original single-protocol call sites).
-    let protocol = options
-        .as_ref()
-        .map(|o| o.protocol)
-        .unwrap_or(Protocol::WireGuard);
+    let CreatePeerOptions {
+        installation_id,
+        protocol,
+    } = options;
 
     // Resolve everything protocol-specific up front, BEFORE any row is written: an AmneziaWG
     // peer must not be committed only to fail on a missing server key afterwards (the daemon
@@ -1811,7 +1810,7 @@ mod tests {
         let user_id = seed_user(&pool, 11111).await;
         seed_subscription(&pool, user_id, plan_id).await;
 
-        let result = create_peer(&ctx, user_id, None).await.unwrap();
+        let result = create_peer(&ctx, user_id, wg_opts()).await.unwrap();
         assert_eq!(result.assigned_ip, "10.200.0.1");
     }
 
@@ -1871,6 +1870,21 @@ mod tests {
 
     // ── create_peer ──
 
+    /// A standalone WireGuard peer — `test_config()` has no [amneziawg] section.
+    fn wg_opts() -> CreatePeerOptions {
+        CreatePeerOptions {
+            installation_id: None,
+            protocol: Protocol::WireGuard,
+        }
+    }
+
+    #[test]
+    fn default_peer_options_are_standalone_amneziawg() {
+        let opts = CreatePeerOptions::default();
+        assert_eq!(opts.installation_id, None);
+        assert_eq!(opts.protocol, Protocol::AmneziaWg);
+    }
+
     fn test_ctx<'a>(pool: &'a DbPool, config: &'a Config) -> CreatePeerContext<'a> {
         static ENCRYPTION_KEY: [u8; 32] = [0x42u8; 32];
         CreatePeerContext {
@@ -1891,7 +1905,7 @@ mod tests {
         let user_id = seed_user(&pool, 11111).await;
         seed_subscription(&pool, user_id, plan_id).await;
 
-        let result = create_peer(&ctx, user_id, None).await.unwrap();
+        let result = create_peer(&ctx, user_id, wg_opts()).await.unwrap();
 
         assert_eq!(result.assigned_ip, "10.200.0.2");
         assert!(!result.private_key_plaintext.is_empty());
@@ -1953,7 +1967,7 @@ mod tests {
         let ctx = test_ctx(&pool, &config);
         let user_id = seed_user(&pool, 11111).await;
 
-        let result = create_peer(&ctx, user_id, None).await;
+        let result = create_peer(&ctx, user_id, wg_opts()).await;
         assert!(matches!(result, Err(FloppaError::NoActiveSubscription)));
     }
 
@@ -1974,10 +1988,10 @@ mod tests {
         seed_subscription(&pool, user_id, plan_id).await;
 
         // Create first peer (should succeed)
-        create_peer(&ctx, user_id, None).await.unwrap();
+        create_peer(&ctx, user_id, wg_opts()).await.unwrap();
 
         // Second peer should fail
-        let result = create_peer(&ctx, user_id, None).await;
+        let result = create_peer(&ctx, user_id, wg_opts()).await;
         assert!(matches!(
             result,
             Err(FloppaError::PeerLimitReached { current: 1, max: 1 })
@@ -2028,10 +2042,10 @@ mod tests {
         create_peer(
             &ctx,
             user_id,
-            Some(CreatePeerOptions {
+            CreatePeerOptions {
                 installation_id: Some(inst.id),
                 protocol: Protocol::WireGuard,
-            }),
+            },
         )
         .await
         .unwrap();
@@ -2040,16 +2054,16 @@ mod tests {
         create_peer(
             &ctx,
             user_id,
-            Some(CreatePeerOptions {
+            CreatePeerOptions {
                 installation_id: Some(inst.id),
                 protocol: Protocol::AmneziaWg,
-            }),
+            },
         )
         .await
         .unwrap();
 
         // A standalone exported config (no installation) now exceeds the limit.
-        let result = create_peer(&ctx, user_id, None).await;
+        let result = create_peer(&ctx, user_id, wg_opts()).await;
         assert!(matches!(
             result,
             Err(FloppaError::PeerLimitReached { current: 1, max: 1 })
@@ -2076,10 +2090,10 @@ mod tests {
         .await
         .unwrap();
 
-        let options = Some(CreatePeerOptions {
+        let options = CreatePeerOptions {
             installation_id: Some(installation.id),
             protocol: Protocol::WireGuard,
-        });
+        };
 
         let result = create_peer(&ctx, user_id, options).await.unwrap();
 
@@ -2107,10 +2121,10 @@ mod tests {
         let result = create_peer(
             &ctx,
             user_id,
-            Some(CreatePeerOptions {
+            CreatePeerOptions {
                 installation_id: Some(foreign.id),
                 protocol: Protocol::WireGuard,
-            }),
+            },
         )
         .await;
 
@@ -2131,11 +2145,9 @@ mod tests {
             .await
             .unwrap();
 
-        let options = || {
-            Some(CreatePeerOptions {
-                installation_id: Some(installation.id),
-                protocol: Protocol::WireGuard,
-            })
+        let options = || CreatePeerOptions {
+            installation_id: Some(installation.id),
+            protocol: Protocol::WireGuard,
         };
         create_peer(&ctx, user_id, options()).await.unwrap();
         let result = create_peer(&ctx, user_id, options()).await;
@@ -2160,8 +2172,8 @@ mod tests {
         seed_subscription(&pool, user_b, plan_id).await;
 
         let (peer_a, peer_b) = tokio::join!(
-            create_peer(&ctx, user_a, None),
-            create_peer(&ctx, user_b, None),
+            create_peer(&ctx, user_a, wg_opts()),
+            create_peer(&ctx, user_b, wg_opts()),
         );
         let peer_a = peer_a.unwrap();
         let peer_b = peer_b.unwrap();
@@ -2194,10 +2206,10 @@ mod tests {
         let result = create_peer(
             &ctx,
             user_id,
-            Some(CreatePeerOptions {
+            CreatePeerOptions {
                 installation_id: None,
                 protocol: Protocol::AmneziaWg,
-            }),
+            },
         )
         .await;
         assert!(matches!(result, Err(FloppaError::AmneziaWgNotConfigured)));
