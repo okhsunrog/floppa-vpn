@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { DialogTitle, DialogDescription, VisuallyHidden } from 'reka-ui'
-import { renderLinks } from 'floppa-web-shared'
+import { handleExternalLinkClick, openExternal, renderLinks } from 'floppa-web-shared'
 import { useUpdateStore, type ChangelogItem, type ChangelogSection } from '../stores/updateStore'
 
 const { t, locale } = useI18n()
@@ -34,15 +33,6 @@ const defaultOpen = computed(() => updateStore.changelog?.sections.map((s) => s.
 
 function getItemText(item: ChangelogItem): string {
   return locale.value === 'ru' ? item.ru : item.en
-}
-
-/** Intercept <a> clicks to open in system browser */
-function handleLinkClick(event: MouseEvent) {
-  const target = (event.target as HTMLElement).closest('a')
-  if (target?.href) {
-    event.preventDefault()
-    openUrl(target.href)
-  }
 }
 
 const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
@@ -91,7 +81,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
       <UAccordion v-else :items="accordionItems" type="multiple" :default-value="defaultOpen">
         <template #body="{ item }">
           <!-- eslint-disable-next-line vue/no-v-html -->
-          <div class="flex flex-col gap-2" @click="handleLinkClick">
+          <div class="flex flex-col gap-2" @click="handleExternalLinkClick">
             <div
               v-for="(entry, idx) in item.section.items"
               :key="idx"
@@ -113,7 +103,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
         <UButton
           v-if="isUpdateMode && updateStore.updateInfo"
           :label="t('update.download')"
-          @click="openUrl(updateStore.updateInfo!.downloadUrl)"
+          @click="openExternal(updateStore.updateInfo!.downloadUrl)"
         />
       </div>
     </template>

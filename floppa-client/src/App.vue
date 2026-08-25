@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useDark } from '@vueuse/core'
-import { AppLayout, useAuthStore } from 'floppa-web-shared'
+import { AppLayout, openExternal, useAuthStore } from 'floppa-web-shared'
 import { useI18n } from 'vue-i18n'
 import { useUpdateStore } from './stores/updateStore'
 import { useVpnStore } from './stores/vpnStore'
-import { openUrl } from '@tauri-apps/plugin-opener'
 import { commands } from './bindings'
 import ChangelogModal from './components/ChangelogModal.vue'
 
@@ -42,7 +41,7 @@ const forceUpdateOpen = computed({
 })
 
 async function openDownload(url: string) {
-  await openUrl(url)
+  await openExternal(url)
 }
 </script>
 

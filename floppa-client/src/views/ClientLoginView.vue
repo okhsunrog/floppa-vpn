@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import { isTauri } from 'floppa-web-shared'
+import { isTauri, openExternal } from 'floppa-web-shared'
 import { LoginView } from 'floppa-web-shared/views'
 import { useDeepLinkAuthStore } from '../stores/deepLinkAuthStore'
 import { API_URL } from '../config'
@@ -22,7 +21,7 @@ async function handleDeepLinkLogin(url: string) {
   // A fresh attempt supersedes any previous failure.
   deepLinkAuth.reset()
   try {
-    await openUrl(url)
+    await openExternal(url)
   } catch (e) {
     console.error('Failed to open browser login:', e)
   }
