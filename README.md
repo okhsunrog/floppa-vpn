@@ -216,7 +216,7 @@ graph TD
 | Daemon | Rust, WireGuard (`wg`) + AmneziaWG (`awg`, kernel DKMS module), Linux tc HFSC, Prometheus metrics |
 | VLESS Proxy | Rust, [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS+REALITY+Vision), Prometheus metrics |
 | Frontend | Vue 3, Nuxt UI v4, Pinia Colada, Tailwind v4 |
-| Client | Tauri 2, [gotatun](https://github.com/okhsunrog/gotatun) (WireGuard + AmneziaWG obfuscation, fork of Mullvad's boringtun), [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS), tauri-specta, custom tauri-plugin-vpn |
+| Client | Tauri 2, [gotatun](https://github.com/okhsunrog/gotatun) (WireGuard + AmneziaWG obfuscation, fork of Mullvad's boringtun), [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS), tauri-specta, custom tauri-plugin-vpn; `floppa-tunnel-config` (config parser, AmneziaWG params, route helpers) shared with `floppa-cli` |
 | Database | PostgreSQL with LISTEN/NOTIFY |
 | Metrics | VictoriaMetrics (Prometheus-compatible TSDB) |
 | Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), XTLS REALITY, JWT |

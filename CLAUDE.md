@@ -45,7 +45,8 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 - `floppa-daemon` — `SyncContext` (one per interface, `target()` picks `WgTool::{Wg, Awg}`), `wg show dump` → `PeerStat` for bandwidth, `check_expired` (handles `active` and `pending_add`), Linux tc HFSC in `tc.rs`: root `1:`, total class `1:1`, default class `1:ffff` for unlimited peers, per-peer class minor = host offset within the /16 **rendered as hex**, u32 filter at `prio = <offset in decimal>`, ingress via `ifb-<iface minus wg->`; `tc::set_peer_limit` adds or updates
 - `floppa-vless` — VLESS+REALITY proxy (shoes-lite), shared DB with server, own config/secrets (`FLOPPA_VLESS_CONFIG`/`FLOPPA_VLESS_SECRETS`)
 - `floppa-cli` — standalone CLI client: `connect --protocol wireguard|amneziawg|vless`, token via `--token-file`/`FLOPPA_TOKEN_FILE` (default `<config dir>/floppa-cli/token`, sudo-aware) or `--token`/`FLOPPA_TOKEN`, persistent `device_id` file, DNS via `resolvectl` under systemd-resolved, clean exit on SIGINT/SIGTERM/SIGHUP (also the tunnel binary for integration tests)
-- `floppa-client/src-tauri` — Tauri desktop/mobile app (Rust backend); excluded from the workspace
+- `floppa-tunnel-config` — client-side tunnel config shared by `floppa-cli` and `floppa-client`: the strict WireGuard/AmneziaWG `.conf` parser (`TunnelConfig`, typed `ConfigParseError`), `AwgObfuscation` (re-exported by `floppa-core::config`), VLESS tunnel defaults, pure route helpers (`route::{endpoint_route, split_default, parse_default_route, pick_endpoint}`) and, behind the `gotatun` feature, the gotatun peer/device builders. No sqlx/tauri/tokio; anything that resolves names, creates TUNs or runs `ip`/`netsh` stays in the clients
+- `floppa-client/src-tauri` — Tauri desktop/mobile app (Rust backend); excluded from the workspace, depends on `floppa-tunnel-config` by path
 - `tauri-plugin-vpn` — Android VPN plugin (Kotlin + Rust); excluded from the workspace
 
 ## Client VPN Architecture
@@ -64,6 +65,7 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 - `vpn/backend/` — `VpnBackend` trait (`mod.rs`), `in_process.rs` (desktop), `android_ipc.rs` (tarpc client)
 - `vpn/platform/` — `Platform` trait (`mod.rs`: routes, DNS, TUN, `default_gateway(family) -> Gateway(IpAddr)`), `linux.rs`, `windows.rs`, `android.rs`
 - `vpn/actor/` — connection state machine (intents, epochs, reconcile); `vpn/rollback/` — journal of undo steps (`Step::EndpointRoute` is durable across restarts)
+- `vpn/state.rs` — `ProtocolConfig` = `WgConfig`/`AwgConfig` (typed `floppa_tunnel_config::TunnelConfig`, persisted through the legacy string shape via `serde(try_from/into)`) or `VlessVpnConfig`; `SavedVpnConfigs` store
 - `vpn/config.rs` — device identity; VPN config persistence as an envelope `{updated_at, configs}`: desktop writes the OS keyring first with a 0600 file fallback (newest copy wins, file migrates back into the keyring); Android is file only (0600, private app dir)
 - `logging.rs` — `init_tracing(log_dir, LogProcess::{Ui, Vpn})`, `LogProfile::{Normal, Verbose}` + custom filter, diagnostic captures capped at 64 MiB (`docs/LOGGING.md`)
 
