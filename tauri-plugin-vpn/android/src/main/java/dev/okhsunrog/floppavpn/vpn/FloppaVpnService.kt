@@ -241,6 +241,12 @@ class FloppaVpnService : VpnService() {
             // A start the system issued: always-on, boot, or a lockdown restore. Same requirement
             // — foreground at once — and then the actor is told to want a tunnel.
             else -> {
+                if (intent == null) {
+                    // START_NOT_STICKY means we should never be redelivered a null intent; some
+                    // OEM builds do it anyway. Treated as a system start, but said out loud, so
+                    // that a device doing it does not read as always-on in the log.
+                    Log.w(TAG, "started with a null intent; treating it as a system start")
+                }
                 startVpnForeground(connected = false)
                 nativeSystemStart()
             }

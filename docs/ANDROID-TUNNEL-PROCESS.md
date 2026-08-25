@@ -110,9 +110,15 @@ it is what produced a restart loop once before. The persisted intent replaces `a
 ### Consent
 
 `VpnService.prepare(context)` can be *checked* from anywhere and can only be *shown* from an
-activity. The UI keeps the fast path (ask before requesting Up). The actor checks independently
-before establishing and parks in a `NeedsConsent` phase — surfaced in the UI and in the
-notification — instead of spending reconnect passes on a dialog nobody can see.
+activity. So the UI asks — before it requests a tunnel, where it has an activity and a person
+looking at it — and the actor only ever *checks*. Consent that is missing is a refusal, which the
+ladder already treats as fatal for the whole cycle.
+
+That is deliberately not a "waiting for consent" state. A reconnect at three in the morning cannot
+show a dialog whatever it does, so parking would mean holding a tunnel-shaped promise nobody can
+fulfil until the user next opens the app — and the app opening is exactly when the UI asks anyway.
+Revocation is the same story from the other side: the user has said no, and an app that keeps a
+pending request alive across it is arguing.
 
 ### Staging
 
