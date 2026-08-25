@@ -14,7 +14,7 @@ const AVATAR_MISSING_TTL_MS = 60 * 60 * 1000
 const TELEGRAM_ID_KEY = 'floppa-telegram-id'
 
 /** The JWT `exp` claim (seconds since epoch), or null if absent/unreadable. */
-function jwtExp(jwt: string): number | null {
+export function jwtExp(jwt: string): number | null {
   const payload = jwt.split('.')[1]
   if (!payload) return null
   try {
@@ -27,7 +27,7 @@ function jwtExp(jwt: string): number | null {
 }
 
 /** True only when the token carries an `exp` claim that is already in the past. */
-function isTokenExpired(jwt: string): boolean {
+export function isTokenExpired(jwt: string): boolean {
   const exp = jwtExp(jwt)
   return exp !== null && exp * 1000 <= Date.now()
 }
