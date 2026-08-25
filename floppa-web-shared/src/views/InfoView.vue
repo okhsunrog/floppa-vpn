@@ -11,16 +11,14 @@ import logoUrl from '../assets/logo.png'
 import ColorModeButton from '../components/ColorModeButton.vue'
 import { durationUnit } from '../utils/format'
 import { renderLinks } from '../utils/renderLinks'
+import { handleExternalLinkClick, openExternal } from '../utils/openExternal'
 import { useLocaleSwitch } from '../composables/localeSwitch'
 
 // `landing` is shown to logged-out visitors (web home, with a Login CTA);
 // `tab` is the in-app Info tab for authenticated users.
-const props = withDefaults(
+withDefaults(
   defineProps<{
     variant?: 'landing' | 'tab'
-    // Injected by the Tauri client to open links in the system browser. On web, falls back
-    // to window.open (which also triggers binary downloads).
-    openExternal?: (url: string) => void
   }>(),
   { variant: 'tab' },
 )
@@ -65,9 +63,9 @@ const secondaryDownloads = computed(() => [
   { key: 'arch', file: 'floppa-vpn-x86_64.pkg.tar.zst' },
 ])
 
+// System browser in Tauri, a new tab on the web (which also triggers binary downloads).
 function go(url: string) {
-  if (props.openExternal) props.openExternal(url)
-  else window.open(url, '_blank', 'noopener,noreferrer')
+  void openExternal(url)
 }
 
 function download(file: string) {
@@ -107,14 +105,6 @@ const sectionIcons: Record<string, string> = {
 
 function changelogText(item: ChangelogItem): string {
   return locale.value === 'ru' ? item.ru : item.en
-}
-
-function onChangelogClick(event: MouseEvent) {
-  const target = (event.target as HTMLElement).closest('a')
-  if (target?.href) {
-    event.preventDefault()
-    go(target.href)
-  }
 }
 </script>
 
@@ -236,7 +226,7 @@ function onChangelogClick(event: MouseEvent) {
     <!-- What's new (changelog, bundled) -->
     <section v-if="changelogData.sections?.length" class="mb-10">
       <h2 class="text-xl font-semibold mb-4 text-center">{{ t('info.changelogTitle') }}</h2>
-      <div class="max-w-2xl mx-auto flex flex-col gap-6" @click="onChangelogClick">
+      <div class="max-w-2xl mx-auto flex flex-col gap-6" @click="handleExternalLinkClick">
         <div v-for="entry in visibleChangelog" :key="entry.version">
           <h3 class="font-semibold mb-2">v{{ entry.version }}</h3>
           <div
