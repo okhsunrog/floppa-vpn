@@ -13,8 +13,8 @@ use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
 use crate::vpn::actor::world::ServiceReadiness;
 use crate::vpn::autostart::{self, AutostartBundle, TunSpec};
+use crate::vpn::host::HostError;
 use crate::vpn::rollback::{RollbackStack, Step};
-use tauri_plugin_vpn::VpnExt;
 use tracing::{debug, error, info, warn};
 
 macro_rules! bail_if_cancelled {
@@ -48,13 +48,12 @@ pub(super) async fn ladder(
     let granted = tokio::select! {
         biased;
         _ = ctx.cancel.cancelled() => return Err(AttemptError::Cancelled),
-        answer = tokio::time::timeout(ctx.policy.consent_budget, ctx.app.vpn().prepare()) => {
+        answer = tokio::time::timeout(ctx.policy.consent_budget, ctx.host.consent()) => {
             match answer {
                 Ok(Ok(granted)) => granted,
-                Ok(Err(e)) => {
-                    return Err(AttemptError::PlatformUnavailable {
-                        detail: format!("VPN prepare failed: {e}"),
-                    });
+                Ok(Err(HostError::Refused)) => return Err(AttemptError::PermissionDenied),
+                Ok(Err(HostError::Unavailable { detail })) => {
+                    return Err(AttemptError::PlatformUnavailable { detail });
                 }
                 Err(_) => {
                     error!("the VPN consent dialog never answered");
@@ -92,7 +91,7 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Starting).await;
 
-    let vpn_config = TunSpec::derive(&ctx.config, &ctx.params).with_generation(ctx.generation);
+    let spec = TunSpec::derive(&ctx.config, &ctx.params);
     stack.push(Step::AndroidService {
         generation: ctx.generation,
     });
@@ -102,9 +101,8 @@ pub(super) async fn ladder(
     // reconnects — otherwise the poll below spends the whole budget reading a dying service.
     ctx.backend.expect_generation(ctx.generation);
 
-    ctx.app
-        .vpn()
-        .start(vpn_config)
+    ctx.host
+        .start(spec, ctx.generation)
         .await
         .map_err(|e| AttemptError::PeerStartFailed {
             detail: e.to_string(),

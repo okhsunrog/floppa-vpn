@@ -105,6 +105,13 @@ impl TunnelHandle {
         self.state.borrow().clone()
     }
 
+    /// The stream of published states, for whoever is forwarding them onwards.
+    ///
+    /// Read-only, like every other view of it: the actor is the sole writer.
+    pub fn states(&self) -> watch::Receiver<TunnelState> {
+        self.state.clone()
+    }
+
     pub async fn set_intent(&self, intent: IntentRequest) -> Result<IntentAccepted, IntentError> {
         let (reply, rx) = oneshot::channel();
         self.tx

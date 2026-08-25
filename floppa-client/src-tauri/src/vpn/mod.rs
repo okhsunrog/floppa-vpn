@@ -4,6 +4,10 @@ pub mod backend;
 pub mod commands;
 pub mod config;
 pub mod events;
+/// What the tunnel needs from whatever hosts it. Android-only: on desktop the ladder configures
+/// the machine itself, and there is no service to ask.
+#[cfg(target_os = "android")]
+pub mod host;
 #[cfg(target_os = "android")]
 pub mod jni_entry;
 pub mod platform;

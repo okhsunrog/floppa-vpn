@@ -223,12 +223,41 @@ pub fn run() {
                     vpn::rollback::Journal::new(vpn::rollback::Journal::default_path(&dir))
                 });
 
+                // `setup` runs outside a Tokio runtime, so everything the actor starts has to go
+                // through Tauri's handle. The actor is told how to spawn rather than assuming it,
+                // because the same actor also runs in the `:vpn` process, which owns its runtime.
+                let spawn: vpn::actor::Spawn = Arc::new(|task| {
+                    tauri::async_runtime::spawn(task);
+                });
+
                 let handle = vpn::actor::TunnelActor::spawn(
                     backend,
                     platform,
                     journal,
-                    app.handle().clone(),
+                    spawn,
+                    #[cfg(target_os = "android")]
+                    Arc::new(vpn::host::plugin::PluginHost::new(app.handle().clone())),
                 );
+
+                // The bridge from the actor's state to the UI. It is here rather than inside the
+                // actor because emitting a Tauri event is something only this process can do —
+                // the actor merely publishes, and whoever hosts it decides who hears.
+                let mut states = handle.states();
+                tauri::async_runtime::spawn({
+                    let app = app.handle().clone();
+                    async move {
+                        use tauri_specta::Event as _;
+                        // A `watch` gives a slow listener the newest value rather than a backlog:
+                        // the UI wants what is true now, never a replay of what was.
+                        while states.changed().await.is_ok() {
+                            let state = states.borrow_and_update().clone();
+                            if let Err(e) = vpn::events::TunnelStateChanged(state).emit(&app) {
+                                warn!(error = %e, "failed to emit the tunnel state");
+                            }
+                        }
+                    }
+                });
+
                 app.manage(handle);
             }
 

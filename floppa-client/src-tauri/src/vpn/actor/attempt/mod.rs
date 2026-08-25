@@ -51,8 +51,10 @@ pub struct AttemptCtx {
     pub policy: Policy,
     pub cancel: CancellationToken,
     pub tx: mpsc::Sender<Command>,
+    /// The service that owns the descriptor. Named as a dependency rather than reached through
+    /// the UI process's `AppHandle`, so the same ladder runs wherever the actor is hosted.
     #[cfg(target_os = "android")]
-    pub app: tauri::AppHandle,
+    pub host: std::sync::Arc<dyn crate::vpn::host::ServiceHost>,
 }
 
 impl AttemptCtx {

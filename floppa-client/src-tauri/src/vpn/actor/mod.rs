@@ -52,6 +52,13 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+/// How this process starts a task.
+///
+/// The actor is spawned from Tauri's `setup`, which runs outside any Tokio runtime, and also from
+/// the `:vpn` process, which owns its runtime. Taking the spawner as an argument is what lets one
+/// actor serve both without naming either.
+pub type Spawn = Arc<dyn Fn(std::pin::Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync>;
+
 /// How many finished cycles are remembered, so a caller that asks late still gets its answer
 /// instead of hanging on a waiter for something that already happened.
 const RECENT_OUTCOMES: usize = 8;
@@ -95,9 +102,9 @@ pub struct TunnelActor {
     policy: Policy,
     iface: InterfaceName,
     journal: Option<Journal>,
-    /// Only the Android ladder needs it; the publisher takes its own clone when it is spawned.
+    /// Only the Android ladder needs it: the service that owns the tunnel's descriptor.
     #[cfg(target_os = "android")]
-    app: tauri::AppHandle,
+    host: Arc<dyn crate::vpn::host::ServiceHost>,
 
     // ---- in-flight work ----
     attempt: Option<AttemptHandle>,
@@ -124,24 +131,30 @@ pub struct TunnelActor {
 
 impl TunnelActor {
     /// Spawn the actor and return a handle to it.
+    ///
+    /// `spawn_task` is how this process starts a task. It is injected rather than assumed: the UI
+    /// process is set up outside any Tokio runtime and has to go through Tauri's handle, while the
+    /// `:vpn` process owns its runtime outright — and the actor should not have to know which one
+    /// it is running in.
     pub fn spawn(
         backend: Arc<dyn VpnBackend>,
         platform: Arc<PlatformImpl>,
         journal: Option<Journal>,
-        app: tauri::AppHandle,
+        spawn_task: Spawn,
+        #[cfg(target_os = "android")] host: Arc<dyn crate::vpn::host::ServiceHost>,
     ) -> TunnelHandle {
         let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
         let policy = Policy::for_backend(backend.liveness_grace());
 
-        // Tauri's `setup` runs outside a Tokio runtime context, so these must go through Tauri's
-        // runtime handle. Everything the actor spawns afterwards runs inside its own task and can
-        // use `tokio::spawn` directly.
-        tauri::async_runtime::spawn(observer(backend.clone(), cmd_tx.clone(), policy.clone()));
-        tauri::async_runtime::spawn(publisher(state_rx.clone(), app.clone()));
+        spawn_task(Box::pin(observer(
+            backend.clone(),
+            cmd_tx.clone(),
+            policy.clone(),
+        )));
 
         let actor_tx = cmd_tx.clone();
-        tauri::async_runtime::spawn(async move {
+        spawn_task(Box::pin(async move {
             // Reading the OS keyring can block for as long as an unlock dialog stays open. It
             // runs on a blocking thread, and the loop starts only once it is done — so nothing
             // queues behind it, and the actor task itself never blocks.
@@ -155,10 +168,10 @@ impl TunnelActor {
                 actor_tx,
                 state_tx,
                 #[cfg(target_os = "android")]
-                app,
+                host,
             );
             actor.run(cmd_rx).await;
-        });
+        }));
 
         TunnelHandle::new(cmd_tx, state_rx)
     }
@@ -175,7 +188,7 @@ impl TunnelActor {
         configs: ConfigStore,
         cmd_tx: mpsc::Sender<Command>,
         state_tx: watch::Sender<TunnelState>,
-        #[cfg(target_os = "android")] app: tauri::AppHandle,
+        #[cfg(target_os = "android")] host: Arc<dyn crate::vpn::host::ServiceHost>,
     ) -> Self {
         Self {
             status: Status::Idle,
@@ -193,7 +206,7 @@ impl TunnelActor {
             iface: InterfaceName::default(),
             journal,
             #[cfg(target_os = "android")]
-            app,
+            host,
             attempt: None,
             unwind: None,
             next_epoch: 1,
@@ -751,7 +764,7 @@ impl TunnelActor {
                     cancel: cancel.clone(),
                     tx: self.cmd_tx.clone(),
                     #[cfg(target_os = "android")]
-                    app: self.app.clone(),
+                    host: self.host.clone(),
                 };
                 self.spawn_attempt(epoch, index, attempt::run(ctx));
                 self.attempt = Some(AttemptHandle {
@@ -1052,21 +1065,6 @@ async fn sleep_until(deadline: Option<Instant>) {
         Some(at) => tokio::time::sleep_until(at.into()).await,
         // Never fires; the `if` guard on the select arm keeps this unreachable.
         None => std::future::pending().await,
-    }
-}
-
-/// Forwards every published state to the UI as an event.
-///
-/// Reading from a `watch` means a listener that falls behind is given the newest value rather than
-/// a backlog: the UI wants the current state, never a replay of states that are no longer true.
-async fn publisher(mut states: watch::Receiver<TunnelState>, app: tauri::AppHandle) {
-    use tauri_specta::Event as _;
-
-    while states.changed().await.is_ok() {
-        let state = states.borrow_and_update().clone();
-        if let Err(e) = crate::vpn::events::TunnelStateChanged(state).emit(&app) {
-            warn!(error = %e, "failed to emit the tunnel state");
-        }
     }
 }
 
