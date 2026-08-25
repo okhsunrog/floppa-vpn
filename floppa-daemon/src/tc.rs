@@ -3,6 +3,17 @@
 //! Uses Linux tc with HFSC (Hierarchical Fair Service Curve) qdisc for
 //! precise bandwidth control. Handles both egress (outbound) and ingress
 //! (inbound via IFB device) traffic shaping.
+//!
+//! # Known ceiling: ~2046 limited peers per interface
+//!
+//! Each limited peer gets its own `u32` filter at its own `prio` (so it can be deleted by
+//! prio alone, without tracking handles). Every distinct prio is a separate classifier
+//! instance with its own root u32 hash table, and the kernel's `cls_u32` hands out those
+//! table ids (`htid`) from a 12-bit range — `idr_alloc_cyclic(…, 1, 0x7FF)` in
+//! `net/sched/cls_u32.c`, i.e. at most 2046 tables per qdisc. Past that, `tc filter add`
+//! fails and the peer stays `pending_add`. The class ids themselves cover a whole /16, but
+//! the filters do not; the current /24 subnets are far below the limit. Lifting it means
+//! putting all filters under one prio and deleting by handle (`handle 800::<id>`).
 
 use anyhow::{Context, Result, anyhow};
 use std::process::Command;

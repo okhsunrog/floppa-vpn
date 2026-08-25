@@ -194,6 +194,9 @@ reading `tc -s class show dev wg-floppa` or debugging a limit:
 - A new peer stays `pending_add` until both its WireGuard entry and its tc class are in place;
   if `tc` fails the daemon takes the just-added peer off the interface again (so it never runs
   unlimited), leaves it pending and retries on the next sync.
+- Each limited peer is a separate `u32` filter at its own prio, and the kernel allows at most
+  ~2046 of those per qdisc (`cls_u32` table ids are 12-bit) — a known ceiling on limited peers
+  per interface, far above the current /24 subnets; see the note at the top of `tc.rs`.
 
 ## 7. Verify
 
