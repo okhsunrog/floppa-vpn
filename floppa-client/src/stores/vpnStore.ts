@@ -301,6 +301,38 @@ export const useVpnStore = defineStore(
       }
     }
 
+    /**
+     * Take the tunnel down and forget every stored config.
+     *
+     * The command does the waiting: it issues a Down that must leave nothing running — including
+     * a tunnel the always-on toggle started — and wipes only once the actor is genuinely idle. So
+     * this replaces a `disconnect()`, it does not follow one.
+     *
+     * What it removes is the previous account's private keys, its VLESS URI and the autostart
+     * bundle. Without it they stayed on the device: a second account on the same phone that could
+     * not reach the server connected under the first account's identity, and always-on could
+     * bring the logged-out account's tunnel back by itself.
+     */
+    async function forgetConfigs(): Promise<boolean> {
+      error.value = null
+      inFlight.value += 1
+      try {
+        const result = await commands.clearConfigs()
+        if (result.status === 'error') {
+          error.value = result.error
+          return false
+        }
+        handled.value = null
+        await refresh()
+        return true
+      } catch (e) {
+        error.value = { kind: 'unexpected', detail: describeUnknown(e) }
+        return false
+      } finally {
+        inFlight.value -= 1
+      }
+    }
+
     /** Store a config. Storing is not choosing: this does not change what the next connect uses. */
     async function importConfig(raw: string) {
       error.value = null
@@ -364,6 +396,7 @@ export const useVpnStore = defineStore(
       refresh,
       connect,
       disconnect,
+      forgetConfigs,
       importConfig,
       forgetPreferred,
     }

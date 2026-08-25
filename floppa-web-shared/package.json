@@ -30,6 +30,7 @@
     "./client/*": "./src/client/*",
     "./stores": "./src/stores/index.ts",
     "./components": "./src/components/index.ts",
+    "./composables/*": "./src/composables/*",
     "./utils": "./src/utils/index.ts",
     "./types": "./src/types/index.ts",
     "./views": "./src/views/index.ts",
