@@ -49,10 +49,9 @@ pub enum Effect {
     /// Demote the intent to Down at the same epoch, preserving the invariant that an Up intent
     /// means the actor is actively working toward Up.
     DemoteIntent,
-    /// Resolve waiters for the current epoch.
-    Resolve(CycleOutcome),
-    /// Resolve waiters for a specific, usually superseded, epoch.
-    ResolveFor {
+    /// Resolve waiters for an epoch. Always explicit: the actor executes effects after it has
+    /// already written the next status, so "the current epoch" would be read off the wrong state.
+    Resolve {
         epoch: IntentEpoch,
         outcome: CycleOutcome,
     },
@@ -164,10 +163,13 @@ fn adopt(up: &UpIntent, rt: &super::types::RunningTunnel, now_unix: i64) -> Deci
     }))
     .with(Effect::ResetSpeed)
     .with(Effect::RememberWinner(rt.protocol))
-    .with(Effect::Resolve(CycleOutcome::Connected {
-        protocol: rt.protocol,
-        adopted: true,
-    }))
+    .with(Effect::Resolve {
+        epoch: up.epoch,
+        outcome: CycleOutcome::Connected {
+            protocol: rt.protocol,
+            adopted: true,
+        },
+    })
 }
 
 /// The main table.
@@ -264,10 +266,13 @@ pub fn reconcile(
                     resolved: true,
                     ..u.clone()
                 }))
-                .with(Effect::Resolve(CycleOutcome::Connected {
-                    protocol: u.protocol,
-                    adopted: u.adopted,
-                })),
+                .with(Effect::Resolve {
+                    epoch: up.epoch,
+                    outcome: CycleOutcome::Connected {
+                        protocol: u.protocol,
+                        adopted: u.adopted,
+                    },
+                }),
                 // Handed over on a dark observation: the epoch takes the tunnel but its waiter
                 // stays unresolved until something authoritative confirms it.
                 World::Dark => Decision::to(Status::Up(UpStatus {
@@ -297,10 +302,13 @@ pub fn reconcile(
                 next.resolved = true;
                 let decision = Decision::to(Status::Up(next));
                 if resolve {
-                    decision.with(Effect::Resolve(CycleOutcome::Connected {
-                        protocol: u.protocol,
-                        adopted: u.adopted,
-                    }))
+                    decision.with(Effect::Resolve {
+                        epoch: u.epoch,
+                        outcome: CycleOutcome::Connected {
+                            protocol: u.protocol,
+                            adopted: u.adopted,
+                        },
+                    })
                 } else {
                     decision
                 }
@@ -346,14 +354,16 @@ pub fn reconcile(
 
         // ------------------------------------------------------------------------ Retrying
         Status::Retrying { cycle, resume_at } => match (relate(status, intent), world) {
-            // 24
-            (Rel::Down, _) => {
-                Decision::to(Status::Idle).with(Effect::Resolve(CycleOutcome::Cancelled))
-            }
+            // 24: the waiting cycle is cancelled; the Down itself is resolved by the actor the
+            // moment it sees Idle with a Down intent.
+            (Rel::Down, _) => Decision::to(Status::Idle).with(Effect::Resolve {
+                epoch: cycle.epoch,
+                outcome: CycleOutcome::Cancelled,
+            }),
             // 25
             (Rel::Newer(up), _) => {
                 let stale = cycle.epoch;
-                connecting(Cycle::start(up, policy), now, policy).with(Effect::ResolveFor {
+                connecting(Cycle::start(up, policy), now, policy).with(Effect::Resolve {
                     epoch: stale,
                     outcome: CycleOutcome::Cancelled,
                 })
@@ -414,10 +424,13 @@ pub fn on_attempt_done(
                 .with(Effect::TakeStack(stack))
                 .with(Effect::ResetSpeed)
                 .with(Effect::RememberWinner(protocol))
-                .with(Effect::Resolve(CycleOutcome::Connected {
-                    protocol,
-                    adopted: false,
-                }))
+                .with(Effect::Resolve {
+                    epoch: cycle.epoch,
+                    outcome: CycleOutcome::Connected {
+                        protocol,
+                        adopted: false,
+                    },
+                })
             }
             // A2: it succeeded, but nobody wants it any more. Take the stack so the teardown can
             // undo exactly what the attempt applied.
@@ -430,7 +443,7 @@ pub fn on_attempt_done(
                 UnwindReason::IntentChanged,
             ))
             .with(Effect::TakeStack(stack))
-            .with(Effect::ResolveFor {
+            .with(Effect::Resolve {
                 epoch: cycle.epoch,
                 outcome: CycleOutcome::Cancelled,
             })
@@ -450,7 +463,7 @@ pub fn on_attempt_done(
             // up to nine dialogs.
             if error.is_fatal_for_cycle() && !matches!(intent, Intent::Down { .. }) {
                 return Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                    Effect::ResolveFor {
+                    Effect::Resolve {
                         epoch: cycle.epoch,
                         outcome: CycleOutcome::Exhausted {
                             failures: cycle.failures,
@@ -461,13 +474,14 @@ pub fn on_attempt_done(
 
             match relate(status, intent) {
                 // A5
-                Rel::Down => {
-                    Decision::to(Status::Idle).with(Effect::Resolve(CycleOutcome::Cancelled))
-                }
+                Rel::Down => Decision::to(Status::Idle).with(Effect::Resolve {
+                    epoch: cycle.epoch,
+                    outcome: CycleOutcome::Cancelled,
+                }),
                 // A6
                 Rel::Newer(up) => {
                     let stale = cycle.epoch;
-                    connecting(Cycle::start(up, policy), now, policy).with(Effect::ResolveFor {
+                    connecting(Cycle::start(up, policy), now, policy).with(Effect::Resolve {
                         epoch: stale,
                         outcome: CycleOutcome::Cancelled,
                     })
@@ -488,7 +502,7 @@ pub fn on_attempt_done(
                     } else {
                         // A9
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::ResolveFor {
+                            Effect::Resolve {
                                 epoch: cycle.epoch,
                                 outcome: CycleOutcome::Exhausted {
                                     failures: cycle.failures,
@@ -553,7 +567,10 @@ pub fn on_unwind_done(
             );
             Decision::to(Status::Idle)
                 .with(Effect::DemoteIntent)
-                .with(Effect::Resolve(CycleOutcome::UnwindFailed))
+                .with(Effect::Resolve {
+                    epoch: intent.epoch(),
+                    outcome: CycleOutcome::UnwindFailed,
+                })
         };
     }
     // Deliberately not triggered by Dark: darkness is never authoritative, and re-unwinding
@@ -568,13 +585,16 @@ pub fn on_unwind_done(
             } else {
                 CycleOutcome::Cancelled
             };
-            Decision::to(Status::Idle).with(Effect::Resolve(outcome))
+            Decision::to(Status::Idle).with(Effect::Resolve {
+                epoch: intent.epoch(),
+                outcome,
+            })
         }
         // U2
         Rel::Newer(up) => {
             let decision = connecting(Cycle::start(up, policy), now, policy);
             match cycle {
-                Some(c) => decision.with(Effect::ResolveFor {
+                Some(c) => decision.with(Effect::Resolve {
                     epoch: c.epoch,
                     outcome: CycleOutcome::Cancelled,
                 }),
@@ -609,7 +629,7 @@ pub fn on_unwind_done(
                         })
                     } else {
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::ResolveFor {
+                            Effect::Resolve {
                                 epoch: cycle.epoch,
                                 outcome: CycleOutcome::Exhausted {
                                     failures: cycle.failures,
@@ -635,7 +655,7 @@ pub fn on_unwind_done(
                         let protocol = cycle.protocol();
                         let passes = cycle.pass + 1;
                         Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::ResolveFor {
+                            Effect::Resolve {
                                 epoch: cycle.epoch,
                                 outcome: CycleOutcome::LostGaveUp { protocol, passes },
                             },

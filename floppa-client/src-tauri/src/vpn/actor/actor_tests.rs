@@ -388,6 +388,22 @@ async fn a_connect_goes_up_through_the_ladder_and_a_down_tears_it_down() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_down_while_already_idle_still_resolves_its_epoch() {
+    // Caught by the disconnect button: with nothing to tear down the table had nothing to
+    // resolve, so the caller waiting on the Down epoch waited forever and the UI stayed busy.
+    let mut h = Harness::spawn(policy());
+    h.wait_for_phase(Phase::Disconnected).await;
+
+    let epoch = h.set(IntentRequest::Down).await;
+    assert_eq!(h.outcome(epoch).await, CycleOutcome::Down);
+
+    // And again: every Down gets its own answer, not just the first.
+    let again = h.set(IntentRequest::Down).await;
+    assert_ne!(again, epoch);
+    assert_eq!(h.outcome(again).await, CycleOutcome::Down);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_late_success_while_unwinding_is_torn_down_and_never_published_as_connected() {
     // The only path a late-succeeding connect can take: the intent went Down while the attempt
     // was in flight, and the attempt reports Established anyway. Its stack is taken and undone,
@@ -432,4 +448,42 @@ async fn a_cancelled_attempt_unwinds_itself_and_the_actor_settles_on_down() {
     assert_eq!(h.outcome(down_epoch).await, CycleOutcome::Down);
     h.wait_for_phase(Phase::Disconnected).await;
     assert!(h.backend.running().is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stale_epochs_outcome_is_not_shown_as_the_current_one() {
+    let mut h = Harness::spawn(policy());
+    h.platform.park_attempts();
+
+    // Attempt 1 is parked; a newer Up supersedes it.
+    let first = h.set(up()).await;
+    h.wait_for_phase(Phase::Connecting).await;
+    let second = h.set(up()).await;
+    h.wait_for_phase(Phase::Disconnecting).await;
+    h.platform.release();
+
+    // The superseded epoch is released as Cancelled...
+    assert_eq!(h.outcome(first).await, CycleOutcome::Cancelled);
+    // ...but the sticky outcome is about the intent the UI is looking at, which has none yet:
+    // its attempt is the one now parked.
+    let state = h
+        .wait_for("the second attempt", |s| {
+            s.phase == Phase::Connecting && s.epoch == second
+        })
+        .await;
+    assert_eq!(
+        state.last_outcome, None,
+        "a superseded cycle's Cancelled must not stick"
+    );
+
+    h.platform.release();
+    assert!(matches!(
+        h.outcome(second).await,
+        CycleOutcome::Connected { .. }
+    ));
+    let state = h.wait_for_phase(Phase::Connected).await;
+    assert!(matches!(
+        state.last_outcome,
+        Some(CycleOutcome::Connected { .. })
+    ));
 }

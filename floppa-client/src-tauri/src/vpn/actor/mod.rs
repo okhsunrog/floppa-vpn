@@ -538,8 +538,27 @@ impl TunnelActor {
             self.exec(effect);
         }
 
+        self.resolve_idle_down();
         self.settle_pending(now);
         self.publish_if_changed();
+    }
+
+    /// A Down intent that finds nothing to tear down has still reached Down.
+    ///
+    /// The table resolves a Down epoch only at the end of a teardown, so a Down issued while Idle
+    /// resolved nobody — and the caller waiting on it (the disconnect button) waited forever. Epoch
+    /// zero is the boot intent nobody asked for, so nobody is waiting on it.
+    fn resolve_idle_down(&mut self) {
+        let Intent::Down { epoch } = self.intent else {
+            return;
+        };
+        if epoch == IntentEpoch::default() || !view::is_quiescent(&self.status) {
+            return;
+        }
+        if self.recent_outcomes.iter().any(|(e, _)| *e == epoch) {
+            return;
+        }
+        self.publish_outcome(epoch, CycleOutcome::Down);
     }
 
     fn exec(&mut self, effect: Effect) {
@@ -649,17 +668,18 @@ impl TunnelActor {
                 self.intent = Intent::Down { epoch };
             }
 
-            Effect::Resolve(outcome) => {
-                let epoch = self.status.epoch().unwrap_or_else(|| self.intent.epoch());
-                self.publish_outcome(epoch, outcome);
-            }
-            Effect::ResolveFor { epoch, outcome } => self.publish_outcome(epoch, outcome),
+            Effect::Resolve { epoch, outcome } => self.publish_outcome(epoch, outcome),
         }
     }
 
     fn publish_outcome(&mut self, epoch: IntentEpoch, outcome: CycleOutcome) {
         info!(%epoch, ?outcome, "cycle finished");
-        self.last_outcome = Some(outcome.clone());
+        // Sticky for the UI only when it is about the intent the UI is looking at. A superseded
+        // cycle's `Cancelled`, released after a newer intent was accepted, must not overwrite what
+        // that newer intent is about to report.
+        if epoch == self.intent.epoch() {
+            self.last_outcome = Some(outcome.clone());
+        }
 
         self.recent_outcomes.push_back((epoch, outcome.clone()));
         while self.recent_outcomes.len() > RECENT_OUTCOMES {

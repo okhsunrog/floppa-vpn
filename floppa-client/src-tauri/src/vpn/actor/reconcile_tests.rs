@@ -119,8 +119,13 @@ fn has_demote(d: &Decision) -> bool {
 }
 
 fn outcome(d: &Decision) -> Option<&CycleOutcome> {
+    resolved(d).map(|(_, o)| o)
+}
+
+/// Every resolution carries the epoch it is for; the epoch is part of what the table promises.
+fn resolved(d: &Decision) -> Option<(IntentEpoch, &CycleOutcome)> {
     d.effects.iter().find_map(|e| match e {
-        Effect::Resolve(o) | Effect::ResolveFor { outcome: o, .. } => Some(o),
+        Effect::Resolve { epoch, outcome } => Some((*epoch, outcome)),
         _ => None,
     })
 }
@@ -193,8 +198,11 @@ fn only_the_bootstrap_intent_adopts_a_running_tunnel() {
     }
     assert!(has_remember(&d));
     assert!(matches!(
-        outcome(&d),
-        Some(CycleOutcome::Connected { adopted: true, .. })
+        resolved(&d),
+        Some((
+            IntentEpoch(1),
+            CycleOutcome::Connected { adopted: true, .. }
+        ))
     ));
 }
 
@@ -490,6 +498,13 @@ fn pressing_connect_while_already_connected_is_a_hand_over_not_a_reconnect() {
         other => panic!("expected a hand-over, got {other:?}"),
     }
     assert!(!has_unwind(&d), "nothing is torn down");
+    assert!(
+        matches!(
+            resolved(&d),
+            Some((IntentEpoch(2), CycleOutcome::Connected { .. }))
+        ),
+        "the waiter released is the new epoch's, not the old one's"
+    );
 }
 
 #[test]
@@ -642,7 +657,13 @@ fn going_down_during_a_retry_is_immediate() {
     let now = t0();
     let d = go(&retrying(now, &[AWG]), &down(2), &World::Clear, now);
     assert!(matches!(d.next, Status::Idle));
-    assert!(matches!(outcome(&d), Some(CycleOutcome::Cancelled)));
+    assert!(
+        matches!(
+            resolved(&d),
+            Some((IntentEpoch(1), CycleOutcome::Cancelled))
+        ),
+        "it is the waiting cycle that is cancelled; the Down is resolved by the actor once idle"
+    );
 }
 
 // ------------------------------------------------------------------------------ attempt outcomes
@@ -674,8 +695,11 @@ fn a_successful_attempt_becomes_up_and_hands_over_its_stack() {
     );
     assert!(has_remember(&d));
     assert!(matches!(
-        outcome(&d),
-        Some(CycleOutcome::Connected { adopted: false, .. })
+        resolved(&d),
+        Some((
+            IntentEpoch(1),
+            CycleOutcome::Connected { adopted: false, .. }
+        ))
     ));
 }
 
@@ -888,7 +912,10 @@ fn a_completed_teardown_for_an_explicit_down_reports_down() {
         now,
     );
     assert!(matches!(d.next, Status::Idle));
-    assert!(matches!(outcome(&d), Some(CycleOutcome::Down)));
+    assert!(
+        matches!(resolved(&d), Some((IntentEpoch(2), CycleOutcome::Down))),
+        "the Down epoch is the one that reached Down"
+    );
 }
 
 #[test]
@@ -952,7 +979,10 @@ fn a_newer_intent_arriving_during_a_teardown_is_honoured_the_moment_it_completes
     assert!(matches!(d.next, Status::Connecting { .. }));
     assert!(has_begin(&d, WG));
     assert!(
-        matches!(outcome(&d), Some(CycleOutcome::Cancelled)),
-        "the superseded epoch's waiter is released"
+        matches!(
+            resolved(&d),
+            Some((IntentEpoch(1), CycleOutcome::Cancelled))
+        ),
+        "the superseded epoch's waiter is released, not the new one's"
     );
 }
