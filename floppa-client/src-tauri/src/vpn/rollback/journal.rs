@@ -1,11 +1,16 @@
 //! On-disk record of the rollback steps that outlive the process.
 //!
-//! Routes and DNS survive a `kill -9`; nothing else does. If the app dies mid-connect, the next
-//! start reads this file and unwinds what was left behind, so a crash cannot strand a machine with
-//! VPN routes and a rewritten `/etc/resolv.conf` pointing at a tunnel that no longer exists.
+//! Routes, the endpoint host route and DNS survive a `kill -9`; nothing else does. If the app dies
+//! mid-connect, the next start reads this file and unwinds what was left behind, so a crash cannot
+//! strand a machine with VPN routes and a rewritten `/etc/resolv.conf` pointing at a tunnel that
+//! no longer exists.
 //!
 //! Every failure here is non-fatal by design: a journal that cannot be written, read or parsed
 //! must never prevent a connect. A missing journal degrades to today's behaviour.
+//!
+//! Writes are atomic (temp file, fsync, rename), so a crash mid-write leaves the previous journal
+//! rather than a truncated one. A journal that still fails to parse is moved aside as
+//! `rollback.json.corrupt` rather than deleted — it is the only record of what was applied.
 
 use super::Applied;
 use std::path::{Path, PathBuf};
@@ -75,31 +80,56 @@ impl Journal {
                 steps
             }
             Err(e) => {
-                warn!(error = %e, "rollback journal is corrupt, discarding");
-                self.clear();
+                warn!(error = %e, "rollback journal is corrupt, moving it aside");
+                self.quarantine();
                 Vec::new()
+            }
+        }
+    }
+
+    /// Where a corrupt journal is moved to.
+    pub fn corrupt_path(&self) -> PathBuf {
+        let mut name = self.path.file_name().unwrap_or_default().to_os_string();
+        name.push(".corrupt");
+        self.path.with_file_name(name)
+    }
+
+    fn quarantine(&self) {
+        let dest = self.corrupt_path();
+        match std::fs::rename(&self.path, &dest) {
+            Ok(()) => info!(path = %dest.display(), "corrupt rollback journal kept for inspection"),
+            Err(e) => {
+                warn!(error = %e, "failed to move the corrupt journal aside; removing it");
+                self.clear();
             }
         }
     }
 }
 
-#[cfg(unix)]
+/// Write `bytes` to `path` atomically and readable only by the owner.
+///
+/// The content goes to a temp file in the same directory, is synced, and is then renamed over the
+/// destination, so a reader — including the next start after a crash — sees either the old journal
+/// or the new one, never a partial write.
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
 
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    f.write_all(bytes)
-}
-
-#[cfg(not(unix))]
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)
+    let dir = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "journal path has no parent directory",
+        )
+    })?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".rollback-").suffix(".tmp");
+    #[cfg(unix)]
+    builder
+        .permissions(<std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o600));
+    let mut tmp = builder.tempfile_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path).map_err(|e| e.error)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -152,13 +182,30 @@ mod tests {
     }
 
     #[test]
-    fn a_corrupt_journal_is_discarded_rather_than_propagated() {
+    fn a_corrupt_journal_is_moved_aside_rather_than_propagated() {
         let (dir, journal) = tmp();
         std::fs::write(Journal::default_path(dir.path()), b"{ not json").unwrap();
 
         assert!(journal.read_orphaned().is_empty());
-        // ...and it does not come back to haunt the next read.
+        // ...it does not come back to haunt the next read...
         assert!(!Journal::default_path(dir.path()).exists());
+        // ...but it is kept, because it is the only record of what was applied.
+        assert_eq!(
+            std::fs::read(journal.corrupt_path()).unwrap(),
+            b"{ not json"
+        );
+    }
+
+    #[test]
+    fn a_write_leaves_no_temp_file_behind() {
+        let (dir, journal) = tmp();
+        journal.write([&dns_step()].into_iter());
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["rollback.json".to_string()]);
     }
 
     #[cfg(unix)]

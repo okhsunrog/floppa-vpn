@@ -115,8 +115,16 @@ impl Step {
     ///
     /// Only these are journalled. The rest are either self-healing (the TUN is persistent and
     /// deconfiguring it is unconditionally safe) or meaningless once the owning process is gone.
+    ///
+    /// The endpoint host route is durable too: it lives in the kernel's (or Windows') routing
+    /// table independently of the tunnel interface, so it survives a crash just as the /1 routes
+    /// do. Leaving it out meant the next connect on the same network hit `ip route add` with
+    /// "File exists" for every protocol in the ladder.
     pub const fn durable(&self) -> bool {
-        matches!(self, Self::Routes { .. } | Self::Dns { .. })
+        matches!(
+            self,
+            Self::EndpointRoute { .. } | Self::Routes { .. } | Self::Dns { .. }
+        )
     }
 }
 
@@ -233,14 +241,19 @@ impl RollbackStack {
     }
 
     fn persist(&self) {
-        if let Some(journal) = &self.journal {
-            journal.write(self.steps.iter().filter(|a| a.step.durable()));
-        }
+        self.persist_with(&[]);
     }
 
-    fn clear_journal(&self) {
+    /// Persist the durable steps on the stack plus `extra` — steps that have been popped because
+    /// their undo gave up, but whose effect is still on the machine.
+    fn persist_with(&self, extra: &[Applied]) {
         if let Some(journal) = &self.journal {
-            journal.clear();
+            journal.write(
+                self.steps
+                    .iter()
+                    .chain(extra.iter())
+                    .filter(|a| a.step.durable()),
+            );
         }
     }
 }
@@ -278,7 +291,9 @@ pub fn split_default(allowed_ips: &[IpNetwork], include_ipv6: bool) -> Vec<IpNet
 /// A step is popped only once its undo reports success; until then it is retried up to
 /// `undo_retries` times. A step whose undo never succeeds is popped anyway — an unrecoverable undo
 /// must not wedge the caller forever — but it is reported in [`UnwindReport::residual`] so the
-/// failure is visible rather than silent.
+/// failure is visible rather than silent, and if it was durable it stays in the journal so the
+/// next start tries again. Previously the journal was cleared regardless, which turned "the undo
+/// failed" into "nothing is left to undo" the moment the process restarted.
 pub async fn unwind(
     stack: &mut RollbackStack,
     extra: Option<ExtraUndo>,
@@ -287,6 +302,9 @@ pub async fn unwind(
     undo_retries: u32,
 ) -> UnwindReport {
     let mut residual = Vec::new();
+    // Steps popped without a successful undo. Their durable effects are still on the machine, so
+    // they are carried in the journal alongside whatever is still on the stack.
+    let mut failed: Vec<Applied> = Vec::new();
 
     while let Some(applied) = stack.steps.last().cloned() {
         let kind = applied.step.kind();
@@ -308,9 +326,10 @@ pub async fn unwind(
         if let Some(e) = last_err {
             warn!(?kind, error = %e, "undo did not succeed; machine may be partially configured");
             residual.push((kind, e));
+            failed.push(applied);
         }
         stack.steps.pop();
-        stack.persist();
+        stack.persist_with(&failed);
     }
 
     if let Some(ExtraUndo::StopBackend) = extra
@@ -320,7 +339,12 @@ pub async fn unwind(
         residual.push((StepKind::StartBackend, e));
     }
 
-    stack.clear_journal();
+    // Writing an empty set clears the journal; a non-empty one leaves the failed durable steps
+    // for the next start to retry.
+    stack.persist_with(&failed);
+    if failed.iter().any(|a| a.step.durable()) {
+        warn!("durable steps whose undo failed are kept in the rollback journal");
+    }
     info!(residual = residual.len(), "unwind complete");
     UnwindReport {
         stack_empty: stack.steps.is_empty(),
@@ -412,7 +436,14 @@ mod tests {
     }
 
     #[test]
-    fn only_routes_and_dns_survive_process_death() {
+    fn only_routes_dns_and_the_endpoint_route_survive_process_death() {
+        assert!(
+            Step::EndpointRoute {
+                endpoint: "1.2.3.4".parse().unwrap(),
+                gateway: Some(Gateway("192.168.1.1".into())),
+            }
+            .durable()
+        );
         assert!(
             Step::Routes {
                 iface: iface(),
@@ -438,6 +469,188 @@ mod tests {
             }
             .durable()
         );
+    }
+
+    /// A platform whose route removal always fails, and a backend that never runs.
+    struct StuckRoutes;
+
+    #[async_trait::async_trait]
+    impl Platform for StuckRoutes {
+        fn tun_params(&self) -> crate::vpn::platform::TunParams {
+            Default::default()
+        }
+        async fn preflight(&self) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn prepare_link(
+            &self,
+            _: &InterfaceName,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn release_link(
+            &self,
+            _: &InterfaceName,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn configure_address(
+            &self,
+            _: &InterfaceName,
+            _: IpNetwork,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn deconfigure_address(
+            &self,
+            _: &InterfaceName,
+            _: IpNetwork,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn default_gateway(
+            &self,
+        ) -> Result<Option<Gateway>, crate::vpn::platform::PlatformError> {
+            Ok(None)
+        }
+        async fn interface_index(&self, _: &InterfaceName) -> Option<u32> {
+            None
+        }
+        async fn add_endpoint_route(
+            &self,
+            _: IpAddr,
+            _: Option<&Gateway>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn remove_endpoint_route(
+            &self,
+            _: IpAddr,
+            _: Option<&Gateway>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn add_routes(
+            &self,
+            _: &InterfaceName,
+            _: &[IpNetwork],
+            _: Option<u32>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn remove_routes(
+            &self,
+            _: &InterfaceName,
+            _: &[IpNetwork],
+            _: Option<u32>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Err(crate::vpn::platform::PlatformError::Failed(
+                "helper refused".into(),
+            ))
+        }
+        async fn capture_dns(
+            &self,
+            _: &InterfaceName,
+            _: Option<u32>,
+        ) -> Result<DnsSnapshot, crate::vpn::platform::PlatformError> {
+            Ok(DnsSnapshot::Resolvectl)
+        }
+        async fn configure_dns(
+            &self,
+            _: &InterfaceName,
+            _: &[IpAddr],
+            _: Option<u32>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn restore_dns(
+            &self,
+            _: &InterfaceName,
+            _: &DnsSnapshot,
+            _: Option<u32>,
+        ) -> Result<(), crate::vpn::platform::PlatformError> {
+            Ok(())
+        }
+        async fn ipv6_enabled(&self) -> bool {
+            false
+        }
+    }
+
+    struct NoBackend;
+
+    #[async_trait::async_trait]
+    impl VpnBackend for NoBackend {
+        async fn start(
+            &self,
+            _: &crate::vpn::state::ProtocolConfig,
+            _: &str,
+            _: &crate::vpn::platform::TunParams,
+            _: std::net::SocketAddr,
+        ) -> Result<(), String> {
+            unreachable!()
+        }
+        async fn stop(&self) -> Result<(), String> {
+            Ok(())
+        }
+        async fn observe(&self) -> crate::vpn::actor::types::Observation {
+            unreachable!()
+        }
+        async fn ping(&self) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_durable_undo_stays_in_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(Journal::default_path(dir.path()));
+        let mut stack = RollbackStack::new(Some(journal.clone()));
+
+        let endpoint = Step::EndpointRoute {
+            endpoint: "1.2.3.4".parse().unwrap(),
+            gateway: None,
+        };
+        let routes = Step::Routes {
+            iface: iface(),
+            routes: vec![net("0.0.0.0/1")],
+            if_index: None,
+        };
+        stack.push(endpoint.clone());
+        stack.confirm_top(endpoint.clone());
+        stack.push(routes.clone());
+        stack.confirm_top(routes.clone());
+
+        let report = unwind(&mut stack, None, &StuckRoutes, &NoBackend, 0).await;
+
+        assert!(
+            stack.is_empty(),
+            "an unrecoverable undo must not wedge the stack"
+        );
+        assert_eq!(report.residual.len(), 1);
+        assert_eq!(report.residual[0].0, StepKind::Routes);
+
+        // The endpoint route was removed and is gone from the journal; the routes were not, and
+        // the next start must find them.
+        let left = journal.read_orphaned();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].step, routes);
+    }
+
+    #[tokio::test]
+    async fn a_clean_unwind_clears_the_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(Journal::default_path(dir.path()));
+        let mut stack = RollbackStack::new(Some(journal.clone()));
+        stack.push(Step::Dns {
+            iface: iface(),
+            snapshot: DnsSnapshot::Resolvectl,
+            if_index: None,
+        });
+        assert!(Journal::default_path(dir.path()).exists());
+
+        let report = unwind(&mut stack, None, &StuckRoutes, &NoBackend, 0).await;
+        assert!(report.is_clean());
+        assert!(!Journal::default_path(dir.path()).exists());
     }
 
     #[test]
