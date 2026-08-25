@@ -33,11 +33,14 @@ impl fmt::Display for WgTool {
     }
 }
 
-/// One peer's counters from `wg show <iface> dump`. Byte directions are the
+/// One peer's line from `wg show <iface> dump`. Byte directions are the
 /// server's: `rx` is what the peer sent us, `tx` what we sent the peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerStat {
     pub public_key: String,
+    /// The peer's allowed-ips as printed (`10.100.0.2/32`), in interface order; empty for
+    /// `(none)`.
+    pub allowed_ips: Vec<String>,
     pub rx_bytes: u64,
     pub tx_bytes: u64,
     pub last_handshake: Option<DateTime<Utc>>,
@@ -390,8 +393,14 @@ pub fn parse_wg_dump(dump: &str) -> Result<Vec<PeerStat>, DumpParseError> {
             .then(|| DateTime::from_timestamp(handshake_secs as i64, 0))
             .flatten();
 
+        let allowed_ips = match parts[3] {
+            "(none)" => Vec::new(),
+            list => list.split(',').map(|ip| ip.trim().to_string()).collect(),
+        };
+
         stats.push(PeerStat {
             public_key: parts[0].to_string(),
+            allowed_ips,
             rx_bytes: number("transfer-rx", parts[5])?,
             tx_bytes: number("transfer-tx", parts[6])?,
             last_handshake,
@@ -402,7 +411,7 @@ pub fn parse_wg_dump(dump: &str) -> Result<Vec<PeerStat>, DumpParseError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const SHOWCONF: &str = "[Interface]\nListenPort = 51821\nPrivateKey = cHJpdmF0ZQ==\nJc = 6\nJmin = 55\nJmax = 205\nS1 = 72\nS2 = 56\nS3 = 32\nS4 = 16\nH1 = 234567-345678\nH2 = 3456789-4567890\nH3 = 56789012-67890123\nH4 = 456789012-567890123\n\n[Peer]\nPublicKey = cGVlcg==\nAllowedIPs = 10.101.0.2/32\n";
@@ -498,18 +507,20 @@ mod tests {
     }
 
     /// Captured from `wg show wg-floppa dump` (keys shortened).
-    const DUMP: &str = "cHJpdmF0ZQ==\tc2VydmVy\t51820\toff\n\
+    pub(crate) const DUMP: &str = "cHJpdmF0ZQ==\tc2VydmVy\t51820\toff\n\
         cGVlcjE=\t(none)\t203.0.113.7:41641\t10.100.0.2/32\t1700000000\t12345\t67890\toff\n\
-        cGVlcjI=\t(none)\t(none)\t10.100.0.3/32\t0\t0\t0\toff\n";
+        cGVlcjI=\t(none)\t(none)\t10.100.0.3/32\t0\t0\t0\toff\n\
+        cGVlcjM=\t(none)\t(none)\t(none)\t0\t0\t0\toff\n";
 
     #[test]
     fn parses_dump_peer_lines() {
         let stats = parse_wg_dump(DUMP).unwrap();
-        assert_eq!(stats.len(), 2);
+        assert_eq!(stats.len(), 3);
         assert_eq!(
             stats[0],
             PeerStat {
                 public_key: "cGVlcjE=".to_string(),
+                allowed_ips: vec!["10.100.0.2/32".to_string()],
                 rx_bytes: 12345,
                 tx_bytes: 67890,
                 last_handshake: DateTime::from_timestamp(1_700_000_000, 0),
@@ -519,6 +530,16 @@ mod tests {
         assert_eq!(stats[1].public_key, "cGVlcjI=");
         assert_eq!(stats[1].last_handshake, None);
         assert_eq!((stats[1].rx_bytes, stats[1].tx_bytes), (0, 0));
+        // A peer with no allowed-ips at all
+        assert_eq!(stats[2].allowed_ips, Vec::<String>::new());
+    }
+
+    #[test]
+    fn dump_allowed_ips_list_is_split() {
+        let dump =
+            "k\tk\t51820\toff\npk\t(none)\t(none)\t10.100.0.2/32,fd00::2/128\t0\t0\t0\toff\n";
+        let stats = parse_wg_dump(dump).unwrap();
+        assert_eq!(stats[0].allowed_ips, ["10.100.0.2/32", "fd00::2/128"]);
     }
 
     #[test]

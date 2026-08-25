@@ -277,14 +277,27 @@ async fn listen_for_changes(mut listener: PgListener, ctx: &SyncContext) -> Resu
     }
 }
 
-/// (Re)add every `active` peer to its protocol interface.
+/// Public key → allowed-ips of every peer currently on an interface.
+type LivePeers = HashMap<String, Vec<String>>;
+
+/// Whether an active peer needs a `set peer` to match the DB: it is missing from the
+/// interface, or is there with different allowed-ips (`add_peer` always writes `<ip>/32`).
+fn peer_needs_set(live: &LivePeers, public_key: &str, assigned_ip: &str) -> bool {
+    live.get(public_key)
+        .is_none_or(|allowed| allowed.len() != 1 || allowed[0] != format!("{assigned_ip}/32"))
+}
+
+/// Put every `active` peer that is missing (or differs) back onto its protocol interface.
 ///
 /// `sync_peers` only acts on `pending_add`/`pending_remove` rows, so after an
 /// interface is recreated empty (reboot, manual recreation, or the kernel module
 /// reloading) the peers still marked `active` in the DB would never be re-added
-/// and silently stop working. `wg/awg set peer ...` is idempotent — re-adding a
-/// peer that's already present just refreshes its allowed-ips — so this is a
-/// no-op when the interface is already in sync and a full restore when it isn't.
+/// and silently stop working. The interface is read first (`wg/awg show dump`)
+/// and only peers absent from it, or present with other allowed-ips, get a
+/// `set peer` — so a restart against an interface that already matches issues
+/// none. That matters for AmneziaWG, where every `awg set` re-runs the kernel
+/// module's `jp_spec_setup` (see [`crate::wg::ensure_interface`]). If the dump
+/// cannot be read, every peer is (re)added: `set peer` is idempotent.
 async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
     let peers = sqlx::query!(
         r#"SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!",
@@ -294,7 +307,30 @@ async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
     .fetch_all(&ctx.pool)
     .await?;
 
+    // Interface name → what is on it right now. An interface that could not be read is
+    // absent from the map, which makes every peer on it look missing.
+    let mut live: HashMap<&str, LivePeers> = HashMap::new();
+    for target in &ctx.targets {
+        match crate::wg::get_peer_stats(target.tool, &target.interface) {
+            Ok(stats) => {
+                live.insert(
+                    target.interface.as_str(),
+                    stats
+                        .into_iter()
+                        .map(|s| (s.public_key, s.allowed_ips))
+                        .collect(),
+                );
+            }
+            Err(e) => warn!(
+                interface = %target.interface,
+                error = %e,
+                "Could not read the interface's peers; re-adding every active peer on it"
+            ),
+        }
+    }
+
     let mut reconciled = 0u32;
+    let mut in_sync = 0u32;
     for peer in &peers {
         let Some(target) = ctx.target(peer.protocol) else {
             error!(
@@ -304,6 +340,13 @@ async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
             );
             continue;
         };
+        if live
+            .get(target.interface.as_str())
+            .is_some_and(|on_iface| !peer_needs_set(on_iface, &peer.public_key, &peer.assigned_ip))
+        {
+            in_sync += 1;
+            continue;
+        }
         match crate::wg::add_peer(
             target.tool,
             &target.interface,
@@ -317,7 +360,7 @@ async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
 
     info!(
         total_active = peers.len(),
-        reconciled, "Reconciled active peers onto interfaces"
+        in_sync, reconciled, "Reconciled active peers onto interfaces"
     );
     Ok(())
 }
@@ -726,4 +769,47 @@ async fn check_expired_subscriptions(pool: &DbPool) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wg::parse_wg_dump;
+
+    fn live_from(dump: &str) -> LivePeers {
+        parse_wg_dump(dump)
+            .unwrap()
+            .into_iter()
+            .map(|s| (s.public_key, s.allowed_ips))
+            .collect()
+    }
+
+    #[test]
+    fn matching_peers_need_no_set() {
+        let live = live_from(crate::wg::tests::DUMP);
+        assert!(!peer_needs_set(&live, "cGVlcjE=", "10.100.0.2"));
+        assert!(!peer_needs_set(&live, "cGVlcjI=", "10.100.0.3"));
+    }
+
+    #[test]
+    fn missing_or_differing_peers_need_a_set() {
+        let live = live_from(crate::wg::tests::DUMP);
+        // Not on the interface at all
+        assert!(peer_needs_set(&live, "bm9wZQ==", "10.100.0.9"));
+        // Present with another address
+        assert!(peer_needs_set(&live, "cGVlcjE=", "10.100.0.7"));
+        // Present with no allowed-ips
+        assert!(peer_needs_set(&live, "cGVlcjM=", "10.100.0.4"));
+        // Present with an extra network
+        let extra = live_from(
+            "k\tk\t51820\toff\npk\t(none)\t(none)\t10.100.0.2/32,10.100.1.0/24\t0\t0\t0\toff\n",
+        );
+        assert!(peer_needs_set(&extra, "pk", "10.100.0.2"));
+    }
+
+    #[test]
+    fn empty_interface_needs_everything() {
+        let live = live_from("k\tk\t51820\toff\n");
+        assert!(peer_needs_set(&live, "cGVlcjE=", "10.100.0.2"));
+    }
 }
