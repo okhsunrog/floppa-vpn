@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use floppa_core::{Config, DbPool};
 use sqlx::postgres::PgListener;
@@ -134,17 +134,13 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
         }
     });
 
-    // Wait for either task to complete (they shouldn't under normal operation)
+    // Neither task returns under normal operation. If one does, the daemon is
+    // half-dead (no NOTIFY handling, or no stats/expiry), so fail loudly and let
+    // systemd restart us rather than idling with a zero exit code.
     tokio::select! {
-        r = listener_handle => {
-            error!("Listener task exited unexpectedly: {:?}", r);
-        }
-        r = periodic_handle => {
-            error!("Periodic task exited unexpectedly: {:?}", r);
-        }
+        r = listener_handle => Err(anyhow!("listener task exited unexpectedly: {r:?}")),
+        r = periodic_handle => Err(anyhow!("periodic task exited unexpectedly: {r:?}")),
     }
-
-    Ok(())
 }
 
 /// Restore all database-active peers to their protocol interfaces.

@@ -12,7 +12,7 @@ WorkingDirectory=/opt/floppa-vless
 ExecStart=/opt/floppa-vless/bin/floppa-vless
 Environment=FLOPPA_VLESS_CONFIG=/etc/floppa-vless/config.toml
 Environment=FLOPPA_VLESS_SECRETS=/etc/floppa-vless/secrets.toml
-Restart=on-failure
+Restart=always
 RestartSec=5
 
 [Install]

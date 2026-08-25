@@ -74,19 +74,19 @@ async fn main() -> Result<()> {
     // Main sync loop with graceful shutdown on SIGTERM/SIGINT
     let config_for_shutdown = config.clone();
     let mut sigterm = signal(SignalKind::terminate())?;
-    tokio::select! {
+    let outcome = tokio::select! {
         result = sync::run_sync_loop(&pool, &config) => {
-            if let Err(e) = result {
-                error!(error = %e, "Sync loop failed");
-            }
+            result.inspect_err(|e| error!(error = %e, "Sync loop failed"))
         }
         _ = tokio::signal::ctrl_c() => {
             info!("Received SIGINT, shutting down");
+            Ok(())
         }
         _ = sigterm.recv() => {
             info!("Received SIGTERM, shutting down");
+            Ok(())
         }
-    }
+    };
 
     // Clean up tc rules on exit (per protocol interface)
     if let Some(ref rate_limit) = config_for_shutdown.wireguard.rate_limit
@@ -105,5 +105,7 @@ async fn main() -> Result<()> {
     }
 
     info!("floppa-daemon stopped");
-    Ok(())
+    // A failed sync loop must exit non-zero: tc rules are gone and nothing is
+    // processing pending peers, so systemd has to restart us.
+    outcome
 }
