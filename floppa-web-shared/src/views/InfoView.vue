@@ -11,6 +11,7 @@ import logoUrl from '../assets/logo.png'
 import ColorModeButton from '../components/ColorModeButton.vue'
 import { durationUnit } from '../utils/format'
 import { renderLinks } from '../utils/renderLinks'
+import { useLocaleSwitch } from '../composables/localeSwitch'
 
 // `landing` is shown to logged-out visitors (web home, with a Login CTA);
 // `tab` is the in-app Info tab for authenticated users.
@@ -24,7 +25,8 @@ const props = withDefaults(
   { variant: 'tab' },
 )
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { locale, toggleLocale, toggleLabel } = useLocaleSwitch()
 const router = useRouter()
 const auth = useAuthStore()
 
@@ -74,12 +76,6 @@ function download(file: string) {
 
 function planPrice(price: number | null | undefined): string {
   return price ? `${price} ⭐` : t('common.free')
-}
-
-function toggleLocale() {
-  const next = locale.value === 'ru' ? 'en' : 'ru'
-  locale.value = next
-  localStorage.setItem('locale', next)
 }
 
 // Changelog (bundled at build time from floppa-web-shared/changelog.json; shown on web + client).
@@ -133,7 +129,7 @@ function onChangelogClick(event: MouseEvent) {
       <div class="flex items-center gap-2">
         <ColorModeButton />
         <UButton
-          :label="locale === 'ru' ? 'EN' : 'RU'"
+          :label="toggleLabel"
           color="neutral"
           variant="ghost"
           size="sm"

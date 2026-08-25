@@ -9,6 +9,7 @@ import { getMeQuery } from '../client/@pinia/colada.gen'
 import { useAuthStore } from '../stores'
 import ColorModeButton from './ColorModeButton.vue'
 import { isMiniApp as detectMiniApp } from '../utils/telegram'
+import { useLocaleSwitch } from '../composables/localeSwitch'
 
 const props = withDefaults(
   defineProps<{
@@ -22,7 +23,8 @@ const props = withDefaults(
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { locale, locales, setLocale, toggleLocale, toggleLabel } = useLocaleSwitch()
 
 const navLabel = computed(() => {
   const u = auth.user
@@ -99,24 +101,10 @@ function logout() {
 
 const { store: colorModeStore } = useColorMode()
 
-function setLocale(lang: string) {
-  locale.value = lang
-  localStorage.setItem('locale', lang)
-}
-
-function toggleLocale() {
-  setLocale(locale.value === 'ru' ? 'en' : 'ru')
-}
-
 const colorModes = [
   { value: 'light', icon: 'i-lucide-sun' },
   { value: 'dark', icon: 'i-lucide-moon' },
   { value: 'auto', icon: 'i-lucide-monitor' },
-] as const
-
-const locales = [
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
 ] as const
 
 // Base nav shown to every authenticated user, plus any app-injected extras.
@@ -196,7 +184,7 @@ const navItems = computed(() => {
           <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
           <ColorModeButton />
           <UButton
-            :label="locale === 'ru' ? 'EN' : 'RU'"
+            :label="toggleLabel"
             color="neutral"
             variant="ghost"
             size="sm"
