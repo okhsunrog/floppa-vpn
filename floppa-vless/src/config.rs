@@ -5,6 +5,7 @@
 
 use serde::Deserialize;
 use std::path::Path;
+use veil::Redact;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct VlessServerConfig {
@@ -57,11 +58,13 @@ fn default_sync_interval() -> u64 {
     300
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Redact, Clone, Deserialize)]
 pub struct VlessServerSecrets {
-    /// PostgreSQL connection URL
+    /// PostgreSQL connection URL (carries the DB password)
+    #[redact]
     pub database_url: String,
     /// REALITY x25519 private key (base64)
+    #[redact]
     pub reality_private_key: String,
 }
 

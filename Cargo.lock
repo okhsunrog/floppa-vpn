@@ -1303,6 +1303,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "veil",
 ]
 
 [[package]]

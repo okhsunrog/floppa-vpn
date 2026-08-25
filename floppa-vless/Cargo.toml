@@ -21,3 +21,4 @@ toml.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 uuid = "1.25.0"
+veil = "0.3.0"
