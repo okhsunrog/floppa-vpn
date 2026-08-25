@@ -53,13 +53,58 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 
 **Desktop (Linux/Windows):** Single process. `VpnBackend` trait → gotatun (Mullvad's Rust WireGuard, AmneziaWG fork) or shoes-lite (VLESS). `Platform` trait handles routes/DNS/TUN. Graceful cleanup on exit via `RunEvent::Exit` in `lib.rs`.
 
-**Android:** Two-process model for VPN to survive app swipe-close:
-- UI process: Tauri WebView + Rust commands
-- `:vpn` process: `FloppaVpnService` (Kotlin) → JNI (`nativeInit` / `nativeStartServer` / `nativeSetTunFd` / `nativeReportStartError` / `nativeStop` in `vpn/jni_entry.rs`) → Rust tunnel. Start order is bind-first: foreground → `nativeStartServer` (RPC bound, `tun_ready = false`) → `Builder.establish()` → `nativeSetTunFd`; a failed `establish()` is reported with `nativeReportStartError` and the generation lingers 3 s so the UI's poll reads `start_error` instead of timing out (`TunnelObservation::readiness_for`)
-- **Service generation ≠ `IntentEpoch`.** One *generation* is minted per service start by `autostart::ServiceGenerations` (random per-process base, monotonic, always `< AUTONOMOUS_EPOCH_BASE`) and travels through `TunSpec::with_generation` → intent extra → `ServiceState` → `TunnelInfo.generation` → `readiness_for`/`start_tunnel`/`nativeStop`/`closeGeneration`. An `IntentEpoch` must never be used for this: it is shared by every protocol and pass of one cycle and restarts at 1 in each UI process, while `:vpn` outlives the UI. `SERVER_GENERATION` resets to a sentinel on teardown; the Kotlin linger timer captures its generation and stops via `stopSelf(startId)`. `ServiceState` (`vpn/service_state.rs`, unix-gated so it is host-tested) owns the generation's phase — `tun_ready` is true only while the descriptor is still available, and `starting` comes from the phase, so a *stopped* generation reads as `Clear` rather than `Dark`. Connections accepted by a generation are cancelled when it is shut down (`rpc_listener`), and `AndroidIpcBackend::expect_generation` drops the cached client while a superseded instance is answering
-- IPC: tarpc over Unix socket (`vpn.sock` in app data dir), **JSON on the wire** (`tokio_serde::formats::Json`): every argument/return type of every `VpnRpc` method must round-trip through that codec in `rpc.rs` `tests::wire_coverage` (extend it when adding a method or a field). It was bincode until the actor moved into `:vpn` — not self-describing, so asymmetric `serialize_with`/`deserialize_with`, `untagged`, internally/adjacently tagged enums, `flatten` and `deserialize_any` all encoded fine and failed to *decode* inside the framed transport (the AmneziaWG I-slots shipped broken exactly that way); JSON removes that class, at the cost of one of its own — a non-finite `f64` is written as `null` and cannot be read back. The mirror type `WireConfig` existed only for bincode and is gone: `start_tunnel` carries the persisted `ProtocolConfig`. `create_backend(socket_path, app_handle)` on Android. `start_tunnel` carries the `TunnelParams` and `get_full_info` reports them back (`RunningInfo { params, autonomous }`), so the UI learns a running tunnel's split rules from its owner
-- **Always-on / autonomous start** (`vpn/autostart.rs`): after every verified Android connect the UI writes `autostart.json` (`AutostartBundle { version, tun: TunSpec, config, endpoint, params, saved_at }`, 0600, same dir and same protection as `vpn-config.json` — it holds the tunnel private key). Rewritten on every successful connect, removed when configs are cleared, kept on Disconnect. When the system starts the service with no configuration (always-on toggle, boot, lockdown), Kotlin calls `nativeLoadAutostart(dataDir)` → JSON `TunSpec` + a fresh generation from the reserved range `≥ AUTONOMOUS_EPOCH_BASE` (`1 << 62`, persisted counter in `autostart.epoch`; UI generations never reach it) → `establish()` → `nativeStartServer` → `nativeStartTunnelFromBundle(generation)`, which runs the same `rpc_server::bring_up` the RPC uses. No bundle → the service stops (`START_NOT_STICKY`). The UI's bootstrap intent adopts the tunnel with the reported params (reconcile row 5a); a caller-issued Up with identical params hands over instead of rebuilding (row 5c)
-- **The OS toggle owns always-on restarts.** An autonomous tunnel found while the intent is Down is *adopted* (row 2a → `Effect::AdoptAutonomous`, which promotes the intent to Up for exactly that tunnel), not killed as a foreign one: whether the service comes back is the system toggle's decision, and the app fighting it produced a restart/kill loop with the UI claiming Disconnected throughout. Stopping it stays an explicit user act. The exception is a wipe: `ClearConfigs` issues `IntentRequest::Forget` → `Intent::Down { forget: true }`, and row 2b stops the tunnel whoever started it, so no tunnel of a logged-out account survives
+**Android:** two processes, and **all the decisions are in `:vpn`** — the intent, the status, the
+connect ladder, the reconnect budget and the config store all live there, beside the tunnel. The UI
+process holds a socket to them and no tunnel state at all. The move happened because Android's
+cached-app freezer stops the UI process outright: an actor living there could not reconnect a tunnel
+that died while the phone was in a pocket, and a swipe-close left the tunnel running unwatched. See
+`docs/ANDROID-TUNNEL-PROCESS.md` for the full design and the device matrix.
+
+- `:vpn` process: `FloppaVpnService` (Kotlin) hosts the actor. `nativeInit(logDir, dataDir)` boots
+  it on the first service instance (logging, config dir, `TunnelManager`, `ServiceRegistry`, the
+  actor, the socket) and only refreshes the JNI callback reference on later ones. What crosses the
+  JNI boundary is what only Kotlin can do: `hasConsent()`, `startGeneration(planJson, generation)`
+  → `nativeSetTunFd` / `nativeReportStartError`, `setState(busy, connected)` for the notification,
+  `shutdownService()`, `protectSocket()`, plus `nativeNetworkChanged` and `nativeSystemStart`
+- UI process: Tauri WebView + Rust commands, and a `RemoteActor` (`vpn/remote.rs`) — the socket
+  implementation of `TunnelControl`. `snapshot()` stays a free local read because a background task
+  mirrors the state by long-polling `state_since(boot, seq)`; **unreachable is never rendered as
+  disconnected**, and a `boot` that differs means the process restarted, so its state is adopted
+  rather than compared against a sequence that started over
+- **Lifecycle.** The UI *binds* the service on plugin load — that is what makes the process, and so
+  the actor and the store, exist while the app is open, with no notification — and *starts* it
+  (`ACTION_KEEP_ALIVE`) before asking for a tunnel, because a bound-only service dies with its last
+  client. The service follows the actor's phase and stands down only when it settles at
+  Disconnected; `backend.stop()` must never stop the service, because it runs inside every
+  mid-cycle unwind. A start that is never given work stands down on a 10 s deadline
+- **Consent** is asked by the UI, which has an activity; the actor only ever *checks* it. Missing
+  consent is a refusal, not a waiting state: a background reconnect cannot show a dialog whatever
+  it does
+- **The system is a second principal.** A start it issues (always-on, boot, lockdown) reaches
+  `nativeSystemStart`, which raises the intent from `autostart.json` — now just
+  `LastIntent { order, params }`, written after every successful connect, cleared by a wipe. The
+  address each host last resolved to is cached beside it (`last-endpoints.json`), because a start
+  under lockdown cannot resolve anything until the tunnel is up
+- **Service generations** identify one request for a descriptor: `establish()` answers
+  asynchronously and must name what it answers. Minted by `autostart::ServiceGenerations` (random
+  per-process base, never zero); `ServiceRegistry` (`vpn/service_state.rs`, unix-gated so it is
+  host-tested) holds the one being served, so a callback from an instance that has been replaced
+  matches nothing
+- **The network reflex.** `:vpn` follows the *underlying* network — explicitly not the default one,
+  which after the tunnel comes up is our own VPN — and rebinds the tunnel's socket in place through
+  gotatun's `suspend`/`resume` when it changes. It never changes what is running, so it cannot
+  fight the actor's own recovery. `setUnderlyingNetworks` is set from the same callback
+- IPC: tarpc over Unix socket (`vpn.sock` in app data dir), **JSON on the wire**
+  (`tokio_serde::formats::Json`): every argument/return type of every `VpnRpc` method must
+  round-trip through that codec in `rpc.rs` `tests::wire_coverage` (extend it when adding a method
+  or a field). It was bincode until the actor moved — not self-describing, so asymmetric
+  `serialize_with`/`deserialize_with`, `untagged`, internally/adjacently tagged enums, `flatten`
+  and `deserialize_any` all encoded fine and failed to *decode* inside the framed transport (the
+  AmneziaWG I-slots shipped broken exactly that way); JSON removes that class at the cost of one of
+  its own — a non-finite `f64` is written as `null` and cannot be read back. The mirror type
+  `WireConfig` existed only for bincode and is gone. Both ends are `#[cfg(unix)]`, not
+  Android-only, so their tests drive a real socket on the host — and a desktop split into a
+  privileged helper and a UI would reuse them rather than grow a second copy
 
 **`tauri-plugin-vpn/`** — **Android only.** `src/android.rs` holds the implementation (`Vpn<R>`, async `VpnExt::vpn()` → `run_mobile_plugin_async` → Kotlin `@Command` methods); on other platforms `init()` registers nothing. `Error { Register, PluginInvoke }`. Kotlin side: VPN lifecycle, TUN creation, split tunneling, foreground notification, device info (`Build.MODEL`), safe area insets (`docs/SAFE-AREA-AND-Z-INDEX.md`). No iOS implementation (`docs/IOS-BACKEND-PLAN.md`).
 
