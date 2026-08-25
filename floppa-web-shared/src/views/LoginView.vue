@@ -47,8 +47,9 @@ const manualCode = ref('')
 const manualCodeLoading = ref(false)
 const manualCodeError = ref<string | null>(null)
 
-// Login surface: account (login + password) leads; Telegram is secondary.
-const tab = ref<'account' | 'telegram'>('account')
+// Login surface: account (login + password) leads; Telegram is secondary. Inside a Mini App the
+// Telegram tab is the one that reports the auto-login outcome, so it starts selected there.
+const tab = ref<'account' | 'telegram'>(getTelegramInitData() !== null ? 'telegram' : 'account')
 
 // A failed deep-link exchange means the user was mid-Telegram-login — open that tab for retry.
 watch(
@@ -111,7 +112,9 @@ onMounted(async () => {
     auth.setAuth(response.token, response.user, telegramUserId)
     router.push('/')
   } catch {
+    // The error is rendered inside the Telegram tab; make sure that tab is the visible one.
     loginError.value = t('login.miniAppFailed')
+    tab.value = 'telegram'
   } finally {
     miniAppLoading.value = false
   }
