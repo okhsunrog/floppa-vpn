@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE peers p SET sync_status = $3\n           FROM app_installations h\n           JOIN app_installations s ON s.user_id = $1 AND s.device_id = h.device_id\n           WHERE h.user_id = $2 AND p.installation_id = h.id\n             AND p.sync_status NOT IN ('removed', 'pending_remove')\n             AND EXISTS (\n                 SELECT 1 FROM peers sp\n                 WHERE sp.installation_id = s.id AND sp.protocol = p.protocol\n                   AND sp.sync_status NOT IN ('removed', 'pending_remove')\n             )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "9489ef119e00bed9e9bfa717a84cb86b577b1eb93e036660444930eba318e7d0"
+}

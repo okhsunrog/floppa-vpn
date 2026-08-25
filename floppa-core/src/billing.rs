@@ -2,6 +2,7 @@
 
 use crate::DbPool;
 use crate::error::Result;
+use crate::models::SubscriptionSource;
 use chrono::{DateTime, Duration, Utc};
 
 /// A plan available for purchase with Stars.
@@ -175,11 +176,12 @@ pub async fn complete_payment(pool: &DbPool, params: CompletePaymentParams<'_>) 
 
     // Create new subscription
     let sub_id: i64 = sqlx::query_scalar!(
-        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'purchase') RETURNING id as "id!""#,
+        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5) RETURNING id as "id!""#,
         params.user_id,
         params.plan_id,
         now,
         expires_at,
+        SubscriptionSource::Purchase as _,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -255,11 +257,12 @@ pub async fn process_credit_switch(
     .await?;
 
     let sub_id: i64 = sqlx::query_scalar!(
-        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, 'purchase') RETURNING id as "id!""#,
+        r#"INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at, source) VALUES ($1, $2, $3, $4, $5) RETURNING id as "id!""#,
         user_id,
         plan_id,
         now,
         expires_at,
+        SubscriptionSource::Purchase as _,
     )
     .fetch_one(&mut *tx)
     .await?;

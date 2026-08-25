@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use std::fmt;
+use std::str::FromStr;
 
 /// VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
 /// AmneziaWG adds interface-wide obfuscation and runs on its own server interface.
@@ -26,9 +28,46 @@ impl Protocol {
     }
 }
 
-/// Peer synchronization status with WireGuard interface
+/// The database/config form: "wireguard" | "amneziawg".
+impl fmt::Display for Protocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_db_str())
+    }
+}
+
+/// A string that names no known [`Protocol`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown protocol {0:?} (expected \"wireguard\" or \"amneziawg\")")]
+pub struct ProtocolParseError(pub String);
+
+/// Accepts exactly the database/config form (see [`Protocol::as_db_str`]).
+impl FromStr for Protocol {
+    type Err = ProtocolParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "wireguard" => Ok(Protocol::WireGuard),
+            "amneziawg" => Ok(Protocol::AmneziaWg),
+            other => Err(ProtocolParseError(other.to_owned())),
+        }
+    }
+}
+
+impl TryFrom<&str> for Protocol {
+    type Error = ProtocolParseError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+/// Peer synchronization status with WireGuard interface.
+///
+/// Stored in `peers.sync_status` (TEXT, CHECK-constrained by migration 0014); bind it in
+/// `query!` macros as `$n` with `PeerSyncStatus::Active as _`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum PeerSyncStatus {
     /// Peer added to DB, waiting for daemon to add to WireGuard
     PendingAdd,
@@ -38,6 +77,22 @@ pub enum PeerSyncStatus {
     PendingRemove,
     /// Peer removed from WireGuard (kept in DB for history)
     Removed,
+}
+
+/// How a subscription came to exist. Stored in `subscriptions.source` (TEXT, CHECK-constrained
+/// by migration 0014); bind it in `query!` macros as `$n` with `SubscriptionSource::Trial as _`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum SubscriptionSource {
+    /// The one-time real trial (the "basic" plan's `trial_minutes`), claims `users.trial_used_at`.
+    Trial,
+    /// The short credential-signup taster; does not consume the real trial.
+    Taster,
+    /// Paid with Telegram Stars (including credit-funded plan switches).
+    Purchase,
+    /// Granted by an admin from the panel.
+    AdminGrant,
 }
 
 /// Telegram user
@@ -121,4 +176,38 @@ pub struct Subscription {
     pub payment_id: Option<String>,
     pub source: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn protocol_parses_its_own_display_form() {
+        for p in [Protocol::WireGuard, Protocol::AmneziaWg] {
+            assert_eq!(p.to_string().parse::<Protocol>(), Ok(p));
+            assert_eq!(Protocol::try_from(p.as_db_str()), Ok(p));
+        }
+        assert_eq!(
+            "WireGuard".parse::<Protocol>(),
+            Err(ProtocolParseError("WireGuard".into()))
+        );
+        assert!("vless".parse::<Protocol>().is_err());
+    }
+
+    #[test]
+    fn enums_serialize_to_their_db_form() {
+        assert_eq!(
+            serde_json::to_string(&Protocol::AmneziaWg).unwrap(),
+            "\"amneziawg\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PeerSyncStatus::PendingRemove).unwrap(),
+            "\"pending_remove\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SubscriptionSource::AdminGrant).unwrap(),
+            "\"admin_grant\""
+        );
+    }
 }

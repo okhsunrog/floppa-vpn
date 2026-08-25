@@ -1,7 +1,7 @@
 //! Shared business logic used by both bot and admin.
 
 use crate::error::{FloppaError, Result};
-use crate::models::Protocol;
+use crate::models::{PeerSyncStatus, Protocol, SubscriptionSource};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{Duration, Utc};
 use ipnetwork::Ipv4Network;
@@ -88,7 +88,7 @@ async fn grant_trial(
     pool: &DbPool,
     user_id: i64,
     plan_name: &str,
-    source: &str,
+    source: SubscriptionSource,
     consume_real_trial: bool,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
@@ -126,7 +126,7 @@ async fn grant_trial(
         plan.id,
         now,
         expires_at,
-        source,
+        source as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -141,14 +141,14 @@ async fn grant_trial(
 /// whether a trial was granted on this call. Keyed on `user_id` so it works for both the
 /// Telegram signup path and the credential→Telegram link path.
 pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<bool> {
-    grant_trial(pool, user_id, "basic", "trial", true).await
+    grant_trial(pool, user_id, "basic", SubscriptionSource::Trial, true).await
 }
 
 /// Grant the short "taster" trial (the "taster" plan's `trial_minutes`). Does NOT consume
 /// `trial_used_at`, so the user can still claim the real trial later via Telegram link.
 /// No-op if the 'taster' plan is missing or has no `trial_minutes`.
 pub async fn grant_taster_trial(pool: &DbPool, user_id: i64) -> Result<()> {
-    grant_trial(pool, user_id, "taster", "taster", false)
+    grant_trial(pool, user_id, "taster", SubscriptionSource::Taster, false)
         .await
         .map(|_| ())
 }
@@ -440,7 +440,7 @@ pub async fn merge_telegram_into_session(
     //     installation would violate `peers_installation_protocol_active`; queue such husk peers
     //     for daemon removal first (the survivor's peer is the one the client actually uses).
     sqlx::query!(
-        r#"UPDATE peers p SET sync_status = 'pending_remove'
+        r#"UPDATE peers p SET sync_status = $3
            FROM app_installations h
            JOIN app_installations s ON s.user_id = $1 AND s.device_id = h.device_id
            WHERE h.user_id = $2 AND p.installation_id = h.id
@@ -452,6 +452,7 @@ pub async fn merge_telegram_into_session(
              )"#,
         survivor_id,
         husk_id,
+        PeerSyncStatus::PendingRemove as _,
     )
     .execute(&mut *tx)
     .await?;
@@ -650,7 +651,7 @@ pub async fn create_peer(
             )"#,
         )
         .bind(id)
-        .bind(protocol.as_db_str())
+        .bind(protocol)
         .fetch_one(&mut *tx)
         .await?;
 
@@ -715,15 +716,16 @@ pub async fn create_peer(
     let peer_id = sqlx::query_scalar!(
         r#"
         INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id, protocol)
-        VALUES ($1, $2, $3, $4, 'pending_add', $5, $6)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id
         "#,
         user_id,
         public_key.as_base64(),
         &encrypted_private_key,
         &assigned_ip,
+        PeerSyncStatus::PendingAdd as _,
         installation_id,
-        protocol.as_db_str(),
+        protocol as _,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -826,7 +828,7 @@ pub async fn find_peer_by_device_id(
         "#,
         user_id,
         device_id,
-        protocol.as_db_str(),
+        protocol as _,
     )
     .fetch_optional(pool)
     .await?;
@@ -1123,15 +1125,15 @@ mod tests {
                 .unwrap();
         assert!(trial_used.is_none());
 
-        // A taster subscription exists.
-        let taster_count = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'taster'",
+        // A taster subscription exists (read back through the enum).
+        let sources: Vec<SubscriptionSource> = sqlx::query_scalar!(
+            r#"SELECT source AS "source: SubscriptionSource" FROM subscriptions WHERE user_id = $1"#,
             res.id
         )
-        .fetch_one(&pool)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(taster_count, Some(1));
+        assert_eq!(sources, vec![SubscriptionSource::Taster]);
 
         // Now grant the real trial (as the Telegram-link path would) → succeeds once.
         assert!(grant_real_trial_if_unused(&pool, res.id).await.unwrap());
@@ -1764,12 +1766,53 @@ mod tests {
         assert!(result.config.contains("[Interface]"));
         assert!(result.config.contains("[Peer]"));
 
-        // Verify peer in DB
-        let status = sqlx::query_scalar!("SELECT sync_status FROM peers WHERE id = $1", result.id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(status, "pending_add");
+        // Verify peer in DB — decoded through the enum, so the stored form is the enum's form.
+        let row = sqlx::query!(
+            r#"SELECT sync_status AS "sync_status: PeerSyncStatus", protocol AS "protocol: Protocol"
+               FROM peers WHERE id = $1"#,
+            result.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.sync_status, PeerSyncStatus::PendingAdd);
+        assert_eq!(row.protocol, Protocol::WireGuard);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_enum_columns_are_check_constrained(pool: DbPool) {
+        let user_id = seed_user(&pool, 11111).await;
+        let bad_status = sqlx::query!(
+            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status) VALUES ($1, 'k', '10.0.0.2', 'pending')",
+            user_id,
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            matches!(bad_status, Err(sqlx::Error::Database(e)) if e.constraint() == Some("peers_sync_status_check"))
+        );
+
+        let bad_protocol = sqlx::query!(
+            "INSERT INTO peers (user_id, public_key, assigned_ip, protocol) VALUES ($1, 'k', '10.0.0.2', 'vless')",
+            user_id,
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            matches!(bad_protocol, Err(sqlx::Error::Database(e)) if e.constraint() == Some("peers_protocol_check"))
+        );
+
+        let plan_id = get_basic_plan_id(&pool).await;
+        let bad_source = sqlx::query!(
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, source) VALUES ($1, $2, NOW(), 'gift')",
+            user_id,
+            plan_id,
+        )
+        .execute(&pool)
+        .await;
+        assert!(
+            matches!(bad_source, Err(sqlx::Error::Database(e)) if e.constraint() == Some("subscriptions_source_check"))
+        );
     }
 
     #[sqlx::test(migrations = "../migrations")]

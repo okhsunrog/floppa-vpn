@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id, protocol)\n        VALUES ($1, $2, $3, $4, 'pending_add', $5, $6)\n        RETURNING id\n        ",
+  "query": "\n        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id, protocol)\n        VALUES ($1, $2, $3, $4, $5, $6, $7)\n        RETURNING id\n        ",
   "describe": {
     "columns": [
       {
@@ -21,6 +21,7 @@
         "Text",
         "Text",
         "Text",
+        "Text",
         "Int8",
         "Text"
       ]
@@ -29,5 +30,5 @@
       false
     ]
   },
-  "hash": "b97d5552028d5fad115f0e6bfa8b1d273a3226baca119d81e4f3ed72606eff5e"
+  "hash": "2affab03f7d518350c33ef21815aae7e240bd27c48047b35ba8760f65d84f6d4"
 }
