@@ -9,8 +9,8 @@
 //! priority is expressed: there is no second channel that could quietly overtake the first.
 
 use super::types::{
-    AttemptPhase, AttemptResult, ConfigsView, CycleOutcome, IntentAccepted, IntentEpoch,
-    IntentError, Observation, TunnelParams, TunnelState,
+    AttemptPhase, AttemptResult, CycleOutcome, IntentAccepted, IntentEpoch, IntentError,
+    Observation, TunnelParams, TunnelState,
 };
 use crate::vpn::protocol::Protocol;
 use crate::vpn::rollback::UnwindReport;
@@ -50,11 +50,9 @@ pub enum Command {
         raw: String,
         reply: oneshot::Sender<Result<Protocol, ConfigError>>,
     },
-    ListConfigs {
-        reply: oneshot::Sender<ConfigsView>,
-    },
     /// Goes Down, waits for genuine quiescence, *then* wipes — rather than branching on whatever
     /// status the caller last saw, which is how a live adopted tunnel could survive "forget me".
+    /// Every caller gets an answer: a second request while one is pending joins the wait.
     ClearConfigs {
         reply: oneshot::Sender<Result<(), IntentError>>,
     },
@@ -121,27 +119,11 @@ impl TunnelHandle {
 
     pub async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {
         let (reply, rx) = oneshot::channel();
-        if self
-            .tx
+        self.tx
             .send(Command::ImportConfig { raw, reply })
             .await
-            .is_err()
-        {
-            return Err(ConfigError::Unparseable {
-                detail: "the tunnel actor is not running".into(),
-            });
-        }
-        rx.await.unwrap_or(Err(ConfigError::Unparseable {
-            detail: "the tunnel actor is not running".into(),
-        }))
-    }
-
-    pub async fn list_configs(&self) -> ConfigsView {
-        let (reply, rx) = oneshot::channel();
-        if self.tx.send(Command::ListConfigs { reply }).await.is_err() {
-            return ConfigsView::default();
-        }
-        rx.await.unwrap_or_default()
+            .map_err(|_| ConfigError::ActorGone)?;
+        rx.await.map_err(|_| ConfigError::ActorGone)?
     }
 
     pub async fn clear_configs(&self) -> Result<(), IntentError> {

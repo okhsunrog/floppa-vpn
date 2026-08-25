@@ -22,8 +22,9 @@ mod tests;
 use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
-    AttemptError, AttemptPhase, AttemptResult, CycleOutcome, Intent, IntentAccepted, IntentEpoch,
-    IntentError, Observation, Policy, Status, TunnelState, UpIntent, World,
+    AttemptError, AttemptPhase, AttemptResult, ConfigsView, CycleOutcome, Intent, IntentAccepted,
+    IntentEpoch, IntentError, Observation, Policy, Status, Traffic, TrafficStats, TunnelState,
+    UpIntent, World, WorldView,
 };
 use crate::vpn::backend::VpnBackend;
 use crate::vpn::platform::{Platform, PlatformImpl};
@@ -65,7 +66,12 @@ pub struct TunnelActor {
     intent: Intent,
     held_stack: RollbackStack,
     configs: ConfigStore,
+    /// The store's projection, rebuilt only when the store changes — every publish reads it.
+    configs_view: ConfigsView,
     speed: SpeedTracker,
+    /// Traffic as of the last observation. Computed there, once, so the speed tracker sees each
+    /// sample exactly once and rendering stays pure.
+    traffic: Traffic,
     last_obs: Observation,
     /// Whether the world has ever answered us. Until it has, "there is no tunnel" is a claim we
     /// are not entitled to make, and the published phase says so.
@@ -95,7 +101,9 @@ pub struct TunnelActor {
     recent_outcomes: VecDeque<(IntentEpoch, CycleOutcome)>,
     cycle_waiters: Vec<(IntentEpoch, oneshot::Sender<CycleOutcome>)>,
     quiescent_waiters: Vec<oneshot::Sender<()>>,
-    pending_clear: Option<(oneshot::Sender<Result<(), IntentError>>, Instant)>,
+    /// Everyone waiting for a wipe, each with their own deadline. A second request while one is
+    /// pending joins the wait rather than replacing — and silently dropping — the first.
+    pending_clear: Vec<(oneshot::Sender<Result<(), IntentError>>, Instant)>,
 
     cmd_tx: mpsc::Sender<Command>,
     state_tx: watch::Sender<TunnelState>,
@@ -160,8 +168,10 @@ impl TunnelActor {
             status: Status::Idle,
             intent: Intent::default(),
             held_stack: RollbackStack::default(),
+            configs_view: configs.view(),
             configs,
             speed: SpeedTracker::new(),
+            traffic: Traffic::default(),
             last_obs: Observation::unknown(Instant::now()),
             observed_once: false,
             backend,
@@ -180,7 +190,7 @@ impl TunnelActor {
             recent_outcomes: VecDeque::new(),
             cycle_waiters: Vec::new(),
             quiescent_waiters: Vec::new(),
-            pending_clear: None,
+            pending_clear: Vec::new(),
             cmd_tx,
             state_tx,
         }
@@ -203,7 +213,10 @@ impl TunnelActor {
                 // the tunnel process.
                 cmd = cmds.recv() => {
                     let Some(cmd) = cmd else {
-                        self.shutdown().await;
+                        // Every handle is gone. Unreachable in practice — Tauri holds a handle
+                        // for the life of the process, and exit goes through a Down intent and
+                        // `await_quiescent` — so there is no teardown here to keep honest.
+                        info!("every tunnel handle was dropped; the actor stops");
                         return;
                     };
                     match self.handle(cmd).await {
@@ -275,32 +288,24 @@ impl TunnelActor {
             }
 
             Command::ImportConfig { raw, reply } => {
-                let result = self.configs.import(&raw);
+                let result = self.edit_configs(|c| c.import(&raw));
                 let _ = reply.send(result);
-                Reconcile::No
-            }
-
-            Command::ListConfigs { reply } => {
-                let _ = reply.send(self.configs.view());
                 Reconcile::No
             }
 
             Command::ClearConfigs { reply } => {
                 // Go down and wait for genuine quiescence before wiping, rather than deciding from
                 // whatever status the caller last observed — which is how a live adopted tunnel
-                // could survive being forgotten.
+                // could survive being forgotten. The wipe itself happens in `settle_pending`,
+                // once the tick issued below has confirmed Idle.
                 let _ = self.accept_intent(IntentRequest::Down);
-                if view::is_quiescent(&self.status) {
-                    self.configs.clear();
-                    let _ = reply.send(Ok(()));
-                } else {
-                    self.pending_clear = Some((reply, Instant::now() + self.policy.settle_timeout));
-                }
+                self.pending_clear
+                    .push((reply, Instant::now() + self.policy.settle_timeout));
                 Reconcile::Yes
             }
 
             Command::ForgetPreferred { reply } => {
-                self.configs.set_preferred(None);
+                self.edit_configs(|c| c.set_preferred(None));
                 let _ = reply.send(());
                 Reconcile::No
             }
@@ -342,10 +347,40 @@ impl TunnelActor {
                 // completed — and the boot placeholder never arrives through this channel, so it
                 // cannot be mistaken for one.
                 self.observed_once = true;
+                self.traffic = self.traffic_of(&obs);
                 self.last_obs = *obs;
                 Reconcile::Yes
             }
         }
+    }
+
+    /// Feed one sample to the speed tracker. Every observation is a sample, whatever the status:
+    /// entering Up resets the tracker, so the first sample after that only sets the baseline.
+    fn traffic_of(&mut self, obs: &Observation) -> Traffic {
+        match &obs.view {
+            WorldView::Reachable(t) => {
+                let raw = t.raw_stats.unwrap_or_default();
+                let (tx_bytes_per_sec, rx_bytes_per_sec) =
+                    self.speed.update(raw.tx_bytes, raw.rx_bytes);
+                Traffic {
+                    stats: TrafficStats {
+                        tx_bytes: raw.tx_bytes,
+                        rx_bytes: raw.rx_bytes,
+                        tx_bytes_per_sec,
+                        rx_bytes_per_sec,
+                    },
+                    last_packet_secs: t.last_packet_secs,
+                }
+            }
+            WorldView::Unreachable(_) => Traffic::default(),
+        }
+    }
+
+    /// The one way to change the store, so its cached projection can never go stale.
+    fn edit_configs<T>(&mut self, edit: impl FnOnce(&mut ConfigStore) -> T) -> T {
+        let out = edit(&mut self.configs);
+        self.configs_view = self.configs.view();
+        out
     }
 
     /// Accept an intent change and mint a new epoch for it.
@@ -688,11 +723,16 @@ impl TunnelActor {
             }
 
             Effect::TakeStack(stack) => self.held_stack = stack,
-            Effect::ResetSpeed => self.speed.reset(),
+            Effect::ResetSpeed => {
+                self.speed.reset();
+                self.traffic = Traffic::default();
+            }
 
             // Only ever emitted on success, which is why a failed cycle can no longer leave the
             // last *failed* protocol recorded as the preferred one.
-            Effect::RememberWinner(protocol) => self.configs.set_preferred(Some(protocol)),
+            Effect::RememberWinner(protocol) => {
+                self.edit_configs(|c| c.set_preferred(Some(protocol)));
+            }
 
             Effect::DemoteIntent => {
                 let epoch = self.intent.epoch();
@@ -771,18 +811,21 @@ impl TunnelActor {
         for reply in std::mem::take(&mut self.quiescent_waiters) {
             let _ = reply.send(());
         }
-        if let Some((reply, _)) = self.pending_clear.take() {
-            self.configs.clear();
+        if !self.pending_clear.is_empty() {
+            self.edit_configs(|c| c.clear());
             info!("configs cleared once the tunnel was down");
-            let _ = reply.send(Ok(()));
+            for (reply, _) in std::mem::take(&mut self.pending_clear) {
+                let _ = reply.send(Ok(()));
+            }
         }
     }
 
     fn expire_pending_clear(&mut self, now: Instant) {
-        if let Some((_, deadline)) = &self.pending_clear
-            && now >= *deadline
-        {
-            let (reply, _) = self.pending_clear.take().expect("checked above");
+        let (expired, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_clear)
+            .into_iter()
+            .partition(|(_, deadline)| now >= *deadline);
+        self.pending_clear = waiting;
+        for (reply, _) in expired {
             warn!("timed out waiting for the tunnel to settle before clearing configs");
             let _ = reply.send(Err(IntentError::SettleTimeout));
         }
@@ -790,45 +833,31 @@ impl TunnelActor {
 
     // ------------------------------------------------------------------------------ output
 
-    fn publish(&mut self) {
-        self.seq += 1;
-        let world = World::classify(&self.last_obs, Instant::now(), &self.policy);
-        let state = view::render(
-            self.seq,
+    fn render(&self, seq: u64) -> TunnelState {
+        let now = Instant::now();
+        let world = World::classify(&self.last_obs, now, &self.policy);
+        view::render(
+            seq,
             &self.status,
             &self.intent,
-            &self.last_obs,
             &world,
-            self.configs.view(),
+            self.traffic,
+            &self.configs_view,
             self.last_outcome.clone(),
-            &mut self.speed,
-            Instant::now(),
+            now,
             self.observed_once,
-        );
+        )
+    }
+
+    fn publish(&mut self) {
+        self.seq += 1;
+        let state = self.render(self.seq);
         let _ = self.state_tx.send(state);
     }
 
     fn publish_if_changed(&mut self) {
-        // `seq` differs on every render, so compare everything else.
-        let world = World::classify(&self.last_obs, Instant::now(), &self.policy);
-        let candidate = view::render(
-            self.seq + 1,
-            &self.status,
-            &self.intent,
-            &self.last_obs,
-            &world,
-            self.configs.view(),
-            self.last_outcome.clone(),
-            &mut self.speed,
-            Instant::now(),
-            self.observed_once,
-        );
-        let differs = {
-            let current = self.state_tx.borrow();
-            let mut same_seq = candidate.clone();
-            same_seq.seq = current.seq;
-            *current != same_seq
-        };
+        let candidate = self.render(self.seq + 1);
+        let differs = !self.state_tx.borrow().eq_ignoring_seq(&candidate);
         if differs {
             self.seq += 1;
             let _ = self.state_tx.send(candidate);
@@ -844,31 +873,10 @@ impl TunnelActor {
             Status::Up(u) => u.dark_since.map(|since| since + self.policy.dark_grace),
             Status::Idle | Status::Unwinding { .. } => None,
         };
-        let clear_deadline = self.pending_clear.as_ref().map(|(_, at)| *at);
+        let clear_deadline = self.pending_clear.iter().map(|(_, at)| *at).min();
         match (status_deadline, clear_deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
-        }
-    }
-
-    async fn shutdown(&mut self) {
-        info!("tunnel actor shutting down");
-        if let Some(handle) = &self.attempt {
-            handle.cancel.cancel();
-        }
-        if !self.held_stack.is_empty() {
-            let mut stack = std::mem::take(&mut self.held_stack);
-            let report = unwind(
-                &mut stack,
-                None,
-                self.platform.as_ref(),
-                self.backend.as_ref(),
-                1,
-            )
-            .await;
-            if !report.is_clean() {
-                warn!(residual = ?report.residual, "shutdown rollback left residue");
-            }
         }
     }
 }

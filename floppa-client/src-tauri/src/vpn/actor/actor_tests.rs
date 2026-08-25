@@ -585,3 +585,23 @@ async fn a_tunnel_that_dies_with_no_reconnect_budget_reports_lost_gave_up_on_the
     assert_eq!(state.phase, Phase::Disconnected);
     assert_eq!(state.intent, IntentView::Down, "the intent is demoted");
 }
+
+#[tokio::test(start_paused = true)]
+async fn every_caller_asking_for_a_wipe_is_answered_once_the_tunnel_is_down() {
+    // A second ClearConfigs while the first was still waiting for quiescence used to replace it,
+    // dropping the first caller's reply channel: that caller got "actor gone" for a wipe that
+    // then happened anyway.
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+
+    let (first, second) = tokio::join!(h.handle.clear_configs(), h.handle.clear_configs());
+    assert_eq!(first, Ok(()));
+    assert_eq!(second, Ok(()));
+
+    let state = h.wait_for_phase(Phase::Disconnected).await;
+    assert!(state.configs.available.is_empty(), "the wipe happened");
+    assert!(
+        h.backend.running().is_none(),
+        "after the tunnel was torn down"
+    );
+}

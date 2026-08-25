@@ -1,15 +1,13 @@
 //! Projection of the actor's internal state onto the one value the UI consumes.
 //!
-//! Pure apart from the speed tracker, which needs the previous sample to compute a rate. Keeping
-//! this in one function is what guarantees the UI can never see a torn combination — the phase, the
-//! probe progress and the retry countdown are computed together from the same status, so a spinner
-//! cannot disagree with its own label.
+//! Pure. Keeping this in one function is what guarantees the UI can never see a torn combination
+//! — the phase, the probe progress and the retry countdown are computed together from the same
+//! status, so a spinner cannot disagree with its own label.
 
 use super::types::{
-    AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Observation, Phase,
-    RetryProgress, Status, TrafficStats, TunnelState, World, WorldView,
+    AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Phase, RetryProgress, Status,
+    Traffic, TrafficStats, TunnelState, World,
 };
-use crate::vpn::state::SpeedTracker;
 use std::time::Instant;
 
 /// Build the published snapshot.
@@ -22,11 +20,10 @@ pub fn render(
     seq: u64,
     status: &Status,
     intent: &Intent,
-    obs: &Observation,
     world: &World,
-    configs: ConfigsView,
+    traffic: Traffic,
+    configs: &ConfigsView,
     last_outcome: Option<CycleOutcome>,
-    speed: &mut SpeedTracker,
     now: Instant,
     observed_once: bool,
 ) -> TunnelState {
@@ -64,21 +61,9 @@ pub fn render(
         _ => None,
     };
 
-    // Stats are only meaningful while a tunnel is actually up and answering.
-    let (stats, last_packet_received) = match (status, &obs.view) {
-        (Status::Up(_), WorldView::Reachable(t)) => {
-            let raw = t.raw_stats.unwrap_or_default();
-            let (tx_rate, rx_rate) = speed.update(raw.tx_bytes, raw.rx_bytes);
-            (
-                TrafficStats {
-                    tx_bytes: raw.tx_bytes,
-                    rx_bytes: raw.rx_bytes,
-                    tx_bytes_per_sec: tx_rate,
-                    rx_bytes_per_sec: rx_rate,
-                },
-                t.last_packet_secs,
-            )
-        }
+    // Stats are only meaningful while a tunnel is actually up.
+    let (stats, last_packet_received) = match status {
+        Status::Up(_) => (traffic.stats, traffic.last_packet_secs),
         _ => (TrafficStats::default(), None),
     };
 
@@ -109,7 +94,7 @@ pub fn render(
         last_packet_received,
         stats,
         last_outcome,
-        configs,
+        configs: configs.clone(),
         backend_reachable: !world.is_dark(),
     }
 }
@@ -151,20 +136,6 @@ mod tests {
     use crate::vpn::protocol::Protocol;
     use std::time::Duration;
 
-    fn obs_clear(now: Instant) -> Observation {
-        Observation {
-            observed_at: now,
-            view: WorldView::Reachable(TunnelObservation {
-                epoch: 0,
-                running: None,
-                starting: false,
-                start_error: None,
-                raw_stats: None,
-                last_packet_secs: None,
-            }),
-        }
-    }
-
     fn render_with(status: &Status, intent: &Intent, now: Instant) -> TunnelState {
         render_observed(status, intent, now, true)
     }
@@ -175,16 +146,14 @@ mod tests {
         now: Instant,
         observed_once: bool,
     ) -> TunnelState {
-        let mut speed = SpeedTracker::new();
         render(
             1,
             status,
             intent,
-            &obs_clear(now),
             &World::Clear,
-            ConfigsView::default(),
+            Traffic::default(),
+            &ConfigsView::default(),
             None,
-            &mut speed,
             now,
             observed_once,
         )
@@ -263,19 +232,14 @@ mod tests {
         // Android the peer only exists while a tunnel does, so with no tunnel there is nothing to
         // reach — and the UI sat at "checking" forever. Unknown has to be a state we can leave.
         let now = Instant::now();
-        let mut speed = SpeedTracker::new();
         let state = render(
             1,
             &Status::Idle,
             &Intent::default(),
-            &Observation {
-                observed_at: now,
-                view: WorldView::Unreachable(UnreachableCause::NotStarted),
-            },
             &World::Dark,
-            ConfigsView::default(),
+            Traffic::default(),
+            &ConfigsView::default(),
             None,
-            &mut speed,
             now,
             true,
         );
@@ -359,7 +323,6 @@ mod tests {
     #[test]
     fn darkness_is_reported_without_claiming_the_tunnel_is_down() {
         let now = Instant::now();
-        let mut speed = SpeedTracker::new();
         let state = render(
             1,
             &Status::Up(UpStatus {
@@ -374,11 +337,10 @@ mod tests {
                 resolved: true,
             }),
             &Intent::default(),
-            &obs_clear(now),
             &World::Dark,
-            ConfigsView::default(),
+            Traffic::default(),
+            &ConfigsView::default(),
             None,
-            &mut speed,
             now,
             true,
         );

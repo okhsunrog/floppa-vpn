@@ -143,7 +143,9 @@ export type AttemptProgress = {
 	total: number,
 };
 
-export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string };
+export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string } | 
+/**  A transport failure, not a config problem: nothing looked at the config at all. */
+{ kind: "actor_gone" };
 
 export type ConfigSummary = {
 	protocol: Protocol,

@@ -629,6 +629,15 @@ pub struct TrafficStats {
     pub rx_bytes_per_sec: f64,
 }
 
+/// What the last observation said about traffic, computed once per observation by the actor so
+/// the speed tracker sees every sample exactly once — and rendering stays a pure projection.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Traffic {
+    pub stats: TrafficStats,
+    /// Seconds since the last inbound packet.
+    pub last_packet_secs: Option<i64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct ConfigSummary {
     pub protocol: Protocol,
@@ -681,6 +690,49 @@ pub struct TunnelState {
 }
 
 impl TunnelState {
+    /// Equal apart from `seq`, which differs on every publish by construction.
+    pub fn eq_ignoring_seq(&self, other: &Self) -> bool {
+        let Self {
+            seq: _,
+            phase,
+            busy,
+            cancellable,
+            intent,
+            epoch,
+            intent_order,
+            protocol,
+            adopted,
+            attempt,
+            retry,
+            server_endpoint,
+            assigned_ip,
+            connected_at,
+            last_packet_received,
+            stats,
+            last_outcome,
+            configs,
+            backend_reachable,
+        } = self;
+        *phase == other.phase
+            && *busy == other.busy
+            && *cancellable == other.cancellable
+            && *intent == other.intent
+            && *epoch == other.epoch
+            && *intent_order == other.intent_order
+            && *protocol == other.protocol
+            && *adopted == other.adopted
+            && *attempt == other.attempt
+            && *retry == other.retry
+            && *server_endpoint == other.server_endpoint
+            && *assigned_ip == other.assigned_ip
+            && *connected_at == other.connected_at
+            && *last_packet_received == other.last_packet_received
+            && *stats == other.stats
+            && *last_outcome == other.last_outcome
+            && *configs == other.configs
+            && *backend_reachable == other.backend_reachable
+    }
+
     pub fn initial() -> Self {
         Self {
             seq: 0,

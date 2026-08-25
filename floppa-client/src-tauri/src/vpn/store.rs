@@ -29,6 +29,9 @@ pub enum ConfigError {
     Empty,
     #[error("could not parse the config: {detail}")]
     Unparseable { detail: String },
+    /// A transport failure, not a config problem: nothing looked at the config at all.
+    #[error("the tunnel actor is not running")]
+    ActorGone,
 }
 
 /// What the persistence task is asked to do. Only the newest request matters: a later save
