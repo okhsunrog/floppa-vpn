@@ -22,40 +22,35 @@ import {
   toIntOrNull,
 } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
-import type { PeerSyncStatus } from '../../types'
+import type { BadgeProps } from '@nuxt/ui'
+import type { SubscriptionSource } from '../../client/types.gen'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import { useConfirmAction } from '../../composables/adminList'
 
 const { t } = useI18n()
 
-function sourceLabel(source: string): string {
-  switch (source) {
-    case 'trial':
-      return t('adminUserDetail.sourceTrial')
-    case 'taster':
-      return t('adminUserDetail.sourceTaster')
-    case 'purchase':
-      return t('adminUserDetail.sourcePurchase')
-    case 'admin_grant':
-      return t('adminUserDetail.sourceAdminGrant')
-    default:
-      return source
-  }
+// Records over the generated union: a source added on the server without a label here is a
+// compile error, not a badge that shows the raw enum value.
+const SOURCE_LABEL_KEYS: Record<SubscriptionSource, string> = {
+  trial: 'adminUserDetail.sourceTrial',
+  taster: 'adminUserDetail.sourceTaster',
+  purchase: 'adminUserDetail.sourcePurchase',
+  admin_grant: 'adminUserDetail.sourceAdminGrant',
 }
 
-function sourceColor(source: string): 'info' | 'success' | 'warning' | 'neutral' {
-  switch (source) {
-    case 'trial':
-      return 'info'
-    case 'taster':
-      return 'neutral'
-    case 'purchase':
-      return 'success'
-    case 'admin_grant':
-      return 'warning'
-    default:
-      return 'neutral'
-  }
+const SOURCE_COLORS: Record<SubscriptionSource, BadgeProps['color']> = {
+  trial: 'info',
+  taster: 'neutral',
+  purchase: 'success',
+  admin_grant: 'warning',
+}
+
+function sourceLabel(source: SubscriptionSource): string {
+  return t(SOURCE_LABEL_KEYS[source])
+}
+
+function sourceColor(source: SubscriptionSource): BadgeProps['color'] {
+  return SOURCE_COLORS[source]
 }
 
 const route = useRoute()
@@ -423,7 +418,12 @@ async function doRemovePeer() {
           <UCard v-for="peer in user.peers" :key="peer.id" class="bg-[var(--ui-bg-elevated)]">
             <div class="flex justify-between items-center mb-2">
               <span class="font-mono font-semibold">{{ peer.assigned_ip }}</span>
-              <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
+              <div class="flex items-center gap-2">
+                <UBadge color="neutral" variant="subtle" size="sm">
+                  {{ t(`vpn.${peer.protocol}`) }}
+                </UBadge>
+                <StatusBadge :status="peer.sync_status" />
+              </div>
             </div>
             <div
               v-if="peer.device_name"

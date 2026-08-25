@@ -18,7 +18,6 @@ import { describeError, formatBytes, formatDate, formatDateTime } from '../../ut
 import { isTauri } from '../../utils/platform'
 import { isMiniApp as detectMiniApp } from '../../utils/telegram'
 import StatusBadge from '../../components/StatusBadge.vue'
-import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import { useConfirmAction } from '../../composables/adminList'
 
@@ -408,7 +407,7 @@ async function doRegenerateVless() {
                 <UBadge color="neutral" variant="subtle" size="sm">
                   {{ t(`vpn.${peer.protocol}`) }}
                 </UBadge>
-                <StatusBadge :status="peer.sync_status as PeerSyncStatus" />
+                <StatusBadge :status="peer.sync_status" />
               </div>
             </div>
             <div

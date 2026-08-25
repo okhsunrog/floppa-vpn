@@ -22,4 +22,6 @@ export type {
   UpdatePlanRequest,
   SetSubscriptionRequest,
   MiniAppAuthRequest,
+  Protocol,
+  SubscriptionSource,
 } from '../client/types.gen'
