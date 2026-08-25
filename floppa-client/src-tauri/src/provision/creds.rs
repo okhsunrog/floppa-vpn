@@ -13,7 +13,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
 use tracing::{debug, warn};
 
 use crate::vpn::private_file::write_private;
@@ -49,23 +48,16 @@ impl ServerCredentials {
     }
 }
 
-/// The last credentials this process saw, so the common path costs no disk read.
-static CACHED: RwLock<Option<ServerCredentials>> = RwLock::new(None);
-
 fn path(dir: &Path) -> PathBuf {
     dir.join(CREDS_FILENAME)
 }
 
-/// Store credentials, in memory and on disk.
+/// Write credentials, or remove them.
 ///
-/// Called on login, on every token refresh and — with `None` — on logout. A write that fails is
-/// reported but not fatal: the process that has them in memory keeps working, and only an
-/// autonomous start by another process would miss them.
+/// Called by the UI process on login, on every token refresh, and — with `None` — on logout.
+/// Atomic, so the other process reading the file concurrently sees the old content or the new
+/// one and never half of either.
 pub fn store(dir: &Path, creds: Option<ServerCredentials>) -> Result<(), String> {
-    if let Ok(mut cache) = CACHED.write() {
-        cache.clone_from(&creds);
-    }
-
     let file = path(dir);
     let Some(creds) = creds else {
         match std::fs::remove_file(&file) {
@@ -82,18 +74,18 @@ pub fn store(dir: &Path, creds: Option<ServerCredentials>) -> Result<(), String>
     Ok(())
 }
 
-/// The credentials, from memory if this process has seen them and from disk otherwise.
+/// The credentials, read from disk every time.
+///
+/// Deliberately uncached. The process that *writes* these is the UI and the process that most
+/// needs them is `:vpn`, and a token is rewritten on every sliding refresh — so a copy held in
+/// memory by the reader is a copy that goes stale in the ordinary course of things, and the way
+/// it fails is a background repair authenticating with a token that expired days ago. The file is
+/// a few hundred bytes and is read at most a few times a minute; there is nothing here to save.
 ///
 /// `None` means there is nothing usable — signed out, never signed in, or a file this build
 /// cannot read. Every one of those is the same to a caller: it cannot talk to the server as
 /// anybody, so it must not try.
 pub fn load(dir: &Path) -> Option<ServerCredentials> {
-    if let Ok(cache) = CACHED.read()
-        && let Some(creds) = cache.as_ref()
-    {
-        return Some(creds.clone());
-    }
-
     let file = path(dir);
     let json = match std::fs::read_to_string(&file) {
         Ok(json) => json,
@@ -121,20 +113,7 @@ pub fn load(dir: &Path) -> Option<ServerCredentials> {
         return None;
     }
 
-    if let Ok(mut cache) = CACHED.write() {
-        *cache = Some(creds.clone());
-    }
     Some(creds)
-}
-
-/// Drop the in-memory copy, so the next [`load`] reads the disk again.
-///
-/// For the process that does *not* write them: `:vpn` caches what it read, and a refresh written
-/// by the UI has to be picked up rather than served from a copy that predates it.
-pub fn forget_cached() {
-    if let Ok(mut cache) = CACHED.write() {
-        *cache = None;
-    }
 }
 
 #[cfg(test)]
@@ -154,7 +133,6 @@ mod tests {
     fn what_was_stored_comes_back() {
         let dir = tempfile::tempdir().unwrap();
         store(dir.path(), Some(creds())).unwrap();
-        forget_cached();
         assert_eq!(load(dir.path()), Some(creds()));
     }
 
@@ -163,7 +141,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         store(dir.path(), Some(creds())).unwrap();
         store(dir.path(), None).unwrap();
-        forget_cached();
         assert_eq!(load(dir.path()), None);
         assert!(!path(dir.path()).exists());
     }
@@ -176,7 +153,6 @@ mod tests {
             r#"{"version":99,"base_url":"https://x/api","token":"t"}"#,
         )
         .unwrap();
-        forget_cached();
         assert_eq!(load(dir.path()), None);
     }
 
@@ -188,7 +164,6 @@ mod tests {
             r#"{"version":1,"base_url":"","token":"t"}"#,
         )
         .unwrap();
-        forget_cached();
         assert_eq!(load(dir.path()), None);
     }
 }

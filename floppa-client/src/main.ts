@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 import { PiniaColada } from '@pinia/colada'
@@ -105,6 +105,28 @@ installApiInterceptors(client, authStore, {
       message: body.message ?? 'Please update the app',
     }),
 })
+
+// Hand the session to Rust, and keep handing it over.
+//
+// One watcher rather than a call at each of sign-in, refresh and sign-out: the token ref is what
+// all three of those *are*, and the sliding refresh writes it from inside an interceptor that
+// nothing else observes. `immediate` covers the fourth case, a token restored from localStorage
+// before any of them happens.
+//
+// This is what lets the tunnel process talk to the server with nobody looking at the app: it has
+// no webview, so it has no localStorage, so without this it could reconnect a tunnel but never
+// replace a peer that had been deleted underneath it.
+watch(
+  () => authStore.token,
+  (token) => {
+    void commands.setServerCredentials(API_URL, token).then((result) => {
+      if (result.status === 'error') {
+        console.warn('[auth] the tunnel process was not given the session:', result.error)
+      }
+    })
+  },
+  { immediate: true },
+)
 
 // Setup router with shared routes, overriding dashboard and login
 const routes = createAppRoutes()

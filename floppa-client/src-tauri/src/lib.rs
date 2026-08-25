@@ -50,6 +50,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::get_log_config,
             vpn::commands::set_log_config,
             vpn::commands::webview_log,
+            vpn::commands::set_server_credentials,
         ])
         .events(tauri_specta::collect_events![
             vpn::events::TunnelStateChanged

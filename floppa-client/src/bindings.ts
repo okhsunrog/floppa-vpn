@@ -107,6 +107,20 @@ export const commands = {
 	 *  callsite: that is exactly what makes `webview=…` a filter directive of its own.
 	 */
 	webviewLog: (level: WebviewLevel, message: string) => __TAURI_INVOKE<void>("webview_log", { level, message }),
+	/**
+	 *  Hand the session over to Rust, or take it away.
+	 * 
+	 *  Called by the frontend whenever the auth store's token changes — sign-in, every sliding
+	 *  refresh, sign-out — and once at startup for a token restored from `localStorage`. `token` is
+	 *  `None` exactly when the user is signed out, and then the stored credentials are removed rather
+	 *  than left to rot: they are what an autonomous repair would authenticate with, and a signed-out
+	 *  device must not be able to make peers.
+	 * 
+	 *  The `base_url` comes from the frontend because the frontend is where it is configured
+	 *  (`VITE_API_URL`, baked in at build time). Keeping a second copy compiled into Rust would mean
+	 *  two places to change and one of them silently wrong.
+	 */
+	setServerCredentials: (baseUrl: string, token: string | null) => typedError<null, string>(__TAURI_INVOKE("set_server_credentials", { baseUrl, token })),
 };
 
 /** Events */

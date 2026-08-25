@@ -2,6 +2,7 @@
 //!
 //! - `vpn` — the tunnel: thin wrappers over the actor.
 //! - `logs` — log configuration and diagnostic captures.
+//! - `provision` — the server session, and the peers it provisions for this device.
 //! - `android` / `desktop` — everything whose implementation depends on the platform: device
 //!   identity, the split-tunneling app list, Android permission prompts, insets, the status bar,
 //!   and where an exported archive is saved. Exactly one of the two is compiled, and both define
@@ -17,6 +18,7 @@ mod android;
 #[cfg(not(target_os = "android"))]
 mod desktop;
 mod logs;
+mod provision;
 mod vpn;
 
 #[cfg(target_os = "android")]
@@ -24,6 +26,7 @@ pub use android::*;
 #[cfg(not(target_os = "android"))]
 pub use desktop::*;
 pub use logs::*;
+pub use provision::*;
 pub use vpn::*;
 
 use serde::{Deserialize, Serialize};
