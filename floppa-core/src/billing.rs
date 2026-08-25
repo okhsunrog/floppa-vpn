@@ -217,6 +217,17 @@ pub async fn process_credit_switch(
     subscription_days: i32,
     credit_amount: i32,
 ) -> Result<Option<i64>> {
+    let now = Utc::now();
+    let expires_at = now + Duration::days(subscription_days as i64);
+
+    let mut tx = pool.begin().await?;
+
+    // Serialize switches per user so the dedup check below and the insert are one atomic step:
+    // two concurrent callbacks cannot both pass the check and both create a subscription.
+    sqlx::query!("SELECT id FROM users WHERE id = $1 FOR UPDATE", user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
     // Dedup: skip if a recent credit switch for the same user+plan exists
     let recent = sqlx::query_scalar!(
         r#"
@@ -228,17 +239,13 @@ pub async fn process_credit_switch(
         user_id,
         plan_id,
     )
-    .fetch_optional(pool)
+    .fetch_optional(&mut *tx)
     .await?;
 
     if recent.is_some() {
+        tx.rollback().await?;
         return Ok(None);
     }
-
-    let now = Utc::now();
-    let expires_at = now + Duration::days(subscription_days as i64);
-
-    let mut tx = pool.begin().await?;
 
     sqlx::query!(
         "UPDATE subscriptions SET expires_at = NOW() WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
