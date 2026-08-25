@@ -159,9 +159,6 @@ class FloppaVpnService : VpnService() {
     /** This service instance is being destroyed; end its generation and the tunnel on it. */
     private external fun nativeServiceGone(generation: Long)
 
-    /** The process is going away: release the reference Rust calls back on. */
-    private external fun nativeReleaseService()
-
     /**
      * Generation of the descriptor this instance is holding.
      *
@@ -255,6 +252,15 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
+     * Whether this app already holds VPN consent. Called from Rust.
+     *
+     * A question, never a dialog: `VpnService.prepare` can be checked from anywhere and can only be
+     * *shown* from an activity, which this process does not have. Consent that is missing comes
+     * back as a refusal, and the UI — which does have an activity — is what asks for it.
+     */
+    fun hasConsent(): Boolean = VpnService.prepare(this) == null
+
+    /**
      * Establish a TUN for [generation] and hand its descriptor to the actor. Called from Rust.
      *
      * Asynchronous by nature: `establish()` must run on the main thread, so this posts and answers
@@ -307,9 +313,11 @@ class FloppaVpnService : VpnService() {
     override fun onDestroy() {
         Log.i(TAG, "the VPN service is being destroyed")
         endGeneration()
-        // The instance is going away; a global reference kept past this point pins a destroyed
-        // service in the JVM for the life of the process.
-        nativeReleaseService()
+        // The reference Rust calls back on is deliberately *not* cleared here. Instances share this
+        // process and their teardown is asynchronous: a new instance's onCreate routinely runs
+        // before the old one's onDestroy, so clearing here would clear the reference the new
+        // instance had just installed — and `protectSocket` failing means the live tunnel's own
+        // handshake traffic routes into itself. It is replaced on the next onCreate instead.
         super.onDestroy()
     }
 

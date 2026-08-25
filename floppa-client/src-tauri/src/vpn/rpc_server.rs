@@ -10,7 +10,7 @@
 //! desktop app into a privileged helper and a UI later needs this exact machinery rather than a
 //! second copy of it.
 
-use super::rpc::{STATE_HOLD, VpnRpc};
+use super::rpc::{Published, STATE_HOLD, VpnRpc};
 pub use super::rpc_listener::RpcServerHandle;
 use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
 use crate::vpn::actor::types::{
@@ -27,18 +27,30 @@ use tracing::{debug, warn};
 #[derive(Clone)]
 struct ActorServer {
     handle: TunnelHandle,
+    /// Identity of this run of the actor. Random per process: it is only ever compared for
+    /// equality, and what it has to be is *different from the last run's*.
+    boot: u64,
+}
+
+impl ActorServer {
+    fn published(&self, state: TunnelState) -> Published {
+        Published {
+            boot: self.boot,
+            state,
+        }
+    }
 }
 
 impl VpnRpc for ActorServer {
-    async fn state(self, _ctx: Context) -> TunnelState {
-        self.handle.snapshot()
-    }
-
-    async fn state_since(self, _ctx: Context, seq: u64) -> TunnelState {
+    async fn state_since(self, _ctx: Context, boot: u64, seq: u64) -> Published {
         let mut states = self.handle.states();
+        // A caller from a previous run knows nothing about this one, whatever its seq says.
+        if boot != self.boot {
+            return self.published(states.borrow().clone());
+        }
         // Anything already newer is answered on the spot: the client is behind, not waiting.
         if states.borrow().seq > seq {
-            return states.borrow().clone();
+            return self.published(states.borrow().clone());
         }
         // Otherwise hold the call open. The timeout is not a failure — it returns whatever is
         // current, the client asks again with the same `seq`, and an idle connection proves itself
@@ -57,7 +69,8 @@ impl VpnRpc for ActorServer {
                 "nothing new within the hold; answering with the current state"
             );
         }
-        states.borrow().clone()
+        let state = states.borrow().clone();
+        self.published(state)
     }
 
     async fn set_intent(
@@ -120,7 +133,15 @@ impl VpnRpc for ActorServer {
 /// One server per process, not one per tunnel: what is being served is the actor, which outlives
 /// every individual tunnel and every client that connects to ask about one.
 pub fn serve(socket_path: &str, handle: TunnelHandle) -> Result<RpcServerHandle, String> {
-    let server = ActorServer { handle };
+    // `RandomState` is seeded per process by the standard library: entropy with no dependency and
+    // no syscall, and equality is all this value is ever used for.
+    let boot = {
+        use std::hash::{BuildHasher, Hasher};
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    };
+    let server = ActorServer { handle, boot };
     super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream, cancel| {
         debug!("a client connected to the actor");
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
@@ -277,12 +298,38 @@ mod tests {
             "an unreachable process must never read as a tunnel that went down"
         );
 
-        // And when it comes back — as a restarted service does — the mirror resumes from where it
-        // was, without anything having to tell it to.
-        let _server = serve(&socket, TunnelHandle::remote(actor.clone())).expect("rebind");
-        state_tx.send(connected(3)).expect("publish");
-        wait_for(&remote, "the state after the process came back", |s| {
-            s.seq == 3
+        // It comes back as a *restarted process*: a new actor, whose sequence starts again from
+        // the beginning. This is the case sequence numbers alone cannot survive — the mirror holds
+        // seq 2 and everything the new run publishes is seq 1 — and it is the ordinary path after
+        // Android restarts the service, not an exotic one. What makes it work is that the run has
+        // an identity of its own, so a mismatch is adopted instead of compared.
+        let (fresh_tx, fresh_rx) = watch::channel(TunnelState::initial());
+        let mut restarted = TunnelState::initial();
+        restarted.seq = 1;
+        restarted.phase = Phase::Disconnected;
+        fresh_tx.send(restarted).expect("publish");
+        let fresh_actor = Arc::new(FakeActor {
+            state: fresh_rx,
+            intents: std::sync::Mutex::new(Vec::new()),
+        });
+        let _server = serve(&socket, TunnelHandle::remote(fresh_actor)).expect("rebind");
+
+        wait_for(&remote, "the state of the restarted process", |s| {
+            s.phase == Phase::Disconnected
+        })
+        .await;
+        assert_eq!(
+            remote.snapshot().seq,
+            1,
+            "the new run's numbering is adopted, not filtered against the old one's"
+        );
+
+        // And it keeps following that run from there.
+        let mut later = connected(2);
+        later.assigned_ip = Some("10.0.0.9/32".into());
+        fresh_tx.send(later).expect("publish");
+        wait_for(&remote, "the next state of the new run", |s| {
+            s.assigned_ip.as_deref() == Some("10.0.0.9/32")
         })
         .await;
     }

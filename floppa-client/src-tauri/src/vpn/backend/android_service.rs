@@ -162,15 +162,22 @@ impl VpnBackend for AndroidServiceBackend {
         .map_err(|detail| BackendError::ServiceRefused { detail })
     }
 
+    /// Stop the tunnel — and *only* the tunnel.
+    ///
+    /// Deliberately not the service. This runs inside every unwind, including the ones a cycle
+    /// does between protocols: a ladder that fails AmneziaWG and goes on to WireGuard unwinds in
+    /// the middle, and pulling the service down there would take the started lifecycle with it —
+    /// so the tunnel that came up a second later would die with the app being swiped away, and a
+    /// reconnect with no UI alive would lose the service mid-cycle and never retry.
+    ///
+    /// The service stands down from one place instead: the watcher on the actor's phase, when it
+    /// settles at Disconnected. That covers a Down, a wipe, a cycle that gave up and a connect
+    /// that failed before anything started, and it cannot fire while a cycle is still working.
     async fn stop(&self) -> Result<(), BackendError> {
         let result = self.tunnel_manager.stop().await;
         if let Some(service) = self.services.current() {
             self.services.end(service.generation);
         }
-        // The Android side goes too: the notification, the descriptor and the started lifecycle
-        // are all one unit, and leaving them standing over a stopped tunnel is a route to nowhere
-        // with a notification on top.
-        crate::vpn::jni_entry::stop_vpn_service();
         result
     }
 

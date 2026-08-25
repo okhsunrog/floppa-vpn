@@ -33,6 +33,20 @@ use crate::vpn::actor::types::{
 use crate::vpn::protocol::Protocol;
 use crate::vpn::store::ConfigError;
 
+/// A published state, and which run of the actor published it.
+///
+/// The `boot` is what makes the sequence numbers mean anything across a restart. The actor stamps
+/// every publish with a `seq` that only ever grows *within one run*, and the process holding it is
+/// a service the system stops and starts — so a mirror holding seq 57 from a run that has died
+/// would reject everything a fresh run publishes from seq 1, and freeze at a state that is no
+/// longer true, exactly when the process came back. Comparing the run first turns that into an
+/// adoption rather than a stall.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Published {
+    pub boot: u64,
+    pub state: TunnelState,
+}
+
 /// How long the server holds a [`VpnRpc::state_since`] call open waiting for something to change.
 ///
 /// A long poll rather than a subscription: tarpc is request/response, and this maps a `watch`
@@ -70,16 +84,15 @@ pub const SOCKET_NAME: &str = "vpn.sock";
 #[cfg(unix)]
 #[tarpc::service]
 pub trait VpnRpc {
-    /// The state as of now. Used once, to seed the mirror before the long polls take over.
-    async fn state() -> TunnelState;
-
-    /// The first published state newer than `seq`.
+    /// The first published state newer than what the caller holds.
     ///
-    /// Returns immediately when one already exists, and otherwise holds the call open until one
-    /// does or [`STATE_HOLD`] elapses — at which point the current state is returned unchanged and
-    /// the client asks again. That is a `watch` over a request/response transport: the client
-    /// always knows what it last saw, so nothing can be missed and nothing is replayed.
-    async fn state_since(seq: u64) -> TunnelState;
+    /// `boot` and `seq` are what the caller last saw. A `boot` that is not this run's is answered
+    /// on the spot, whatever the `seq`: everything the caller knows came from a run that is over.
+    /// Otherwise this returns immediately when something newer already exists, and holds the call
+    /// open until it does or [`STATE_HOLD`] elapses — at which point the current state comes back
+    /// unchanged and the caller asks again. That is a `watch` over a request/response transport:
+    /// the caller always knows what it last saw, so nothing is missed and nothing is replayed.
+    async fn state_since(boot: u64, seq: u64) -> Published;
 
     async fn set_intent(intent: IntentRequest) -> Result<IntentAccepted, IntentError>;
 
@@ -131,7 +144,7 @@ mod tests {
     }
 
     /// Every argument and return type of every `VpnRpc` method, in every variant that can be
-    /// constructed, through the wire's codec. Ordered by the trait: state, state_since, set_intent,
+    /// constructed, through the wire's codec. Ordered by the trait: state_since, set_intent,
     /// await_cycle, import_config, clear_configs, forget_preferred, await_quiescent, flush_configs,
     /// set_log_config, start_log_capture, stop_log_capture.
     mod wire_coverage {
@@ -281,9 +294,17 @@ mod tests {
         #[test]
         fn the_published_state_every_shape() {
             for (i, state) in states().iter().enumerate() {
-                assert_eq!(&survives(&format!("TunnelState #{i}"), state), state);
+                let published = Published {
+                    boot: u64::MAX,
+                    state: state.clone(),
+                };
+                assert_eq!(
+                    &survives(&format!("Published #{i}"), &published),
+                    &published
+                );
             }
-            // state_since's argument, and the seed call's absence of one.
+            // state_since's arguments: the run the caller is following, and how far into it.
+            assert_eq!(survives("boot", &u64::MAX), u64::MAX);
             assert_eq!(survives("seq", &u64::MAX), u64::MAX);
         }
 

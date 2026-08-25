@@ -306,14 +306,27 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
         let actor =
             crate::vpn::actor::TunnelActor::spawn(backend, platform, journal, spawn, host.clone());
 
-        // The notification is the only UI a tunnel has while the app is closed, so it follows the
-        // actor's own phase rather than being set by whatever last touched the tunnel.
+        // The service follows the actor's phase, and nothing else writes it.
+        //
+        // Two things hang off this. The notification is the only UI a tunnel has while the app is
+        // closed, so what it says comes from the one place that knows what is true. And a service
+        // that is foreground with nothing running is a notification over an empty promise: when
+        // the actor settles at Disconnected — a connect that failed before anything started, a
+        // Down, a cycle that gave up — the service stands down. It is a no-op unless the service
+        // actually is foreground, which is what keeps the very first Disconnected of a freshly
+        // booted process from stopping a service the UI has merely bound.
         {
             let mut states = actor.states();
             runtime.spawn(async move {
                 let mut said = None;
                 while states.changed().await.is_ok() {
-                    let connected = states.borrow().phase == Phase::Connected;
+                    let phase = states.borrow().phase;
+                    if phase == Phase::Disconnected {
+                        said = None;
+                        stop_vpn_service();
+                        continue;
+                    }
+                    let connected = phase == Phase::Connected;
                     if said != Some(connected) {
                         said = Some(connected);
                         set_service_connected(connected);
@@ -486,23 +499,6 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeServic
         Ok(())
     });
     log_outcome("nativeServiceGone", outcome.into_outcome());
-}
-
-/// Called from `FloppaVpnService.onDestroy()` when the *process* is going away rather than one
-/// service instance: release the service reference so a destroyed service is not pinned in the JVM.
-#[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReleaseService<'local>(
-    mut env: EnvUnowned<'local>,
-    _class: JClass<'local>,
-) {
-    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        VPN_SERVICE_REF
-            .lock()
-            .map_err(|_| EntryError::Poisoned)?
-            .take();
-        Ok(())
-    });
-    log_outcome("nativeReleaseService", outcome.into_outcome());
 }
 
 /// Ask the actor to go down and stay down, from Kotlin's stop action.

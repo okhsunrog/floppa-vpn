@@ -6,19 +6,22 @@
 //! **The state is mirrored, not fetched.** `snapshot()` must stay a free local read — the UI calls
 //! it on every render — so a background task keeps a `watch` filled by long-polling `state_since`,
 //! and every caller reads the mirror. The seq the actor stamps on each publish is what makes that
-//! exact: the poll asks for anything newer than what the mirror holds, so nothing is missed and
-//! nothing is replayed, and a reconnect after the socket drops resumes from the same place.
+//! exact within one run of it: the poll asks for anything newer than what the mirror holds, so
+//! nothing is missed and nothing is replayed, and a reconnect after the socket drops resumes from
+//! the same place. Across runs the seq means nothing — a restarted process counts from one again —
+//! so every answer names the run it came from, and a run the mirror has not seen before is adopted
+//! rather than compared. That is the ordinary path after Android restarts the service.
 //!
 //! **Unreachable is not down.** Whatever this cannot ask, it does not answer for: while the socket
-//! is not there the mirror keeps the last state it saw and reports `Phase::Unknown` only until the
-//! first answer arrives. Turning a failed connection into "disconnected" is the one thing that
-//! must never happen here — it is the same mistake the decision table spends `World::Dark`
-//! avoiding, one layer up.
+//! is not there the mirror keeps the last state it saw, and until the first answer ever arrives it
+//! says `Unknown`. Turning a failed connection into "disconnected" is the one thing that must
+//! never happen here — it is the same mistake the decision table spends `World::Dark` avoiding,
+//! one layer up.
 
 use super::rpc::{SOCKET_NAME, STATE_POLL_DEADLINE, VpnRpcClient};
 use crate::vpn::actor::handle::{IntentRequest, TunnelControl};
 use crate::vpn::actor::types::{
-    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Phase, TunnelState,
+    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelState,
 };
 use crate::vpn::protocol::Protocol;
 use crate::vpn::store::ConfigError;
@@ -27,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, watch};
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// How long to wait before reconnecting to a socket that is not answering.
 ///
@@ -147,22 +150,39 @@ impl RemoteActor {
 /// so its socket coming and going is ordinary, not exceptional. What must never happen is this
 /// task ending — the mirror would then quietly freeze at whatever it last saw.
 async fn mirror(remote: Arc<RemoteActor>, state_tx: watch::Sender<TunnelState>) {
+    // What run of the actor the mirror is following, and how far into it. `NO_BOOT` is "none yet",
+    // which every real run differs from — so the first answer is adopted whatever its seq.
+    const NO_BOOT: u64 = 0;
+    let mut following = NO_BOOT;
+
     loop {
         let seq = state_tx.borrow().seq;
         let asked = remote
             .call("state_since", |client| async move {
                 client
-                    .state_since(RemoteActor::deadline(STATE_POLL_DEADLINE), seq)
+                    .state_since(RemoteActor::deadline(STATE_POLL_DEADLINE), following, seq)
                     .await
             })
             .await;
 
         match asked {
-            Ok(state) => {
-                // Strictly newer only: the hold expiring answers with the state we already have,
-                // and republishing it would wake every listener for nothing.
-                if state.seq > seq || state_tx.borrow().phase == Phase::Unknown {
-                    let _ = state_tx.send(state);
+            Ok(published) => {
+                if published.boot != following {
+                    // A different run of the actor: its sequence starts again, so everything the
+                    // mirror knows is from a process that is over. Adopt what it says rather than
+                    // comparing numbers that are no longer comparable — this is the ordinary path
+                    // after the system restarts the service, not an exceptional one.
+                    info!(
+                        was = following,
+                        now = published.boot,
+                        "following a new run of the tunnel actor"
+                    );
+                    following = published.boot;
+                    let _ = state_tx.send(published.state);
+                } else if published.state.seq > seq {
+                    // Strictly newer only: the hold expiring answers with the state we already
+                    // have, and republishing it would wake every listener for nothing.
+                    let _ = state_tx.send(published.state);
                 }
             }
             Err(_) => {
