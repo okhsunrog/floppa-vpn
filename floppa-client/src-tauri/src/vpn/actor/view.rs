@@ -258,12 +258,9 @@ mod tests {
         assert!(state.protocol.is_none());
     }
 
-    /// The snapshot answers "is the button busy?" itself.
-    ///
-    /// It used to answer only "which phase?", and the consumer turned that into a boolean from its
-    /// own copy of the list — in TypeScript, where nothing checks it against this one. Two lists
-    /// that happen to agree are not one source of truth; they are a bug waiting for the next phase
-    /// to be added.
+    /// The snapshot answers "is the button busy?" itself, so no consumer needs its own copy of
+    /// which phases count as work in progress. Two lists that happen to agree are not one source
+    /// of truth; they are a bug waiting for the next phase to be added.
     #[test]
     fn every_status_publishes_booleans_that_match_its_own_phase() {
         let now = Instant::now();

@@ -50,8 +50,10 @@ pub enum Effect {
     ResetSpeed,
     /// Persist "this protocol actually worked". Emitted only on success.
     RememberWinner(Protocol),
-    /// Demote the intent to Down at the same epoch, preserving the invariant that an Up intent
-    /// means the actor is actively working toward Up.
+    /// Demote the intent to Down at the same epoch, once a caller-issued Up has been given up
+    /// on: an Up intent with params means the actor is working toward Up. The startup intent is
+    /// the deliberate exception — it carries no params, so it rests in Idle without being
+    /// demoted, and adopts a tunnel that appears later (row 5a).
     DemoteIntent,
     /// Resolve waiters for an epoch. Always explicit: the actor executes effects after it has
     /// already written the next status, so "the current epoch" would be read off the wrong state.

@@ -90,8 +90,8 @@ impl<'de> Deserialize<'de> for Preference {
 pub struct InvalidInterfaceName(pub String);
 
 /// Validated against the privileged helper's own `^floppa[0-9]+$` check
-/// (`resources/linux/floppa-network-helper:11`). Replaces the `const INTERFACE_NAME` in
-/// `commands.rs` and the duplicated bare `"floppa0"` literal in `lib.rs`.
+/// (`resources/linux/floppa-network-helper`), so a name the helper would refuse cannot be
+/// constructed here.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct InterfaceName(String);
 

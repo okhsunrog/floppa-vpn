@@ -574,9 +574,9 @@ impl Phase {
     /// `Unknown` counts as busy: the honest thing to show while we do not know is a pending
     /// indicator, not an actionable button offering to do something we cannot yet judge.
     ///
-    /// Published as [`TunnelState::busy`] rather than left for the consumer to re-derive. It was
-    /// re-derived, in TypeScript, from a second copy of this list — so the claim above was true of
-    /// this function and false of the app: adding a phase here would not have reached the button.
+    /// Published as [`TunnelState::busy`] rather than left for the consumer to re-derive, so
+    /// this list is the only one: a phase added here reaches the button without a second copy
+    /// having to be kept in step.
     pub const fn is_busy(self) -> bool {
         matches!(
             self,
