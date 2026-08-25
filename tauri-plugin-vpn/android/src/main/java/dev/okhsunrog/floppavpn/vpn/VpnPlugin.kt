@@ -22,7 +22,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import androidx.core.net.toUri
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import app.tauri.annotation.ActivityCallback
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
@@ -187,87 +189,105 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
      */
     @Command
     fun getInstalledApps(invoke: Invoke) {
-        // Run on background thread to avoid blocking the Android UI thread
+        // Run on background thread to avoid blocking the Android UI thread. Anything thrown on it
+        // would otherwise kill the process with no reply ever reaching the caller.
         Thread {
-            val pm = activity.packageManager
-            val apps =
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
-                } else {
-                    @Suppress("DEPRECATION") pm.getInstalledApplications(0)
-                }
-
-            val ownPackage = activity.packageName
-            val result = JSObject()
-            val appList = JSArray()
-            val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
-
-            for (appInfo in apps) {
-                if (appInfo.packageName == ownPackage) continue
-
-                // Preinstalled apps carry FLAG_SYSTEM, but user-facing ones (YouTube, Maps,
-                // Chrome, …) have a launcher entry. Treat those as non-system so they show up
-                // in the main list instead of being hidden behind "show system apps".
-                val isSystemFlag = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                val hasLauncher = pm.getLaunchIntentForPackage(appInfo.packageName) != null
-                val isSystem = isSystemFlag && !hasLauncher
-
-                val entry = JSObject()
-                entry.put("packageName", appInfo.packageName)
-                entry.put("label", appInfo.loadLabel(pm).toString())
-                entry.put("isSystem", isSystem)
-
-                try {
-                    val drawable = appInfo.loadIcon(pm)
-                    val bitmap =
-                        if (drawable is BitmapDrawable) {
-                            drawable.bitmap.scale(iconSize, iconSize)
-                        } else {
-                            val bmp = createBitmap(iconSize, iconSize)
-                            val canvas = Canvas(bmp)
-                            drawable.setBounds(0, 0, iconSize, iconSize)
-                            drawable.draw(canvas)
-                            bmp
-                        }
-                    val stream = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
-                    entry.put(
-                        "icon",
-                        Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP),
-                    )
-                } catch (_: Exception) {
-                    // Icon loading failed, leave null
-                }
-
-                appList.put(entry)
+            try {
+                invoke.resolve(collectInstalledApps())
+            } catch (e: Exception) {
+                Log.e("VpnPlugin", "getInstalledApps error", e)
+                invoke.reject("Failed to list installed apps: ${e.message}")
             }
-
-            result.put("apps", appList)
-            invoke.resolve(result)
         }
             .start()
     }
 
-    /** Get safe area insets (status bar, navigation bar) in density-independent pixels. */
+    private fun collectInstalledApps(): JSObject {
+        val pm = activity.packageManager
+        val apps =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION") pm.getInstalledApplications(0)
+            }
+
+        // One query for every launcher entry, rather than one getLaunchIntentForPackage binder
+        // call per installed package.
+        val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val launchable =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.queryIntentActivities(launcherIntent, PackageManager.ResolveInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION") pm.queryIntentActivities(launcherIntent, 0)
+            }
+        val launchablePackages = launchable.map { it.activityInfo.packageName }.toHashSet()
+
+        val ownPackage = activity.packageName
+        val result = JSObject()
+        val appList = JSArray()
+        val iconSize = (32 * activity.resources.displayMetrics.density).toInt()
+
+        for (appInfo in apps) {
+            if (appInfo.packageName == ownPackage) continue
+
+            // Preinstalled apps carry FLAG_SYSTEM, but user-facing ones (YouTube, Maps,
+            // Chrome, …) have a launcher entry. Treat those as non-system so they show up
+            // in the main list instead of being hidden behind "show system apps".
+            val isSystemFlag = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+            val hasLauncher = appInfo.packageName in launchablePackages
+            val isSystem = isSystemFlag && !hasLauncher
+
+            val entry = JSObject()
+            entry.put("packageName", appInfo.packageName)
+            entry.put("label", appInfo.loadLabel(pm).toString())
+            entry.put("isSystem", isSystem)
+
+            try {
+                val drawable = appInfo.loadIcon(pm)
+                val bitmap =
+                    if (drawable is BitmapDrawable) {
+                        drawable.bitmap.scale(iconSize, iconSize)
+                    } else {
+                        val bmp = createBitmap(iconSize, iconSize)
+                        val canvas = Canvas(bmp)
+                        drawable.setBounds(0, 0, iconSize, iconSize)
+                        drawable.draw(canvas)
+                        bmp
+                    }
+                val stream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 80, stream)
+                entry.put("icon", Base64.encodeToString(stream.toByteArray(), Base64.NO_WRAP))
+            } catch (_: Exception) {
+                // Icon loading failed, leave null
+            }
+
+            appList.put(entry)
+        }
+
+        result.put("apps", appList)
+        return result
+    }
+
+    /**
+     * Get safe area insets (status bar, navigation bar) in density-independent pixels.
+     *
+     * Goes through the compat API so the values are real on every supported release. The platform
+     * `WindowInsets.getInsets(Type)` only exists from API 30, and the previous version answered 0/0
+     * below that — which, with edge-to-edge enabled, put the content under the status bar on
+     * Android 7–10.
+     */
     @Command
     fun getSafeAreaInsets(invoke: Invoke) {
         val ret = JSObject()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val insets = activity.window.decorView.rootWindowInsets
-            if (insets != null) {
-                val density = activity.resources.displayMetrics.density
-                val statusBars = insets.getInsets(android.view.WindowInsets.Type.statusBars())
-                val navBars = insets.getInsets(android.view.WindowInsets.Type.navigationBars())
-                val cutout = insets.getInsets(android.view.WindowInsets.Type.displayCutout())
-                // Top inset = max of status bar and display cutout
-                val topPx = maxOf(statusBars.top, cutout.top)
-                val bottomPx = navBars.bottom
-                ret.put("top", (topPx / density).toDouble())
-                ret.put("bottom", (bottomPx / density).toDouble())
-            } else {
-                ret.put("top", 0)
-                ret.put("bottom", 0)
-            }
+        val insets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+        if (insets != null) {
+            val density = activity.resources.displayMetrics.density
+            val bars =
+                insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+                )
+            ret.put("top", (bars.top / density).toDouble())
+            ret.put("bottom", (bars.bottom / density).toDouble())
         } else {
             ret.put("top", 0)
             ret.put("bottom", 0)
@@ -374,8 +394,10 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
 
     /**
      * Request notification permission. On Android 13+ shows a runtime permission dialog via Tauri's
-     * permission system. On older versions opens the app's notification settings page. Resolves
-     * with { "enabled": true/false } after the user responds.
+     * permission system. On older versions opens the app's notification settings page and resolves
+     * when the user comes back from it — resolving right after `startActivity`, as this used to,
+     * reported the state from before the user had touched anything. Resolves with { "enabled":
+     * true/false }.
      */
     @Command
     fun openNotificationSettings(invoke: Invoke) {
@@ -399,18 +421,24 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                             data = Uri.fromParts("package", activity.packageName, null)
                         }
                     }
-                activity.startActivity(intent)
-                val ret = JSObject()
-                ret.put(
-                    "enabled",
-                    NotificationManagerCompat.from(activity).areNotificationsEnabled(),
-                )
-                invoke.resolve(ret)
+                startActivityForResult(invoke, intent, "notificationSettingsResult")
             }
         } catch (e: Exception) {
             Log.e("VpnPlugin", "openNotificationSettings error", e)
             invoke.reject("Failed to request notification permission: ${e.message}")
         }
+    }
+
+    @ActivityCallback
+    fun notificationSettingsResult(invoke: Invoke, result: ActivityResult) {
+        val enabled = NotificationManagerCompat.from(activity).areNotificationsEnabled()
+        Log.d(
+            "VpnPlugin",
+            "notificationSettingsResult: resultCode=${result.resultCode}, enabled=$enabled",
+        )
+        val ret = JSObject()
+        ret.put("enabled", enabled)
+        invoke.resolve(ret)
     }
 
     @PermissionCallback

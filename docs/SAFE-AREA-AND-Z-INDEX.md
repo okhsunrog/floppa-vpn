@@ -6,7 +6,7 @@ The Tauri client runs edge-to-edge on Android (`viewport-fit=cover` in `index.ht
 
 ## How Safe Area Insets Are Set
 
-1. **Kotlin plugin** (`tauri-plugin-vpn/android/.../VpnPlugin.kt` → `getSafeAreaInsets()`) queries `window.decorView.rootWindowInsets` on Android 11+. Returns `max(statusBars.top, cutout.top)` and `navBars.bottom` in density-independent pixels.
+1. **Kotlin plugin** (`tauri-plugin-vpn/android/.../VpnPlugin.kt` → `getSafeAreaInsets()`) queries `ViewCompat.getRootWindowInsets(decorView)` and takes the `systemBars() | displayCutout()` insets, so the values are real on every supported release (the platform `WindowInsets.getInsets(Type)` only exists from Android 11). Returns the top and bottom insets in density-independent pixels.
 2. **Rust bridge** (`tauri-plugin-vpn/src/mobile.rs`) forwards to Kotlin. On non-Android platforms, returns `(0, 0)`.
 3. **JavaScript** (`floppa-client/src/main.ts`) sets `--safe-area-inset-top` and `--safe-area-inset-bottom` on `document.documentElement`. On desktop these are never set, so CSS `var()` defaults to `0px`.
 
