@@ -374,9 +374,10 @@ function formatLastPacket(secs: number | null | undefined): string {
 }
 
 function selectProtocol(proto: Protocol) {
-  // In manual mode the request carries exactly one protocol, so choosing one is a local
-  // preference — nothing is persisted until it actually connects.
-  settingsStore.protocolOrder = [proto, ...settingsStore.protocolOrder.filter((p) => p !== proto)]
+  // In manual mode the request carries exactly one protocol: the pick. It is remembered across
+  // launches, but it is not a reordering of the auto-select priority — that list is its own
+  // setting and stays as the user left it.
+  settingsStore.manualProtocol = proto
 }
 
 const healthDotClass = computed(() => {
@@ -535,7 +536,7 @@ const healthDotClass = computed(() => {
             :disabled="vpn.isConnected || busy"
             class="px-4 py-1.5 text-sm rounded-md transition-all"
             :class="
-              vpn.activeProtocol === proto
+              vpn.manualProtocol === proto
                 ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
                 : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
             "

@@ -75,6 +75,15 @@ export const useVpnStore = defineStore(
     const activeProtocol = computed(
       () => state.value.protocol ?? state.value.configs.preferred ?? availableProtocols.value[0],
     )
+    /**
+     * What a manual-mode connect would use: the user's pick from the switcher when we still hold
+     * a config for it, else whatever `activeProtocol` says. Read by the switcher's highlight and
+     * by `connect()`, so the card can never show one protocol and request another.
+     */
+    const manualProtocol = computed(() => {
+      const picked = useSettingsStore().manualProtocol
+      return picked && availableProtocols.value.includes(picked) ? picked : activeProtocol.value
+    })
     const attempt = computed(() => state.value.attempt)
     const retry = computed(() => state.value.retry)
     const lastOutcome = computed(() => state.value.last_outcome)
@@ -147,15 +156,16 @@ export const useVpnStore = defineStore(
     /**
      * Ask for a tunnel, and wait for the request to reach a terminal outcome.
      *
-     * The order sent is the user's priority list as-is. Narrowing it to protocols we actually hold
-     * a config for, and moving whichever one last worked to the front, is the actor's job — it is
-     * the side that knows both.
+     * In auto-select mode the order sent is the user's priority list as-is. Narrowing it to
+     * protocols we actually hold a config for, and moving whichever one last worked to the front,
+     * is the actor's job — it is the side that knows both. In manual mode it is exactly the one
+     * protocol the switcher shows.
      */
     async function connect(): Promise<CycleOutcome | null> {
       const settings = useSettingsStore()
       const order = settings.autoSelect
         ? [...settings.protocolOrder]
-        : [activeProtocol.value].filter((p): p is Protocol => !!p)
+        : [manualProtocol.value].filter((p): p is Protocol => !!p)
 
       error.value = null
       requesting.value = true
@@ -245,6 +255,7 @@ export const useVpnStore = defineStore(
       availableProtocols,
       hasConfig,
       activeProtocol,
+      manualProtocol,
       attempt,
       retry,
       lastOutcome,

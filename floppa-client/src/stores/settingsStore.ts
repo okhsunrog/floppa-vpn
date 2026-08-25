@@ -24,14 +24,14 @@ const DEFAULT_PROTOCOL_ORDER: Protocol[] = (Object.keys(DEFAULT_PRIORITY) as Pro
 
 const KNOWN_PROTOCOLS = new Set<string>(DEFAULT_PROTOCOL_ORDER)
 
+function isProtocol(value: unknown): value is Protocol {
+  return typeof value === 'string' && KNOWN_PROTOCOLS.has(value)
+}
+
 /** Persisted orders are user data from an older build: drop anything that is no longer a protocol,
  *  then append protocols added since, so the list is always exactly the known set. */
 function sanitizeProtocolOrder(stored: unknown): Protocol[] {
-  const kept = Array.isArray(stored)
-    ? (stored.filter(
-        (p): p is Protocol => typeof p === 'string' && KNOWN_PROTOCOLS.has(p),
-      ) as Protocol[])
-    : []
+  const kept = Array.isArray(stored) ? stored.filter(isProtocol) : []
   const deduped = [...new Set(kept)]
   return [...deduped, ...DEFAULT_PROTOCOL_ORDER.filter((p) => !deduped.includes(p))]
 }
@@ -50,6 +50,11 @@ export const useSettingsStore = defineStore(
     // User-defined probe order for auto-select (most preferred first). Editable in
     // the Protocol settings modal.
     const protocolOrder = ref<Protocol[]>([...DEFAULT_PROTOCOL_ORDER])
+
+    // The protocol picked on the connection card's switcher when auto-select is off. Kept apart
+    // from `protocolOrder`: a manual pick is a choice for the next connect, not a reordering of
+    // the auto-select priority. `null` until the user has picked one.
+    const manualProtocol = ref<Protocol | null>(null)
 
     // One-time guard: on upgrade to auto-select we forget the previously-used
     // protocol once (see VpnCard) so the cycle re-probes from the priority order.
@@ -102,6 +107,7 @@ export const useSettingsStore = defineStore(
       selectedApps,
       autoSelect,
       protocolOrder,
+      manualProtocol,
       protocolDefaultsApplied,
       cachedApps,
       appsLoading,
@@ -113,11 +119,19 @@ export const useSettingsStore = defineStore(
   },
   {
     persist: {
-      pick: ['splitMode', 'selectedApps', 'autoSelect', 'protocolOrder', 'protocolDefaultsApplied'],
+      pick: [
+        'splitMode',
+        'selectedApps',
+        'autoSelect',
+        'protocolOrder',
+        'manualProtocol',
+        'protocolDefaultsApplied',
+      ],
       // localStorage holds whatever an older build wrote. Narrow it back to Protocol[] on load,
       // so an unknown string can never reach `t(\`vpn.${proto}\`)` or a probe order.
       afterHydrate: (ctx) => {
         ctx.store.protocolOrder = sanitizeProtocolOrder(ctx.store.protocolOrder)
+        if (!isProtocol(ctx.store.manualProtocol)) ctx.store.manualProtocol = null
       },
     },
   },
