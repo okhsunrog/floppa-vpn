@@ -18,6 +18,7 @@ import { describeError, formatBytes, formatDate, formatDateTime } from '../../ut
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
+import { useConfirmAction } from '../../composables/adminList'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -73,10 +74,12 @@ const createMenuItems = computed<DropdownMenuItem[]>(() => [
   },
 ])
 
-// Confirm delete state
-const confirmOpen = ref(false)
-const confirmMessage = ref('')
-const pendingDeletePeerId = ref<number | null>(null)
+const {
+  open: confirmOpen,
+  message: confirmMessage,
+  request: requestDeletePeer,
+  confirm: runDeletePeer,
+} = useConfirmAction()
 
 // VLESS state
 const vlessDialog = ref(false)
@@ -130,29 +133,26 @@ async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
 }
 
 function confirmDeletePeer(peerId: number, peerIp: string) {
-  pendingDeletePeerId.value = peerId
-  confirmMessage.value = t('userPeers.deleteConfirm', { ip: peerIp })
-  confirmOpen.value = true
+  requestDeletePeer(peerId, t('userPeers.deleteConfirm', { ip: peerIp }))
 }
 
 async function doDeletePeer() {
-  if (!pendingDeletePeerId.value) return
-  try {
-    await deleteMut.mutateAsync({ path: { id: pendingDeletePeerId.value } })
-    toast.add({
-      title: t('userPeers.configDeleted'),
-      description: t('userPeers.configDeletedMessage'),
-      color: 'success',
-    })
-  } catch (e) {
-    toast.add({
-      title: t('common.error'),
-      description: describeError(e, t('userPeers.deleteFailed')),
-      color: 'error',
-    })
-  }
-  confirmOpen.value = false
-  pendingDeletePeerId.value = null
+  await runDeletePeer(async (id) => {
+    try {
+      await deleteMut.mutateAsync({ path: { id } })
+      toast.add({
+        title: t('userPeers.configDeleted'),
+        description: t('userPeers.configDeletedMessage'),
+        color: 'success',
+      })
+    } catch (e) {
+      toast.add({
+        title: t('common.error'),
+        description: describeError(e, t('userPeers.deleteFailed')),
+        color: 'error',
+      })
+    }
+  })
 }
 
 async function showConfig(peer: MyPeer) {

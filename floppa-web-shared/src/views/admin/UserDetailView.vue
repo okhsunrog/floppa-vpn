@@ -23,6 +23,7 @@ import {
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
+import { useConfirmAction } from '../../composables/adminList'
 
 const { t } = useI18n()
 
@@ -133,10 +134,12 @@ const subPermanent = ref(false)
 // Delete subscription confirm
 const deleteSubConfirm = ref(false)
 
-// Confirm remove peer
-const confirmOpen = ref(false)
-const confirmMessage = ref('')
-const pendingPeerId = ref<number | null>(null)
+const {
+  open: confirmOpen,
+  message: confirmMessage,
+  request: requestRemovePeer,
+  confirm: runRemovePeer,
+} = useConfirmAction()
 
 // Show subscription history
 const showHistory = ref(false)
@@ -232,29 +235,26 @@ async function deleteSubscription() {
 }
 
 function confirmRemovePeer(peerId: number, peerIp: string) {
-  pendingPeerId.value = peerId
-  confirmMessage.value = t('adminUserDetail.removePeerConfirm', { ip: peerIp })
-  confirmOpen.value = true
+  requestRemovePeer(peerId, t('adminUserDetail.removePeerConfirm', { ip: peerIp }))
 }
 
 async function doRemovePeer() {
-  if (!user.value || !pendingPeerId.value) return
-  try {
-    await deletePeerMut.mutateAsync({ path: { id: pendingPeerId.value } })
-    toast.add({
-      title: t('common.success'),
-      description: t('adminUserDetail.peerRemoved'),
-      color: 'success',
-    })
-  } catch (e) {
-    toast.add({
-      title: t('common.error'),
-      description: describeError(e, t('adminUserDetail.removeFailed')),
-      color: 'error',
-    })
-  }
-  confirmOpen.value = false
-  pendingPeerId.value = null
+  await runRemovePeer(async (id) => {
+    try {
+      await deletePeerMut.mutateAsync({ path: { id } })
+      toast.add({
+        title: t('common.success'),
+        description: t('adminUserDetail.peerRemoved'),
+        color: 'success',
+      })
+    } catch (e) {
+      toast.add({
+        title: t('common.error'),
+        description: describeError(e, t('adminUserDetail.removeFailed')),
+        color: 'error',
+      })
+    }
+  })
 }
 </script>
 

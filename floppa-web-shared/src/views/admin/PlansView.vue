@@ -14,6 +14,7 @@ import type { TableColumn } from '@nuxt/ui'
 import { durationUnit } from '../../utils/format'
 import { describeError } from '../../utils/apiError'
 import { useInvalidateQueries } from '../../composables/invalidate'
+import { useConfirmAction } from '../../composables/adminList'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -78,10 +79,12 @@ function setTrialFromMinutes(min: number | null | undefined) {
   }
 }
 
-// Confirm delete state
-const confirmOpen = ref(false)
-const confirmMessage = ref('')
-const pendingDeletePlan = ref<Plan | null>(null)
+const {
+  open: confirmOpen,
+  message: confirmMessage,
+  request: requestDeletePlan,
+  confirm: runDeletePlan,
+} = useConfirmAction()
 
 function openNewPlanDialog() {
   isEditing.value = false
@@ -169,29 +172,26 @@ async function savePlan() {
 }
 
 function confirmDeletePlan(plan: Plan) {
-  pendingDeletePlan.value = plan
-  confirmMessage.value = t('adminPlans.deleteConfirm', { name: plan.display_name })
-  confirmOpen.value = true
+  requestDeletePlan(plan.id, t('adminPlans.deleteConfirm', { name: plan.display_name }))
 }
 
 async function doDeletePlan() {
-  if (!pendingDeletePlan.value) return
-  try {
-    await deleteMut.mutateAsync({ path: { id: pendingDeletePlan.value.id } })
-    toast.add({
-      title: t('common.success'),
-      description: t('adminPlans.planDeleted'),
-      color: 'success',
-    })
-  } catch (e) {
-    toast.add({
-      title: t('common.error'),
-      description: describeError(e, t('adminPlans.deleteFailed')),
-      color: 'error',
-    })
-  }
-  confirmOpen.value = false
-  pendingDeletePlan.value = null
+  await runDeletePlan(async (id) => {
+    try {
+      await deleteMut.mutateAsync({ path: { id } })
+      toast.add({
+        title: t('common.success'),
+        description: t('adminPlans.planDeleted'),
+        color: 'success',
+      })
+    } catch (e) {
+      toast.add({
+        title: t('common.error'),
+        description: describeError(e, t('adminPlans.deleteFailed')),
+        color: 'error',
+      })
+    }
+  })
 }
 
 const columns = computed<TableColumn<Plan>[]>(() => [
