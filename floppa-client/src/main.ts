@@ -7,7 +7,7 @@ import ui from '@nuxt/ui/vue-plugin'
 import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrent, onOpenUrl } from '@tauri-apps/plugin-deep-link'
-import { useAuthStore } from 'floppa-web-shared'
+import { createSharedI18n, installApiInterceptors, useAuthStore } from 'floppa-web-shared'
 import { useUpdateStore } from './stores/updateStore'
 import { useDeepLinkAuthStore } from './stores/deepLinkAuthStore'
 import { commands } from './bindings'
@@ -15,7 +15,6 @@ import { client } from 'floppa-web-shared/client/client.gen'
 import { exchangeTelegramLoginCode } from 'floppa-web-shared/client/sdk.gen'
 import { createAppRoutes, installAuthGuard } from 'floppa-web-shared/router'
 import { trace, debug, info, warn, error } from '@tauri-apps/plugin-log'
-import { i18n } from './i18n'
 
 import './styles.css'
 import App from './App.vue'
@@ -81,46 +80,22 @@ app.use(PiniaColada)
 setActivePinia(pinia)
 
 // Setup i18n and Nuxt UI
-app.use(i18n)
+app.use(createSharedI18n())
 app.use(ui)
 
 // Configure shared API client with auth interceptors
 const API_URL = import.meta.env.VITE_API_URL as string
 const authStore = useAuthStore()
-
-client.setConfig({ baseUrl: API_URL })
-
-client.interceptors.request.use((request) => {
-  request.headers.set('X-Client-Version', __APP_VERSION__)
-  const token = authStore.getToken()
-  if (token) {
-    request.headers.set('Authorization', `Bearer ${token}`)
-  }
-  return request
-})
-
 const updateStore = useUpdateStore()
 
-client.interceptors.response.use(async (response, request) => {
-  // Sliding session: the server attaches a fresh JWT once the current one is a day old.
-  const refreshed = response.headers.get('x-refreshed-token')
-  if (refreshed) {
-    authStore.replaceToken(refreshed)
-  }
-  // Only a rejected *authenticated* request means our session is dead; public endpoints
-  // (e.g. a failed login-code exchange) also return 401 and must not wipe the session.
-  if (response.status === 401 && request.headers.has('Authorization')) {
-    authStore.logout()
-  }
-  if (response.status === 426) {
-    try {
-      const body = await response.clone().json()
-      updateStore.setForceUpdate({ minVersion: body.min_version, message: body.message })
-    } catch {
-      updateStore.setForceUpdate({ minVersion: 'unknown', message: 'Please update the app' })
-    }
-  }
-  return response
+client.setConfig({ baseUrl: API_URL })
+installApiInterceptors(client, authStore, {
+  clientVersion: __APP_VERSION__,
+  onUpgradeRequired: (body) =>
+    updateStore.setForceUpdate({
+      minVersion: body.min_version ?? 'unknown',
+      message: body.message ?? 'Please update the app',
+    }),
 })
 
 // Setup router with shared routes, overriding dashboard and login
