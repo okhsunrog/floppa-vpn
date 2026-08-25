@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { LoginView } from 'floppa-web-shared/views'
 import { useDeepLinkAuthStore } from '../stores/deepLinkAuthStore'
+import { API_URL } from '../config'
 
 const isTauriRuntime = isTauri()
 const deepLinkAuth = useDeepLinkAuthStore()
@@ -12,8 +13,7 @@ const authMode = computed(() => (isTauriRuntime ? ('deep-link' as const) : ('wid
 
 const deepLinkLoginUrl = computed(() => {
   if (!isTauriRuntime) return undefined
-  const baseApiUrl = (import.meta.env.VITE_API_URL as string).replace(/\/$/, '')
-  const startUrl = new URL(`${baseApiUrl}/auth/telegram/start`)
+  const startUrl = new URL(`${API_URL}/auth/telegram/start`)
   startUrl.searchParams.set('redirect_uri', 'floppa://auth')
   return startUrl.toString()
 })

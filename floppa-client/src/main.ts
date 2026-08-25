@@ -23,6 +23,7 @@ import ClientDashboardView from './views/ClientDashboardView.vue'
 import ClientInfoView from './views/ClientInfoView.vue'
 import { useVpnStore } from './stores/vpnStore'
 import { extractDeepLinkLoginCode } from './utils/deepLink'
+import { API_URL } from './config'
 
 // Forward console.* to Tauri's plugin-log so all frontend logs
 // appear in tracing (logcat on Android, stdout on desktop).
@@ -85,7 +86,6 @@ app.use(createSharedI18n())
 app.use(ui)
 
 // Configure shared API client with auth interceptors
-const API_URL = import.meta.env.VITE_API_URL as string
 const authStore = useAuthStore()
 const updateStore = useUpdateStore()
 

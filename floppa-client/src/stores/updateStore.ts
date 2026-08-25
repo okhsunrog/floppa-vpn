@@ -3,14 +3,9 @@ import { computed, ref } from 'vue'
 import { platform } from '@tauri-apps/plugin-os'
 import bundledChangelog from 'floppa-web-shared/changelog.json'
 import { compareSemver } from '../utils/semver'
+import { DOWNLOADS_BASE } from '../config'
 
 const LAST_SEEN_VERSION_KEY = 'lastSeenVersion'
-
-// Self-hosted update source: our server mirrors the latest release (binaries + metadata) at
-// <origin>/downloads/, so the update check, download and changelog are served from our own
-// origin instead of GitHub — insurance in case GitHub becomes unreachable for clients.
-const API_URL = (import.meta.env.VITE_API_URL as string) ?? ''
-const DOWNLOADS_BASE = API_URL.replace(/\/api\/?$/, '').replace(/\/+$/, '') + '/downloads'
 
 export interface UpdateInfo {
   version: string
