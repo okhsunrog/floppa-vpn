@@ -224,9 +224,18 @@ pub struct AuthConfig {
     /// Max account-registration attempts per IP per hour.
     #[serde(default = "default_register_rate_limit_per_hour")]
     pub register_rate_limit_per_hour: u32,
-    /// Max credential-login attempts per IP per 15 minutes.
+    /// Max credential-login attempts per login name per 15 minutes — the brute-force cap on
+    /// one account, whatever addresses the attempts come from.
     #[serde(default = "default_login_rate_limit_per_15min")]
     pub login_rate_limit_per_15min: u32,
+    /// Max credential-login attempts per IP per 15 minutes — one client trying many accounts.
+    /// Looser than the per-name cap: a NAT or office shares one address.
+    #[serde(default = "default_login_ip_rate_limit_per_15min")]
+    pub login_ip_rate_limit_per_15min: u32,
+    /// Max Telegram deep-link login starts and code exchanges per IP per 15 minutes. Every
+    /// start mints a pending-state entry, so this bounds how fast one client can fill that map.
+    #[serde(default = "default_telegram_login_rate_limit_per_15min")]
+    pub telegram_login_rate_limit_per_15min: u32,
 }
 
 /// The same values serde fills in for keys missing from `[auth]`, so a config without the
@@ -238,6 +247,8 @@ impl Default for AuthConfig {
             jwt_expiration_hours: default_jwt_expiration_hours(),
             register_rate_limit_per_hour: default_register_rate_limit_per_hour(),
             login_rate_limit_per_15min: default_login_rate_limit_per_15min(),
+            login_ip_rate_limit_per_15min: default_login_ip_rate_limit_per_15min(),
+            telegram_login_rate_limit_per_15min: default_telegram_login_rate_limit_per_15min(),
         }
     }
 }
@@ -252,6 +263,14 @@ fn default_register_rate_limit_per_hour() -> u32 {
 
 fn default_login_rate_limit_per_15min() -> u32 {
     10
+}
+
+fn default_login_ip_rate_limit_per_15min() -> u32 {
+    60
+}
+
+fn default_telegram_login_rate_limit_per_15min() -> u32 {
+    120
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -557,6 +576,13 @@ mod tests {
         assert_eq!(defaults.jwt_expiration_hours, 24 * 7);
         assert_eq!(defaults.register_rate_limit_per_hour, 5);
         assert_eq!(defaults.login_rate_limit_per_15min, 10);
+        assert_eq!(defaults.login_ip_rate_limit_per_15min, 60);
+        assert_eq!(defaults.telegram_login_rate_limit_per_15min, 120);
+
+        // Each key can be set on its own; the rest keep their defaults.
+        let partial: AuthConfig = toml::from_str("login_ip_rate_limit_per_15min = 7").unwrap();
+        assert_eq!(partial.login_ip_rate_limit_per_15min, 7);
+        assert_eq!(partial.login_rate_limit_per_15min, 10);
     }
 
     #[test]

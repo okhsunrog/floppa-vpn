@@ -23,11 +23,6 @@ use crate::admin::{
 
 use super::AppState;
 
-/// Per-IP cap on deep-link login starts and code exchanges per 15 minutes. Each start mints a
-/// pending-state entry, so this bounds how fast one client can fill the map; exchanges are
-/// capped mainly so a lost code cannot be guessed at line rate (it is 256 random bits anyway).
-const TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN: u32 = 30;
-
 #[derive(Clone, Serialize, ToSchema)]
 pub struct AuthResponse {
     pub token: String,
@@ -246,7 +241,7 @@ pub(super) async fn start_telegram_deep_link_login(
     state.rate_limiter.check(
         RateLimitScope::TelegramStart,
         client_ip(&headers, peer).to_string(),
-        TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN,
+        state.auth_config.telegram_login_rate_limit_per_15min,
         Duration::minutes(15),
     )?;
 
@@ -484,10 +479,12 @@ pub(super) async fn exchange_telegram_login_code(
     headers: HeaderMap,
     Json(request): Json<ExchangeTelegramLoginCodeRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
+    // Exchanges share the deep-link cap mainly so a lost code cannot be guessed at line rate
+    // (it is 256 random bits anyway).
     state.rate_limiter.check(
         RateLimitScope::ExchangeCode,
         client_ip(&headers, peer).to_string(),
-        TELEGRAM_LOGIN_RATE_LIMIT_PER_15MIN,
+        state.auth_config.telegram_login_rate_limit_per_15min,
         Duration::minutes(15),
     )?;
 
@@ -657,20 +654,19 @@ pub(super) async fn login_account(
     headers: HeaderMap,
     Json(req): Json<AccountLoginRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
-    let limit = state.auth_config.login_rate_limit_per_15min;
     let window = Duration::minutes(15);
     // Per IP against one client trying many accounts; per login name against many addresses
     // trying one account. Logins are matched case-insensitively, so key on the lowercase form.
     state.rate_limiter.check(
         RateLimitScope::LoginIp,
         client_ip(&headers, peer).to_string(),
-        limit,
+        state.auth_config.login_ip_rate_limit_per_15min,
         window,
     )?;
     state.rate_limiter.check(
         RateLimitScope::LoginName,
         req.login.trim().to_lowercase(),
-        limit,
+        state.auth_config.login_rate_limit_per_15min,
         window,
     )?;
 
