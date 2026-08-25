@@ -1,7 +1,7 @@
 //! Shared business logic used by both bot and admin.
 
 use crate::error::{FloppaError, Result};
-use crate::models::{PeerSyncStatus, Protocol, SubscriptionSource};
+use crate::models::{Lang, PeerSyncStatus, Protocol, SubscriptionSource};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
@@ -30,6 +30,9 @@ pub struct TelegramProfile<'a> {
     pub first_name: Option<&'a str>,
     pub last_name: Option<&'a str>,
     pub photo_url: Option<&'a str>,
+    /// The client's UI language as reported by Telegram. Only recorded when the user has no
+    /// stored preference yet — an explicit choice made in the bot is never overridden.
+    pub language: Option<Lang>,
 }
 
 /// Upsert a Telegram user and auto-grant the one-time real trial if they haven't used one.
@@ -46,14 +49,15 @@ pub async fn upsert_user(
 ) -> Result<UpsertResult> {
     let row = sqlx::query!(
         r#"
-        INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO users (telegram_id, username, first_name, last_name, photo_url, is_admin, language)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (telegram_id) WHERE telegram_id IS NOT NULL DO UPDATE SET
             username = COALESCE($2, users.username),
             first_name = COALESCE($3, users.first_name),
             last_name = COALESCE($4, users.last_name),
             photo_url = COALESCE($5, users.photo_url),
-            is_admin = users.is_admin OR $6
+            is_admin = users.is_admin OR $6,
+            language = COALESCE(users.language, $7)
         RETURNING id, username, first_name, last_name, photo_url, is_admin, trial_used_at
         "#,
         telegram_id,
@@ -62,6 +66,7 @@ pub async fn upsert_user(
         profile.last_name,
         profile.photo_url,
         is_admin_from_config,
+        profile.language as _,
     )
     .fetch_one(pool)
     .await?;
@@ -1756,7 +1761,7 @@ mod tests {
             TelegramProfile {
                 first_name: Some("Alice"),
                 last_name: Some("Smith"),
-                photo_url: None,
+                ..Default::default()
             },
             false,
         )
@@ -1822,6 +1827,7 @@ mod tests {
                 first_name: Some("Alice"),
                 last_name: Some("Smith"),
                 photo_url: Some("https://photo.url"),
+                ..Default::default()
             },
             false,
         )
@@ -1842,6 +1848,49 @@ mod tests {
         assert_eq!(result.first_name.as_deref(), Some("Alice"));
         assert_eq!(result.last_name.as_deref(), Some("Smith"));
         assert_eq!(result.photo_url.as_deref(), Some("https://photo.url"));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_upsert_records_language_but_never_overrides_a_choice(pool: DbPool) {
+        get_basic_plan_id(&pool).await;
+
+        // First contact: Telegram says the client runs in Russian → stored, so background
+        // notifications (which only read users.language) come out localised.
+        let ru = TelegramProfile {
+            language: Some(Lang::Ru),
+            ..Default::default()
+        };
+        let user = upsert_user(&pool, 12345, Some("alice"), ru, false)
+            .await
+            .unwrap();
+        let stored = sqlx::query_scalar!("SELECT language FROM users WHERE id = $1", user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("ru"));
+
+        // The user explicitly switches to English in the bot; a later login from a Russian
+        // client must not flip it back, and a client without a language must not clear it.
+        sqlx::query!("UPDATE users SET language = 'en' WHERE id = $1", user.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for profile in [
+            TelegramProfile {
+                language: Some(Lang::Ru),
+                ..Default::default()
+            },
+            TelegramProfile::default(),
+        ] {
+            upsert_user(&pool, 12345, Some("alice"), profile, false)
+                .await
+                .unwrap();
+            let stored = sqlx::query_scalar!("SELECT language FROM users WHERE id = $1", user.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(stored.as_deref(), Some("en"));
+        }
     }
 
     #[sqlx::test(migrations = "../migrations")]

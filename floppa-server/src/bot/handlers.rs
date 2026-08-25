@@ -1,7 +1,7 @@
 use crate::bot::i18n;
 use chrono::{Duration, Utc};
 use dptree::di::DependencyMap;
-use floppa_core::{Config, DbPool, Secrets, billing, services};
+use floppa_core::{Config, DbPool, Secrets, billing, models::Lang, services};
 use std::ops::ControlFlow;
 use std::sync::Arc;
 use teloxide::{
@@ -185,6 +185,11 @@ async fn start(
             first_name: first_name.as_deref(),
             last_name: last_name.as_deref(),
             photo_url: None, // Bot API doesn't provide photo_url in messages
+            language: msg
+                .from
+                .as_ref()
+                .and_then(|u| u.language_code.as_deref())
+                .and_then(Lang::from_language_tag),
         },
         false,
     )

@@ -63,6 +63,66 @@ impl TryFrom<&str> for Protocol {
     }
 }
 
+/// A user's interface language, stored in `users.language` (TEXT; NULL = no preference yet).
+///
+/// Only languages the bot has translations for are representable, so the column can never
+/// hold a value no reader understands. Bind it in `query!` macros as `Lang::Ru as _`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum Lang {
+    En,
+    Ru,
+}
+
+impl Lang {
+    /// Database form ("en" | "ru").
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Lang::En => "en",
+            Lang::Ru => "ru",
+        }
+    }
+
+    /// Map an IETF language tag the way Telegram sends it in `language_code` (`ru`, `en-GB`,
+    /// `pt-br`) to a supported language. `None` for tags we have no translation for, so the
+    /// caller can leave the stored preference untouched instead of recording a useless value.
+    pub fn from_language_tag(tag: &str) -> Option<Self> {
+        let primary = tag.split(['-', '_']).next()?;
+        match primary.to_ascii_lowercase().as_str() {
+            "en" => Some(Lang::En),
+            "ru" => Some(Lang::Ru),
+            _ => None,
+        }
+    }
+}
+
+/// The database form: "en" | "ru".
+impl fmt::Display for Lang {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_db_str())
+    }
+}
+
+/// A string that names no supported [`Lang`].
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unsupported language {0:?} (expected \"en\" or \"ru\")")]
+pub struct LangParseError(pub String);
+
+/// Accepts exactly the database form (see [`Lang::as_db_str`]); use
+/// [`Lang::from_language_tag`] for Telegram's looser `language_code`.
+impl FromStr for Lang {
+    type Err = LangParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "en" => Ok(Lang::En),
+            "ru" => Ok(Lang::Ru),
+            other => Err(LangParseError(other.to_owned())),
+        }
+    }
+}
+
 /// Peer synchronization status with WireGuard interface.
 ///
 /// Stored in `peers.sync_status` (TEXT, CHECK-constrained by migration 0014); bind it in
@@ -117,6 +177,23 @@ pub struct AppInstallation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lang_from_telegram_language_tag() {
+        assert_eq!(Lang::from_language_tag("ru"), Some(Lang::Ru));
+        assert_eq!(Lang::from_language_tag("en-GB"), Some(Lang::En));
+        assert_eq!(Lang::from_language_tag("RU_ru"), Some(Lang::Ru));
+        assert_eq!(Lang::from_language_tag("de"), None);
+        assert_eq!(Lang::from_language_tag(""), None);
+    }
+
+    #[test]
+    fn lang_db_form_round_trips() {
+        for lang in [Lang::En, Lang::Ru] {
+            assert_eq!(lang.to_string().parse::<Lang>(), Ok(lang));
+        }
+        assert!("en-GB".parse::<Lang>().is_err());
+    }
 
     #[test]
     fn protocol_parses_its_own_display_form() {

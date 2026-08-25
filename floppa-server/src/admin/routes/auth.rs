@@ -207,6 +207,7 @@ async fn authenticate_telegram_user(
             first_name: auth_data.first_name.as_deref(),
             last_name: auth_data.last_name.as_deref(),
             photo_url: auth_data.photo_url.as_deref(),
+            language: None, // the Login Widget does not report the client language
         },
     )
     .await
@@ -549,6 +550,7 @@ pub(super) async fn telegram_mini_app_auth(
             first_name: mini_app_user.first_name.as_deref(),
             last_name: mini_app_user.last_name.as_deref(),
             photo_url: None, // Mini App initData doesn't include photo_url
+            language: None,
         },
     )
     .await?;
