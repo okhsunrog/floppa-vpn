@@ -274,13 +274,19 @@ async function addUser() {
                   class="block text-xs text-[var(--ui-text-muted)]"
                   >@{{ user.username }}</span
                 >
-                <span class="block text-xs text-[var(--ui-text-muted)]"
-                  >ID: {{ user.id }} &middot; TG: {{ user.telegram_id }}</span
-                >
+                <span class="block text-xs text-[var(--ui-text-muted)]">{{
+                  t('adminUsers.idAndTelegram', { id: user.id, tg: user.telegram_id ?? '—' })
+                }}</span>
               </div>
             </div>
             <div class="flex gap-1">
-              <UBadge v-if="user.is_admin" color="info" label="Admin" variant="subtle" size="sm" />
+              <UBadge
+                v-if="user.is_admin"
+                color="info"
+                :label="t('common.admin')"
+                variant="subtle"
+                size="sm"
+              />
               <UBadge
                 v-if="user.active_plan"
                 color="success"
@@ -321,7 +327,7 @@ async function addUser() {
       <template #body>
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
-            <label class="text-sm font-medium">Telegram ID *</label>
+            <label class="text-sm font-medium">{{ t('adminUsers.telegramId') }} *</label>
             <UInput
               type="number"
               :model-value="addUserTelegramId ?? undefined"

@@ -31,7 +31,7 @@ const navLabel = computed(() => {
   if (!u) return ''
   if (u.username) return `@${u.username}`
   if (u.first_name) return u.last_name ? `${u.first_name} ${u.last_name}` : u.first_name
-  return `User #${u.id}`
+  return t('common.userNumber', { id: u.id })
 })
 
 // Persistent nudge: a Telegram user with no backup login should set one while Telegram still works.

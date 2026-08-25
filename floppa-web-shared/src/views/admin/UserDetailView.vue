@@ -295,7 +295,7 @@ async function doRemovePeer() {
                   ? user.last_name
                     ? `${user.first_name} ${user.last_name}`
                     : user.first_name
-                  : user.username || `User #${user.id}`
+                  : user.username || t('common.userNumber', { id: user.id })
               }}
             </h1>
             <UBadge
@@ -427,13 +427,19 @@ async function doRemovePeer() {
               v-if="activeSubscription"
               class="flex flex-col gap-1 p-2 bg-[var(--ui-bg)] rounded text-sm mb-3"
             >
-              <small
-                >Speed:
-                {{
-                  formatSpeedLimit(activeSubscription.speed_limit_mbps, t('common.unlimited'))
-                }}</small
-              >
-              <small> Traffic: {{ formatBytes(peer.download_bytes + peer.upload_bytes) }} </small>
+              <small>{{
+                t('adminUserDetail.peerSpeed', {
+                  speed: formatSpeedLimit(
+                    activeSubscription.speed_limit_mbps,
+                    t('common.unlimited'),
+                  ),
+                })
+              }}</small>
+              <small>{{
+                t('adminUserDetail.peerTraffic', {
+                  traffic: formatBytes(peer.download_bytes + peer.upload_bytes),
+                })
+              }}</small>
             </div>
             <UButton
               v-if="peer.sync_status === 'active'"

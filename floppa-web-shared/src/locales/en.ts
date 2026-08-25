@@ -37,6 +37,7 @@ export default {
     admin: 'Admin',
     user: 'User',
     copied: 'Copied',
+    userNumber: 'User #{id}',
   },
   nav: {
     dashboard: 'Dashboard',
@@ -191,6 +192,7 @@ export default {
     userCreated: 'User pre-registered successfully',
     createFailed: 'Failed to create user',
     userExists: 'User with this Telegram ID already exists',
+    idAndTelegram: 'ID: {id} · TG: {tg}',
   },
   adminPlans: {
     title: 'Plans',
@@ -279,6 +281,8 @@ export default {
     sourceTaster: 'Taster',
     sourcePurchase: 'Purchase',
     sourceAdminGrant: 'Admin Grant',
+    peerSpeed: 'Speed: {speed}',
+    peerTraffic: 'Traffic: {traffic}',
   },
   userDashboard: {
     title: 'Dashboard',

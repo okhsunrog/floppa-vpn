@@ -37,6 +37,7 @@ export default {
     admin: 'Админ',
     user: 'Пользователь',
     copied: 'Скопировано',
+    userNumber: 'Пользователь #{id}',
   },
   nav: {
     dashboard: 'Главная',
@@ -190,6 +191,7 @@ export default {
     userCreated: 'Пользователь предрегистрирован',
     createFailed: 'Не удалось создать пользователя',
     userExists: 'Пользователь с таким Telegram ID уже существует',
+    idAndTelegram: 'ID: {id} · TG: {tg}',
   },
   adminPlans: {
     title: 'Тарифы',
@@ -278,6 +280,8 @@ export default {
     sourceTaster: 'Тестовый',
     sourcePurchase: 'Покупка',
     sourceAdminGrant: 'Админ',
+    peerSpeed: 'Скорость: {speed}',
+    peerTraffic: 'Трафик: {traffic}',
   },
   userDashboard: {
     title: 'Главная',

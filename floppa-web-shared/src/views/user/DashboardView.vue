@@ -105,7 +105,7 @@ const daysRemaining = computed(() => {
                     ? me.last_name
                       ? `${me.first_name} ${me.last_name}`
                       : me.first_name
-                    : me.username || `User #${me.id}`
+                    : me.username || t('common.userNumber', { id: me.id })
                 }}
               </h2>
             </div>
