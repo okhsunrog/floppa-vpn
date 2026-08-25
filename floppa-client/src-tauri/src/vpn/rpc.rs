@@ -87,6 +87,13 @@ pub struct TunnelInfo {
     /// Beforehand, "the service is starting" and "the service failed to start" both looked like an
     /// unreachable socket, and the only way to tell them apart was to wait and see.
     pub starting: bool,
+    /// `VpnService.Builder.establish()` has handed the service its descriptor.
+    ///
+    /// The socket is bound *before* the TUN is established, so that an `establish()` that fails
+    /// — consent revoked, another VPN holding lockdown, every selected app uninstalled — reaches
+    /// the caller as `start_error` on its next poll instead of as a service that never answers.
+    /// Until this is true a `start_tunnel` has no descriptor to run on and must not be sent.
+    pub tun_ready: bool,
     /// Why the last start attempt failed, if it did. Returned rather than only logged, so the
     /// caller gets a reason instead of a timeout.
     pub start_error: Option<String>,
@@ -220,6 +227,7 @@ AllowedIPs = 0.0.0.0/0
             }),
             epoch: crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 3,
             starting: false,
+            tun_ready: true,
             start_error: None,
             last_packet_received: Some(1),
             tx_bytes: Some(10),

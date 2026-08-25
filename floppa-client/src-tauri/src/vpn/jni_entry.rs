@@ -42,6 +42,8 @@ enum EntryError {
     NoPlan { epoch: u64 },
     #[error("no service generation is serving yet")]
     NoService,
+    #[error("generation {epoch} is not serving (this process serves {current})")]
+    WrongGeneration { epoch: u64, current: u64 },
 }
 
 /// Global state for the VPN process
@@ -302,14 +304,13 @@ impl shoes_lite::tun::SocketProtector for ShoesSocketProtector {
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartServer<'local>(
     mut env: EnvUnowned<'local>,
     this: JObject<'local>,
-    tun_fd: jint,
     socket_path: JString<'local>,
     epoch: jlong,
 ) {
     env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let socket_path_str: String = socket_path.mutf8_chars(env)?.to_string();
         let epoch = epoch as u64;
-        info!("nativeStartServer: fd={tun_fd}, socket={socket_path_str}, epoch={epoch}");
+        info!("nativeStartServer: socket={socket_path_str}, epoch={epoch}");
 
         // Socket protection for gotatun (WireGuard) and shoes-lite (VLESS).
         tunnel::set_socket_protect_callback(protect_socket_jni);
@@ -317,7 +318,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
 
         let runtime = get_runtime();
         let tunnel_manager = get_tunnel_manager();
-        let service = Arc::new(rpc_server::ServiceState::new(epoch, tun_fd as RawFd));
+        // No descriptor yet: the socket is bound before `establish()` runs, so that a TUN that
+        // cannot be established is reported over it (`nativeReportStartError`) instead of
+        // leaving the UI to time out on a socket nobody bound.
+        let service = Arc::new(rpc_server::ServiceState::new(epoch));
 
         // Everything that can fail and does not need the bind comes before it, so that once the
         // socket is bound the only way out is the success path. (Should one of the locks below
@@ -343,10 +347,69 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeStartS
         *guard = Some(handle);
         *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)? = epoch;
 
-        info!("tarpc RPC server started, waiting for a tunnel request");
+        info!("tarpc RPC server started, waiting for the TUN and a tunnel request");
         Ok(())
     })
     .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+/// The generation currently serving, if it is `epoch`.
+fn serving(epoch: u64) -> Result<Arc<ServiceState>, EntryError> {
+    let current = *SERVER_EPOCH.lock().map_err(|_| EntryError::Poisoned)?;
+    if current != epoch {
+        return Err(EntryError::WrongGeneration { epoch, current });
+    }
+    SERVICE_STATE
+        .lock()
+        .map_err(|_| EntryError::Poisoned)?
+        .clone()
+        .ok_or(EntryError::NoService)
+}
+
+/// Called right after `VpnService.Builder.establish()` succeeded: hand the descriptor to the
+/// generation `nativeStartServer` bound. From this moment the observation says `tun_ready` and
+/// a `start_tunnel` request has something to run on.
+///
+/// Throws when `epoch` is not the generation serving, so a descriptor from a start that has
+/// since been superseded is never adopted by the newer generation.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTunFd<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    epoch: jlong,
+    tun_fd: jint,
+) {
+    env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let epoch = epoch as u64;
+        serving(epoch)?.set_fd(tun_fd as RawFd);
+        info!("nativeSetTunFd: generation {epoch} holds fd {tun_fd}");
+        Ok(())
+    })
+    .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+/// Called when `establish()` (or anything else between the bind and the descriptor) failed:
+/// record the reason on the generation so the UI's next poll returns it as `start_error`.
+///
+/// This is the one failure the Rust side cannot see for itself. Best-effort: a generation that
+/// is no longer serving has nobody left to tell, and the reason is already in the log.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReportStartError<
+    'local,
+>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    epoch: jlong,
+    message: JString<'local>,
+) {
+    let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
+        let message: String = message.mutf8_chars(env)?.to_string();
+        let epoch = epoch as u64;
+        error!("nativeReportStartError: generation {epoch} could not start: {message}");
+        serving(epoch)?.set_error(message);
+        Ok(())
+    });
+    log_outcome("nativeReportStartError", outcome.into_outcome());
 }
 
 /// Called in `FloppaVpnService.onDestroy()` / `onRevoke()`.

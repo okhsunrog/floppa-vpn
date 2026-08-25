@@ -88,6 +88,8 @@ impl VpnBackend for InProcessBackend {
                 epoch: 0,
                 running,
                 starting: false,
+                // In-process there is no descriptor hand-over to wait for.
+                tun_ready: true,
                 start_error: None,
                 raw_stats: stats,
                 last_packet_secs: self.tunnel_manager.get_last_packet_received().await,

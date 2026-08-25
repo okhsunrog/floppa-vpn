@@ -133,6 +133,12 @@ class FloppaVpnService : VpnService() {
          */
         const val EXTRA_EPOCH = "epoch"
 
+        /**
+         * How long a generation whose TUN could not be established keeps answering the RPC, so the
+         * UI (polling every 200 ms) reads `start_error` before the socket goes away.
+         */
+        private const val START_ERROR_LINGER_MS = 3_000L
+
         init {
             System.loadLibrary("floppa_client_lib")
         }
@@ -141,8 +147,20 @@ class FloppaVpnService : VpnService() {
     // Native methods implemented in Rust (vpn/jni_entry.rs)
     private external fun nativeInit(logDir: String)
 
-    /** Binds the RPC socket. Throws [RuntimeException] when it cannot. */
-    private external fun nativeStartServer(tunFd: Int, socketPath: String, epoch: Long)
+    /** Binds the RPC socket for [epoch]. Throws [RuntimeException] when it cannot. */
+    private external fun nativeStartServer(socketPath: String, epoch: Long)
+
+    /**
+     * Hands the descriptor `establish()` produced to the generation [nativeStartServer] bound.
+     * Throws [RuntimeException] when [epoch] is no longer the generation serving.
+     */
+    private external fun nativeSetTunFd(epoch: Long, tunFd: Int)
+
+    /**
+     * Records why this generation could not establish its TUN, so the UI process reads the reason
+     * on its next poll instead of waiting for a service that never becomes ready.
+     */
+    private external fun nativeReportStartError(epoch: Long, message: String)
 
     /**
      * For a start the system issued: the TUN to build from the autostart bundle, as the JSON
@@ -286,12 +304,18 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * Go foreground, establish the TUN, bind the RPC, then run [afterBind] — the one step that
+     * Go foreground, bind the RPC, establish the TUN, then run [afterReady] — the one step that
      * differs between a plugin start (nothing: the tunnel is requested over the socket) and an
-     * autonomous one (start the tunnel from the bundle). Any failure along the way tears down what
-     * was applied and stops the service.
+     * autonomous one (start the tunnel from the bundle).
+     *
+     * The bind comes *before* `establish()` on purpose. `establish()` fails for reasons outside
+     * this app — the user revoked the VPN consent, another VPN holds a lockdown, every app selected
+     * for the tunnel was uninstalled — and with the socket already bound that failure is reported
+     * over it: the UI's next poll gets the reason instead of waiting out a service that never comes
+     * up. A failed bind, on the other hand, leaves nothing to report through, so the service simply
+     * stops.
      */
-    private fun startGeneration(spec: TunSpec, autonomous: Boolean, afterBind: () -> Unit): Int {
+    private fun startGeneration(spec: TunSpec, autonomous: Boolean, afterReady: () -> Unit): Int {
         // Before anything that can fail or tear down: onDestroy stops by this value, and reading
         // it later meant a start that threw left the previous instance's generation in the field.
         epoch = spec.epoch
@@ -303,23 +327,33 @@ class FloppaVpnService : VpnService() {
         startVpnForeground(connected = false)
 
         try {
+            // Keep in sync with SOCKET_NAME in rpc.rs.
+            nativeStartServer(applicationInfo.dataDir + "/vpn.sock", epoch)
+        } catch (e: Exception) {
+            // Nothing is listening, so nothing can be told; the service must not stay foreground
+            // as if it had started.
+            Log.e(TAG, "Failed to bind the RPC socket", e)
+            closeGeneration(epoch)
+            return START_NOT_STICKY
+        }
+
+        try {
             tunInterface = createTunInterface(spec)
             val fd = tunInterface?.fd ?: throw IllegalStateException("Failed to get TUN fd")
-
             Log.i(TAG, "TUN interface created with fd: $fd")
-
-            // Keep in sync with SOCKET_NAME in rpc.rs.
-            val socketPath = applicationInfo.dataDir + "/vpn.sock"
-            nativeStartServer(fd, socketPath, epoch)
-            afterBind()
+            nativeSetTunFd(epoch, fd)
+            afterReady()
         } catch (e: Exception) {
-            // nativeStartServer throws when the socket cannot be bound. Whatever failed, the
-            // service is foreground and may be holding an established TUN with a default route
-            // into it; without the RPC nothing can ask it to stop, so it must not stay.
-            Log.e(TAG, "Failed to start VPN service", e)
-            nativeStop(epoch)
-            cleanupAndroid()
-            stopSelf()
+            // The socket is bound, so this is reportable. Leave the generation answering for a
+            // moment so the UI's next poll reads the reason, then wind it down — the UI's own
+            // teardown usually gets there first, and closeGeneration is idempotent.
+            Log.e(TAG, "Failed to establish the TUN", e)
+            try {
+                nativeReportStartError(epoch, e.message ?: e.toString())
+            } catch (report: Exception) {
+                Log.w(TAG, "Could not record the start error", report)
+            }
+            mainHandler.postDelayed({ closeGeneration(epoch) }, START_ERROR_LINGER_MS)
             return START_NOT_STICKY
         }
 
@@ -327,6 +361,20 @@ class FloppaVpnService : VpnService() {
         // stop again. For always-on VPN it is the system that restarts the service, with the
         // VpnService action, and that start rebuilds from the bundle.
         return START_NOT_STICKY
+    }
+
+    /**
+     * Tear down [generation] and stop, unless a newer start has since taken over this instance —
+     * then the generation is already gone and the newer one must be left alone.
+     */
+    private fun closeGeneration(generation: Long) {
+        if (epoch != generation) {
+            Log.i(TAG, "closeGeneration($generation): superseded by $epoch, nothing to do")
+            return
+        }
+        nativeStop(generation)
+        cleanupAndroid()
+        stopSelf()
     }
 
     override fun onDestroy() {

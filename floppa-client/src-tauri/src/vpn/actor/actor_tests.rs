@@ -99,6 +99,7 @@ impl VpnBackend for FakeBackend {
                 epoch: 0,
                 running: self.running(),
                 starting: false,
+                tun_ready: true,
                 start_error: None,
                 raw_stats: Some(RawStats::default()),
                 // A handshake straight away, so verification passes without waiting.

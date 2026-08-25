@@ -24,36 +24,75 @@ pub struct Started {
     pub autonomous: bool,
 }
 
+/// The descriptor's life in this service: not yet established, held, or already handed to a
+/// tunnel. Three states rather than an `Option`, because "not yet" and "already used" both read
+/// as `None` and mean opposite things to a start request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FdSlot {
+    NotEstablished,
+    Ready(std::os::fd::RawFd),
+    Taken,
+}
+
 /// What the service is holding before any tunnel exists.
 ///
-/// This only has anywhere to live because the RPC server now binds ahead of the tunnel. Before
-/// that, "the service is coming up", "the service is up and idle" and "the service failed" were
-/// all a socket that would not connect, and the caller could only wait and guess.
+/// This only has anywhere to live because the RPC server binds ahead of everything else — ahead
+/// of `establish()` too. Before that, "the service is coming up", "the service is up and idle",
+/// "the TUN could not be established" and "the service failed" were all a socket that would not
+/// connect, and the caller could only wait and guess.
 pub struct ServiceState {
     /// Generation of the service, taken from the request that started it.
     pub epoch: u64,
-    /// The descriptor handed over by `VpnService.Builder.establish()`.
-    tun_fd: std::sync::Mutex<Option<std::os::fd::RawFd>>,
+    /// The descriptor handed over by `VpnService.Builder.establish()`, once it has been.
+    tun_fd: std::sync::Mutex<FdSlot>,
     start_error: std::sync::Mutex<Option<String>>,
     /// Set once a tunnel is up on the descriptor.
     started: std::sync::Mutex<Option<Started>>,
 }
 
 impl ServiceState {
-    pub fn new(epoch: u64, tun_fd: std::os::fd::RawFd) -> Self {
+    pub fn new(epoch: u64) -> Self {
         Self {
             epoch,
-            tun_fd: std::sync::Mutex::new(Some(tun_fd)),
+            tun_fd: std::sync::Mutex::new(FdSlot::NotEstablished),
             start_error: std::sync::Mutex::new(None),
             started: std::sync::Mutex::new(None),
         }
     }
 
-    fn take_fd(&self) -> Option<std::os::fd::RawFd> {
-        self.tun_fd.lock().ok()?.take()
+    /// The service has established its TUN; from now on a tunnel can be started on it.
+    pub fn set_fd(&self, fd: std::os::fd::RawFd) {
+        if let Ok(mut guard) = self.tun_fd.lock() {
+            *guard = FdSlot::Ready(fd);
+        }
     }
 
-    fn set_error(&self, error: String) {
+    /// Established, or already running a tunnel — either way, not "still waiting for the TUN".
+    pub fn tun_ready(&self) -> bool {
+        self.tun_fd
+            .lock()
+            .map(|g| !matches!(*g, FdSlot::NotEstablished))
+            .unwrap_or(false)
+    }
+
+    fn take_fd(&self) -> Result<std::os::fd::RawFd, &'static str> {
+        let mut guard = self
+            .tun_fd
+            .lock()
+            .map_err(|_| "the descriptor lock is poisoned")?;
+        match *guard {
+            FdSlot::Ready(fd) => {
+                *guard = FdSlot::Taken;
+                Ok(fd)
+            }
+            FdSlot::NotEstablished => Err("the tunnel descriptor has not been established yet"),
+            FdSlot::Taken => Err("the tunnel descriptor has already been used"),
+        }
+    }
+
+    /// Record why this generation could not start, for whoever observes next. Public because the
+    /// one failure the Rust side cannot see itself — `establish()` — is reported from Kotlin.
+    pub fn set_error(&self, error: String) {
         if let Ok(mut guard) = self.start_error.lock() {
             *guard = Some(error);
         }
@@ -91,10 +130,13 @@ pub async fn bring_up(
     endpoint: SocketAddr,
     started: Started,
 ) -> Result<(), String> {
-    let Some(tun_fd) = service.take_fd() else {
-        let e = "the tunnel descriptor has already been used".to_string();
-        service.set_error(e.clone());
-        return Err(e);
+    let tun_fd = match service.take_fd() {
+        Ok(fd) => fd,
+        Err(why) => {
+            let e = why.to_string();
+            service.set_error(e.clone());
+            return Err(e);
+        }
     };
 
     // Through the parser rather than by field, so an IPv6 literal is bracketed the way the
@@ -192,6 +234,7 @@ impl VpnRpc for VpnRpcServer {
             // Up and idle, with no tunnel asked for yet and nothing having gone wrong. Only
             // reachable because the socket is bound before the tunnel is started.
             starting: running.is_none() && start_error.is_none(),
+            tun_ready: self.service.tun_ready(),
             running,
             epoch: self.service.epoch,
             start_error,

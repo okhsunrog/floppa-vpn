@@ -61,10 +61,46 @@ pub struct TunnelObservation {
     /// server to bind ahead of the tunnel start, which is what turns a failed Android start into
     /// typed state instead of a blind timeout.
     pub starting: bool,
+    /// The peer holds an established TUN (Android: `establish()` succeeded). A reachable peer
+    /// without one is still coming up, and a tunnel must not be requested from it yet.
+    pub tun_ready: bool,
     pub start_error: Option<String>,
     pub raw_stats: Option<RawStats>,
     /// Seconds since the last inbound packet.
     pub last_packet_secs: Option<i64>,
+}
+
+/// What one observation says about a service the caller is waiting to hand a tunnel to.
+///
+/// Pure so it is testable on the host: the Android attempt polls the service and feeds each
+/// observation through here, and the whole "did our generation come up, and can it take a
+/// tunnel yet" judgement lives in one place instead of in the poll loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceReadiness {
+    /// Our generation holds an established TUN: a tunnel can be requested now.
+    Ready,
+    /// Our generation is up but `establish()` has not handed it a descriptor yet.
+    Establishing,
+    /// Our generation reported why it could not start.
+    Failed(String),
+    /// Something answered, but not the generation we started (a dying predecessor, usually).
+    OtherGeneration(u64),
+}
+
+impl TunnelObservation {
+    pub fn readiness_for(&self, wanted_epoch: u64) -> ServiceReadiness {
+        if self.epoch != wanted_epoch {
+            return ServiceReadiness::OtherGeneration(self.epoch);
+        }
+        if let Some(detail) = &self.start_error {
+            return ServiceReadiness::Failed(detail.clone());
+        }
+        if self.tun_ready {
+            ServiceReadiness::Ready
+        } else {
+            ServiceReadiness::Establishing
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -144,6 +180,7 @@ mod tests {
                 epoch: 0,
                 running: None,
                 starting: false,
+                tun_ready: true,
                 start_error: None,
                 raw_stats: None,
                 last_packet_secs: None,
@@ -165,6 +202,7 @@ mod tests {
                 epoch: 0,
                 running: None,
                 starting: true,
+                tun_ready: false,
                 start_error: None,
                 raw_stats: None,
                 last_packet_secs: None,
@@ -193,5 +231,51 @@ mod tests {
                 "{cause:?} must never be read as 'no tunnel'"
             );
         }
+    }
+
+    fn service(epoch: u64, tun_ready: bool, start_error: Option<&str>) -> TunnelObservation {
+        TunnelObservation {
+            epoch,
+            running: None,
+            starting: start_error.is_none(),
+            tun_ready,
+            start_error: start_error.map(str::to_owned),
+            raw_stats: None,
+            last_packet_secs: None,
+        }
+    }
+
+    #[test]
+    fn readiness_waits_for_the_descriptor_and_surfaces_a_failed_establish() {
+        // Bound but not established yet: keep polling, do not request a tunnel.
+        assert_eq!(
+            service(7, false, None).readiness_for(7),
+            ServiceReadiness::Establishing
+        );
+        // establish() done: go.
+        assert_eq!(
+            service(7, true, None).readiness_for(7),
+            ServiceReadiness::Ready
+        );
+        // establish() failed: the reason, immediately — not a timeout.
+        assert_eq!(
+            service(
+                7,
+                false,
+                Some("VpnService.Builder.establish() returned null")
+            )
+            .readiness_for(7),
+            ServiceReadiness::Failed("VpnService.Builder.establish() returned null".into())
+        );
+        // A failure beats a descriptor that somehow also arrived.
+        assert_eq!(
+            service(7, true, Some("late")).readiness_for(7),
+            ServiceReadiness::Failed("late".into())
+        );
+        // The predecessor still answering is not ours, whatever it says.
+        assert_eq!(
+            service(6, true, None).readiness_for(7),
+            ServiceReadiness::OtherGeneration(6)
+        );
     }
 }

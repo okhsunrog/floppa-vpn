@@ -11,6 +11,7 @@
 
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
+use crate::vpn::actor::world::ServiceReadiness;
 use crate::vpn::autostart::{self, AutostartBundle, TunSpec};
 use crate::vpn::rollback::{RollbackStack, Step};
 use tauri_plugin_vpn::VpnExt;
@@ -138,18 +139,26 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
             return Err(AttemptError::Cancelled);
         }
         if let WorldView::Reachable(t) = ctx.backend.observe().await.view {
-            if t.epoch == ctx.epoch.0 {
-                if let Some(detail) = t.start_error {
+            match t.readiness_for(ctx.epoch.0) {
+                ServiceReadiness::Ready => return Ok(()),
+                ServiceReadiness::Failed(detail) => {
                     error!("the VPN service reported a failed start: {detail}");
                     return Err(AttemptError::PeerStartFailed { detail });
                 }
-                return Ok(());
+                // Bound before `establish()`: answering is not yet holding a descriptor. A tunnel
+                // request now would find nothing to run on; the next poll brings either the
+                // descriptor or the reason there is none.
+                ServiceReadiness::Establishing => {
+                    debug!("our service is up; waiting for it to establish the TUN");
+                }
+                ServiceReadiness::OtherGeneration(answered) => {
+                    debug!(
+                        answered,
+                        wanted = ctx.epoch.0,
+                        "a previous service instance is still answering; waiting for ours"
+                    );
+                }
             }
-            debug!(
-                answered = t.epoch,
-                wanted = ctx.epoch.0,
-                "a previous service instance is still answering; waiting for ours"
-            );
         }
         if std::time::Instant::now() >= deadline {
             error!("the VPN service never became reachable");

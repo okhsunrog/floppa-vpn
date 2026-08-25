@@ -272,6 +272,7 @@ impl VpnBackend for AndroidIpcBackend {
                         autonomous: r.autonomous,
                     }),
                     starting: info.starting,
+                    tun_ready: info.tun_ready,
                     start_error: info.start_error,
                     raw_stats: match (info.tx_bytes, info.rx_bytes) {
                         (Some(tx_bytes), Some(rx_bytes)) => Some(RawStats { tx_bytes, rx_bytes }),
