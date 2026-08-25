@@ -14,7 +14,7 @@ import {
 import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import type { DropdownMenuItem } from '@nuxt/ui'
-import { formatBytes, formatDate, formatDateTime } from '../../utils'
+import { describeError, formatBytes, formatDate, formatDateTime } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -123,7 +123,7 @@ async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('userPeers.createFailed'),
+      description: describeError(e, t('userPeers.createFailed')),
       color: 'error',
     })
   }
@@ -147,7 +147,7 @@ async function doDeletePeer() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('userPeers.deleteFailed'),
+      description: describeError(e, t('userPeers.deleteFailed')),
       color: 'error',
     })
   }
@@ -168,7 +168,7 @@ async function showConfig(peer: MyPeer) {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('userPeers.createFailed'),
+      description: describeError(e, t('userPeers.createFailed')),
       color: 'error',
     })
   }
@@ -256,7 +256,7 @@ async function showVlessConfig() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : String(e),
+      description: describeError(e, t('userPeers.vlessLoadFailed')),
       color: 'error',
     })
   } finally {
@@ -281,7 +281,7 @@ async function doRegenerateVless() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : String(e),
+      description: describeError(e, t('userPeers.vlessRegenerateFailed')),
       color: 'error',
     })
   }

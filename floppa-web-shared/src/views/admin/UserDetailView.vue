@@ -13,7 +13,13 @@ import {
   setUserCredentialMutation,
 } from '../../client/@pinia/colada.gen'
 import { getUserAvatar } from '../../client/sdk.gen'
-import { formatBytes, formatDateTime, formatSpeedLimit, handleExternalLinkClick } from '../../utils'
+import {
+  describeError,
+  formatBytes,
+  formatDateTime,
+  formatSpeedLimit,
+  handleExternalLinkClick,
+} from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -105,7 +111,7 @@ async function setUserCredential() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminUserDetail.credentialFailed'),
+      description: describeError(e, t('adminUserDetail.credentialFailed')),
       color: 'error',
     })
   }
@@ -200,7 +206,7 @@ async function setSubscription() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminUserDetail.changeFailed'),
+      description: describeError(e, t('adminUserDetail.changeFailed')),
       color: 'error',
     })
   }
@@ -219,7 +225,7 @@ async function deleteSubscription() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminUserDetail.deleteFailed'),
+      description: describeError(e, t('adminUserDetail.deleteFailed')),
       color: 'error',
     })
   }
@@ -243,7 +249,7 @@ async function doRemovePeer() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminUserDetail.removeFailed'),
+      description: describeError(e, t('adminUserDetail.removeFailed')),
       color: 'error',
     })
   }

@@ -9,7 +9,7 @@ import {
   deleteAdminPeerMutation,
 } from '../../client/@pinia/colada.gen'
 import type { PeerSummary } from '../../client/types.gen'
-import { formatBytes, formatDateTime } from '../../utils'
+import { describeError, formatBytes, formatDateTime } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 import { useClientPagination, useConfirmAction } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -67,7 +67,7 @@ async function doDeletePeer() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: e instanceof Error ? e.message : t('adminPeers.deleteFailed'),
+        description: describeError(e, t('adminPeers.deleteFailed')),
         color: 'error',
       })
     }

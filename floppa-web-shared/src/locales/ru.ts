@@ -332,6 +332,8 @@ export default {
     vlessRegenerateConfirm: 'Вы уверены? Текущий VLESS конфиг сразу перестанет работать.',
     vlessRegenerated: 'VLESS конфиг перегенерирован',
     vlessCopied: 'VLESS URI скопирован',
+    vlessLoadFailed: 'Не удалось загрузить VLESS конфиг',
+    vlessRegenerateFailed: 'Не удалось перегенерировать VLESS конфиг',
   },
   settings: {
     title: 'Настройки',

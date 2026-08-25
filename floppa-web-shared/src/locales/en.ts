@@ -333,6 +333,8 @@ export default {
     vlessRegenerateConfirm: 'Are you sure? The current VLESS config will stop working immediately.',
     vlessRegenerated: 'VLESS config regenerated',
     vlessCopied: 'VLESS URI copied to clipboard',
+    vlessLoadFailed: 'Failed to load VLESS config',
+    vlessRegenerateFailed: 'Failed to regenerate VLESS config',
   },
   settings: {
     title: 'Settings',

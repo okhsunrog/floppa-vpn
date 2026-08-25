@@ -13,6 +13,7 @@ import {
 } from '../client/sdk.gen'
 import type { TelegramAuthData } from '../client/types.gen'
 import { useAuthStore } from '../stores'
+import { describeError, isApiError } from '../utils/apiError'
 import TelegramLoginButton from '../components/TelegramLoginButton.vue'
 
 const props = withDefaults(
@@ -134,8 +135,7 @@ async function handleAccount() {
     auth.setAuth(response.token, response.user)
     router.push('/')
   } catch (e) {
-    const status = (e as { status?: number })?.status
-    if (accountMode.value === 'register' && status === 409) {
+    if (accountMode.value === 'register' && isApiError(e) && e.error === 'login_taken') {
       accountError.value = t('login.loginTaken')
     } else if (accountMode.value === 'register') {
       accountError.value = t('login.registerFailed')
@@ -154,7 +154,7 @@ async function handleTelegramAuth(data: TelegramAuthData) {
     auth.setAuth(response.token, response.user)
     router.push('/')
   } catch (e) {
-    loginError.value = e instanceof Error ? e.message : t('login.loginFailed')
+    loginError.value = describeError(e, t('login.loginFailed'))
   }
 }
 

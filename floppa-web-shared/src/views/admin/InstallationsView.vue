@@ -9,7 +9,7 @@ import {
   deleteInstallationMutation,
 } from '../../client/@pinia/colada.gen'
 import type { InstallationSummary } from '../../client/types.gen'
-import { formatDateTime } from '../../utils'
+import { describeError, formatDateTime } from '../../utils'
 import type { TableColumn } from '@nuxt/ui'
 import { useClientPagination, useConfirmAction } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -67,7 +67,7 @@ async function doDelete() {
     } catch (e) {
       toast.add({
         title: t('common.error'),
-        description: e instanceof Error ? e.message : t('adminInstallations.deleteFailed'),
+        description: describeError(e, t('adminInstallations.deleteFailed')),
         color: 'error',
       })
     }

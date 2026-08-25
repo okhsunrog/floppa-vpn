@@ -5,6 +5,7 @@ import { useQuery } from '@pinia/colada'
 import { getMeQuery } from '../../client/@pinia/colada.gen'
 import { setMyCredential, startTelegramLink, pollTelegramLink } from '../../client/sdk.gen'
 import { openExternal } from '../../utils/openExternal'
+import { isApiError } from '../../utils/apiError'
 
 const { t } = useI18n()
 const { data: me, refetch: refetchMe } = useQuery(getMeQuery())
@@ -31,8 +32,10 @@ async function saveCredential() {
     password.value = ''
     await refetchMe()
   } catch (e) {
-    const status = (e as { status?: number })?.status
-    credError.value = status === 409 ? t('account.loginTaken') : t('account.credentialError')
+    credError.value =
+      isApiError(e) && e.error === 'login_taken'
+        ? t('account.loginTaken')
+        : t('account.credentialError')
   } finally {
     credLoading.value = false
   }
@@ -79,8 +82,8 @@ async function linkTelegram() {
       }
     }, 2000)
   } catch (e) {
-    const status = (e as { status?: number })?.status
-    linkError.value = status === 409 ? t('account.alreadyLinked') : t('account.linkError')
+    linkError.value =
+      isApiError(e) && e.error === 'conflict' ? t('account.alreadyLinked') : t('account.linkError')
     linking.value = false
   }
 }

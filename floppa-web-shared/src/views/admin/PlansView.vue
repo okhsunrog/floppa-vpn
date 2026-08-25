@@ -12,6 +12,7 @@ import {
 import type { Plan, CreatePlanRequest, UpdatePlanRequest } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 import { durationUnit } from '../../utils/format'
+import { describeError } from '../../utils/apiError'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
 const { t } = useI18n()
@@ -161,7 +162,7 @@ async function savePlan() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminPlans.saveFailed'),
+      description: describeError(e, t('adminPlans.saveFailed')),
       color: 'error',
     })
   }
@@ -185,7 +186,7 @@ async function doDeletePlan() {
   } catch (e) {
     toast.add({
       title: t('common.error'),
-      description: e instanceof Error ? e.message : t('adminPlans.deleteFailed'),
+      description: describeError(e, t('adminPlans.deleteFailed')),
       color: 'error',
     })
   }

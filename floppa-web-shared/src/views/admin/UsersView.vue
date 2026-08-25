@@ -12,7 +12,7 @@ import {
 import { getAvatarsBatch } from '../../client/sdk.gen'
 import type { UserSummary } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
-import { formatDate } from '../../utils'
+import { describeError, formatDate, isApiError } from '../../utils'
 import { useClientPagination } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
@@ -142,14 +142,11 @@ async function addUser() {
       description: t('adminUsers.userCreated'),
       color: 'success',
     })
-  } catch (e: unknown) {
-    const errorCode = (e as Record<string, unknown>)?.error
+  } catch (e) {
     const msg =
-      errorCode === 'conflict'
+      isApiError(e) && e.error === 'conflict'
         ? t('adminUsers.userExists')
-        : e instanceof Error
-          ? e.message
-          : t('adminUsers.createFailed')
+        : describeError(e, t('adminUsers.createFailed'))
     toast.add({ title: t('common.error'), description: msg, color: 'error' })
   }
 }
