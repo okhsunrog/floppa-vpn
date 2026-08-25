@@ -1,20 +1,20 @@
-//! Tauri plugin for VPN functionality on mobile platforms (Android/iOS).
+//! Tauri plugin for the Android VPN service.
 //!
-//! This plugin provides a cross-platform API for:
-//! - Requesting VPN permissions
-//! - Creating and managing VPN tunnels
-//! - Receiving TUN file descriptors for WireGuard integration
+//! Android only. It wraps `VpnService` consent, starting and stopping the `:vpn` service, and a
+//! handful of device queries (installed apps, safe-area insets, device identity, notification and
+//! battery settings). There is no iOS implementation; the design one would follow is in
+//! `docs/IOS-BACKEND-PLAN.md`. On every other platform [`init`] registers nothing.
 
 use tauri::{
     Runtime,
     plugin::{Builder, TauriPlugin},
 };
 
-#[cfg(mobile)]
+#[cfg(target_os = "android")]
 use tauri::Manager;
 
-#[cfg(mobile)]
-mod mobile;
+#[cfg(target_os = "android")]
+mod android;
 
 mod error;
 mod models;
@@ -22,16 +22,16 @@ mod models;
 pub use error::{Error, Result};
 pub use models::*;
 
-#[cfg(mobile)]
-use mobile::Vpn;
+#[cfg(target_os = "android")]
+pub use android::Vpn;
 
 /// Extension trait for accessing the VPN plugin.
-#[cfg(mobile)]
+#[cfg(target_os = "android")]
 pub trait VpnExt<R: Runtime> {
     fn vpn(&self) -> &Vpn<R>;
 }
 
-#[cfg(mobile)]
+#[cfg(target_os = "android")]
 impl<R: Runtime, T: Manager<R>> VpnExt<R> for T {
     fn vpn(&self) -> &Vpn<R> {
         self.state::<Vpn<R>>().inner()
@@ -42,15 +42,15 @@ impl<R: Runtime, T: Manager<R>> VpnExt<R> for T {
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("vpn")
         .setup(|app, api| {
-            #[cfg(mobile)]
+            #[cfg(target_os = "android")]
             {
-                let vpn = mobile::init(app, api)?;
+                let vpn = android::init(app, api)?;
                 app.manage(vpn);
             }
-            #[cfg(not(mobile))]
+            #[cfg(not(target_os = "android"))]
             {
                 let _ = (app, api);
-                log::warn!("VPN plugin is only available on mobile platforms");
+                log::warn!("VPN plugin is only available on Android");
             }
             Ok(())
         })

@@ -6,11 +6,11 @@ permissions = [
     "allow-stop-vpn",
     "allow-get-installed-apps",
     "allow-get-safe-area-insets",
-    "allow-register-listener",
     "allow-is-battery-optimization-disabled",
     "allow-request-disable-battery-optimization",
     "allow-are-notifications-enabled",
     "allow-open-notification-settings",
+    "allow-get-device-id",
     "allow-get-device-name",
     "allow-set-status-bar-style",
 ]

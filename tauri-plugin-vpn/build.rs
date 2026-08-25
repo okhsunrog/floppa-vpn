@@ -1,10 +1,12 @@
+// Every command the Kotlin plugin class exposes. `register_listener` is not among them: it is a
+// Tauri built-in, and listing it here only generated a permission for something this plugin does
+// not implement.
 const COMMANDS: &[&str] = &[
     "prepare_vpn",
     "start_vpn",
     "stop_vpn",
     "get_installed_apps",
     "get_safe_area_insets",
-    "register_listener",
     "is_battery_optimization_disabled",
     "request_disable_battery_optimization",
     "are_notifications_enabled",

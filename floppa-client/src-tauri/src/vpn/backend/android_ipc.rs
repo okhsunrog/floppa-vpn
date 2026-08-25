@@ -47,13 +47,11 @@ impl AndroidIpcBackend {
     }
 
     /// Stop the service through the plugin's intent path rather than the RPC.
-    ///
-    /// Blocking plugin call, so it runs off the async runtime rather than stalling it.
     async fn stop_by_intent(&self) -> Result<(), String> {
-        let app = self.app.clone();
-        tokio::task::spawn_blocking(move || app.vpn().stop())
+        self.app
+            .vpn()
+            .stop()
             .await
-            .map_err(|e| format!("stop intent panicked: {e}"))?
             .map_err(|e| format!("failed to stop the VPN service by intent: {e}"))
     }
 

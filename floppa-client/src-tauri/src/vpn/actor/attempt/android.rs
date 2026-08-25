@@ -32,13 +32,11 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
 
     // 1. Consent --------------------------------------------------------------------------
-    // Blocking plugin call, so it runs off the async runtime rather than stalling it.
-    let app = ctx.app.clone();
-    let granted = tokio::task::spawn_blocking(move || app.vpn().prepare())
+    let granted = ctx
+        .app
+        .vpn()
+        .prepare()
         .await
-        .map_err(|e| AttemptError::PlatformUnavailable {
-            detail: format!("consent check panicked: {e}"),
-        })?
         .map_err(|e| AttemptError::PlatformUnavailable {
             detail: format!("VPN prepare failed: {e}"),
         })?;
@@ -74,12 +72,10 @@ pub(super) async fn ladder(
     let vpn_config = build_config(ctx);
     stack.push(Step::AndroidService { epoch: ctx.epoch.0 });
 
-    let app = ctx.app.clone();
-    tokio::task::spawn_blocking(move || app.vpn().start(vpn_config))
+    ctx.app
+        .vpn()
+        .start(vpn_config)
         .await
-        .map_err(|e| AttemptError::PeerStartFailed {
-            detail: format!("service start panicked: {e}"),
-        })?
         .map_err(|e| AttemptError::PeerStartFailed {
             detail: e.to_string(),
         })?;

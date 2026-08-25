@@ -391,18 +391,6 @@
           "markdownDescription": "Denies the prepare_vpn command without any pre-configured scope."
         },
         {
-          "description": "Enables the register_listener command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-register-listener",
-          "markdownDescription": "Enables the register_listener command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the register_listener command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-register-listener",
-          "markdownDescription": "Denies the register_listener command without any pre-configured scope."
-        },
-        {
           "description": "Enables the request_disable_battery_optimization command without any pre-configured scope.",
           "type": "string",
           "const": "allow-request-disable-battery-optimization",
@@ -451,10 +439,10 @@
           "markdownDescription": "Denies the stop_vpn command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-installed-apps`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-name`\n- `allow-set-status-bar-style`",
+          "description": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-installed-apps`\n- `allow-get-safe-area-insets`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-id`\n- `allow-get-device-name`\n- `allow-set-status-bar-style`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-installed-apps`\n- `allow-get-safe-area-insets`\n- `allow-register-listener`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-name`\n- `allow-set-status-bar-style`"
+          "markdownDescription": "Default permissions for VPN plugin\n#### This default permission set includes:\n\n- `allow-prepare-vpn`\n- `allow-start-vpn`\n- `allow-stop-vpn`\n- `allow-get-installed-apps`\n- `allow-get-safe-area-insets`\n- `allow-is-battery-optimization-disabled`\n- `allow-request-disable-battery-optimization`\n- `allow-are-notifications-enabled`\n- `allow-open-notification-settings`\n- `allow-get-device-id`\n- `allow-get-device-name`\n- `allow-set-status-bar-style`"
         }
       ]
     }

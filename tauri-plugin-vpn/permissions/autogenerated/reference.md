@@ -9,11 +9,11 @@ Default permissions for VPN plugin
 - `allow-stop-vpn`
 - `allow-get-installed-apps`
 - `allow-get-safe-area-insets`
-- `allow-register-listener`
 - `allow-is-battery-optimization-disabled`
 - `allow-request-disable-battery-optimization`
 - `allow-are-notifications-enabled`
 - `allow-open-notification-settings`
+- `allow-get-device-id`
 - `allow-get-device-name`
 - `allow-set-status-bar-style`
 
@@ -230,32 +230,6 @@ Enables the prepare_vpn command without any pre-configured scope.
 <td>
 
 Denies the prepare_vpn command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`vpn:allow-register-listener`
-
-</td>
-<td>
-
-Enables the register_listener command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`vpn:deny-register-listener`
-
-</td>
-<td>
-
-Denies the register_listener command without any pre-configured scope.
 
 </td>
 </tr>

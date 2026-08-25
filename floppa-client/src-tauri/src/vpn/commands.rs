@@ -40,12 +40,13 @@ pub struct LogCaptureStatus {
 /// Desktop: random UUID persisted in config dir.
 #[tauri::command]
 #[specta::specta]
-pub fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String, String> {
+pub async fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String, String> {
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .get_device_id()
+            .await
             .map_err(|e| format!("Failed to get ANDROID_ID: {e}"))
     }
 
@@ -56,11 +57,11 @@ pub fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String
 /// Get the device name (Android: manufacturer+model, desktop: hostname)
 #[tauri::command]
 #[specta::specta]
-pub fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
+pub async fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
     #[cfg(target_os = "android")]
     {
         use tauri_plugin_vpn::VpnExt;
-        match app.vpn().get_device_name() {
+        match app.vpn().get_device_name().await {
             Ok(name) => return name,
             Err(e) => {
                 warn!("Failed to get Android device name: {e}");
@@ -188,6 +189,7 @@ pub async fn get_installed_apps(
         let plugin_apps = app
             .vpn()
             .get_installed_apps()
+            .await
             .map_err(|e| format!("Failed to get installed apps: {e}"))?;
         Ok(plugin_apps
             .into_iter()
@@ -217,6 +219,7 @@ pub async fn is_battery_optimization_disabled(
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .is_battery_optimization_disabled()
+            .await
             .map_err(|e| format!("Failed to check battery optimization: {e}"))
     }
 
@@ -238,6 +241,7 @@ pub async fn request_disable_battery_optimization(
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .request_disable_battery_optimization()
+            .await
             .map_err(|e| format!("Failed to request battery optimization: {e}"))
     }
 
@@ -258,6 +262,7 @@ pub async fn are_notifications_enabled(
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .are_notifications_enabled()
+            .await
             .map_err(|e| format!("Failed to check notifications: {e}"))
     }
 
@@ -279,6 +284,7 @@ pub async fn open_notification_settings(
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .open_notification_settings()
+            .await
             .map_err(|e| format!("Failed to request notification permission: {e}"))
     }
 
@@ -300,6 +306,7 @@ pub async fn set_status_bar_style(
         use tauri_plugin_vpn::VpnExt;
         app.vpn()
             .set_status_bar_style(is_dark)
+            .await
             .map_err(|e| format!("Failed to set status bar style: {e}"))
     }
 
@@ -665,6 +672,7 @@ pub async fn get_safe_area_insets(
         let insets = app
             .vpn()
             .get_safe_area_insets()
+            .await
             .map_err(|e| format!("Failed to get safe area insets: {e}"))?;
         Ok(SafeAreaInsets {
             top: insets.top,
