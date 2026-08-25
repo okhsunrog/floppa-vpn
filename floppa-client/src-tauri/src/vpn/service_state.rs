@@ -172,9 +172,92 @@ impl ServiceState {
     }
 }
 
+/// Which generation the `:vpn` process is serving, if any.
+///
+/// The process outlives the service instances inside it, and starting one is asynchronous: a
+/// previous instance's teardown routinely arrives *after* the next one has been asked for. So the
+/// current generation is held in one place that everything consults, rather than compared against
+/// a global that each caller updates for itself — which is how a late `onDestroy` used to tear
+/// down the instance that had replaced it.
+#[derive(Default)]
+pub struct ServiceRegistry {
+    current: std::sync::Mutex<Option<std::sync::Arc<ServiceState>>>,
+}
+
+impl ServiceRegistry {
+    /// Begin a generation, retiring whatever came before it.
+    ///
+    /// The predecessor is marked stopped rather than dropped: something may still be holding it,
+    /// and what it says from now on must be "there is nothing here" rather than "wait for me".
+    pub fn begin(&self, generation: u64) -> std::sync::Arc<ServiceState> {
+        let state = std::sync::Arc::new(ServiceState::new(generation));
+        if let Ok(mut guard) = self.current.lock() {
+            if let Some(previous) = guard.take() {
+                previous.mark_stopped();
+            }
+            *guard = Some(state.clone());
+        }
+        state
+    }
+
+    pub fn current(&self) -> Option<std::sync::Arc<ServiceState>> {
+        self.current.lock().ok()?.clone()
+    }
+
+    /// The state for `generation`, and only if that is the one being served.
+    ///
+    /// Everything arriving from Kotlin goes through here: a descriptor, a start error or a
+    /// teardown that names a generation we have moved past belongs to an instance that is already
+    /// gone, and applying it to the current one is the bug this prevents.
+    pub fn serving(&self, generation: u64) -> Option<std::sync::Arc<ServiceState>> {
+        self.current().filter(|s| s.generation == generation)
+    }
+
+    /// End `generation` if it is the current one. Idempotent, and a no-op for any other.
+    pub fn end(&self, generation: u64) -> bool {
+        let Ok(mut guard) = self.current.lock() else {
+            return false;
+        };
+        match guard.as_ref() {
+            Some(state) if state.generation == generation => {
+                state.mark_stopped();
+                *guard = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_registry_only_ever_answers_for_the_generation_it_is_serving() {
+        let registry = ServiceRegistry::default();
+        assert!(registry.current().is_none());
+
+        let first = registry.begin(7);
+        assert!(registry.serving(7).is_some());
+        assert!(registry.serving(8).is_none(), "not this one");
+
+        // A newer start retires the old one where it stands: whatever still holds a reference to
+        // it now hears "nothing here" instead of "still coming up".
+        let _second = registry.begin(8);
+        assert_eq!(first.phase(), GenerationPhase::Stopped);
+        assert!(registry.serving(7).is_none());
+        assert!(registry.serving(8).is_some());
+
+        // A teardown for the generation that has already been replaced must not touch the one
+        // that replaced it — the case a late `onDestroy` produces on every reconnect.
+        assert!(!registry.end(7));
+        assert!(registry.serving(8).is_some());
+
+        assert!(registry.end(8));
+        assert!(registry.current().is_none());
+        assert!(!registry.end(8), "and ending it twice is not an error");
+    }
 
     #[test]
     fn a_descriptor_is_ready_only_while_it_is_still_available() {
