@@ -3,11 +3,13 @@
 use floppa_core::DbPool;
 use floppa_core::billing::PurchasablePlan;
 use floppa_core::models::Lang;
-use floppa_core::services::MergePrompt;
+use floppa_core::services::{self, MergePrompt, TrialGrant};
+use teloxide::types::BotCommand;
 
 pub struct Messages {
     // /start
     pub welcome: &'static str,
+    /// Placeholders: {plan}, {date}
     pub trial_granted: &'static str,
     pub open_app: &'static str,
     pub open_app_cta: &'static str,
@@ -49,7 +51,14 @@ pub struct Messages {
     pub notify_expires_tomorrow: &'static str,
     pub notify_expired: &'static str,
 
-    // fallback
+    // command menu (shown by Telegram next to the input, and in the fallback reply)
+    pub cmd_start: &'static str,
+    pub cmd_status: &'static str,
+    pub cmd_buy: &'static str,
+    pub cmd_vless: &'static str,
+    pub cmd_lang: &'static str,
+
+    // fallback: header above the command list
     pub unknown_message: &'static str,
 
     // errors
@@ -75,7 +84,7 @@ static EN: Messages = Messages {
               Use the menu below for quick actions, or open the app for the full dashboard, \
               configs and downloads.",
 
-    trial_granted: "You've been granted a free 7-day Basic subscription!",
+    trial_granted: "You've been granted a free {plan} trial until {date}!",
     open_app: "Open Floppa VPN",
     open_app_cta: "Full dashboard — configs, devices and downloads:",
 
@@ -111,12 +120,13 @@ static EN: Messages = Messages {
     notify_expires_tomorrow: "Your subscription expires tomorrow!\n\nRenew now:",
     notify_expired: "Your subscription has expired.\n\nChoose a plan to continue:",
 
-    unknown_message: "I only understand commands:\n\n\
-                      /start — open the app\n\
-                      /status — check subscription\n\
-                      /buy — purchase a plan\n\
-                      /vless — get VLESS config\n\
-                      /lang — change language",
+    cmd_start: "Start the bot",
+    cmd_status: "Check subscription status",
+    cmd_buy: "Purchase a subscription",
+    cmd_vless: "Get VLESS config",
+    cmd_lang: "Change language",
+
+    unknown_message: "I only understand commands:",
 
     error_generic: "An error occurred. Please try again later.",
 
@@ -137,7 +147,7 @@ static RU: Messages = Messages {
               Используйте меню ниже для быстрых действий или откройте приложение — \
               там полная панель, конфиги и загрузки.",
 
-    trial_granted: "Вам предоставлена бесплатная 7-дневная подписка Basic!",
+    trial_granted: "Вам предоставлен бесплатный пробный тариф {plan} до {date}!",
     open_app: "Открыть Floppa VPN",
     open_app_cta: "Полная панель — конфиги, устройства и загрузки:",
 
@@ -173,12 +183,13 @@ static RU: Messages = Messages {
     notify_expires_tomorrow: "Ваша подписка истекает завтра!\n\nПродлите сейчас:",
     notify_expired: "Ваша подписка истекла.\n\nВыберите тариф для продления:",
 
-    unknown_message: "Я понимаю только команды:\n\n\
-                      /start — открыть приложение\n\
-                      /status — проверить подписку\n\
-                      /buy — купить тариф\n\
-                      /vless — получить VLESS конфиг\n\
-                      /lang — сменить язык",
+    cmd_start: "Запустить бота",
+    cmd_status: "Проверить подписку",
+    cmd_buy: "Купить тариф",
+    cmd_vless: "Получить VLESS конфиг",
+    cmd_lang: "Сменить язык",
+
+    unknown_message: "Я понимаю только команды:",
 
     error_generic: "Произошла ошибка. Попробуйте позже.",
 
@@ -231,27 +242,62 @@ pub fn for_language_tag(tag: Option<&str>) -> &'static Messages {
     for_lang(tag.and_then(Lang::from_language_tag).unwrap_or(Lang::En))
 }
 
-/// Resolve language for a user: DB preference → Telegram language_code → English.
+/// Messages for a user we have (or have not) seen: their stored preference, else the
+/// Telegram client language, else English.
+pub fn for_user(
+    user: Option<&services::BotUser>,
+    telegram_lang: Option<&str>,
+) -> &'static Messages {
+    match user.and_then(|u| u.language) {
+        Some(lang) => for_lang(lang),
+        None => for_language_tag(telegram_lang),
+    }
+}
+
+/// Resolve language for a Telegram id when no handler context exists (error reporting):
+/// DB preference → Telegram language_code → English. A failed lookup falls through.
 pub async fn resolve_lang(
     pool: &DbPool,
     telegram_id: i64,
     telegram_lang: Option<&str>,
 ) -> &'static Messages {
-    // Check DB preference first
-    let db_lang = sqlx::query_scalar!(
-        r#"SELECT language AS "language: Lang" FROM users WHERE telegram_id = $1"#,
-        telegram_id
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let user = services::find_bot_user(pool, telegram_id)
+        .await
+        .ok()
+        .flatten();
+    for_user(user.as_ref(), telegram_lang)
+}
 
-    match db_lang {
-        Some(lang) => for_lang(lang),
-        None => for_language_tag(telegram_lang),
+/// The command menu in this language, in the order Telegram lists it. One table feeds both
+/// `setMyCommands` and the fallback reply, so they cannot drift apart.
+pub fn bot_commands(msgs: &Messages) -> Vec<BotCommand> {
+    [
+        ("start", msgs.cmd_start),
+        ("status", msgs.cmd_status),
+        ("buy", msgs.cmd_buy),
+        ("vless", msgs.cmd_vless),
+        ("lang", msgs.cmd_lang),
+    ]
+    .into_iter()
+    .map(|(command, description)| BotCommand::new(command, description))
+    .collect()
+}
+
+/// Reply to anything that is not a command: the header plus the command list.
+pub fn format_unknown_message(msgs: &Messages) -> String {
+    let mut text = msgs.unknown_message.to_string();
+    text.push('\n');
+    for cmd in bot_commands(msgs) {
+        text.push_str(&format!("\n/{} — {}", cmd.command, cmd.description));
     }
+    text
+}
+
+/// Announce a trial that was just granted, naming the plan and when it ends.
+pub fn format_trial_granted(msgs: &Messages, trial: &TrialGrant) -> String {
+    msgs.trial_granted
+        .replace("{plan}", &trial.plan_display_name)
+        .replace("{date}", &trial.expires_at.format("%Y-%m-%d").to_string())
 }
 
 /// Format status message with plan and expiry date.

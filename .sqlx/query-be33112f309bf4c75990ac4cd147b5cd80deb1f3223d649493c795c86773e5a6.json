@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT s.id, s.plan_id, p.price_stars, p.period_days, s.expires_at\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ORDER BY s.expires_at DESC NULLS FIRST\n        LIMIT 1\n        ",
+  "query": "\n        SELECT s.id, s.plan_id, p.display_name AS plan_display_name,\n               p.price_stars, p.period_days, s.expires_at\n        FROM subscriptions s\n        JOIN plans p ON s.plan_id = p.id\n        WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())\n        ORDER BY s.expires_at DESC NULLS FIRST\n        LIMIT 1\n        ",
   "describe": {
     "columns": [
       {
@@ -27,6 +27,17 @@
       },
       {
         "ordinal": 2,
+        "name": "plan_display_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
         "name": "price_stars",
         "type_info": "Int4",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "period_days",
         "type_info": "Int4",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "expires_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -67,10 +78,11 @@
     "nullable": [
       false,
       false,
+      false,
       true,
       true,
       true
     ]
   },
-  "hash": "4a8e2fe4d4eeff50285da3efe5b166bdcb35f9bee12727f645d929fac72f8fe6"
+  "hash": "be33112f309bf4c75990ac4cd147b5cd80deb1f3223d649493c795c86773e5a6"
 }

@@ -4,6 +4,7 @@ use crate::bot::callback::CallbackAction;
 use crate::bot::i18n;
 use floppa_core::models::{Lang, NotificationKind};
 use floppa_core::{Config, DbPool, billing};
+use sqlx::postgres::types::PgInterval;
 use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
@@ -54,9 +55,22 @@ pub async fn alert_admins(bot: &Bot, pool: &DbPool, text: &str) {
     }
 }
 
+/// Subscriptions shorter than this never get the "expires tomorrow" notice: a trial that lasts
+/// hours would otherwise be announced as ending "tomorrow" the moment it starts.
+const MIN_DURATION_FOR_ADVANCE_NOTICE: PgInterval = PgInterval {
+    months: 0,
+    days: 2,
+    microseconds: 0,
+};
+
+/// One pass: find every subscription that is about to end or has just ended and has not been
+/// told about it yet, and send the matching notice.
+///
+/// The window is ±25 h around now: "expires within the next 25 hours" yields the
+/// `expiry_1d_before` notice (the loop runs every 30 min, so it fires roughly a day ahead),
+/// "expired within the last 25 hours" yields `expiry_now` — wide enough to survive a restart
+/// without losing a notice, while `notification_log` keeps each kind to one delivery.
 async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::Result<()> {
-    // Find subscriptions expiring within 24-25h (1 day before) or already expired within last 1h,
-    // that haven't been notified yet.
     let rows = sqlx::query_as!(
         ExpiringSubscription,
         r#"
@@ -75,6 +89,8 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
           AND u.telegram_id IS NOT NULL
           -- Expires within next 25 hours OR expired within last 25 hours
           AND s.expires_at BETWEEN NOW() - INTERVAL '25 hours' AND NOW() + INTERVAL '25 hours'
+          -- Advance notice only for subscriptions long enough for "tomorrow" to mean something
+          AND (s.expires_at <= NOW() OR s.expires_at - s.starts_at >= $3)
           -- No newer subscription for this user
           AND NOT EXISTS (
               SELECT 1 FROM subscriptions s2
@@ -94,6 +110,7 @@ async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::
         "#,
         NotificationKind::ExpiryNow as _,
         NotificationKind::ExpiryOneDayBefore as _,
+        MIN_DURATION_FOR_ADVANCE_NOTICE,
     )
     .fetch_all(pool)
     .await?;

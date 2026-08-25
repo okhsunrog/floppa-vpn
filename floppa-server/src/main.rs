@@ -5,11 +5,7 @@ use anyhow::Result;
 use axum::Router;
 use floppa_core::{Config, Secrets, db};
 use std::net::SocketAddr;
-use teloxide::{
-    prelude::*,
-    types::{BotCommand, MenuButton, WebAppInfo},
-    utils::command::BotCommands,
-};
+use teloxide::prelude::*;
 use tower_http::{
     cors::{AllowOrigin, CorsLayer},
     trace::TraceLayer,
@@ -70,31 +66,7 @@ async fn main() -> Result<()> {
     let bot = Bot::new(&bot_secrets.token);
     info!("Bot initialized");
 
-    // Register bot commands so Telegram shows the menu button
-    bot.set_my_commands(bot::handlers::Command::bot_commands())
-        .await?;
-    bot.set_my_commands(vec![
-        BotCommand::new("start", "Запустить бота"),
-        BotCommand::new("status", "Проверить подписку"),
-        BotCommand::new("buy", "Купить тариф"),
-        BotCommand::new("vless", "VLESS конфиг"),
-        BotCommand::new("lang", "Сменить язык"),
-    ])
-    .language_code("ru")
-    .await?;
-    info!("Bot commands registered");
-
-    // Point the chat menu button (next to the message input) at the Mini App, so the app
-    // is always one tap away instead of the default commands list.
-    if let Some(url) = config.bot.as_ref().and_then(|b| b.web_app_url.clone()) {
-        bot.set_chat_menu_button()
-            .menu_button(MenuButton::WebApp {
-                text: "Floppa VPN".to_string(),
-                web_app: WebAppInfo { url },
-            })
-            .await?;
-        info!("Chat menu button set to Mini App");
-    }
+    let web_app_url = config.bot.as_ref().and_then(|b| b.web_app_url.clone());
 
     // Build Axum router
     let state = admin::routes::AppState::new(
@@ -169,7 +141,7 @@ async fn main() -> Result<()> {
     // Handlers answer the user themselves before an error reaches this point (see
     // `bot::handlers::report_errors`); all that is left to do here is log it.
     let handler = bot::handlers::schema();
-    let mut dispatcher = Dispatcher::builder(bot, handler)
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
         .dependencies(dptree::deps![pool, config, secrets, wg_public_key])
         .error_handler(std::sync::Arc::new(
             |err: bot::handlers::BotError| async move {
@@ -181,6 +153,10 @@ async fn main() -> Result<()> {
 
     // Run both concurrently
     let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    // Telegram-side cosmetics (command menu, Mini App button) are best-effort and must not
+    // hold up serving: register them once we are listening.
+    tokio::spawn(bot::configure_menu(bot, web_app_url));
 
     tokio::select! {
         result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()) => {

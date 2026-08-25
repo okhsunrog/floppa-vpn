@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, trial_minutes FROM plans WHERE name = $1",
+  "query": "SELECT id, display_name, trial_minutes FROM plans WHERE name = $1",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "display_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "trial_minutes",
         "type_info": "Int4",
         "origin": {
@@ -33,8 +44,9 @@
     },
     "nullable": [
       false,
+      false,
       true
     ]
   },
-  "hash": "0196eb3b7228a49ca508466db2a214e7e7c5ea7e6ec17d3f42b982873a0739e5"
+  "hash": "fe00fda7e669e6448801cb58983244018821c98784c02782896f29509fe0b8d1"
 }

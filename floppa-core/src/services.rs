@@ -20,8 +20,15 @@ pub struct UpsertResult {
     pub last_name: Option<String>,
     pub photo_url: Option<String>,
     pub is_admin: bool,
-    /// Whether a trial subscription was auto-granted on this call.
-    pub trial_granted: bool,
+    /// The trial subscription auto-granted on this call, if any.
+    pub trial: Option<TrialGrant>,
+}
+
+/// A trial subscription that was just granted — what the user should be told about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrialGrant {
+    pub plan_display_name: String,
+    pub expires_at: DateTime<Utc>,
 }
 
 /// Profile fields from Telegram auth sources.
@@ -71,7 +78,7 @@ pub async fn upsert_user(
     .fetch_one(pool)
     .await?;
 
-    let trial_granted = grant_real_trial_if_unused(pool, row.id).await?;
+    let trial = grant_real_trial_if_unused(pool, row.id).await?;
 
     Ok(UpsertResult {
         id: row.id,
@@ -80,14 +87,14 @@ pub async fn upsert_user(
         last_name: row.last_name,
         photo_url: row.photo_url,
         is_admin: row.is_admin,
-        trial_granted,
+        trial,
     })
 }
 
 /// Grant a trial subscription on `plan_name` for the duration stored on that plan
 /// (`trial_minutes`). When `consume_real_trial` is true, atomically claims the user's
-/// one-time `trial_used_at` and no-ops if it was already used. Returns whether a
-/// subscription was granted. No-op (returns false) if the plan is missing or has no
+/// one-time `trial_used_at` and no-ops if it was already used. Returns what was granted,
+/// or `None` if nothing was: the trial was already used, or the plan is missing or has no
 /// `trial_minutes` — in which case `trial_used_at` is left untouched.
 ///
 /// Plan lookup, the `trial_used_at` claim and the INSERT run in one transaction, so a
@@ -98,20 +105,20 @@ async fn grant_trial(
     plan_name: &str,
     source: SubscriptionSource,
     consume_real_trial: bool,
-) -> Result<bool> {
+) -> Result<Option<TrialGrant>> {
     let mut tx = pool.begin().await?;
 
     let plan = sqlx::query!(
-        "SELECT id, trial_minutes FROM plans WHERE name = $1",
+        "SELECT id, display_name, trial_minutes FROM plans WHERE name = $1",
         plan_name
     )
     .fetch_optional(&mut *tx)
     .await?;
     let Some(plan) = plan else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(minutes) = plan.trial_minutes else {
-        return Ok(false);
+        return Ok(None);
     };
 
     if consume_real_trial {
@@ -122,7 +129,7 @@ async fn grant_trial(
         .execute(&mut *tx)
         .await?;
         if claimed.rows_affected() != 1 {
-            return Ok(false);
+            return Ok(None);
         }
     }
 
@@ -130,7 +137,10 @@ async fn grant_trial(
     insert_subscription(&mut tx, user_id, plan.id, Some(expires_at), source).await?;
 
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(TrialGrant {
+        plan_display_name: plan.display_name,
+        expires_at,
+    }))
 }
 
 /// Insert a subscription starting now. `expires_at = None` means permanent. Returns its id.
@@ -254,9 +264,9 @@ pub async fn grant_subscription(
 /// Grant the one-time real trial (the "basic" plan's `trial_minutes`) if not yet used.
 ///
 /// Atomically claims `trial_used_at`, so concurrent calls grant at most one trial. Returns
-/// whether a trial was granted on this call. Keyed on `user_id` so it works for both the
+/// what was granted on this call, if anything. Keyed on `user_id` so it works for both the
 /// Telegram signup path and the credential→Telegram link path.
-pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<bool> {
+pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<Option<TrialGrant>> {
     grant_trial(pool, user_id, "basic", SubscriptionSource::Trial, true).await
 }
 
@@ -266,7 +276,7 @@ pub async fn grant_real_trial_if_unused(pool: &DbPool, user_id: i64) -> Result<b
 pub async fn grant_taster_trial(pool: &DbPool, user_id: i64) -> Result<()> {
     grant_trial(pool, user_id, "taster", SubscriptionSource::Taster, false)
         .await
-        .map(|_| ())
+        .map(drop)
 }
 
 /// Validate a login and return `(normalized_uid_lowercase, display_form)`.
@@ -341,7 +351,7 @@ pub async fn create_credential_user(
         last_name: user.last_name,
         photo_url: user.photo_url,
         is_admin: user.is_admin,
-        trial_granted: false,
+        trial: None,
     })
 }
 
@@ -463,7 +473,7 @@ pub struct MergePrompt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LinkStart {
     /// The Telegram was free and is now attached to the account that minted the code.
-    Attached { trial_granted: bool },
+    Attached { trial: Option<TrialGrant> },
     /// The Telegram already belongs to that very account; the code is spent.
     AlreadyLinked,
     /// The Telegram belongs to a different account — nothing was changed; ask the user to
@@ -483,9 +493,35 @@ pub enum MergeOutcome {
     AlreadyLinked,
     /// The established account vanished between prompt and confirmation, so there was nothing
     /// to merge: the Telegram was simply attached to the account that minted the code.
-    Attached { trial_granted: bool },
+    Attached { trial: Option<TrialGrant> },
     /// Unknown, spent or expired code — or the minting account acquired a Telegram meanwhile.
     InvalidCode,
+}
+
+/// The account behind a Telegram user talking to the bot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BotUser {
+    pub id: i64,
+    /// Stored language preference (explicit choice or first-contact client language).
+    pub language: Option<Lang>,
+}
+
+/// Look up the account a Telegram id is attached to — fetched once at the start of a bot
+/// handler instead of a `SELECT id` per step. `None` until the user has `/start`ed.
+pub async fn find_bot_user(
+    executor: impl PgExecutor<'_>,
+    telegram_id: i64,
+) -> Result<Option<BotUser>> {
+    let row = sqlx::query!(
+        r#"SELECT id, language AS "language: Lang" FROM users WHERE telegram_id = $1"#,
+        telegram_id,
+    )
+    .fetch_optional(executor)
+    .await?;
+    Ok(row.map(|r| BotUser {
+        id: r.id,
+        language: r.language,
+    }))
 }
 
 /// Lock a live link code (unspent, unexpired) and return the account that minted it.
@@ -556,13 +592,13 @@ async fn attach_telegram_in_tx(
 /// same transaction, then grant the one-time real trial. The caller must have checked that no
 /// other account owns the Telegram (see [`begin_telegram_link`], which does).
 ///
-/// Returns whether a real trial was granted, or `None` when another request spent the code
-/// first (or the account is no longer attachable) — nothing is changed in that case.
+/// Returns the trial granted (if any) inside `Some`, or `None` when another request spent the
+/// code first (or the account is no longer attachable) — nothing is changed in that case.
 pub async fn attach_telegram(
     pool: &DbPool,
     code: &str,
     identity: TelegramIdentity<'_>,
-) -> Result<Option<bool>> {
+) -> Result<Option<Option<TrialGrant>>> {
     let mut tx = pool.begin().await?;
     let Some(session_user_id) = attach_telegram_in_tx(&mut tx, code, identity).await? else {
         tx.rollback().await?;
@@ -572,8 +608,8 @@ pub async fn attach_telegram(
 
     // Trial claiming is independently idempotent; identity attachment and code consumption are
     // the security-sensitive pair that must commit together.
-    let granted = grant_real_trial_if_unused(pool, session_user_id).await?;
-    Ok(Some(granted))
+    let trial = grant_real_trial_if_unused(pool, session_user_id).await?;
+    Ok(Some(trial))
 }
 
 async fn summarize_account(executor: impl PgExecutor<'_>, user_id: i64) -> Result<AccountSummary> {
@@ -642,7 +678,7 @@ pub async fn begin_telegram_link(
             // concurrent `/start` with the same code still sees exactly one winner.
             tx.rollback().await?;
             Ok(match attach_telegram(pool, code, identity).await? {
-                Some(trial_granted) => LinkStart::Attached { trial_granted },
+                Some(trial) => LinkStart::Attached { trial },
                 None => LinkStart::InvalidCode,
             })
         }
@@ -698,8 +734,8 @@ pub async fn confirm_telegram_merge(
                 return Ok(MergeOutcome::InvalidCode);
             };
             tx.commit().await?;
-            let trial_granted = grant_real_trial_if_unused(pool, session_user_id).await?;
-            Ok(MergeOutcome::Attached { trial_granted })
+            let trial = grant_real_trial_if_unused(pool, session_user_id).await?;
+            Ok(MergeOutcome::Attached { trial })
         }
     }
 }
@@ -1629,7 +1665,7 @@ mod tests {
         let res = create_credential_user(&pool, "Alice", "hunter2hunter")
             .await
             .unwrap();
-        assert!(!res.trial_granted);
+        assert!(res.trial.is_none());
         assert_eq!(res.username.as_deref(), Some("Alice")); // display preserves case
 
         // Login is case-insensitive on the normalized uid.
@@ -1688,8 +1724,18 @@ mod tests {
         assert_eq!(sources, vec![SubscriptionSource::Taster]);
 
         // Now grant the real trial (as the Telegram-link path would) → succeeds once.
-        assert!(grant_real_trial_if_unused(&pool, res.id).await.unwrap());
-        assert!(!grant_real_trial_if_unused(&pool, res.id).await.unwrap());
+        assert!(
+            grant_real_trial_if_unused(&pool, res.id)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            grant_real_trial_if_unused(&pool, res.id)
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         let trial_count = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'trial'",
@@ -1753,10 +1799,13 @@ mod tests {
             .unwrap();
         mint_link_code(&pool, user.id, "code-1").await;
 
-        let granted = attach_telegram(&pool, "code-1", identity(55555))
+        let attached = attach_telegram(&pool, "code-1", identity(55555))
             .await
             .unwrap();
-        assert_eq!(granted, Some(true));
+        let trial = attached
+            .expect("code was live")
+            .expect("real trial granted");
+        assert_eq!(trial.plan_display_name, "Basic");
 
         let row = sqlx::query!(
             r#"SELECT telegram_id, username, first_name, language AS "language: Lang"
@@ -1850,14 +1899,12 @@ mod tests {
 
         // A free Telegram is attached and gets the real trial.
         mint_link_code(&pool, session.id, "fresh").await;
-        assert_eq!(
+        assert!(matches!(
             begin_telegram_link(&pool, "fresh", identity(1))
                 .await
                 .unwrap(),
-            LinkStart::Attached {
-                trial_granted: true
-            }
-        );
+            LinkStart::Attached { trial: Some(_) }
+        ));
 
         // The same Telegram again, on a new code: nothing to do, code spent.
         mint_link_code(&pool, session.id, "again").await;
@@ -1959,14 +2006,12 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             confirm_telegram_merge(&pool, "gone", identity(5151))
                 .await
                 .unwrap(),
-            MergeOutcome::Attached {
-                trial_granted: true
-            }
-        );
+            MergeOutcome::Attached { trial: Some(_) }
+        ));
         assert_eq!(
             link_code_state(&pool, "gone").await,
             (true, Some(LinkCodeKind::Simple))
@@ -2264,7 +2309,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result.trial_granted);
+        assert!(result.trial.is_some());
         assert_eq!(result.username.as_deref(), Some("alice"));
         assert_eq!(result.first_name.as_deref(), Some("Alice"));
         assert!(!result.is_admin);
@@ -2294,7 +2339,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(first.trial_granted);
+        assert!(first.trial.is_some());
 
         // Second call — no trial
         let second = upsert_user(
@@ -2306,7 +2351,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!second.trial_granted);
+        assert!(second.trial.is_none());
         assert_eq!(second.username.as_deref(), Some("alice2"));
         assert_eq!(second.id, first.id);
     }
@@ -2454,7 +2499,7 @@ mod tests {
         let result = upsert_user(&pool, 12345, Some("u"), TelegramProfile::default(), false)
             .await
             .unwrap();
-        assert!(!result.trial_granted);
+        assert!(result.trial.is_none());
 
         // The one-time trial must not be burned when nothing was granted.
         let trial_used_at =

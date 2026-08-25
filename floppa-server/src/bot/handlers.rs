@@ -11,7 +11,7 @@ use teloxide::{
     prelude::*,
     types::{
         InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, KeyboardMarkup, LabeledPrice,
-        ParseMode, PreCheckoutQuery, SuccessfulPayment, UpdateKind, WebAppInfo,
+        ParseMode, PreCheckoutQuery, SuccessfulPayment, UpdateKind, User, WebAppInfo,
     },
     utils::command::BotCommands,
 };
@@ -32,18 +32,15 @@ pub enum BotError {
 
 type HandlerResult = Result<(), BotError>;
 
+/// The commands the bot parses. Their menu descriptions live in [`i18n::bot_commands`], per
+/// language; the test below keeps that table and this enum in step.
 #[derive(BotCommands, Clone)]
-#[command(rename_rule = "lowercase", description = "Available commands:")]
+#[command(rename_rule = "lowercase")]
 pub enum Command {
-    #[command(description = "Start the bot")]
     Start(String),
-    #[command(description = "Check subscription status")]
     Status,
-    #[command(description = "Purchase a subscription")]
     Buy,
-    #[command(description = "Get VLESS config")]
     Vless,
-    #[command(description = "Change language / Сменить язык")]
     Lang,
 }
 
@@ -154,12 +151,41 @@ fn is_private_chat(update: Update) -> bool {
     update.chat().is_some_and(|chat| chat.is_private())
 }
 
-/// Helper: extract telegram_id and language_code from a message, resolve i18n.
-async fn resolve_msg_lang(msg: &Message, pool: &DbPool) -> (i64, &'static i18n::Messages) {
-    let telegram_id = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
-    let telegram_lang = msg.from.as_ref().and_then(|u| u.language_code.as_deref());
-    let msgs = i18n::resolve_lang(pool, telegram_id, telegram_lang).await;
-    (telegram_id, msgs)
+/// Who an update is from, resolved once at the top of a handler: the Telegram user, the
+/// account they have with us (if they ever `/start`ed) and the messages in their language.
+struct Caller {
+    telegram_id: i64,
+    user: Option<services::BotUser>,
+    msgs: &'static i18n::Messages,
+}
+
+impl Caller {
+    async fn resolve(pool: &DbPool, from: &User) -> Result<Self, BotError> {
+        let telegram_id = from.id.0 as i64;
+        let user = services::find_bot_user(pool, telegram_id).await?;
+        let msgs = i18n::for_user(user.as_ref(), from.language_code.as_deref());
+        Ok(Caller {
+            telegram_id,
+            user,
+            msgs,
+        })
+    }
+}
+
+/// The sender of a message. Absent only for channel posts and anonymous group admins, which the
+/// private-chat filter already excludes — so `None` means there is nobody to answer.
+fn sender(msg: &Message) -> Option<&User> {
+    msg.from.as_ref()
+}
+
+/// Welcome text, plus the trial announcement when one was just granted.
+fn welcome_text(msgs: &i18n::Messages, base: &str, trial: Option<&services::TrialGrant>) -> String {
+    let mut text = base.to_string();
+    if let Some(trial) = trial {
+        text.push_str("\n\n");
+        text.push_str(&i18n::format_trial_granted(msgs, trial));
+    }
+    text
 }
 
 async fn start(
@@ -174,34 +200,30 @@ async fn start(
         return start_with_link(bot, msg, pool, code.to_string()).await;
     }
 
-    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
-    let username = msg.from.as_ref().and_then(|u| u.username.clone());
-    let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-    let last_name = msg.from.as_ref().and_then(|u| u.last_name.clone());
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let caller = Caller::resolve(&pool, from).await?;
+    let msgs = caller.msgs;
 
     let result = services::upsert_user(
         &pool,
-        telegram_id,
-        username.as_deref(),
+        caller.telegram_id,
+        from.username.as_deref(),
         services::TelegramProfile {
-            first_name: first_name.as_deref(),
-            last_name: last_name.as_deref(),
+            first_name: Some(&from.first_name),
+            last_name: from.last_name.as_deref(),
             photo_url: None, // Bot API doesn't provide photo_url in messages
-            language: msg
-                .from
-                .as_ref()
-                .and_then(|u| u.language_code.as_deref())
+            language: from
+                .language_code
+                .as_deref()
                 .and_then(Lang::from_language_tag),
         },
         false,
     )
     .await?;
 
-    let mut text = msgs.welcome.to_string();
-    if result.trial_granted {
-        text.push_str("\n\n");
-        text.push_str(msgs.trial_granted);
-    }
+    let text = welcome_text(msgs, msgs.welcome, result.trial.as_ref());
 
     // Welcome message carries the persistent reply keyboard (quick actions).
     bot.send_message(msg.chat.id, text)
@@ -249,7 +271,7 @@ async fn handle_menu_button(bot: Bot, msg: Message, pool: DbPool, config: Config
 }
 
 /// The Telegram identity behind a message or callback, as core wants it for linking.
-fn telegram_identity(user: &teloxide::types::User) -> services::TelegramIdentity<'_> {
+fn telegram_identity(user: &User) -> services::TelegramIdentity<'_> {
     services::TelegramIdentity {
         telegram_id: user.id.0 as i64,
         username: user.username.as_deref(),
@@ -265,18 +287,14 @@ fn telegram_identity(user: &teloxide::types::User) -> services::TelegramIdentity
 /// Handle `/start link_<code>`: attach this Telegram to the session account, or (if the Telegram
 /// already belongs to another account) offer a merge/recovery confirmation.
 async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> HandlerResult {
-    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
-    let Some(from) = msg.from.as_ref() else {
+    let Some(from) = sender(&msg) else {
         return Ok(());
     };
+    let msgs = Caller::resolve(&pool, from).await?.msgs;
 
     match services::begin_telegram_link(&pool, &code, telegram_identity(from)).await? {
-        services::LinkStart::Attached { trial_granted } => {
-            let mut text = msgs.link_success.to_string();
-            if trial_granted {
-                text.push_str("\n\n");
-                text.push_str(msgs.trial_granted);
-            }
+        services::LinkStart::Attached { trial } => {
+            let text = welcome_text(msgs, msgs.link_success, trial.as_ref());
             bot.send_message(msg.chat.id, text).await?;
         }
         services::LinkStart::AlreadyLinked => {
@@ -309,31 +327,24 @@ async fn start_with_link(bot: Bot, msg: Message, pool: DbPool, code: String) -> 
 }
 
 async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
-    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let caller = Caller::resolve(&pool, from).await?;
+    let msgs = caller.msgs;
 
-    let sub = sqlx::query!(
-        r#"
-        SELECT p.display_name as plan, s.expires_at
-        FROM subscriptions s
-        JOIN plans p ON s.plan_id = p.id
-        JOIN users u ON s.user_id = u.id
-        WHERE u.telegram_id = $1
-          AND (s.expires_at IS NULL OR s.expires_at > NOW())
-        ORDER BY s.expires_at DESC NULLS FIRST
-        LIMIT 1
-        "#,
-        telegram_id,
-    )
-    .fetch_optional(&pool)
-    .await?;
+    let sub = match caller.user {
+        Some(user) => billing::get_current_subscription(&pool, user.id).await?,
+        None => None,
+    };
 
     let message = match sub {
         Some(s) => {
             let expires_str = match s.expires_at {
-                Some(dt) => dt.format("%Y-%m-%d").to_string(),
+                Some(dt) => format_expiry(dt),
                 None => msgs.permanent.to_string(),
             };
-            i18n::format_status(msgs, &s.plan, &expires_str)
+            i18n::format_status(msgs, &s.plan_display_name, &expires_str)
         }
         None => msgs.no_subscription_short.to_string(),
     };
@@ -344,15 +355,16 @@ async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
 }
 
 async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerResult {
-    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let caller = Caller::resolve(&pool, from).await?;
+    let msgs = caller.msgs;
 
     // A permanent subscription has nothing to upgrade to; buying would only replace "forever"
     // with a paid month (billing refuses that too, but the user deserves a clear answer).
-    let user_id = sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-        .fetch_optional(&pool)
-        .await?;
-    if let Some(user_id) = user_id
-        && holds_permanent_subscription(&pool, user_id).await?
+    if let Some(user) = caller.user
+        && holds_permanent_subscription(&pool, user.id).await?
     {
         bot.send_message(msg.chat.id, msgs.buy_permanent).await?;
         return Ok(());
@@ -406,7 +418,11 @@ async fn vless(
     config: Config,
     secrets: Secrets,
 ) -> HandlerResult {
-    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let caller = Caller::resolve(&pool, from).await?;
+    let msgs = caller.msgs;
 
     // Check VLESS is configured
     let reality_public_key = match secrets.vless.as_ref() {
@@ -418,14 +434,11 @@ async fn vless(
         }
     };
 
-    // Look up user
-    let user_id = sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-        .fetch_optional(&pool)
-        .await?;
-    let Some(user_id) = user_id else {
+    let Some(user) = caller.user else {
         bot.send_message(msg.chat.id, msgs.vless_no_user).await?;
         return Ok(());
     };
+    let user_id = user.id;
 
     // Check active subscription
     let has_sub = sqlx::query_scalar!(
@@ -458,7 +471,10 @@ async fn vless(
 }
 
 async fn lang(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
-    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let msgs = Caller::resolve(&pool, from).await?.msgs;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
         InlineKeyboardButton::callback("🇬🇧 English", CallbackAction::SetLang(Lang::En).to_string()),
@@ -487,13 +503,14 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
         None => return Ok(()),
     };
 
-    if let CallbackAction::SetLang(lang) = action {
-        let telegram_id = q.from.id.0 as i64;
+    let caller = Caller::resolve(&pool, &q.from).await?;
+    let msgs = caller.msgs;
 
+    if let CallbackAction::SetLang(lang) = action {
         sqlx::query!(
             "UPDATE users SET language = $1 WHERE telegram_id = $2",
             lang as _,
-            telegram_id
+            caller.telegram_id
         )
         .execute(&pool)
         .await?;
@@ -505,9 +522,6 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
                 .await?;
         }
     } else if let CallbackAction::LinkMerge { code } = &action {
-        let telegram_id = q.from.id.0 as i64;
-        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
-
         // The code may have expired or been spent while the button waited; core re-resolves
         // both accounts and spends the code atomically with whatever it ends up doing.
         let outcome =
@@ -515,13 +529,8 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
         let result_text = match outcome {
             services::MergeOutcome::Merged { .. } => msgs.link_merge_done.to_string(),
             services::MergeOutcome::AlreadyLinked => msgs.link_already.to_string(),
-            services::MergeOutcome::Attached { trial_granted } => {
-                let mut text = msgs.link_success.to_string();
-                if trial_granted {
-                    text.push_str("\n\n");
-                    text.push_str(msgs.trial_granted);
-                }
-                text
+            services::MergeOutcome::Attached { trial } => {
+                welcome_text(msgs, msgs.link_success, trial.as_ref())
             }
             services::MergeOutcome::InvalidCode => msgs.link_invalid.to_string(),
         };
@@ -531,24 +540,15 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
                 .await?;
         }
     } else if action == CallbackAction::LinkCancel {
-        let telegram_id = q.from.id.0 as i64;
-        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
         if let Some(msg) = q.message {
             bot.edit_message_text(msg.chat().id, msg.id(), msgs.link_cancelled)
                 .await?;
         }
     } else if let CallbackAction::Buy { plan_id } = action {
-        let telegram_id = q.from.id.0 as i64;
-        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
-
-        // Look up user
-        let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id,)
-            .fetch_optional(&pool)
-            .await?;
-        let user_id = match user {
-            Some(u) => u.id,
-            None => return Ok(()),
+        let Some(user) = caller.user else {
+            return Ok(());
         };
+        let user_id = user.id;
 
         // Look up the plan
         let plan = sqlx::query!(
@@ -571,7 +571,7 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             .message
             .as_ref()
             .map(|m| m.chat().id)
-            .unwrap_or(ChatId(telegram_id));
+            .unwrap_or(ChatId(caller.telegram_id));
 
         // Calculate proration
         let current_sub = billing::get_current_subscription(&pool, user_id).await?;
@@ -649,6 +649,8 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
 }
 
 async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> HandlerResult {
+    let caller = Caller::resolve(&pool, &q.from).await?;
+
     let (plan_id, payload_user_id) = match billing::parse_invoice_payload(&q.invoice_payload) {
         Some(ids) => ids,
         None => {
@@ -678,19 +680,11 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
     };
 
     // Verify user matches the one encoded in the payload
-    let telegram_id = q.from.id.0 as i64;
-    let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-        .fetch_optional(&pool)
-        .await?;
-
-    let user = match user {
-        Some(u) => u,
-        None => {
-            bot.answer_pre_checkout_query(q.id.clone(), false)
-                .error_message("User not found. Please /start first.")
-                .await?;
-            return Ok(());
-        }
+    let Some(user) = caller.user else {
+        bot.answer_pre_checkout_query(q.id.clone(), false)
+            .error_message("User not found. Please /start first.")
+            .await?;
+        return Ok(());
     };
 
     if user.id != payload_user_id {
@@ -707,9 +701,8 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
         .is_some_and(|sub| sub.expires_at.is_none())
     {
         // Granted permanent access since the invoice was sent: do not take the money.
-        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
         bot.answer_pre_checkout_query(q.id.clone(), false)
-            .error_message(msgs.buy_permanent)
+            .error_message(caller.msgs.buy_permanent)
             .await?;
         return Ok(());
     }
@@ -738,7 +731,11 @@ async fn handle_successful_payment(
     payment: SuccessfulPayment,
     pool: DbPool,
 ) -> HandlerResult {
-    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let caller = Caller::resolve(&pool, from).await?;
+    let msgs = caller.msgs;
     let charge_id = payment.telegram_payment_charge_id.0.as_str();
     let amount = payment.total_amount as i32;
 
@@ -754,15 +751,15 @@ async fn handle_successful_payment(
         return Ok(());
     };
 
-    let Some(user_id) =
-        sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-            .fetch_optional(&pool)
-            .await?
-    else {
-        error!("Charge {charge_id}: payer telegram_id={telegram_id} has no account");
+    let Some(user) = caller.user else {
+        error!(
+            "Charge {charge_id}: payer telegram_id={} has no account",
+            caller.telegram_id
+        );
         bot.send_message(msg.chat.id, msgs.buy_error).await?;
         return Ok(());
     };
+    let user_id = user.id;
 
     // The plan was purchasable when the invoice was issued (pre-checkout checked it seconds
     // ago); a NULL here means it was edited in between, which is a failure to record, not a
@@ -864,15 +861,42 @@ fn format_expiry(expires_at: chrono::DateTime<Utc>) -> String {
 }
 
 async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
-    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
-    bot.send_message(msg.chat.id, msgs.unknown_message).await?;
+    let Some(from) = sender(&msg) else {
+        return Ok(());
+    };
+    let msgs = Caller::resolve(&pool, from).await?.msgs;
+    bot.send_message(msg.chat.id, i18n::format_unknown_message(msgs))
+        .await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::Command;
+    use crate::bot::i18n;
+    use floppa_core::models::Lang;
     use teloxide::utils::command::BotCommands;
+
+    // The localized menu table and the parsed enum must describe the same commands.
+    #[test]
+    fn menu_table_matches_the_command_enum() {
+        for lang in [Lang::En, Lang::Ru] {
+            let menu = i18n::bot_commands(i18n::for_lang(lang));
+            assert_eq!(menu.len(), 5, "one entry per Command variant");
+            for entry in &menu {
+                assert!(
+                    Command::parse(&format!("/{}", entry.command), "floppabot").is_ok(),
+                    "/{} is in the {lang} menu but is not a Command",
+                    entry.command
+                );
+                assert!(!entry.description.is_empty());
+            }
+            let fallback = i18n::format_unknown_message(i18n::for_lang(lang));
+            for entry in &menu {
+                assert!(fallback.contains(&format!("/{} — ", entry.command)));
+            }
+        }
+    }
 
     // Guards the deep-link split: a bare /start must still parse (new-user greeting path),
     // and /start link_<code> must capture the payload.

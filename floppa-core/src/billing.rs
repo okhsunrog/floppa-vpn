@@ -21,6 +21,7 @@ pub struct PurchasablePlan {
 pub struct CurrentSubscription {
     pub subscription_id: i64,
     pub plan_id: i32,
+    pub plan_display_name: String,
     pub price_stars: Option<i32>,
     pub period_days: Option<i32>,
     pub expires_at: Option<chrono::DateTime<Utc>>,
@@ -70,7 +71,8 @@ pub async fn get_current_subscription(
 ) -> Result<Option<CurrentSubscription>> {
     let row = sqlx::query!(
         r#"
-        SELECT s.id, s.plan_id, p.price_stars, p.period_days, s.expires_at
+        SELECT s.id, s.plan_id, p.display_name AS plan_display_name,
+               p.price_stars, p.period_days, s.expires_at
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
         WHERE s.user_id = $1 AND (s.expires_at IS NULL OR s.expires_at > NOW())
@@ -85,6 +87,7 @@ pub async fn get_current_subscription(
     Ok(row.map(|r| CurrentSubscription {
         subscription_id: r.id,
         plan_id: r.plan_id,
+        plan_display_name: r.plan_display_name,
         price_stars: r.price_stars,
         period_days: r.period_days,
         expires_at: r.expires_at,
@@ -426,6 +429,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: None, // trial has no price
             period_days: Some(7),
             expires_at: Some(now() + Duration::days(5)),
@@ -440,6 +444,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: Some(300),
             period_days: Some(30),
             expires_at: Some(now() + Duration::days(15)),
@@ -456,6 +461,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: Some(300),
             period_days: Some(30),
             expires_at: Some(now() + Duration::days(14) + Duration::hours(12)),
@@ -470,6 +476,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 2,
+            plan_display_name: "Plan".into(),
             price_stars: Some(300),
             period_days: Some(30),
             expires_at: Some(now() + Duration::days(28)),
@@ -487,6 +494,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: Some(100),
             period_days: Some(30),
             expires_at: None, // permanent
@@ -501,6 +509,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: Some(100),
             period_days: Some(30),
             expires_at: Some(now() - Duration::days(1)),
@@ -515,6 +524,7 @@ mod tests {
         let sub = CurrentSubscription {
             subscription_id: 1,
             plan_id: 1,
+            plan_display_name: "Plan".into(),
             price_stars: Some(0), // free plan
             period_days: Some(30),
             expires_at: Some(now() + Duration::days(15)),
