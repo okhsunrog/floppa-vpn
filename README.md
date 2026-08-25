@@ -112,6 +112,9 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
   unavailable) or a 0600 file in the app's private data directory (Android)
 - Deep-link authentication (Telegram Login Widget → JWT)
 - Two-process architecture on Android (VPN survives app swipe-close)
+- Always-on VPN and lockdown ("block connections without VPN") on Android: the service rebuilds
+  the last successful tunnel on its own when the system starts it — at boot, or with the app
+  never opened — and the app adopts it when opened
 
 ## Client Architecture
 
@@ -178,6 +181,8 @@ Two-process model so the VPN survives app swipe-close:
 **Why tarpc?** Android's standard IPC (AIDL, Messenger) is Java/Kotlin-only — useless when both ends are Rust. gRPC adds HTTP/2 overhead. tarpc is pure Rust, async-native, and works directly over Unix domain sockets with bincode serialization. The UI process connects to `vpn.sock` in the app data directory to query stats or request stop.
 
 **The flow:** `tauri-plugin-vpn` (Kotlin) starts `FloppaVpnService` as a foreground service → service creates TUN via Android's `VpnService.Builder` → passes the raw fd to Rust via JNI (`nativeStartServer`) → the tarpc server starts listening on `vpn.sock` and the tunnel (gotatun or shoes-lite) is brought up over that fd. When gotatun creates UDP sockets, it calls back into Kotlin via JNI (`protectSocket`) to mark them as bypass — preventing WireGuard packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
+
+**Always-on:** after every verified connect the UI process writes `autostart.json` (the TUN parameters, the protocol config, the resolved endpoint and the split rules; `0600` in the app's private data directory, like `vpn-config.json`). When the system starts the service with no configuration — the always-on toggle, boot, a lockdown restore — the service reads that bundle through `nativeLoadAutostart`, builds the same TUN, binds the RPC and starts the tunnel in-process (`nativeStartTunnelFromBundle`) under an epoch from a range the UI never uses. The UI, once opened, finds the tunnel over the RPC with its protocol and split rules reported by the service and adopts it as connected. Forgetting the configs removes the bundle, so a later system start finds nothing and stops.
 
 ## Frontend Sharing
 
