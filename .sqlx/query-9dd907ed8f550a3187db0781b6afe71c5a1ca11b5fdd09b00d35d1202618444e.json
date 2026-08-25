@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND expires_at IS NULL)\n           AS \"permanent!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "permanent!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9dd907ed8f550a3187db0781b6afe71c5a1ca11b5fdd09b00d35d1202618444e"
+}

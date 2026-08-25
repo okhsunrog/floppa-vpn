@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT display_name, price_stars, period_days FROM plans WHERE id = $1",
+  "query": "SELECT display_name, price_stars AS \"price_stars!\", period_days AS \"period_days!\"\n           FROM plans WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL",
   "describe": {
     "columns": [
       {
@@ -16,7 +16,7 @@
       },
       {
         "ordinal": 1,
-        "name": "price_stars",
+        "name": "price_stars!",
         "type_info": "Int4",
         "origin": {
           "Table": {
@@ -27,7 +27,7 @@
       },
       {
         "ordinal": 2,
-        "name": "period_days",
+        "name": "period_days!",
         "type_info": "Int4",
         "origin": {
           "Table": {
@@ -48,5 +48,5 @@
       true
     ]
   },
-  "hash": "cae02999f5c11118f7cad137adcc610ec7c4da7160e0e2b3017426b682b7f14d"
+  "hash": "34fce1eb1e98cd92bdeca38fcca0389242bf364c91f405ea06ae2ad6e7e507b1"
 }

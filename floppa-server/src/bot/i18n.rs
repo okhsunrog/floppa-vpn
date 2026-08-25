@@ -26,6 +26,8 @@ pub struct Messages {
     pub buy_no_plans: &'static str,
     pub buy_success: &'static str,
     pub buy_error: &'static str,
+    /// Shown instead of the plan list when the user holds a permanent subscription.
+    pub buy_permanent: &'static str,
     pub buy_plan_days: &'static str,  // "days" / "дней"
     pub buy_up_to_mbps: &'static str, // "up to {} Mbps" / "до {} Мбит/с"
     pub buy_no_speed_limit: &'static str,
@@ -86,6 +88,7 @@ static EN: Messages = Messages {
     buy_no_plans: "No plans available for purchase at this time.",
     buy_success: "Payment successful! Your subscription has been activated.",
     buy_error: "Payment processing failed. Please try again or contact support.",
+    buy_permanent: "You already have a permanent subscription — there is nothing to buy.",
     buy_plan_days: "days",
     buy_up_to_mbps: "up to {} Mbps",
     buy_no_speed_limit: "unlimited speed",
@@ -146,6 +149,7 @@ static RU: Messages = Messages {
     buy_no_plans: "Сейчас нет тарифов, доступных для покупки.",
     buy_success: "Оплата прошла успешно! Подписка активирована.",
     buy_error: "Ошибка обработки платежа. Попробуйте снова или обратитесь в поддержку.",
+    buy_permanent: "У вас бессрочная подписка — покупать ничего не нужно.",
     buy_plan_days: "дней",
     buy_up_to_mbps: "до {} Мбит/с",
     buy_no_speed_limit: "без ограничения скорости",

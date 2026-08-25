@@ -1,10 +1,11 @@
 //! Billing service: proration, payment processing, subscription switching.
 
 use crate::DbPool;
-use crate::error::Result;
-use crate::models::SubscriptionSource;
+use crate::error::{FloppaError, Result};
+use crate::models::{PaymentStatus, SubscriptionSource};
 use crate::services::replace_active_subscription;
 use chrono::{DateTime, Duration, Utc};
+use sqlx::PgTransaction;
 
 /// A plan available for purchase with Stars.
 pub struct PurchasablePlan {
@@ -158,16 +159,88 @@ pub struct CompletePaymentParams<'a> {
     pub credit_amount: i32,
 }
 
-/// Complete a Stars payment: expire old sub, create new sub, record payment.
+/// The subscription a purchase produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PurchaseOutcome {
+    pub subscription_id: i64,
+    /// When the new subscription ends — the value written to the row, so callers show the
+    /// user exactly what was stored instead of re-deriving it from "now".
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Why a purchase could not be turned into a subscription.
+#[derive(Debug, thiserror::Error)]
+pub enum PurchaseError {
+    /// This charge already produced a subscription — Telegram re-delivered the update, or two
+    /// workers raced. Nothing was changed; the user should simply be told all is well.
+    #[error("Telegram charge {telegram_charge_id} was already processed")]
+    AlreadyProcessed { telegram_charge_id: String },
+    /// The user holds a permanent subscription. Completing the purchase would have replaced
+    /// "forever" with a paid month, so nothing was changed; the caller decides what to do with
+    /// the money (refund, or record it as failed for an admin to look at).
+    #[error("user {user_id} holds a permanent subscription; refusing to replace it")]
+    PermanentSubscription { user_id: i64 },
+    #[error(transparent)]
+    Core(#[from] FloppaError),
+}
+
+impl From<sqlx::Error> for PurchaseError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Core(e.into())
+    }
+}
+
+/// Refuse to let a purchase clobber a permanent (`expires_at IS NULL`) subscription. Runs inside
+/// the purchase transaction so the check and the replacement cannot interleave with a grant.
+async fn ensure_no_permanent_subscription(
+    tx: &mut PgTransaction<'_>,
+    user_id: i64,
+) -> std::result::Result<(), PurchaseError> {
+    let permanent = sqlx::query_scalar!(
+        r#"SELECT EXISTS(SELECT 1 FROM subscriptions WHERE user_id = $1 AND expires_at IS NULL)
+           AS "permanent!""#,
+        user_id,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    if permanent {
+        return Err(PurchaseError::PermanentSubscription { user_id });
+    }
+    Ok(())
+}
+
+/// Read back the expiry a purchase stored (Postgres keeps microseconds, so the value the caller
+/// shows must come from the row, not from the nanosecond timestamp we computed).
+async fn stored_expires_at(
+    tx: &mut PgTransaction<'_>,
+    subscription_id: i64,
+) -> Result<DateTime<Utc>> {
+    let expires_at = sqlx::query_scalar!(
+        r#"SELECT expires_at AS "expires_at!" FROM subscriptions WHERE id = $1"#,
+        subscription_id,
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    Ok(expires_at)
+}
+
+/// Complete a Stars payment: expire the old subscription, create the new one, record the payment.
 ///
-/// Idempotent on `telegram_charge_id` (UNIQUE constraint in DB).
-pub async fn complete_payment(pool: &DbPool, params: CompletePaymentParams<'_>) -> Result<i64> {
+/// Idempotent on `telegram_charge_id` (UNIQUE constraint in DB): a second delivery of the same
+/// charge yields [`PurchaseError::AlreadyProcessed`] and changes nothing. A user holding a
+/// permanent subscription gets [`PurchaseError::PermanentSubscription`] instead of losing it.
+pub async fn complete_payment(
+    pool: &DbPool,
+    params: CompletePaymentParams<'_>,
+) -> std::result::Result<PurchaseOutcome, PurchaseError> {
     let now = Utc::now();
     let expires_at = now + Duration::days(params.period_days as i64);
 
     let mut tx = pool.begin().await?;
 
-    let sub_id = replace_active_subscription(
+    ensure_no_permanent_subscription(&mut tx, params.user_id).await?;
+
+    let subscription_id = replace_active_subscription(
         &mut tx,
         params.user_id,
         params.plan_id,
@@ -175,12 +248,13 @@ pub async fn complete_payment(pool: &DbPool, params: CompletePaymentParams<'_>) 
         SubscriptionSource::Purchase,
     )
     .await?;
+    let expires_at = stored_expires_at(&mut tx, subscription_id).await?;
 
     // Record payment (telegram_charge_id UNIQUE enforces idempotency)
-    sqlx::query!(
+    let recorded = sqlx::query!(
         r#"
         INSERT INTO payments (user_id, plan_id, amount, credit_amount, invoice_payload, telegram_charge_id, subscription_id, status, completed_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
         "#,
         params.user_id,
         params.plan_id,
@@ -188,27 +262,81 @@ pub async fn complete_payment(pool: &DbPool, params: CompletePaymentParams<'_>) 
         params.credit_amount,
         params.invoice_payload,
         params.telegram_charge_id,
-        sub_id,
+        subscription_id,
+        PaymentStatus::Completed as _,
     )
     .execute(&mut *tx)
-    .await?;
+    .await;
+
+    match recorded {
+        Ok(_) => {}
+        Err(sqlx::Error::Database(db_err))
+            if db_err.constraint() == Some("payments_telegram_charge_id_key") =>
+        {
+            // The transaction (and the subscription replacement it did) is rolled back on drop.
+            return Err(PurchaseError::AlreadyProcessed {
+                telegram_charge_id: params.telegram_charge_id.to_owned(),
+            });
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     tx.commit().await?;
 
-    Ok(sub_id)
+    Ok(PurchaseOutcome {
+        subscription_id,
+        expires_at,
+    })
+}
+
+/// A Stars charge Telegram reported as paid that could not be turned into a subscription.
+pub struct FailedPayment<'a> {
+    pub user_id: i64,
+    pub plan_id: i32,
+    pub telegram_charge_id: &'a str,
+    pub invoice_payload: &'a str,
+    pub amount: i32,
+    pub credit_amount: i32,
+    /// Human-readable cause, stored in `provider_data.error` for the admin who resolves it.
+    pub reason: &'a str,
+}
+
+/// Record a charge that could not be fulfilled (see [`PurchaseError`]), so the money is
+/// traceable from the payments table rather than from a log line. The charge id keeps its
+/// UNIQUE guarantee, so a later completion of the same charge is impossible by construction —
+/// an admin resolves the row by hand.
+pub async fn record_failed_payment(pool: &DbPool, failed: FailedPayment<'_>) -> Result<()> {
+    sqlx::query!(
+        r#"
+        INSERT INTO payments (user_id, plan_id, amount, credit_amount, invoice_payload, telegram_charge_id, status, provider_data)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, jsonb_build_object('error', $8::text))
+        "#,
+        failed.user_id,
+        failed.plan_id,
+        failed.amount,
+        failed.credit_amount,
+        failed.invoice_payload,
+        failed.telegram_charge_id,
+        PaymentStatus::Failed as _,
+        failed.reason,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Process a credit-funded plan switch (proration credit covers the full price).
 ///
-/// Idempotent: skips if a zero-amount payment for the same user+plan was
-/// completed within the last minute (guards against duplicate callbacks).
+/// Idempotent: returns `Ok(None)` if a zero-amount payment for the same user+plan was completed
+/// within the last minute (guards against duplicate callbacks). Refuses to replace a permanent
+/// subscription, like [`complete_payment`].
 pub async fn process_credit_switch(
     pool: &DbPool,
     user_id: i64,
     plan_id: i32,
     subscription_days: i32,
     credit_amount: i32,
-) -> Result<Option<i64>> {
+) -> std::result::Result<Option<PurchaseOutcome>, PurchaseError> {
     let now = Utc::now();
     let expires_at = now + Duration::days(subscription_days as i64);
 
@@ -224,12 +352,13 @@ pub async fn process_credit_switch(
     let recent = sqlx::query_scalar!(
         r#"
         SELECT 1 as "x!" FROM payments
-        WHERE user_id = $1 AND plan_id = $2 AND amount = 0 AND status = 'completed'
+        WHERE user_id = $1 AND plan_id = $2 AND amount = 0 AND status = $3
           AND completed_at > NOW() - INTERVAL '1 minute'
         LIMIT 1
         "#,
         user_id,
         plan_id,
+        PaymentStatus::Completed as _,
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -239,7 +368,9 @@ pub async fn process_credit_switch(
         return Ok(None);
     }
 
-    let sub_id = replace_active_subscription(
+    ensure_no_permanent_subscription(&mut tx, user_id).await?;
+
+    let subscription_id = replace_active_subscription(
         &mut tx,
         user_id,
         plan_id,
@@ -247,24 +378,29 @@ pub async fn process_credit_switch(
         SubscriptionSource::Purchase,
     )
     .await?;
+    let expires_at = stored_expires_at(&mut tx, subscription_id).await?;
 
     sqlx::query!(
         r#"
         INSERT INTO payments (user_id, plan_id, amount, credit_amount, invoice_payload, subscription_id, status, completed_at)
-        VALUES ($1, $2, 0, $3, $4, $5, 'completed', NOW())
+        VALUES ($1, $2, 0, $3, $4, $5, $6, NOW())
         "#,
         user_id,
         plan_id,
         credit_amount,
         format!("credit_switch:plan:{plan_id}:user:{user_id}"),
-        sub_id,
+        subscription_id,
+        PaymentStatus::Completed as _,
     )
     .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
 
-    Ok(Some(sub_id))
+    Ok(Some(PurchaseOutcome {
+        subscription_id,
+        expires_at,
+    }))
 }
 
 #[cfg(test)]
@@ -415,11 +551,18 @@ mod tests {
         .unwrap()
     }
 
-    async fn seed_subscription(pool: &DbPool, user_id: i64, plan_id: i32) {
+    /// `expires_at = None` seeds a permanent subscription.
+    async fn seed_subscription(
+        pool: &DbPool,
+        user_id: i64,
+        plan_id: i32,
+        expires_at: Option<DateTime<Utc>>,
+    ) {
         sqlx::query!(
-            "INSERT INTO subscriptions (user_id, plan_id, starts_at) VALUES ($1, $2, NOW())",
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, expires_at) VALUES ($1, $2, NOW(), $3)",
             user_id,
             plan_id,
+            expires_at,
         )
         .execute(pool)
         .await
@@ -469,7 +612,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        seed_subscription(&pool, user_id, plan_id).await;
+        seed_subscription(&pool, user_id, plan_id, None).await;
 
         let sub = get_current_subscription(&pool, user_id).await.unwrap();
         assert!(sub.is_some());
@@ -484,7 +627,7 @@ mod tests {
             .await
             .unwrap();
 
-        let sub_id = complete_payment(
+        let outcome = complete_payment(
             &pool,
             CompletePaymentParams {
                 user_id,
@@ -498,8 +641,9 @@ mod tests {
         )
         .await
         .unwrap();
+        let sub_id = outcome.subscription_id;
 
-        // Verify subscription
+        // Verify subscription; the reported expiry is exactly what was stored
         let sub = sqlx::query!(
             "SELECT plan_id, expires_at FROM subscriptions WHERE id = $1",
             sub_id,
@@ -508,7 +652,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(sub.plan_id, plan_id);
-        assert!(sub.expires_at.is_some());
+        assert_eq!(sub.expires_at, Some(outcome.expires_at));
 
         // Verify payment record
         let payment = sqlx::query!(
@@ -548,7 +692,8 @@ mod tests {
         .await
         .unwrap();
 
-        // Second call with same charge_id fails (UNIQUE constraint)
+        // Second call with same charge_id is reported as already processed and leaves the
+        // subscription set untouched (still exactly one active subscription)
         let result = complete_payment(
             &pool,
             CompletePaymentParams {
@@ -562,7 +707,111 @@ mod tests {
             },
         )
         .await;
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(PurchaseError::AlreadyProcessed { ref telegram_charge_id }) if telegram_charge_id == "charge_dup"
+        ));
+        let active_count = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+            user_id,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active_count, Some(1));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_purchase_never_replaces_a_permanent_subscription(pool: DbPool) {
+        let user_id = seed_user(&pool, 11111).await;
+        let premium_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'premium'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let standard_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        seed_subscription(&pool, user_id, premium_id, None).await;
+
+        let paid = complete_payment(
+            &pool,
+            CompletePaymentParams {
+                user_id,
+                plan_id: standard_id,
+                period_days: 30,
+                telegram_charge_id: "charge_perm",
+                invoice_payload: "plan:1:1",
+                amount: 100,
+                credit_amount: 0,
+            },
+        )
+        .await;
+        assert!(matches!(
+            paid,
+            Err(PurchaseError::PermanentSubscription { user_id: u }) if u == user_id
+        ));
+
+        let switched = process_credit_switch(&pool, user_id, standard_id, 30, 100).await;
+        assert!(matches!(
+            switched,
+            Err(PurchaseError::PermanentSubscription { .. })
+        ));
+
+        // The permanent subscription is still the (only) active one and no payment was written.
+        let active = sqlx::query!(
+            "SELECT plan_id, expires_at FROM subscriptions WHERE user_id = $1 AND (expires_at IS NULL OR expires_at > NOW())",
+            user_id,
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].plan_id, premium_id);
+        assert!(active[0].expires_at.is_none());
+        let payments =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM payments WHERE user_id = $1", user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(payments, Some(0));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_record_failed_payment_keeps_the_charge(pool: DbPool) {
+        let user_id = seed_user(&pool, 11111).await;
+        let plan_id = sqlx::query_scalar!("SELECT id FROM plans WHERE name = 'standard'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        record_failed_payment(
+            &pool,
+            FailedPayment {
+                user_id,
+                plan_id,
+                telegram_charge_id: "charge_lost",
+                invoice_payload: "plan:1:1",
+                amount: 100,
+                credit_amount: 20,
+                reason: "boom",
+            },
+        )
+        .await
+        .unwrap();
+
+        let row = sqlx::query!(
+            r#"SELECT status, amount, credit_amount, subscription_id,
+                      provider_data->>'error' AS error
+               FROM payments WHERE telegram_charge_id = 'charge_lost'"#
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.status, "failed");
+        assert_eq!(row.amount, 100);
+        assert_eq!(row.credit_amount, 20);
+        assert!(row.subscription_id.is_none());
+        assert_eq!(row.error.as_deref(), Some("boom"));
     }
 
     #[sqlx::test(migrations = "../migrations")]
@@ -577,7 +826,13 @@ mod tests {
             .await
             .unwrap();
 
-        seed_subscription(&pool, user_id, standard_id).await;
+        seed_subscription(
+            &pool,
+            user_id,
+            standard_id,
+            Some(Utc::now() + Duration::days(10)),
+        )
+        .await;
 
         // Upgrade to premium
         complete_payment(
@@ -614,15 +869,15 @@ mod tests {
             .await
             .unwrap();
 
-        let sub_id = process_credit_switch(&pool, user_id, plan_id, 84, 150)
+        let outcome = process_credit_switch(&pool, user_id, plan_id, 84, 150)
             .await
-            .unwrap();
-        assert!(sub_id.is_some());
+            .unwrap()
+            .expect("first switch is not deduplicated");
 
         // Verify zero-amount payment recorded
         let payment = sqlx::query!(
             "SELECT amount, credit_amount, status FROM payments WHERE subscription_id = $1",
-            sub_id.unwrap(),
+            outcome.subscription_id,
         )
         .fetch_one(&pool)
         .await

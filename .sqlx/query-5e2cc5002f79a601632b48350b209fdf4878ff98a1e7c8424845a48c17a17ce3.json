@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT 1 as \"x!\" FROM payments\n        WHERE user_id = $1 AND plan_id = $2 AND amount = 0 AND status = $3\n          AND completed_at > NOW() - INTERVAL '1 minute'\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "x!",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5e2cc5002f79a601632b48350b209fdf4878ff98a1e7c8424845a48c17a17ce3"
+}

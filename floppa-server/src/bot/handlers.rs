@@ -1,5 +1,5 @@
 use crate::bot::i18n;
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use dptree::di::DependencyMap;
 use floppa_core::{Config, DbPool, Secrets, billing, models::Lang, services};
 use std::ops::ControlFlow;
@@ -447,7 +447,19 @@ async fn status(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {
 }
 
 async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerResult {
-    let (_, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+
+    // A permanent subscription has nothing to upgrade to; buying would only replace "forever"
+    // with a paid month (billing refuses that too, but the user deserves a clear answer).
+    let user_id = sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+        .fetch_optional(&pool)
+        .await?;
+    if let Some(user_id) = user_id
+        && holds_permanent_subscription(&pool, user_id).await?
+    {
+        bot.send_message(msg.chat.id, msgs.buy_permanent).await?;
+        return Ok(());
+    }
 
     let plans = billing::get_purchasable_plans(&pool).await?;
 
@@ -482,6 +494,12 @@ async fn buy(bot: Bot, msg: Message, pool: DbPool, config: Config) -> HandlerRes
         .await?;
 
     Ok(())
+}
+
+/// Whether the user's current subscription is permanent (`expires_at IS NULL`).
+async fn holds_permanent_subscription(pool: &DbPool, user_id: i64) -> Result<bool, BotError> {
+    let current = billing::get_current_subscription(pool, user_id).await?;
+    Ok(current.is_some_and(|sub| sub.expires_at.is_none()))
 }
 
 async fn vless(
@@ -687,8 +705,21 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             None => return Ok(()),
         };
 
+        let chat_id = q
+            .message
+            .as_ref()
+            .map(|m| m.chat().id)
+            .unwrap_or(ChatId(telegram_id));
+
         // Calculate proration
         let current_sub = billing::get_current_subscription(&pool, user_id).await?;
+        if current_sub
+            .as_ref()
+            .is_some_and(|sub| sub.expires_at.is_none())
+        {
+            bot.send_message(chat_id, msgs.buy_permanent).await?;
+            return Ok(());
+        }
         let proration = billing::calculate_proration(
             current_sub.as_ref(),
             plan.price_stars,
@@ -696,28 +727,34 @@ async fn handle_callback(bot: Bot, q: CallbackQuery, pool: DbPool) -> HandlerRes
             Utc::now(),
         );
 
-        let chat_id = q
-            .message
-            .as_ref()
-            .map(|m| m.chat().id)
-            .unwrap_or(ChatId(telegram_id));
-
         if proration.payable_stars == 0 {
             // Credit covers the full price — switch with proportional days
-            let result = billing::process_credit_switch(
+            let switched = billing::process_credit_switch(
                 &pool,
                 user_id,
                 plan_id,
                 proration.subscription_days,
                 proration.credit_stars,
             )
-            .await?;
-            if result.is_some() {
-                let expires = (Utc::now() + Duration::days(proration.subscription_days as i64))
-                    .format("%Y-%m-%d")
-                    .to_string();
-                let message = i18n::format_buy_success(msgs, &plan.display_name, &expires);
-                bot.send_message(chat_id, message).await?;
+            .await;
+            match switched {
+                Ok(Some(outcome)) => {
+                    let message = i18n::format_buy_success(
+                        msgs,
+                        &plan.display_name,
+                        &format_expiry(outcome.expires_at),
+                    );
+                    bot.send_message(chat_id, message).await?;
+                }
+                // Duplicate tap within the dedup window: the first one already answered.
+                Ok(None) => {}
+                Err(billing::PurchaseError::PermanentSubscription { .. }) => {
+                    bot.send_message(chat_id, msgs.buy_permanent).await?;
+                }
+                Err(billing::PurchaseError::AlreadyProcessed { .. }) => {
+                    bot.send_message(chat_id, msgs.buy_success).await?;
+                }
+                Err(billing::PurchaseError::Core(e)) => return Err(e.into()),
             }
             return Ok(());
         }
@@ -803,6 +840,17 @@ async fn handle_pre_checkout(bot: Bot, q: PreCheckoutQuery, pool: DbPool) -> Han
 
     // Re-verify amount matches current proration
     let current_sub = billing::get_current_subscription(&pool, user.id).await?;
+    if current_sub
+        .as_ref()
+        .is_some_and(|sub| sub.expires_at.is_none())
+    {
+        // Granted permanent access since the invoice was sent: do not take the money.
+        let msgs = i18n::resolve_lang(&pool, telegram_id, q.from.language_code.as_deref()).await;
+        bot.answer_pre_checkout_query(q.id.clone(), false)
+            .error_message(msgs.buy_permanent)
+            .await?;
+        return Ok(());
+    }
     let proration = billing::calculate_proration(
         current_sub.as_ref(),
         plan.price_stars,
@@ -829,98 +877,128 @@ async fn handle_successful_payment(
     pool: DbPool,
 ) -> HandlerResult {
     let (telegram_id, msgs) = resolve_msg_lang(&msg, &pool).await;
+    let charge_id = payment.telegram_payment_charge_id.0.as_str();
+    let amount = payment.total_amount as i32;
 
-    let (plan_id, payload_user_id) = match billing::parse_invoice_payload(&payment.invoice_payload)
-    {
-        Some(ids) => ids,
-        None => {
-            error!(
-                "Invalid invoice payload in successful payment: {}",
-                payment.invoice_payload
-            );
-            bot.send_message(msg.chat.id, msgs.buy_error).await?;
-            return Ok(());
-        }
-    };
-
-    let user = sqlx::query!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
-        .fetch_optional(&pool)
-        .await?;
-    let user_id = match user {
-        Some(u) => u.id,
-        None => {
-            bot.send_message(msg.chat.id, msgs.buy_error).await?;
-            return Ok(());
-        }
-    };
-
-    if user_id != payload_user_id {
-        error!("User mismatch in successful payment: expected {payload_user_id}, got {user_id}");
+    let Some((plan_id, payload_user_id)) = billing::parse_invoice_payload(&payment.invoice_payload)
+    else {
+        // Only our own invoices reach this bot, so this cannot be attributed to a plan or
+        // recorded against one; the charge id in the log is all an admin has to go on.
+        error!(
+            "Charge {charge_id}: invalid invoice payload {:?}",
+            payment.invoice_payload
+        );
         bot.send_message(msg.chat.id, msgs.buy_error).await?;
         return Ok(());
-    }
+    };
 
+    let Some(user_id) =
+        sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = $1", telegram_id)
+            .fetch_optional(&pool)
+            .await?
+    else {
+        error!("Charge {charge_id}: payer telegram_id={telegram_id} has no account");
+        bot.send_message(msg.chat.id, msgs.buy_error).await?;
+        return Ok(());
+    };
+
+    // The plan was purchasable when the invoice was issued (pre-checkout checked it seconds
+    // ago); a NULL here means it was edited in between, which is a failure to record, not a
+    // default to guess.
     let plan = sqlx::query!(
-        "SELECT display_name, price_stars, period_days FROM plans WHERE id = $1",
+        r#"SELECT display_name, price_stars AS "price_stars!", period_days AS "period_days!"
+           FROM plans WHERE id = $1 AND price_stars IS NOT NULL AND period_days IS NOT NULL"#,
         plan_id,
     )
     .fetch_optional(&pool)
     .await?;
+    // The invoice was issued for `price − credit`, so the credit actually applied is the
+    // difference between the plan price and what Telegram charged — not a fresh proration,
+    // which would have drifted by the seconds between invoice and payment.
+    let credit_amount = plan.as_ref().map_or(0, |p| (p.price_stars - amount).max(0));
 
-    let plan = match plan {
-        Some(p) => p,
-        None => {
-            bot.send_message(msg.chat.id, msgs.buy_error).await?;
-            return Ok(());
+    // The Stars are already charged: a fulfilment failure is kept on record and an admin is
+    // woken up, instead of letting the only trace of it scroll away in a log.
+    let unfulfilled = async |reason: String| {
+        error!("Charge {charge_id} from user {user_id} could not be fulfilled: {reason}");
+        let recorded = billing::record_failed_payment(
+            &pool,
+            billing::FailedPayment {
+                user_id,
+                plan_id,
+                telegram_charge_id: charge_id,
+                invoice_payload: &payment.invoice_payload,
+                amount,
+                credit_amount,
+                reason: &reason,
+            },
+        )
+        .await;
+        if let Err(e) = recorded {
+            error!("Charge {charge_id}: could not record the failed payment either: {e}");
         }
+        crate::bot::notifications::alert_admins(
+            &bot,
+            &pool,
+            &format!(
+                "⚠️ Payment {charge_id} ({amount} ⭐, plan {plan_id}) from user {user_id} was \
+                 charged but could not be fulfilled: {reason}\nIt is recorded as a failed \
+                 payment; please resolve it by hand."
+            ),
+        )
+        .await;
+        bot.send_message(msg.chat.id, msgs.buy_error).await
     };
 
-    let period_days = plan.period_days.unwrap_or(30);
-    let price_stars = plan.price_stars.unwrap_or(0);
+    if user_id != payload_user_id {
+        unfulfilled(format!(
+            "invoice was issued to user {payload_user_id}, paid by user {user_id}"
+        ))
+        .await?;
+        return Ok(());
+    }
+    let Some(plan) = plan else {
+        unfulfilled(format!("plan {plan_id} is no longer purchasable")).await?;
+        return Ok(());
+    };
 
-    // Re-calculate proration for accurate credit recording
-    let current_sub = billing::get_current_subscription(&pool, user_id).await?;
-    let proration =
-        billing::calculate_proration(current_sub.as_ref(), price_stars, period_days, Utc::now());
-
-    match billing::complete_payment(
+    let completed = billing::complete_payment(
         &pool,
         billing::CompletePaymentParams {
             user_id,
             plan_id,
-            period_days,
-            telegram_charge_id: &payment.telegram_payment_charge_id.0,
+            period_days: plan.period_days,
+            telegram_charge_id: charge_id,
             invoice_payload: &payment.invoice_payload,
-            amount: payment.total_amount as i32,
-            credit_amount: proration.credit_stars,
+            amount,
+            credit_amount,
         },
     )
-    .await
-    {
-        Ok(_) => {
-            let expires = (Utc::now() + Duration::days(period_days as i64))
-                .format("%Y-%m-%d")
-                .to_string();
-            let message = i18n::format_buy_success(msgs, &plan.display_name, &expires);
+    .await;
+    match completed {
+        Ok(outcome) => {
+            let message = i18n::format_buy_success(
+                msgs,
+                &plan.display_name,
+                &format_expiry(outcome.expires_at),
+            );
             bot.send_message(msg.chat.id, message).await?;
         }
+        // Telegram re-delivered the update; the first delivery already did the work.
+        Err(billing::PurchaseError::AlreadyProcessed { .. }) => {
+            bot.send_message(msg.chat.id, msgs.buy_success).await?;
+        }
         Err(e) => {
-            // Idempotency: if telegram_charge_id UNIQUE violated, payment was already processed
-            let is_duplicate = matches!(
-                &e,
-                floppa_core::error::FloppaError::Database(sqlx::Error::Database(pg_err))
-                    if pg_err.constraint() == Some("payments_telegram_charge_id_key")
-            );
-            if is_duplicate {
-                bot.send_message(msg.chat.id, msgs.buy_success).await?;
-                return Ok(());
-            }
-            error!("Failed to complete payment: {e}");
-            bot.send_message(msg.chat.id, msgs.buy_error).await?;
+            unfulfilled(e.to_string()).await?;
         }
     }
 
     Ok(())
+}
+
+/// Date shown to the user for a subscription end.
+fn format_expiry(expires_at: chrono::DateTime<Utc>) -> String {
+    expires_at.format("%Y-%m-%d").to_string()
 }
 
 async fn fallback(bot: Bot, msg: Message, pool: DbPool) -> HandlerResult {

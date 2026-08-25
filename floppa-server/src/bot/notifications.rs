@@ -29,6 +29,30 @@ pub fn spawn(pool: DbPool, bot: Bot, config: Config) {
     });
 }
 
+/// Best-effort broadcast to every admin who has a Telegram chat with the bot. Delivery failures
+/// (an admin blocked the bot, say) are logged and skipped — the caller has already recorded
+/// whatever it is alerting about.
+pub async fn alert_admins(bot: &Bot, pool: &DbPool, text: &str) {
+    let admins = match sqlx::query_scalar!(
+        r#"SELECT telegram_id AS "telegram_id!" FROM users
+           WHERE is_admin AND telegram_id IS NOT NULL"#
+    )
+    .fetch_all(pool)
+    .await
+    {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!("Could not look up admins to alert: {e}");
+            return;
+        }
+    };
+    for telegram_id in admins {
+        if let Err(e) = bot.send_message(ChatId(telegram_id), text).await {
+            warn!("Could not alert admin telegram_id={telegram_id}: {e}");
+        }
+    }
+}
+
 async fn check_and_notify(pool: &DbPool, bot: &Bot, config: &Config) -> anyhow::Result<()> {
     // Find subscriptions expiring within 24-25h (1 day before) or already expired within last 1h,
     // that haven't been notified yet.

@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO payments (user_id, plan_id, amount, credit_amount, invoice_payload, telegram_charge_id, status, provider_data)\n        VALUES ($1, $2, $3, $4, $5, $6, $7, jsonb_build_object('error', $8::text))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int4",
+        "Int4",
+        "Int4",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "00624b83fcb375114ab7e93e19f665ea5dc3318710a3499cb9e71294578ff50b"
+}

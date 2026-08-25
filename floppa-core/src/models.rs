@@ -63,6 +63,19 @@ impl TryFrom<&str> for Protocol {
     }
 }
 
+/// Lifecycle of a `payments` row (TEXT column `status`). Bind as `PaymentStatus::Completed as _`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "TEXT", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum PaymentStatus {
+    Pending,
+    /// The charge produced a subscription.
+    Completed,
+    /// Telegram reported a successful charge, but turning it into a subscription failed; the
+    /// row keeps the charge id and the reason so the payment is not lost in a log line.
+    Failed,
+}
+
 /// A user's interface language, stored in `users.language` (TEXT; NULL = no preference yet).
 ///
 /// Only languages the bot has translations for are representable, so the column can never
