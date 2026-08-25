@@ -323,6 +323,13 @@ export type OutcomeAction =
   | { action: 'show_error'; error: VpnError }
   /** The peer for `protocol` may have been deleted server-side: check, and recreate it if so. */
   | { action: 'reprovision'; protocol: WgFamilyProtocol }
+  /**
+   * Same check, on a cycle that *did* connect: some other protocol carried it.
+   *
+   * Quiet by design — the tunnel is up, so there is nothing to reconnect and nothing to complain
+   * about. All that is owed is a working peer for next time.
+   */
+  | { action: 'repair'; protocol: WgFamilyProtocol }
 
 /**
  * Decide what a finished cycle means.
@@ -337,7 +344,14 @@ export function planOutcomeResponse(outcome: CycleOutcome): OutcomeAction {
   // through the generated union, and the `never` below is what makes forgetting to plan for it a
   // compile error instead of a silent `ignore`.
   switch (outcome.outcome) {
-    case 'connected':
+    case 'connected': {
+      // Connected does not mean nothing went wrong: the ladder tries protocols in order, so
+      // AmneziaWG can fail to verify — its peer deleted server-side — and WireGuard carry the
+      // connection a second later. That dead peer is worth repairing while the tunnel is up,
+      // quietly, instead of leaving it to be discovered on some later connect.
+      const dead = outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
+      return dead && dead !== 'vless' ? { action: 'repair', protocol: dead } : { action: 'ignore' }
+    }
     case 'cancelled':
     case 'down':
       return { action: 'ignore' }
@@ -391,6 +405,14 @@ export function planWithoutReprovision(outcome: CycleOutcome): OutcomeAction {
   return plan.action === 'reprovision'
     ? { action: 'show_error', error: { kind: 'connection_failed' } }
     : plan
+}
+
+/** After a repair: recreate the peer if it is gone, and say nothing either way. */
+export async function repairPeer(deps: Omit<ReprovisionDeps, 'reconnect'>): Promise<void> {
+  const lookup = await deps.lookup()
+  if (lookup.found !== 'no') return
+  console.info('[provisioning] a protocol we stepped over has lost its peer; recreating it')
+  await deps.resync()
 }
 
 export type ReprovisionOutcome =
@@ -496,6 +518,22 @@ export function usePeerProvisioning() {
   async function handleOutcome(outcome: CycleOutcome | null): Promise<void> {
     if (!outcome) return
     const plan = planOutcomeResponse(outcome)
+    if (plan.action === 'repair') {
+      // The tunnel is up. Nothing about this is the user's business, so no spinner and no error:
+      // a repair that cannot be done costs nothing that has not already been lost.
+      const deviceId = vpn.deviceId
+      if (!deviceId) return
+      try {
+        await repairPeer({
+          lookup: () => lookupPeer(api, deviceId, plan.protocol),
+          resync: setupAutoPeer,
+          hasConfig: () => vpn.hasConfig,
+        })
+      } catch (e) {
+        console.warn('[provisioning] could not repair the peer that failed to verify:', e)
+      }
+      return
+    }
     if (plan.action !== 'reprovision') {
       apply(plan)
       return

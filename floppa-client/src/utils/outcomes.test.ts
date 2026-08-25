@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vite-plus/test'
 import { isUnhandledOutcome, needsAttention } from './outcomes'
 import type { CycleOutcome } from '../bindings'
 
-const connected: CycleOutcome = { outcome: 'connected', protocol: 'amneziawg', adopted: false }
+const connected: CycleOutcome = {
+  outcome: 'connected',
+  protocol: 'amneziawg',
+  adopted: false,
+  failures: [],
+}
 const lostGaveUp: CycleOutcome = { outcome: 'lost_gave_up', protocol: 'amneziawg', passes: 3 }
 
 describe('isUnhandledOutcome', () => {

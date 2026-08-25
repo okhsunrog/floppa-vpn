@@ -579,7 +579,8 @@ async fn a_late_success_while_unwinding_is_torn_down_and_never_published_as_conn
         state.last_outcome,
         Some(CycleOutcome::Connected {
             protocol: Protocol::WireGuard,
-            adopted: false
+            adopted: false,
+            failures: Vec::new()
         })
     );
     assert!(

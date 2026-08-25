@@ -231,6 +231,8 @@ fn adopt(
         outcome: CycleOutcome::Connected {
             protocol: rt.protocol,
             adopted: true,
+            // Adoption ran no ladder, so nothing failed on the way.
+            failures: Vec::new(),
         },
     })
 }
@@ -424,6 +426,8 @@ pub fn reconcile(
                     outcome: CycleOutcome::Connected {
                         protocol: u.protocol,
                         adopted: u.adopted,
+                        // A hand-over to a tunnel that is already up: this epoch tried nothing.
+                        failures: Vec::new(),
                     },
                 }),
                 // Handed over on a dark observation: the epoch takes the tunnel but its waiter
@@ -477,6 +481,7 @@ pub fn reconcile(
                         outcome: CycleOutcome::Connected {
                             protocol: u.protocol,
                             adopted: u.adopted,
+                            failures: Vec::new(),
                         },
                     })
                 } else {
@@ -627,6 +632,10 @@ pub fn on_attempt_done(
                     outcome: CycleOutcome::Connected {
                         protocol,
                         adopted: false,
+                        // Everything the ladder stepped over to get here. A protocol that failed
+                        // to verify is a peer worth repairing even though another one carried the
+                        // connection.
+                        failures: cycle.failures.clone(),
                     },
                 })
             }

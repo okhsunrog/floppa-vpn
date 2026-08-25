@@ -397,7 +397,8 @@ fn a_tunnel_the_service_started_by_itself_is_adopted_at_startup_with_its_rules()
             IntentEpoch(1),
             CycleOutcome::Connected {
                 protocol: AWG,
-                adopted: true
+                adopted: true,
+                ..
             }
         ))
     ));
@@ -1188,6 +1189,44 @@ fn a_failure_moves_to_the_next_protocol_in_the_order() {
             assert_eq!(cycle.failures[0].protocol, AWG);
         }
         other => panic!("expected the next probe, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_cycle_that_connects_still_reports_what_it_stepped_over() {
+    // The device case this comes from: AmneziaWG failed to verify because its peer had been
+    // deleted on the server, WireGuard connected a second later, and the outcome said only
+    // "connected" — so nothing ever repaired the dead AmneziaWG peer. It survived until the next
+    // app start happened to re-provision it.
+    let now = t0();
+    let mut c = cycle(1, &[AWG, WG], 1);
+    c.index = 1;
+    c.failures.push(AttemptFailure {
+        protocol: AWG,
+        error: AttemptError::VerifyFailed,
+        pass: 0,
+    });
+    let status = Status::Connecting {
+        cycle: c,
+        phase: AttemptPhase::Verifying,
+        deadline: now + Duration::from_secs(25),
+    };
+
+    let d = attempt_done(
+        &status,
+        &up_intent(1, &[AWG, WG], params()),
+        established(WG),
+        now,
+    );
+    match outcome(&d) {
+        Some(CycleOutcome::Connected {
+            protocol, failures, ..
+        }) => {
+            assert_eq!(*protocol, WG, "the one that carried it");
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0].protocol, AWG, "the one that needs repairing");
+        }
+        other => panic!("expected a connected outcome, got {other:?}"),
     }
 }
 

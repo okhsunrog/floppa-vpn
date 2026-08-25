@@ -208,7 +208,17 @@ export type ConfigsView = {
 };
 
 /**  How a cycle ended. */
-export type CycleOutcome = { outcome: "connected"; protocol: Protocol; adopted: boolean } | 
+export type CycleOutcome = { outcome: "connected"; protocol: Protocol; adopted: boolean; 
+/**
+ *  What failed on the way here, if the ladder had to step over anything.
+ * 
+ *  A cycle that ends connected is not a cycle in which nothing went wrong: the ladder
+ *  tries protocols in order, so AmneziaWG can fail to verify — the signal that its peer
+ *  was deleted server-side — and WireGuard carry the connection a second later. Reporting
+ *  only the winner left that dead peer in place until something else happened to notice
+ *  it, which on device meant the next app start.
+ */
+failures: AttemptFailure[] } | 
 /**
  *  Every protocol in the order failed, for every allowed pass — or one failed fatally.
  * 

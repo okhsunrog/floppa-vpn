@@ -394,10 +394,40 @@ describe('planOutcomeResponse', () => {
 
   it('ignores a cycle that connected, was cancelled, or went down', () => {
     expect(
-      planOutcomeResponse({ outcome: 'connected', protocol: 'wireguard', adopted: false }).action,
+      planOutcomeResponse({
+        outcome: 'connected',
+        protocol: 'wireguard',
+        adopted: false,
+        failures: [],
+      }).action,
     ).toBe('ignore')
     expect(planOutcomeResponse({ outcome: 'cancelled' }).action).toBe('ignore')
     expect(planOutcomeResponse({ outcome: 'down' }).action).toBe('ignore')
+  })
+
+  it('repairs the peer of a protocol the ladder stepped over, without disturbing the tunnel', () => {
+    // The device case: AmneziaWG failed to verify because its peer had been deleted, WireGuard
+    // connected, and nothing repaired the dead peer until the next app start.
+    expect(
+      planOutcomeResponse({
+        outcome: 'connected',
+        protocol: 'wireguard',
+        adopted: false,
+        failures: [verifyFailed('amneziawg')],
+      }),
+    ).toEqual({ action: 'repair', protocol: 'amneziawg' })
+  })
+
+  it('has nothing to repair when the protocol that failed was VLESS', () => {
+    // VLESS has no per-device peer: its config is per-user and a peer removal never touches it.
+    expect(
+      planOutcomeResponse({
+        outcome: 'connected',
+        protocol: 'wireguard',
+        adopted: false,
+        failures: [verifyFailed('vless')],
+      }).action,
+    ).toBe('ignore')
   })
 
   it('reports a failed unwind', () => {
