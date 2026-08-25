@@ -3,8 +3,10 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use url::Url;
 
 use crate::api::ApiClient;
 
@@ -186,23 +188,32 @@ pub async fn login(api_url: &str, tokens: &TokenSource) -> Result<()> {
     // Bind to a random port on 127.0.0.1
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}/callback");
+    // The nonce rides along in the redirect URI; the server appends `&code=` to it. A callback
+    // without the matching state is some other local process guessing our port.
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    let redirect_uri = format!("http://127.0.0.1:{port}/callback?state={state}");
 
-    let auth_url = format!(
-        "{}/auth/telegram/start?redirect_uri={}",
-        api_url.trim_end_matches('/'),
-        urlencoding(&redirect_uri)
-    );
+    let auth_url = Url::parse_with_params(
+        &format!("{}/auth/telegram/start", api_url.trim_end_matches('/')),
+        [("redirect_uri", redirect_uri.as_str())],
+    )
+    .context("Invalid API URL")?;
 
     eprintln!("Opening browser for Telegram login...");
     eprintln!("If it doesn't open, visit: {auth_url}");
 
-    if open::that(&auth_url).is_err() {
+    if open::that(auth_url.as_str()).is_err() {
         eprintln!("Failed to open browser automatically.");
     }
 
-    // Wait for the callback
-    let code = wait_for_callback(listener).await?;
+    let code = tokio::time::timeout(LOGIN_TIMEOUT, wait_for_callback(listener, &state))
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "Login timed out after {} minutes",
+                LOGIN_TIMEOUT.as_secs() / 60
+            )
+        })??;
 
     // Exchange code for JWT
     let auth = ApiClient::exchange_code(api_url, &code).await?;
@@ -220,69 +231,132 @@ pub async fn login(api_url: &str, tokens: &TokenSource) -> Result<()> {
     Ok(())
 }
 
-/// Wait for a single HTTP GET request on the callback listener, extract `code` param.
-async fn wait_for_callback(listener: TcpListener) -> Result<String> {
-    let (mut stream, _) = listener
-        .accept()
-        .await
-        .context("Failed to accept callback connection")?;
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-    let mut buf = vec![0u8; 4096];
-    let n = stream.read(&mut buf).await?;
-    let request = String::from_utf8_lossy(&buf[..n]);
+/// Serve the loopback listener until a `GET /callback?state=<expected>&code=...` arrives; any
+/// other request (favicon, wrong path, wrong state) gets an error page and the wait continues.
+async fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String> {
+    loop {
+        let (mut stream, _) = listener
+            .accept()
+            .await
+            .context("Failed to accept callback connection")?;
 
-    // Parse GET /callback?code=XYZ HTTP/1.1
-    let code = request
-        .lines()
-        .next()
-        .and_then(|line| {
-            let path = line.split_whitespace().nth(1)?;
-            let query = path.split('?').nth(1)?;
-            query.split('&').find_map(|param| {
-                let (k, v) = param.split_once('=')?;
-                if k == "code" {
-                    Some(v.to_string())
-                } else {
-                    None
-                }
-            })
-        })
-        .ok_or_else(|| anyhow!("No 'code' parameter in callback"))?;
+        let mut buf = vec![0u8; 4096];
+        let n = stream.read(&mut buf).await?;
+        let request = String::from_utf8_lossy(&buf[..n]);
+        let path = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("/");
 
-    // Respond with success page
-    let body = r#"<!DOCTYPE html>
+        let (status, message) = match parse_callback(path, expected_state) {
+            Ok(code) => {
+                respond(
+                    &mut stream,
+                    "200 OK",
+                    "Login successful!",
+                    "You can close this tab and return to the terminal.",
+                )
+                .await?;
+                return Ok(code);
+            }
+            Err(CallbackError::NotCallback) => ("404 Not Found", "Not found"),
+            Err(CallbackError::BadState) => ("400 Bad Request", "Login state mismatch"),
+            Err(CallbackError::MissingCode) => ("400 Bad Request", "Missing login code"),
+        };
+        eprintln!("Ignoring request {path}: {message}");
+        respond(
+            &mut stream,
+            status,
+            message,
+            "Return to the terminal and try again.",
+        )
+        .await?;
+    }
+}
+
+enum CallbackError {
+    NotCallback,
+    BadState,
+    MissingCode,
+}
+
+/// Extract the login code from a request path, requiring the state nonce to match.
+fn parse_callback(path: &str, expected_state: &str) -> Result<String, CallbackError> {
+    let url = Url::parse("http://127.0.0.1")
+        .and_then(|base| base.join(path))
+        .map_err(|_| CallbackError::NotCallback)?;
+    if url.path() != "/callback" {
+        return Err(CallbackError::NotCallback);
+    }
+    let mut code = None;
+    let mut state = None;
+    for (key, value) in url.query_pairs() {
+        match &*key {
+            "code" => code = Some(value.into_owned()),
+            "state" => state = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+    if state.as_deref() != Some(expected_state) {
+        return Err(CallbackError::BadState);
+    }
+    code.filter(|c| !c.is_empty())
+        .ok_or(CallbackError::MissingCode)
+}
+
+async fn respond(
+    stream: &mut tokio::net::TcpStream,
+    status: &str,
+    title: &str,
+    detail: &str,
+) -> Result<()> {
+    let body = format!(
+        r#"<!DOCTYPE html>
 <html><head><title>Floppa VPN</title></head>
 <body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
 <div style="text-align:center">
-<h1>Login successful!</h1>
-<p>You can close this tab and return to the terminal.</p>
-</div></body></html>"#;
-
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+<h1>{title}</h1>
+<p>{detail}</p>
+</div></body></html>"#
     );
-
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len(),
+    );
     stream.write_all(response.as_bytes()).await?;
     stream.flush().await?;
-
-    Ok(code)
-}
-
-fn urlencoding(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn callback_requires_path_state_and_code() {
+        let ok = parse_callback("/callback?state=abc&code=x%2Fy", "abc");
+        assert_eq!(ok.ok().as_deref(), Some("x/y"));
+        assert!(matches!(
+            parse_callback("/favicon.ico", "abc"),
+            Err(CallbackError::NotCallback)
+        ));
+        assert!(matches!(
+            parse_callback("/callback?state=other&code=x", "abc"),
+            Err(CallbackError::BadState)
+        ));
+        assert!(matches!(
+            parse_callback("/callback?code=x", "abc"),
+            Err(CallbackError::BadState)
+        ));
+        assert!(matches!(
+            parse_callback("/callback?state=abc", "abc"),
+            Err(CallbackError::MissingCode)
+        ));
+    }
 
     #[test]
     fn write_private_creates_0600_and_replaces_atomically() {
