@@ -47,13 +47,22 @@ pub struct Claims {
     pub jti: Option<Uuid>,
 }
 
+/// How old a Login Widget payload may be. The widget signs `auth_date` at the moment the user
+/// approves the login and the browser posts it to us right away, so a payload older than this
+/// is a replayed one, not a slow user. Telegram's own guidance is "make sure it's not outdated";
+/// ten minutes leaves room for clock skew and a sluggish redirect.
+const TELEGRAM_WIDGET_MAX_AGE_SECS: i64 = 10 * 60;
+
+/// How old Mini App `initData` may be. Unlike the widget, `initData` is minted when the Mini App
+/// opens and re-sent on every login for as long as that app stays open, so it gets a day.
+const MINI_APP_INIT_DATA_MAX_AGE_SECS: i64 = 24 * 60 * 60;
+
 /// Verify Telegram Login Widget data
 ///
 /// Algorithm from https://core.telegram.org/widgets/login#checking-authorization
 pub fn verify_telegram_auth(data: &TelegramAuthData, bot_token: &str) -> bool {
-    // Check auth_date is recent (within 24 hours)
     let now = Utc::now().timestamp();
-    if now - data.auth_date > 86400 {
+    if now - data.auth_date > TELEGRAM_WIDGET_MAX_AGE_SECS {
         warn!("Telegram auth data expired: auth_date={}", data.auth_date);
         return false;
     }
@@ -162,7 +171,7 @@ pub fn verify_telegram_mini_app(init_data: &str, bot_token: &str) -> Option<Mini
         .parse()
         .ok()?;
     let now = Utc::now().timestamp();
-    if now - auth_date > 86400 {
+    if now - auth_date > MINI_APP_INIT_DATA_MAX_AGE_SECS {
         warn!("Mini App initData expired: auth_date={auth_date}");
         return None;
     }
@@ -570,7 +579,16 @@ mod tests {
         not_hex.hash = "zz".into();
         assert!(!verify_telegram_auth(&not_hex, BOT_TOKEN));
 
-        // Signed correctly, but a day and a bit ago.
+        // Signed correctly, but stale: the widget posts straight after approval, so a payload
+        // older than ten minutes is a replay. Just inside the window still passes.
+        assert!(verify_telegram_auth(
+            &widget_data(now - TELEGRAM_WIDGET_MAX_AGE_SECS + 60),
+            BOT_TOKEN
+        ));
+        assert!(!verify_telegram_auth(
+            &widget_data(now - TELEGRAM_WIDGET_MAX_AGE_SECS - 60),
+            BOT_TOKEN
+        ));
         assert!(!verify_telegram_auth(
             &widget_data(now - 86400 - 60),
             BOT_TOKEN
@@ -612,8 +630,11 @@ mod tests {
         assert!(verify_telegram_mini_app(&forged, BOT_TOKEN).is_none());
 
         assert!(
-            verify_telegram_mini_app(&mini_app_init_data(now - 86400 - 60, user), BOT_TOKEN)
-                .is_none()
+            verify_telegram_mini_app(
+                &mini_app_init_data(now - MINI_APP_INIT_DATA_MAX_AGE_SECS - 60, user),
+                BOT_TOKEN
+            )
+            .is_none()
         );
         assert!(verify_telegram_mini_app("hash=abc", BOT_TOKEN).is_none());
     }
