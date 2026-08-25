@@ -426,6 +426,28 @@ pub async fn merge_telegram_into_session(
     // 4. Re-point every child FK husk → survivor BEFORE deleting the husk.
     // 4a. app_installations (UNIQUE(user_id, device_id)): re-point peers off doomed husk
     //     installations, drop the duplicates, then move the rest.
+    //
+    //     The typical merge happens on the SAME device (the user created a credential account
+    //     on their phone, connected, then linked Telegram), so the survivor often already holds
+    //     a live peer for the same (device, protocol). Re-pointing the husk's peer onto that
+    //     installation would violate `peers_installation_protocol_active`; queue such husk peers
+    //     for daemon removal first (the survivor's peer is the one the client actually uses).
+    sqlx::query!(
+        r#"UPDATE peers p SET sync_status = 'pending_remove'
+           FROM app_installations h
+           JOIN app_installations s ON s.user_id = $1 AND s.device_id = h.device_id
+           WHERE h.user_id = $2 AND p.installation_id = h.id
+             AND p.sync_status NOT IN ('removed', 'pending_remove')
+             AND EXISTS (
+                 SELECT 1 FROM peers sp
+                 WHERE sp.installation_id = s.id AND sp.protocol = p.protocol
+                   AND sp.sync_status NOT IN ('removed', 'pending_remove')
+             )"#,
+        survivor_id,
+        husk_id,
+    )
+    .execute(&mut *tx)
+    .await?;
     sqlx::query!(
         r#"UPDATE peers p SET installation_id = s.id
            FROM app_installations h
@@ -1250,6 +1272,82 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(sub_count, Some(2));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_merge_same_device_same_protocol_keeps_survivor_peer(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+
+        // Both accounts hold an active AmneziaWG peer on the same device 'devA' — the common
+        // "connect first, link Telegram later" flow on one phone.
+        let survivor = create_credential_user(&pool, "same_phone", "password123")
+            .await
+            .unwrap();
+        let survivor_inst = sqlx::query_scalar!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devA') RETURNING id",
+            survivor.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let survivor_peer = sqlx::query_scalar!(
+            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, installation_id, protocol) \
+             VALUES ($1, 'PUBKEYSURV', '10.0.0.10', 'active', $2, 'amneziawg') RETURNING id",
+            survivor.id,
+            survivor_inst,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let husk = seed_user(&pool, 99999).await;
+        seed_subscription(&pool, husk, basic).await;
+        let husk_inst = sqlx::query_scalar!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devA') RETURNING id",
+            husk
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let husk_peer = sqlx::query_scalar!(
+            "INSERT INTO peers (user_id, public_key, assigned_ip, sync_status, installation_id, protocol) \
+             VALUES ($1, 'PUBKEYHUSK', '10.0.0.11', 'active', $2, 'amneziawg') RETURNING id",
+            husk,
+            husk_inst,
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let merged = merge_telegram_into_session(&pool, survivor.id, husk)
+            .await
+            .unwrap();
+        assert!(merged);
+
+        // Exactly one live peer remains for (devA, amneziawg): the survivor's own.
+        let live: Vec<i64> = sqlx::query_scalar!(
+            r#"SELECT id FROM peers
+               WHERE installation_id = $1 AND protocol = 'amneziawg'
+                 AND sync_status NOT IN ('removed', 'pending_remove')"#,
+            survivor_inst
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(live, vec![survivor_peer]);
+
+        // The husk's peer was handed to the daemon for removal (frees its IP), now owned by the
+        // survivor and attached to the survivor's installation.
+        let row = sqlx::query!(
+            "SELECT user_id, installation_id, sync_status FROM peers WHERE id = $1",
+            husk_peer
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.user_id, survivor.id);
+        assert_eq!(row.installation_id, Some(survivor_inst));
+        assert_eq!(row.sync_status, "pending_remove");
     }
 
     #[sqlx::test(migrations = "../migrations")]
