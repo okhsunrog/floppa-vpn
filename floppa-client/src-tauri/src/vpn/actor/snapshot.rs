@@ -3,7 +3,7 @@
 //! Rendered from the three axes by [`view`](super::view), a pure projection. Nothing here is a
 //! reconcile input — the actor never reads its own snapshot back.
 
-use super::intent::IntentEpoch;
+use super::intent::{IntentEpoch, TunnelParams};
 // Doc-only: the link in `ConfigsView`'s comment. That comment is copied verbatim into
 // `bindings.ts` by specta, so it must stay a bare link rather than name the module.
 #[cfg(doc)]
@@ -141,6 +141,14 @@ pub struct TunnelState {
     pub intent_order: Vec<Protocol>,
     /// The protocol actually running — distinct from the preferred one.
     pub protocol: Option<Protocol>,
+    /// The split rules the running tunnel was actually built with, when they are known.
+    ///
+    /// `None` when nothing is running, and for an adopted tunnel whose owner does not report them
+    /// (only the in-process backend, which cannot find a tunnel it did not start). Published
+    /// because it is the only way the UI can tell "the settings changed since this tunnel came
+    /// up" from data: that used to be a component flag, which a moment of `retrying` cleared and
+    /// leaving the page destroyed — while the tunnel carried on with the old rules.
+    pub params: Option<TunnelParams>,
     pub adopted: bool,
     pub attempt: Option<AttemptProgress>,
     pub retry: Option<RetryProgress>,
@@ -168,6 +176,7 @@ impl TunnelState {
             epoch,
             intent_order,
             protocol,
+            params,
             adopted,
             attempt,
             retry,
@@ -187,6 +196,7 @@ impl TunnelState {
             && *epoch == other.epoch
             && *intent_order == other.intent_order
             && *protocol == other.protocol
+            && *params == other.params
             && *adopted == other.adopted
             && *attempt == other.attempt
             && *retry == other.retry
@@ -212,6 +222,7 @@ impl TunnelState {
             epoch: IntentEpoch(0),
             intent_order: Vec::new(),
             protocol: None,
+            params: None,
             adopted: false,
             attempt: None,
             retry: None,

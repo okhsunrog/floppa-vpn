@@ -165,11 +165,35 @@ export const useVpnStore = defineStore(
       return initialising
     }
 
+    /**
+     * The split rules a connect from here would ask for.
+     *
+     * Sorted and deduplicated, the way `TunnelParams::new` promises on the Rust side: `apps` is
+     * built by pushing and splicing as the user taps, so unticking and reticking one app changed
+     * the order without changing the set — and the actor compares params by value, so "the same
+     * tunnel" turned into a rebuild.
+     */
     function params(): TunnelParams {
       const settings = useSettingsStore()
-      const apps = settings.splitMode === 'all' ? [] : [...settings.selectedApps]
+      const apps = settings.splitMode === 'all' ? [] : [...new Set(settings.selectedApps)].sort()
       return { split_mode: settings.splitMode, apps }
     }
+
+    /**
+     * Do the settings ask for a different tunnel than the one that is running?
+     *
+     * Derived from the snapshot rather than remembered: the running tunnel publishes the rules it
+     * was actually built with, so this survives a remount, a moment of `retrying` and a trip to
+     * another page — all of which used to clear the component flag that stood in for it while the
+     * tunnel carried on with the old rules. False when nothing is running and when the rules are
+     * unknown (an adopted tunnel whose owner does not report them): there is nothing to compare,
+     * and guessing would nag about a tunnel that may well be correct.
+     */
+    const splitDirty = computed(() => {
+      const running = state.value.params
+      if (!isConnected.value || !running) return false
+      return !sameParams(running, params())
+    })
 
     /**
      * Ask for a tunnel, and wait for the request to reach a terminal outcome.
@@ -281,6 +305,8 @@ export const useVpnStore = defineStore(
       attempt,
       retry,
       lastOutcome,
+      splitDirty,
+      params,
       init,
       refresh,
       connect,
@@ -291,6 +317,15 @@ export const useVpnStore = defineStore(
   },
   { persist: false },
 )
+
+/** The actor's own "same tunnel" test, on the shape the snapshot publishes. */
+function sameParams(a: TunnelParams, b: TunnelParams): boolean {
+  return (
+    a.split_mode === b.split_mode &&
+    a.apps.length === b.apps.length &&
+    a.apps.every((app, i) => app === b.apps[i])
+  )
+}
 
 function emptyState(): TunnelState {
   return {
@@ -305,6 +340,7 @@ function emptyState(): TunnelState {
     epoch: 0,
     intent_order: [],
     protocol: null,
+    params: null,
     adopted: false,
     attempt: null,
     retry: null,

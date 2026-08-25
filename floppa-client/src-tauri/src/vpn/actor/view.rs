@@ -29,15 +29,16 @@ pub fn render(
 ) -> TunnelState {
     let phase = phase_of(status, observed_once);
 
-    let (protocol, adopted, server_endpoint, assigned_ip, connected_at) = match status {
+    let (protocol, params, adopted, server_endpoint, assigned_ip, connected_at) = match status {
         Status::Up(u) => (
             Some(u.protocol),
+            u.params.clone(),
             u.adopted,
             Some(u.server_endpoint.clone()),
             Some(u.assigned_ip.clone()),
             Some(u.connected_at),
         ),
-        _ => (None, false, None, None, None),
+        _ => (None, None, false, None, None, None),
     };
 
     let attempt = match status {
@@ -87,6 +88,7 @@ pub fn render(
             Intent::Down { .. } => Vec::new(),
         },
         protocol,
+        params,
         adopted,
         attempt,
         retry,

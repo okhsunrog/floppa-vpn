@@ -78,6 +78,16 @@ async function handleConnect() {
 }
 
 /**
+ * Rebuild the tunnel with the split rules the settings now ask for.
+ *
+ * Asking again is enough — the actor sees a tunnel that no longer satisfies the request and
+ * rebuilds it — but the outcome has to be handled, or a rebuild that fails says nothing.
+ */
+async function reconnectForSplit() {
+  await handleOutcome(await vpn.connect())
+}
+
+/**
  * Outcomes of cycles nobody asked for.
  *
  * When a live tunnel drops, the actor reconnects on its own — there is no caller awaiting that
@@ -262,6 +272,31 @@ const healthDotClass = computed(() => {
           {{ formatLastPacket(vpn.state.last_packet_received) }}
         </span>
       </div>
+
+      <!--
+        The running tunnel does not route what the settings say. Derived from the rules the
+        tunnel publishes, so it survives a remount and a moment of retrying — the flag it
+        replaces was cleared by both, while the tunnel carried on with the old rules.
+      -->
+      <UAlert
+        v-if="vpn.splitDirty"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-split"
+        :title="t('settings.changesApplyOnReconnect')"
+        class="mt-2 w-full max-w-sm"
+      >
+        <template #actions>
+          <UButton
+            :label="t('settings.reconnect')"
+            color="warning"
+            variant="outline"
+            size="xs"
+            :loading="busy"
+            @click="reconnectForSplit"
+          />
+        </template>
+      </UAlert>
 
       <UAlert
         v-if="vpnErrorText"

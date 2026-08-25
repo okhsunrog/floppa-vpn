@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SplitMode } from '../../bindings'
 import { useVpnStore } from '../../stores/vpnStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { filterApps } from '../../utils/appFilter'
+import { usePeerProvisioning } from '../../composables/usePeerProvisioning'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settings = useSettingsStore()
+const { handleOutcome } = usePeerProvisioning()
 
 const searchQuery = ref('')
 const showSystemApps = ref(false)
@@ -49,33 +51,25 @@ const filteredApps = computed(() =>
 
 const selectedCount = computed(() => settings.selectedApps.length)
 
-// Track whether split tunneling settings changed while VPN is connected
-const splitDirty = ref(false)
 const reconnecting = ref(false)
 
-watch(
-  [() => settings.splitMode, () => settings.selectedApps],
-  () => {
-    if (vpn.isConnected) splitDirty.value = true
-  },
-  { deep: true },
-)
-
-// Clear dirty flag when VPN disconnects
-watch(
-  () => vpn.isConnected,
-  (connected) => {
-    if (!connected) splitDirty.value = false
-  },
-)
+/**
+ * "The running tunnel does not route what these settings say."
+ *
+ * Read from the store, which derives it from the rules the running tunnel publishes. It used to
+ * be a flag here, set on a change while connected and cleared on any `isConnected === false` —
+ * so a moment of `retrying` wiped it while the reconnect brought the tunnel back with the *old*
+ * rules, and leaving this page wiped it too.
+ */
+const splitDirty = computed(() => vpn.splitDirty)
 
 async function reconnectVpn() {
   reconnecting.value = true
-  splitDirty.value = false
   try {
     // Re-asking with the new split rules is enough: the actor sees a tunnel that no longer
-    // satisfies the request and rebuilds it.
-    await vpn.connect()
+    // satisfies the request and rebuilds it. The outcome goes through the same handler as any
+    // other connect — a rebuild that fails used to say nothing at all.
+    await handleOutcome(await vpn.connect())
   } finally {
     reconnecting.value = false
   }
