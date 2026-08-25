@@ -9,6 +9,7 @@ use std::sync::Arc;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::auth::{MultiUserAuthenticator, RegistryUser};
 
@@ -35,12 +36,13 @@ pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> any
             None => continue,
         };
 
-        let uuid_bytes = match parse_vless_uuid(uuid_str) {
-            Some(b) => b,
-            None => {
+        let uuid_bytes = match Uuid::parse_str(uuid_str) {
+            Ok(u) => u.into_bytes(),
+            Err(e) => {
                 error!(
                     user_id = row.user_id,
                     uuid = uuid_str,
+                    error = %e,
                     "Invalid VLESS UUID format"
                 );
                 continue;
@@ -132,18 +134,4 @@ pub async fn periodic_sync_loop(
             error!("Periodic registry sync failed: {e:#}");
         }
     }
-}
-
-/// Parse a UUID string (with or without dashes) into 16 bytes.
-fn parse_vless_uuid(s: &str) -> Option<[u8; 16]> {
-    let hex: String = s.chars().filter(|c| *c != '-').collect();
-    if hex.len() != 32 {
-        return None;
-    }
-
-    let mut bytes = [0u8; 16];
-    for i in 0..16 {
-        bytes[i] = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(bytes)
 }

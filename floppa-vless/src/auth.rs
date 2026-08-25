@@ -46,11 +46,6 @@ impl MultiUserAuthenticator {
         }
     }
 
-    /// Number of registered users.
-    pub fn len(&self) -> usize {
-        self.users.len()
-    }
-
     /// Synchronize the registry with a new set of users from the database.
     ///
     /// Uses diff-based update: preserves existing limiters (and their unflushed
