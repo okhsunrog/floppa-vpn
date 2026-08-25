@@ -71,27 +71,19 @@ pub struct ApiClient {
     token: String,
 }
 
+/// Only the fields the CLI reads; serde ignores the rest of the server's response.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct MeResponse {
-    pub id: i64,
-    pub username: Option<String>,
-    pub first_name: Option<String>,
-    pub is_admin: bool,
     pub subscription: Option<SubscriptionInfo>,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct SubscriptionInfo {
     pub plan_name: String,
-    pub plan_display_name: String,
     pub speed_limit_mbps: Option<i32>,
-    pub max_peers: i32,
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct MyPeer {
     pub id: i64,
     pub assigned_ip: String,
@@ -99,7 +91,6 @@ pub struct MyPeer {
     #[serde(default = "default_protocol")]
     pub protocol: Protocol,
     pub device_name: Option<String>,
-    pub device_id: Option<String>,
 }
 
 fn default_protocol() -> Protocol {
@@ -138,12 +129,10 @@ pub struct AuthResponse {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct AuthUserInfo {
     pub id: i64,
     pub username: Option<String>,
     pub first_name: Option<String>,
-    pub is_admin: bool,
 }
 
 #[derive(Debug, Serialize)]

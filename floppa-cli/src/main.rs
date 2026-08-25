@@ -109,7 +109,6 @@ async fn main() -> Result<()> {
             .init();
         None
     };
-    tracing_log::LogTracer::init().ok();
 
     let tokens = auth::TokenSource::new(cli.token, cli.token_file);
 
@@ -161,13 +160,17 @@ async fn main() -> Result<()> {
             if peers.is_empty() {
                 eprintln!("No peers found.");
             } else {
-                println!("{:<6} {:<18} {:<14} Device", "ID", "IP", "Status");
+                println!(
+                    "{:<6} {:<18} {:<14} {:<10} Device",
+                    "ID", "IP", "Status", "Protocol"
+                );
                 for p in &peers {
                     println!(
-                        "{:<6} {:<18} {:<14} {}",
+                        "{:<6} {:<18} {:<14} {:<10} {}",
                         p.id,
                         p.assigned_ip,
                         p.sync_status,
+                        p.protocol,
                         p.device_name.as_deref().unwrap_or("-")
                     );
                 }

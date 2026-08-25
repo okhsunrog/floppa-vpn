@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2024"
 description = "CLI client for Floppa VPN"
 
-[[bin]]
-name = "floppa-cli"
-path = "src/main.rs"
-
 [dependencies]
 gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-2026-08-25", features = ["device", "tun"] }
 tun = { version = "0.8", features = ["async"] }
@@ -24,7 +20,6 @@ open = "5"
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
-tracing-log = "0.2.0"
 tracing-appender = "0.2.4"
 uuid = { version = "1.25.0", features = ["v4"] }
 url = "2.5.8"
