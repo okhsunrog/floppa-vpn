@@ -9,7 +9,7 @@
 use super::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use super::types::*;
 use super::{TunnelActor, observer};
-use crate::vpn::backend::VpnBackend;
+use crate::vpn::backend::{BackendError, VpnBackend};
 use crate::vpn::platform::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
 use crate::vpn::protocol::{InterfaceName, Protocol};
 use crate::vpn::rollback::RollbackStack;
@@ -67,10 +67,12 @@ impl VpnBackend for FakeBackend {
         _: &str,
         _: &TunParams,
         endpoint: SocketAddr,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         self.starts.fetch_add(1, Ordering::SeqCst);
         if self.refuse_starts.load(Ordering::SeqCst) {
-            return Err("start refused".into());
+            return Err(BackendError::Engine {
+                detail: "start refused".into(),
+            });
         }
         *self.running.lock().unwrap() = Some(RunningTunnel {
             protocol: config.protocol(),
@@ -82,7 +84,7 @@ impl VpnBackend for FakeBackend {
         Ok(())
     }
 
-    async fn stop(&self) -> Result<(), String> {
+    async fn stop(&self) -> Result<(), BackendError> {
         self.stops.fetch_add(1, Ordering::SeqCst);
         *self.running.lock().unwrap() = None;
         Ok(())
@@ -103,7 +105,7 @@ impl VpnBackend for FakeBackend {
         }
     }
 
-    async fn ping(&self) -> Result<(), String> {
+    async fn ping(&self) -> Result<(), BackendError> {
         Ok(())
     }
 }

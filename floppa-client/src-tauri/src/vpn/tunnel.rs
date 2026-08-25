@@ -1,5 +1,6 @@
 //! GotatunTunnel - WireGuard tunnel using gotatun library
 
+use super::backend::BackendError;
 #[cfg(not(target_os = "android"))]
 use super::platform::TunParams;
 use super::protocol::Protocol;
@@ -97,20 +98,46 @@ impl UdpTransportFactory for AndroidUdpSocketFactory {
     }
 }
 
+/// Classify a failure of the engine or its device.
+///
+/// Walks the error's source chain for an `io::Error`, so a refused privilege — the socket mark
+/// without `CAP_NET_ADMIN` — is recognised by its kind. It used to be recognised by the text
+/// "Operation not permitted", which a `setlocale` from the GTK side turns into something else.
+fn engine_error(what: &str, e: impl std::error::Error + 'static) -> BackendError {
+    let detail = format!("{what}: {e}");
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&e);
+    while let Some(err) = source {
+        if let Some(io) = err.downcast_ref::<std::io::Error>()
+            && io.kind() == std::io::ErrorKind::PermissionDenied
+        {
+            return BackendError::PermissionDenied { detail };
+        }
+        source = err.source();
+    }
+    BackendError::Engine { detail }
+}
+
+fn invalid_config(detail: impl std::fmt::Display) -> BackendError {
+    BackendError::InvalidConfig {
+        detail: detail.to_string(),
+    }
+}
+
 /// Build a gotatun `AwgConfig` from our parsed obfuscation params.
 // Start from AwgConfig::default() (standard-WG baseline) and override fields; this also keeps
 // us forward-compatible if gotatun adds new AWG fields.
 #[allow(clippy::field_reassign_with_default)]
-fn build_gotatun_awg(obf: &AwgObfuscation) -> Result<gotatun::noise::awg::AwgConfig, String> {
+fn build_gotatun_awg(obf: &AwgObfuscation) -> Result<gotatun::noise::awg::AwgConfig, BackendError> {
     use gotatun::noise::awg::{AwgConfig as GotaAwg, MagicHeader, ObfChain};
 
-    let parse_h =
-        |s: &str| MagicHeader::parse(s).map_err(|e| format!("Invalid AWG header '{s}': {e}"));
-    let parse_i = |o: &Option<String>| -> Result<Option<ObfChain>, String> {
+    let parse_h = |s: &str| {
+        MagicHeader::parse(s).map_err(|e| invalid_config(format!("AWG header '{s}': {e}")))
+    };
+    let parse_i = |o: &Option<String>| -> Result<Option<ObfChain>, BackendError> {
         match o {
             Some(spec) => ObfChain::parse(spec)
                 .map(Some)
-                .map_err(|e| format!("Invalid AWG signature packet '{spec}': {e}")),
+                .map_err(|e| invalid_config(format!("AWG signature packet '{spec}': {e}"))),
             None => Ok(None),
         }
     };
@@ -146,9 +173,12 @@ pub struct GotatunTunnel {
 
 impl GotatunTunnel {
     /// Build a DevicePeer from WgConfig using a pre-resolved endpoint address.
-    fn build_peer(config: &WgConfig, endpoint: std::net::SocketAddr) -> Result<DevicePeer, String> {
-        let peer_public_key = config.peer_public_key_bytes()?;
-        let preshared_key = config.peer_preshared_key_bytes()?;
+    fn build_peer(
+        config: &WgConfig,
+        endpoint: std::net::SocketAddr,
+    ) -> Result<DevicePeer, BackendError> {
+        let peer_public_key = config.peer_public_key_bytes().map_err(invalid_config)?;
+        let preshared_key = config.peer_preshared_key_bytes().map_err(invalid_config)?;
         let allowed_ips = config.allowed_ips_networks();
 
         let public_key = x25519::PublicKey::from(peer_public_key);
@@ -167,16 +197,18 @@ impl GotatunTunnel {
 
     /// Resolve the endpoint hostname to a `SocketAddr`.
     #[cfg(target_os = "android")]
-    async fn resolve_endpoint(config: &WgConfig) -> Result<std::net::SocketAddr, String> {
+    async fn resolve_endpoint(config: &WgConfig) -> Result<std::net::SocketAddr, BackendError> {
         tokio::net::lookup_host(&config.peer_endpoint)
             .await
-            .map_err(|e| format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint))?
+            .map_err(|e| BackendError::Engine {
+                detail: format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint),
+            })?
             .next()
-            .ok_or_else(|| {
-                format!(
+            .ok_or_else(|| BackendError::Engine {
+                detail: format!(
                     "Endpoint '{}' resolved to no addresses",
                     config.peer_endpoint
-                )
+                ),
             })
     }
 
@@ -193,10 +225,10 @@ impl GotatunTunnel {
         tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
         awg: Option<&AwgObfuscation>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, BackendError> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
 
-        let private_key = config.private_key_bytes()?;
+        let private_key = config.private_key_bytes().map_err(invalid_config)?;
         let peer = Self::build_peer(config, endpoint)?;
 
         // Create TUN device configuration
@@ -222,11 +254,11 @@ impl GotatunTunnel {
 
         // Create the TUN device
         let tun_device = tun::create_as_async(&tun_config)
-            .map_err(|e| format!("Failed to create TUN device: {}", e))?;
+            .map_err(|e| engine_error("creating the TUN device", e))?;
 
         // Wrap in gotatun's TunDevice
         let gota_tun = TunDevice::from_tun_device(tun_device)
-            .map_err(|e| format!("Failed to wrap TUN device: {}", e))?;
+            .map_err(|e| engine_error("wrapping the TUN device", e))?;
 
         // Build the device with all configuration
         let mut builder = DeviceBuilder::new()
@@ -248,7 +280,7 @@ impl GotatunTunnel {
         let device = builder
             .build()
             .await
-            .map_err(|e| format!("Failed to build gotatun device: {}", e))?;
+            .map_err(|e| engine_error("building the tunnel device", e))?;
 
         info!("Tunnel configured successfully");
 
@@ -268,12 +300,12 @@ impl GotatunTunnel {
         config: &WgConfig,
         tun_fd: RawFd,
         awg: Option<&AwgObfuscation>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, BackendError> {
         use tun::AbstractDevice;
 
         info!("Creating gotatun tunnel from fd {}", tun_fd);
 
-        let private_key = config.private_key_bytes()?;
+        let private_key = config.private_key_bytes().map_err(invalid_config)?;
         let endpoint = Self::resolve_endpoint(config).await?;
         let peer = Self::build_peer(config, endpoint)?;
 
@@ -285,19 +317,19 @@ impl GotatunTunnel {
 
         // Create the TUN device from existing fd
         let mut tun_device = tun::create_as_async(&tun_config)
-            .map_err(|e| format!("Failed to create TUN device from fd: {}", e))?;
+            .map_err(|e| engine_error("creating the TUN device from the descriptor", e))?;
 
         // HACK: the `tun` crate stubs out MTU on Android (it just stores the value).
         // gotatun reads MTU from this, so we need to set it here with the correct value.
         let mtu = config.get_mtu();
         tun_device
             .set_mtu(mtu)
-            .map_err(|e| format!("Failed to set MTU: {}", e))?;
+            .map_err(|e| engine_error("setting the TUN MTU", e))?;
         info!("Set TUN MTU to {}", mtu);
 
         // Wrap in gotatun's TunDevice
         let gota_tun = TunDevice::from_tun_device(tun_device)
-            .map_err(|e| format!("Failed to wrap TUN device: {}", e))?;
+            .map_err(|e| engine_error("wrapping the TUN device", e))?;
 
         // Build the device with Android socket factory and all configuration
         let mut builder = DeviceBuilder::new()
@@ -314,7 +346,7 @@ impl GotatunTunnel {
         let device = builder
             .build()
             .await
-            .map_err(|e| format!("Failed to build gotatun device: {}", e))?;
+            .map_err(|e| engine_error("building the tunnel device", e))?;
 
         info!("Tunnel configured successfully");
 
@@ -362,7 +394,7 @@ impl GotatunTunnel {
     }
 
     /// Stop the tunnel
-    pub async fn stop(mut self) -> Result<(), String> {
+    pub async fn stop(mut self) -> Result<(), BackendError> {
         info!("Stopping gotatun tunnel");
         if let Some(device) = self.device.take() {
             device.stop().await;
@@ -416,17 +448,23 @@ impl ActiveTunnel {
         }
     }
 
-    async fn ping(&self) -> Result<(), String> {
+    async fn ping(&self) -> Result<(), BackendError> {
         match self {
-            Self::Vless(t) => t.ping(Duration::from_secs(10)).await,
+            Self::Vless(t) => t
+                .ping(Duration::from_secs(10))
+                .await
+                .map_err(|detail| BackendError::Engine { detail }),
             Self::WireGuard(_) => Ok(()), // WireGuard has handshake-based health
         }
     }
 
-    async fn stop(self) -> Result<(), String> {
+    async fn stop(self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.stop().await,
-            Self::Vless(t) => t.stop().await,
+            Self::Vless(t) => t
+                .stop()
+                .await
+                .map_err(|detail| BackendError::Engine { detail }),
         }
     }
 }
@@ -456,7 +494,7 @@ impl TunnelManager {
     /// Stop existing tunnel if any (helper for start methods).
     async fn stop_existing(
         tunnel_guard: &mut Option<(ActiveTunnel, TunnelMeta)>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         if let Some((tunnel, _)) = tunnel_guard.take() {
             tunnel.stop().await?;
         }
@@ -477,7 +515,7 @@ impl TunnelManager {
         tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
         awg: Option<&AwgObfuscation>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
@@ -505,7 +543,7 @@ impl TunnelManager {
         config: &WgConfig,
         tun_fd: RawFd,
         awg: Option<&AwgObfuscation>,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
@@ -534,7 +572,7 @@ impl TunnelManager {
         config: &shoes_lite::api::VlessConfig,
         interface_name: &str,
         tun_params: &TunParams,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
@@ -553,14 +591,16 @@ impl TunnelManager {
         if let Some(ref addr_str) = config.address {
             let addr: IpAddr = addr_str
                 .parse()
-                .map_err(|e| format!("Invalid tunnel address '{addr_str}': {e}"))?;
+                .map_err(|e| invalid_config(format!("tunnel address '{addr_str}': {e}")))?;
             tun_config = tun_config.address(addr);
         }
         if let Some(mtu) = config.mtu {
             tun_config = tun_config.mtu(mtu);
         }
 
-        let tunnel = shoes_lite::api::VlessTunnel::start(config, tun_config).await?;
+        let tunnel = shoes_lite::api::VlessTunnel::start(config, tun_config)
+            .await
+            .map_err(|detail| BackendError::Engine { detail })?;
         *tunnel_guard = Some((ActiveTunnel::Vless(tunnel), vless_meta(config)));
         Ok(())
     }
@@ -570,7 +610,7 @@ impl TunnelManager {
         &self,
         config: &shoes_lite::api::VlessConfig,
         tun_fd: i32,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         info!(
             "Starting VLESS tunnel from fd={}, server={}, sni={}, mtu={:?}",
             tun_fd, config.server_addr, config.server_name, config.mtu
@@ -578,13 +618,15 @@ impl TunnelManager {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd).await?;
+        let tunnel = shoes_lite::api::VlessTunnel::from_fd(config, tun_fd)
+            .await
+            .map_err(|detail| BackendError::Engine { detail })?;
         info!("VLESS tunnel started successfully from fd={}", tun_fd);
         *tunnel_guard = Some((ActiveTunnel::Vless(tunnel), vless_meta(config)));
         Ok(())
     }
 
-    pub async fn stop(&self) -> Result<(), String> {
+    pub async fn stop(&self) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         if let Some((tunnel, _)) = tunnel_guard.take() {
             tunnel.stop().await?;
@@ -617,11 +659,11 @@ impl TunnelManager {
             .and_then(|(t, _)| t.connection_duration())
     }
 
-    pub async fn ping(&self) -> Result<(), String> {
+    pub async fn ping(&self) -> Result<(), BackendError> {
         let tunnel_guard = self.tunnel.read().await;
         match tunnel_guard.as_ref() {
             Some((tunnel, _)) => tunnel.ping().await,
-            None => Err("No tunnel running".to_string()),
+            None => Err(BackendError::NotRunning),
         }
     }
 }
@@ -639,5 +681,47 @@ fn vless_meta(config: &shoes_lite::api::VlessConfig) -> TunnelMeta {
         protocol: Protocol::Vless,
         endpoint: config.server_addr.to_string(),
         address: config.address.clone().unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A wrapper shaped like the engine's own errors: the `io::Error` sits one or two sources
+    /// deep, never at the top.
+    #[derive(Debug, thiserror::Error)]
+    enum Wrapped {
+        #[error("bind failed")]
+        Bind(#[source] std::io::Error),
+        #[error("outer")]
+        Outer(#[source] Box<Wrapped>),
+    }
+
+    #[test]
+    fn a_refused_privilege_is_recognised_by_kind_wherever_it_sits_in_the_chain() {
+        let denied = || std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(matches!(
+            engine_error("x", Wrapped::Bind(denied())),
+            BackendError::PermissionDenied { .. }
+        ));
+        assert!(matches!(
+            engine_error("x", Wrapped::Outer(Box::new(Wrapped::Bind(denied())))),
+            BackendError::PermissionDenied { .. }
+        ));
+    }
+
+    #[test]
+    fn any_other_failure_is_an_engine_error_with_the_full_message() {
+        let e = engine_error(
+            "building",
+            Wrapped::Bind(std::io::Error::from(std::io::ErrorKind::AddrInUse)),
+        );
+        assert_eq!(
+            e,
+            BackendError::Engine {
+                detail: "building: bind failed".into()
+            }
+        );
     }
 }

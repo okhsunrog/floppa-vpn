@@ -11,6 +11,7 @@
 //! happens when [`Intent::Up`] outlives a failure. That is why `userIntent`, `abortGen`,
 //! `reconnectAttempts`, `reconnectTimeoutId` and `runAutoCycle` have no counterpart here.
 
+use crate::vpn::backend::BackendError;
 use crate::vpn::protocol::Protocol;
 use crate::vpn::rollback::StepKind;
 use serde::{Deserialize, Serialize};
@@ -440,8 +441,8 @@ pub enum AttemptError {
     InvalidConfig { detail: String },
     #[error("{step:?} failed: {detail}")]
     Platform { step: StepKind, detail: String },
-    #[error("tunnel backend failed: {detail}")]
-    Backend { detail: String },
+    #[error("tunnel backend failed: {error}")]
+    Backend { error: BackendError },
     #[error("no handshake / no connectivity through the tunnel")]
     VerifyFailed,
     #[error("attempt exceeded its budget")]

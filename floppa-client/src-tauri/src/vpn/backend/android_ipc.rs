@@ -12,7 +12,7 @@
 //! └──────────────────┘           └─────────────────────────────┘
 //! ```
 
-use super::VpnBackend;
+use super::{BackendError, VpnBackend};
 use crate::vpn::actor::types::{
     Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, WorldView,
 };
@@ -47,12 +47,14 @@ impl AndroidIpcBackend {
     }
 
     /// Stop the service through the plugin's intent path rather than the RPC.
-    async fn stop_by_intent(&self) -> Result<(), String> {
+    async fn stop_by_intent(&self) -> Result<(), BackendError> {
         self.app
             .vpn()
             .stop()
             .await
-            .map_err(|e| format!("failed to stop the VPN service by intent: {e}"))
+            .map_err(|e| BackendError::ServiceUnreachable {
+                detail: format!("failed to stop the VPN service by intent: {e}"),
+            })
     }
 
     /// Get or create a tarpc client connection.
@@ -118,11 +120,9 @@ impl VpnBackend for AndroidIpcBackend {
         _interface_name: &str,
         _tun_params: &crate::vpn::platform::TunParams,
         _endpoint: std::net::SocketAddr,
-    ) -> Result<(), String> {
-        // On Android, the tunnel starts via JNI in the :vpn process.
-        // The Kotlin VpnPlugin.startVpn() launches FloppaVpnService which
-        // calls nativeStartTunnel() with the TUN fd and WG config.
-        Err("On Android, tunnel starts via VpnService JNI, not through backend.start()".into())
+    ) -> Result<(), BackendError> {
+        // On Android the tunnel is started by the `:vpn` service, asked through `start_tunnel`.
+        Err(BackendError::Unsupported)
     }
 
     async fn start_tunnel(
@@ -130,11 +130,11 @@ impl VpnBackend for AndroidIpcBackend {
         epoch: u64,
         config: &ProtocolConfig,
         endpoint: std::net::SocketAddr,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         let client = self
             .get_client_typed()
             .await
-            .map_err(|(_, reason)| reason)?;
+            .map_err(|(_, detail)| BackendError::ServiceUnreachable { detail })?;
 
         // A generous deadline: this is the call that actually brings the tunnel up, unlike the
         // polls that only ask about it.
@@ -145,15 +145,17 @@ impl VpnBackend for AndroidIpcBackend {
             .start_tunnel(ctx, epoch, wire, endpoint.to_string())
             .await
         {
-            Ok(result) => result,
+            Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),
             Err(e) => {
                 self.invalidate_client().await;
-                Err(format!("RPC error: {e}"))
+                Err(BackendError::ServiceUnreachable {
+                    detail: format!("RPC error: {e}"),
+                })
             }
         }
     }
 
-    async fn stop(&self) -> Result<(), String> {
+    async fn stop(&self) -> Result<(), BackendError> {
         let client = match self.get_client_typed().await {
             Ok(client) => client,
             // Nothing is listening — which is not the same as nothing running. A service whose
@@ -166,28 +168,35 @@ impl VpnBackend for AndroidIpcBackend {
                 debug!("RPC unreachable ({reason}); stopping the service by intent");
                 return self.stop_by_intent().await;
             }
-            Err((_, reason)) => return Err(reason),
+            Err((_, detail)) => return Err(BackendError::ServiceUnreachable { detail }),
         };
 
         match client.stop(tarpc::context::current()).await {
             Ok(result) => {
                 self.invalidate_client().await;
-                result
+                result.map_err(|detail| BackendError::ServiceRefused { detail })
             }
             Err(e) => {
                 self.invalidate_client().await;
-                Err(format!("RPC error: {e}"))
+                Err(BackendError::ServiceUnreachable {
+                    detail: format!("RPC error: {e}"),
+                })
             }
         }
     }
 
-    async fn ping(&self) -> Result<(), String> {
-        let client = self.get_client().await?;
+    async fn ping(&self) -> Result<(), BackendError> {
+        let client = self
+            .get_client_typed()
+            .await
+            .map_err(|(_, detail)| BackendError::ServiceUnreachable { detail })?;
         match client.ping(tarpc::context::current()).await {
-            Ok(result) => result,
+            Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),
             Err(e) => {
                 self.invalidate_client().await;
-                Err(format!("RPC error: {e}"))
+                Err(BackendError::ServiceUnreachable {
+                    detail: format!("RPC error: {e}"),
+                })
             }
         }
     }

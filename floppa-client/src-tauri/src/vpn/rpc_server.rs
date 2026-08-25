@@ -171,7 +171,7 @@ impl VpnRpc for VpnRpcServer {
             }
         };
 
-        match result {
+        match result.map_err(|e| e.to_string()) {
             Ok(()) => {
                 info!(protocol = %config.protocol(), "tunnel started");
                 // The notification has been saying "connecting" since the service came up; this is
@@ -191,7 +191,7 @@ impl VpnRpc for VpnRpcServer {
     }
 
     async fn stop(self, _ctx: Context) -> Result<(), String> {
-        let result = self.tunnel_manager.stop().await;
+        let result = self.tunnel_manager.stop().await.map_err(|e| e.to_string());
 
         // Stop the Android VPN service (foreground notification, TUN, stopSelf)
         #[cfg(target_os = "android")]
@@ -201,7 +201,7 @@ impl VpnRpc for VpnRpcServer {
     }
 
     async fn ping(self, _ctx: Context) -> Result<(), String> {
-        self.tunnel_manager.ping().await
+        self.tunnel_manager.ping().await.map_err(|e| e.to_string())
     }
 
     async fn set_log_config(self, _ctx: Context, config: crate::logging::LogConfig) {

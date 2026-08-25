@@ -117,7 +117,7 @@ export type AppInfo = {
  *  failure and an address-parse failure ended up indistinguishable from a dead peer. Every variant
  *  here is constructed at exactly one call site.
  */
-export type AttemptError = { kind: "permission_denied" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; detail: string } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" } | 
+export type AttemptError = { kind: "permission_denied" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; error: BackendError } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" } | 
 /**
  *  The attempt task panicked or was aborted. Synthesised by the actor from the task's join
  *  error, so a crash can never leave the status waiting for a report that will not come. The
@@ -142,6 +142,40 @@ export type AttemptProgress = {
 	index: number,
 	total: number,
 };
+
+/**
+ *  Why the backend could not do what it was asked.
+ * 
+ *  Plain data, so it can travel inside an attempt's failure to the UI. The variants that matter
+ *  to a caller's *decision* — as opposed to its log line — are the ones a policy hangs off:
+ *  [`Self::PermissionDenied`] is what makes the desktop ladder retry once without the socket
+ *  mark, and it is derived from the OS error kind, never from the wording of a message that a
+ *  `setlocale` may have translated.
+ */
+export type BackendError = 
+/**
+ *  The OS refused a privileged operation. On Linux that is `SO_MARK`, which needs
+ *  `CAP_NET_ADMIN`.
+ */
+{ kind: "permission_denied"; detail: string } | 
+/**  The config cannot be turned into a tunnel: a malformed key, address or AWG parameter. */
+{ kind: "invalid_config"; detail: string } | 
+/**  The tunnel engine or its device failed to start or stop. */
+{ kind: "engine"; detail: string } | 
+/**  Nothing is running to be pinged. */
+{ kind: "not_running" } | 
+/**
+ *  Cross-process only: the service could not be reached, or the call to it failed in
+ *  transit. Says nothing about whether a tunnel exists.
+ */
+{ kind: "service_unreachable"; detail: string } | 
+/**  Cross-process only: the service answered, and the answer was a refusal. */
+{ kind: "service_refused"; detail: string } | 
+/**
+ *  The operation does not exist on this backend: an in-process backend has no service to
+ *  ask, and a cross-process one starts nothing itself.
+ */
+{ kind: "unsupported" };
 
 export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string } | 
 /**  A transport failure, not a config problem: nothing looked at the config at all. */

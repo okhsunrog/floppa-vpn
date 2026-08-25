@@ -3,7 +3,7 @@
 //! The tunnel runs directly in the current process using gotatun.
 //! Used on desktop platforms (Linux, Windows, macOS).
 
-use super::VpnBackend;
+use super::{BackendError, VpnBackend};
 use crate::vpn::actor::types::{Observation, RunningTunnel, TunnelObservation, WorldView};
 use crate::vpn::platform::TunParams;
 use crate::vpn::state::ProtocolConfig;
@@ -30,7 +30,7 @@ impl VpnBackend for InProcessBackend {
         interface_name: &str,
         tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
-    ) -> Result<(), String> {
+    ) -> Result<(), BackendError> {
         match config {
             ProtocolConfig::WireGuard(wg) => {
                 self.tunnel_manager
@@ -56,11 +56,11 @@ impl VpnBackend for InProcessBackend {
         }
     }
 
-    async fn stop(&self) -> Result<(), String> {
+    async fn stop(&self) -> Result<(), BackendError> {
         self.tunnel_manager.stop().await
     }
 
-    async fn ping(&self) -> Result<(), String> {
+    async fn ping(&self) -> Result<(), BackendError> {
         self.tunnel_manager.ping().await
     }
 

@@ -333,7 +333,7 @@ pub async fn unwind(
     }
 
     if let Some(ExtraUndo::StopBackend) = extra
-        && let Err(e) = backend.stop().await
+        && let Err(e) = backend.stop().await.map_err(|e| e.to_string())
     {
         warn!(error = %e, "stopping a foreign tunnel failed");
         residual.push((StepKind::StartBackend, e));
@@ -362,7 +362,7 @@ async fn undo_step(
             .release_link(iface)
             .await
             .map_err(|e| e.to_string()),
-        Step::StartBackend { .. } => backend.stop().await,
+        Step::StartBackend { .. } => backend.stop().await.map_err(|e| e.to_string()),
         Step::Address { iface, addr } => platform
             .deconfigure_address(iface, *addr)
             .await
@@ -388,7 +388,7 @@ async fn undo_step(
             .await
             .map_err(|e| e.to_string()),
         // Stopping the service tears down the link and everything the builder applied with it.
-        Step::AndroidService { .. } => backend.stop().await,
+        Step::AndroidService { .. } => backend.stop().await.map_err(|e| e.to_string()),
     }
 }
 
@@ -588,16 +588,16 @@ mod tests {
             _: &str,
             _: &crate::vpn::platform::TunParams,
             _: std::net::SocketAddr,
-        ) -> Result<(), String> {
+        ) -> Result<(), crate::vpn::backend::BackendError> {
             unreachable!()
         }
-        async fn stop(&self) -> Result<(), String> {
+        async fn stop(&self) -> Result<(), crate::vpn::backend::BackendError> {
             Ok(())
         }
         async fn observe(&self) -> crate::vpn::actor::types::Observation {
             unreachable!()
         }
-        async fn ping(&self) -> Result<(), String> {
+        async fn ping(&self) -> Result<(), crate::vpn::backend::BackendError> {
             Ok(())
         }
     }

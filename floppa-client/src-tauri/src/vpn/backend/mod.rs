@@ -18,9 +18,47 @@ use super::platform::TunParams;
 use super::state::ProtocolConfig;
 use crate::vpn::actor::types::Observation;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Why the backend could not do what it was asked.
+///
+/// Plain data, so it can travel inside an attempt's failure to the UI. The variants that matter
+/// to a caller's *decision* — as opposed to its log line — are the ones a policy hangs off:
+/// [`Self::PermissionDenied`] is what makes the desktop ladder retry once without the socket
+/// mark, and it is derived from the OS error kind, never from the wording of a message that a
+/// `setlocale` may have translated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BackendError {
+    /// The OS refused a privileged operation. On Linux that is `SO_MARK`, which needs
+    /// `CAP_NET_ADMIN`.
+    #[error("permission denied: {detail}")]
+    PermissionDenied { detail: String },
+    /// The config cannot be turned into a tunnel: a malformed key, address or AWG parameter.
+    #[error("config is not usable: {detail}")]
+    InvalidConfig { detail: String },
+    /// The tunnel engine or its device failed to start or stop.
+    #[error("tunnel engine: {detail}")]
+    Engine { detail: String },
+    /// Nothing is running to be pinged.
+    #[error("no tunnel is running")]
+    NotRunning,
+    /// Cross-process only: the service could not be reached, or the call to it failed in
+    /// transit. Says nothing about whether a tunnel exists.
+    #[error("VPN service unreachable: {detail}")]
+    ServiceUnreachable { detail: String },
+    /// Cross-process only: the service answered, and the answer was a refusal.
+    #[error("VPN service refused: {detail}")]
+    ServiceRefused { detail: String },
+    /// The operation does not exist on this backend: an in-process backend has no service to
+    /// ask, and a cross-process one starts nothing itself.
+    #[error("not supported by this backend")]
+    Unsupported,
+}
 
 /// Backend for VPN tunnel management.
 ///
@@ -40,7 +78,7 @@ pub trait VpnBackend: Send + Sync {
         interface_name: &str,
         tun_params: &TunParams,
         endpoint: SocketAddr,
-    ) -> Result<(), String>;
+    ) -> Result<(), BackendError>;
 
     /// Ask a already-running out-of-process service to bring up a tunnel on the descriptor it
     /// holds, and get back a reason if it cannot.
@@ -52,12 +90,12 @@ pub trait VpnBackend: Send + Sync {
         _epoch: u64,
         _config: &ProtocolConfig,
         _endpoint: SocketAddr,
-    ) -> Result<(), String> {
-        Err("this backend has no out-of-process service to ask".to_string())
+    ) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported)
     }
 
     /// Stop the tunnel.
-    async fn stop(&self) -> Result<(), String>;
+    async fn stop(&self) -> Result<(), BackendError>;
 
     /// Look at the world.
     ///
@@ -78,7 +116,7 @@ pub trait VpnBackend: Send + Sync {
 
     /// Ping the VLESS server through the proxy chain (bypasses TUN).
     /// Updates `last_packet_received` on success so the health dot reflects connectivity.
-    async fn ping(&self) -> Result<(), String>;
+    async fn ping(&self) -> Result<(), BackendError>;
 
     /// Propagate log config to the tunnel process.
     /// Default no-op for desktop (same-process, handled by logging module directly).

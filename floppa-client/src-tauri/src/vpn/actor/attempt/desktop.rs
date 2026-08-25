@@ -6,6 +6,7 @@
 
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, DnsFailurePolicy, UpStatus};
+use crate::vpn::backend::BackendError;
 use crate::vpn::platform::PlatformError;
 use crate::vpn::rollback::{RollbackStack, Step, StepKind, split_default};
 use tracing::{error, info};
@@ -81,12 +82,10 @@ pub(super) async fn ladder(
         .start(&ctx.config, iface.as_str(), &tun_params, endpoint)
         .await
     {
-        // The kernel refuses fwmark without the capability; retry once without it rather than
-        // failing the whole protocol over a routing nicety.
-        Err(e)
-            if tun_params.fwmark.is_some()
-                && (e.contains("Operation not permitted") || e.contains("Permission denied")) =>
-        {
+        // The kernel refuses the socket mark without CAP_NET_ADMIN; retry once without it rather
+        // than failing the whole protocol over a routing nicety. Recognised by the error's kind,
+        // not by its wording — which is localised.
+        Err(BackendError::PermissionDenied { .. }) if tun_params.fwmark.is_some() => {
             info!("tunnel start with fwmark was refused, retrying without it");
             let mut retry = tun_params;
             retry.fwmark = None;
@@ -96,7 +95,7 @@ pub(super) async fn ladder(
         }
         other => other,
     };
-    started.map_err(|detail| AttemptError::Backend { detail })?;
+    started.map_err(|error| AttemptError::Backend { error })?;
     stack.confirm_top(Step::StartBackend {
         iface: iface.clone(),
     });
