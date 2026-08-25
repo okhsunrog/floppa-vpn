@@ -1,4 +1,5 @@
 pub mod logging;
+pub mod provision;
 pub mod vpn;
 
 use std::sync::Arc;
