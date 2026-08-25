@@ -1,5 +1,35 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Tunnel protocol as the server names it. The clap names are the wire strings, so a typo is a
+/// usage error instead of a request the server would coerce into some default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "lowercase")]
+pub enum Protocol {
+    #[value(name = "wireguard")]
+    WireGuard,
+    #[value(name = "amneziawg")]
+    AmneziaWg,
+    #[value(name = "vless")]
+    Vless,
+}
+
+impl Protocol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Protocol::WireGuard => "wireguard",
+            Protocol::AmneziaWg => "amneziawg",
+            Protocol::Vless => "vless",
+        }
+    }
+}
+
+impl fmt::Display for Protocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
 
 pub struct ApiClient {
     client: reqwest::Client,
@@ -33,13 +63,13 @@ pub struct MyPeer {
     pub assigned_ip: String,
     pub sync_status: String,
     #[serde(default = "default_protocol")]
-    pub protocol: String,
+    pub protocol: Protocol,
     pub device_name: Option<String>,
     pub device_id: Option<String>,
 }
 
-fn default_protocol() -> String {
-    "wireguard".to_string()
+fn default_protocol() -> Protocol {
+    Protocol::WireGuard
 }
 
 /// `GET /me/peers` returns an object wrapping the peer list (not a bare array).
@@ -59,7 +89,7 @@ pub struct CreatePeerResponse {
 struct CreatePeerRequest {
     device_name: Option<String>,
     device_id: Option<String>,
-    protocol: Option<String>,
+    protocol: Protocol,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,7 +174,7 @@ impl ApiClient {
     pub async fn create_peer(
         &self,
         device_name: Option<String>,
-        protocol: Option<&str>,
+        protocol: Protocol,
     ) -> Result<CreatePeerResponse> {
         let resp = self
             .client
@@ -153,7 +183,7 @@ impl ApiClient {
             .json(&CreatePeerRequest {
                 device_name,
                 device_id: None,
-                protocol: protocol.map(|p| p.to_string()),
+                protocol,
             })
             .send()
             .await?;
@@ -188,8 +218,16 @@ impl ApiClient {
         resp.text().await.context("Failed to read config response")
     }
 
-    /// Find an existing active peer for `protocol` ("wireguard" | "amneziawg"), or create one.
-    pub async fn find_or_create_peer(&self, protocol: &str) -> Result<String> {
+    /// Config for `protocol`: the VLESS URI, or an existing active peer's config, or a new peer.
+    pub async fn config_for(&self, protocol: Protocol) -> Result<String> {
+        match protocol {
+            Protocol::Vless => self.get_vless_config().await,
+            Protocol::WireGuard | Protocol::AmneziaWg => self.find_or_create_peer(protocol).await,
+        }
+    }
+
+    /// Find an existing active peer for `protocol` (WireGuard or AmneziaWG), or create one.
+    async fn find_or_create_peer(&self, protocol: Protocol) -> Result<String> {
         let peers = self.list_peers().await?;
 
         let active = peers
@@ -205,7 +243,7 @@ impl ApiClient {
         } else {
             let hostname = hostname();
             eprintln!("Creating new {protocol} peer (device: {hostname})...");
-            let created = self.create_peer(Some(hostname), Some(protocol)).await?;
+            let created = self.create_peer(Some(hostname), protocol).await?;
             eprintln!("Peer created: {} ({})", created.assigned_ip, created.id);
             return Ok(created.config);
         };

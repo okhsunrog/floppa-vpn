@@ -34,9 +34,9 @@ enum Command {
         /// Config file (.conf) or VLESS URI file
         #[arg(long)]
         config: Option<String>,
-        /// Protocol: wireguard (default), amneziawg, or vless
-        #[arg(long, default_value = "wireguard")]
-        protocol: String,
+        /// Tunnel protocol
+        #[arg(long, value_enum, default_value_t = api::Protocol::WireGuard)]
+        protocol: api::Protocol,
         /// TUN interface name
         #[arg(long, default_value = tunnel::DEFAULT_INTERFACE_NAME)]
         interface: String,
@@ -53,9 +53,9 @@ enum Command {
     },
     /// Fetch and print config (WireGuard/AmneziaWG .conf or VLESS URI)
     Config {
-        /// Protocol: wireguard (default), amneziawg, or vless
-        #[arg(long, default_value = "wireguard")]
-        protocol: String,
+        /// Tunnel protocol
+        #[arg(long, value_enum, default_value_t = api::Protocol::WireGuard)]
+        protocol: api::Protocol,
         /// Peer ID (WireGuard/AmneziaWG only; uses first active peer of that protocol if omitted)
         #[arg(long)]
         peer_id: Option<i64>,
@@ -132,11 +132,7 @@ async fn main() -> Result<()> {
                     } else {
                         bail!("No active subscription");
                     }
-                    if protocol == "vless" {
-                        client.get_vless_config().await?
-                    } else {
-                        client.find_or_create_peer(&protocol).await?
-                    }
+                    client.config_for(protocol).await?
                 }
             };
 
@@ -174,13 +170,12 @@ async fn main() -> Result<()> {
             let token =
                 auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
             let client = api::ApiClient::new(&api_url, &token);
-            let config = if protocol == "vless" {
-                client.get_vless_config().await?
-            } else {
-                match peer_id {
-                    Some(id) => client.get_peer_config(id).await?,
-                    None => client.find_or_create_peer(&protocol).await?,
+            let config = match (protocol, peer_id) {
+                (api::Protocol::WireGuard | api::Protocol::AmneziaWg, Some(id)) => {
+                    client.get_peer_config(id).await?
                 }
+                (api::Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
+                (protocol, None) => client.config_for(protocol).await?,
             };
             print!("{config}");
         }
