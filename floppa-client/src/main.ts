@@ -22,6 +22,7 @@ import ClientLoginView from './views/ClientLoginView.vue'
 import ClientDashboardView from './views/ClientDashboardView.vue'
 import ClientInfoView from './views/ClientInfoView.vue'
 import { useVpnStore } from './stores/vpnStore'
+import { extractDeepLinkLoginCode } from './utils/deepLink'
 
 // Forward console.* to Tauri's plugin-log so all frontend logs
 // appear in tracing (logcat on Android, stdout on desktop).
@@ -134,24 +135,6 @@ const processingDeepLinkCodes = new Set<string>()
 type SingleInstancePayload = {
   args: string[]
   cwd: string
-}
-
-function extractDeepLinkLoginCode(rawUrl: string): string | null {
-  try {
-    const parsedUrl = new URL(rawUrl)
-    if (parsedUrl.protocol !== 'floppa:') {
-      return null
-    }
-
-    const isAuthRoute = parsedUrl.hostname === 'auth' || parsedUrl.pathname === '/auth'
-    if (!isAuthRoute) {
-      return null
-    }
-
-    return parsedUrl.searchParams.get('code')
-  } catch {
-    return null
-  }
 }
 
 const EXCHANGE_ATTEMPTS = 3
