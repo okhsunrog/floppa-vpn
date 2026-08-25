@@ -319,13 +319,24 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
             let mut states = actor.states();
             runtime.spawn(async move {
                 let mut said = None;
+                // Whether there has been anything to stand down *from*. A freshly booted actor
+                // publishes Disconnected as soon as it has looked at the world, and on a cold
+                // start by the system that lands in the middle of the start it was booted for —
+                // so a stand-down on the plain state, rather than on work ending, told the service
+                // to stop while it was still coming up. It survived by luck; this is the fix.
+                let mut worked = false;
                 while states.changed().await.is_ok() {
                     let phase = states.borrow().phase;
                     if phase == Phase::Disconnected {
-                        said = None;
-                        stop_vpn_service();
+                        if worked {
+                            worked = false;
+                            said = None;
+                            stop_vpn_service();
+                        }
                         continue;
                     }
+                    // Unknown is "nothing has been observed yet", which is not work either.
+                    worked |= phase != Phase::Unknown;
                     let now = (phase.is_busy(), phase == Phase::Connected);
                     if said != Some(now) {
                         said = Some(now);

@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.Handler
@@ -422,7 +424,7 @@ class FloppaVpnService : VpnService() {
         val callback =
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    mainHandler.post { onDefaultNetwork(generation, network) }
+                    mainHandler.post { onUnderlyingNetwork(generation, network) }
                 }
 
                 override fun onLost(network: Network) {
@@ -431,15 +433,34 @@ class FloppaVpnService : VpnService() {
                     Log.i(TAG, "Lost network $network")
                 }
             }
+        // Explicitly *not* the default network. Once this service is up, the default network is
+        // our own tunnel — so a default-network callback reports the VPN and then goes silent
+        // through the very events it exists to catch: on this device a Wi-Fi to mobile switch
+        // produced no callback at all. What is wanted is the best network that is not a VPN,
+        // which is what the tunnel is actually carried by.
+        val request =
+            NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
         try {
-            manager.registerDefaultNetworkCallback(callback)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // "The one network that would be the default if we were not here" — exactly the
+                // question, answered by the system rather than guessed at from a list.
+                manager.registerBestMatchingNetworkCallback(request, callback, mainHandler)
+            } else {
+                // Older devices get every matching network and the most recent one wins. Coarser,
+                // and the rebind it triggers is idempotent, so being wrong costs a handshake. The
+                // callback arrives on a system thread there; it hops to the main one itself.
+                manager.registerNetworkCallback(request, callback)
+            }
             networkCallback = callback
         } catch (e: Exception) {
-            Log.w(TAG, "Could not watch the default network", e)
+            Log.w(TAG, "Could not watch the underlying network", e)
         }
     }
 
-    private fun onDefaultNetwork(generation: Long, network: Network) {
+    private fun onUnderlyingNetwork(generation: Long, network: Network) {
         // A callback outliving its generation belongs to a tunnel that is already gone.
         if (this.generation != generation) return
 
@@ -452,7 +473,7 @@ class FloppaVpnService : VpnService() {
         }
         if (previous == network) return
 
-        Log.i(TAG, "Default network changed: $previous -> $network; rebinding the tunnel")
+        Log.i(TAG, "The tunnel's network changed: $previous -> $network; rebinding")
         try {
             nativeNetworkChanged(generation)
         } catch (e: Exception) {
