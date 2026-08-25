@@ -4,12 +4,11 @@ use super::backend::BackendError;
 #[cfg(not(target_os = "android"))]
 use super::platform::TunParams;
 use super::protocol::Protocol;
-use super::state::{AwgObfuscation, WgConfig};
 use crate::vpn::actor::types::RawStats;
-use gotatun::device::{Device, DeviceBuilder, Peer as DevicePeer};
+use floppa_tunnel_config::{TunnelConfig, device};
+use gotatun::device::{Device, DeviceBuilder};
 use gotatun::tun::tun_async_device::TunDevice;
 use gotatun::udp::socket::UdpSocketFactory;
-use gotatun::x25519;
 #[cfg(not(target_os = "android"))]
 use shoes_lite::tun::TunServerConfig;
 #[cfg(not(target_os = "android"))]
@@ -123,47 +122,6 @@ fn invalid_config(detail: impl std::fmt::Display) -> BackendError {
     }
 }
 
-/// Build a gotatun `AwgConfig` from our parsed obfuscation params.
-// Start from AwgConfig::default() (standard-WG baseline) and override fields; this also keeps
-// us forward-compatible if gotatun adds new AWG fields.
-#[allow(clippy::field_reassign_with_default)]
-fn build_gotatun_awg(obf: &AwgObfuscation) -> Result<gotatun::noise::awg::AwgConfig, BackendError> {
-    use gotatun::noise::awg::{AwgConfig as GotaAwg, MagicHeader, ObfChain};
-
-    let parse_h = |s: &str| {
-        MagicHeader::parse(s).map_err(|e| invalid_config(format!("AWG header '{s}': {e}")))
-    };
-    let parse_i = |o: &Option<String>| -> Result<Option<ObfChain>, BackendError> {
-        match o {
-            Some(spec) => ObfChain::parse(spec)
-                .map(Some)
-                .map_err(|e| invalid_config(format!("AWG signature packet '{spec}': {e}"))),
-            None => Ok(None),
-        }
-    };
-
-    let mut a = GotaAwg::default();
-    a.jc = obf.jc as usize;
-    a.jmin = obf.jmin as usize;
-    a.jmax = obf.jmax as usize;
-    a.s1 = obf.s1 as usize;
-    a.s2 = obf.s2 as usize;
-    a.s3 = obf.s3 as usize;
-    a.s4 = obf.s4 as usize;
-    a.h1 = parse_h(&obf.h1)?;
-    a.h2 = parse_h(&obf.h2)?;
-    a.h3 = parse_h(&obf.h3)?;
-    a.h4 = parse_h(&obf.h4)?;
-    a.i_packets = [
-        parse_i(&obf.i1)?,
-        parse_i(&obf.i2)?,
-        parse_i(&obf.i3)?,
-        parse_i(&obf.i4)?,
-        parse_i(&obf.i5)?,
-    ];
-    Ok(a)
-}
-
 /// GotatunTunnel manages a WireGuard / AmneziaWG tunnel using gotatun
 pub struct GotatunTunnel {
     device: Option<FloppaDevice>,
@@ -172,47 +130,22 @@ pub struct GotatunTunnel {
 }
 
 impl GotatunTunnel {
-    /// Build a DevicePeer from WgConfig using a pre-resolved endpoint address.
-    fn build_peer(
-        config: &WgConfig,
-        endpoint: std::net::SocketAddr,
-    ) -> Result<DevicePeer, BackendError> {
-        let peer_public_key = config.peer_public_key_bytes().map_err(invalid_config)?;
-        let preshared_key = config.peer_preshared_key_bytes().map_err(invalid_config)?;
-        let allowed_ips = config.allowed_ips_networks();
-
-        let public_key = x25519::PublicKey::from(peer_public_key);
-        let mut peer = DevicePeer::new(public_key)
-            .with_endpoint(endpoint)
-            .with_allowed_ips(allowed_ips);
-
-        peer.keepalive = Some(config.persistent_keepalive.unwrap_or(25));
-
-        if let Some(psk) = preshared_key {
-            peer = peer.with_preshared_key(psk);
-        }
-
-        Ok(peer)
-    }
-
     /// Resolve the endpoint hostname to a `SocketAddr`.
     #[cfg(target_os = "android")]
-    async fn resolve_endpoint(config: &WgConfig) -> Result<std::net::SocketAddr, BackendError> {
-        tokio::net::lookup_host(&config.peer_endpoint)
+    async fn resolve_endpoint(config: &TunnelConfig) -> Result<std::net::SocketAddr, BackendError> {
+        let endpoint = &config.peer.endpoint;
+        tokio::net::lookup_host(endpoint.to_string())
             .await
             .map_err(|e| BackendError::Engine {
-                detail: format!("Failed to resolve endpoint '{}': {e}", config.peer_endpoint),
+                detail: format!("Failed to resolve endpoint '{endpoint}': {e}"),
             })?
             .next()
             .ok_or_else(|| BackendError::Engine {
-                detail: format!(
-                    "Endpoint '{}' resolved to no addresses",
-                    config.peer_endpoint
-                ),
+                detail: format!("Endpoint '{endpoint}' resolved to no addresses"),
             })
     }
 
-    /// Create a new tunnel from WireGuard config (desktop platforms).
+    /// Create a new tunnel from a WireGuard or AmneziaWG config (desktop platforms).
     ///
     /// `endpoint` is the pre-resolved server address so the hostname is only resolved once, by the
     /// attempt that is bringing the tunnel up. `tun_params` carries platform-specific
@@ -220,16 +153,12 @@ impl GotatunTunnel {
     #[cfg(not(target_os = "android"))]
     #[allow(unused_variables, unused_mut)]
     pub async fn new(
-        config: &WgConfig,
+        config: &TunnelConfig,
         interface_name: &str,
         tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
-        awg: Option<&AwgObfuscation>,
     ) -> Result<Self, BackendError> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
-
-        let private_key = config.private_key_bytes().map_err(invalid_config)?;
-        let peer = Self::build_peer(config, endpoint)?;
 
         // Create TUN device configuration
         let mut tun_config = tun::Configuration::default();
@@ -263,19 +192,15 @@ impl GotatunTunnel {
         // Build the device with all configuration
         let mut builder = DeviceBuilder::new()
             .with_udp(UdpSocketFactory::default())
-            .with_ip(gota_tun)
-            .with_private_key(x25519::StaticSecret::from(private_key))
-            .with_peer(peer);
+            .with_ip(gota_tun);
 
         #[cfg(target_os = "linux")]
         if let Some(mark) = tun_params.fwmark {
             builder = builder.with_fwmark(mark);
         }
 
-        // AmneziaWG: apply interface-wide obfuscation. Absent → plain WireGuard.
-        if let Some(obf) = awg {
-            builder = builder.with_awg(build_gotatun_awg(obf)?);
-        }
+        // Key, peer, and AmneziaWG obfuscation when the config carries it.
+        let builder = device::configure(builder, config, endpoint).map_err(invalid_config)?;
 
         let device = builder
             .build()
@@ -296,18 +221,12 @@ impl GotatunTunnel {
     /// On Android, the VpnService creates the TUN interface and provides us
     /// with the file descriptor. We just wrap it and use it with gotatun.
     #[cfg(target_os = "android")]
-    pub async fn from_fd(
-        config: &WgConfig,
-        tun_fd: RawFd,
-        awg: Option<&AwgObfuscation>,
-    ) -> Result<Self, BackendError> {
+    pub async fn from_fd(config: &TunnelConfig, tun_fd: RawFd) -> Result<Self, BackendError> {
         use tun::AbstractDevice;
 
         info!("Creating gotatun tunnel from fd {}", tun_fd);
 
-        let private_key = config.private_key_bytes().map_err(invalid_config)?;
         let endpoint = Self::resolve_endpoint(config).await?;
-        let peer = Self::build_peer(config, endpoint)?;
 
         // Create TUN device from raw fd
         let mut tun_config = tun::Configuration::default();
@@ -321,7 +240,7 @@ impl GotatunTunnel {
 
         // HACK: the `tun` crate stubs out MTU on Android (it just stores the value).
         // gotatun reads MTU from this, so we need to set it here with the correct value.
-        let mtu = config.get_mtu();
+        let mtu = config.mtu();
         tun_device
             .set_mtu(mtu)
             .map_err(|e| engine_error("setting the TUN MTU", e))?;
@@ -331,17 +250,12 @@ impl GotatunTunnel {
         let gota_tun = TunDevice::from_tun_device(tun_device)
             .map_err(|e| engine_error("wrapping the TUN device", e))?;
 
-        // Build the device with Android socket factory and all configuration
-        let mut builder = DeviceBuilder::new()
+        // Build the device with the Android socket factory, then the key, peer, and AmneziaWG
+        // obfuscation when the config carries it.
+        let builder = DeviceBuilder::new()
             .with_udp(AndroidUdpSocketFactory)
-            .with_ip(gota_tun)
-            .with_private_key(x25519::StaticSecret::from(private_key))
-            .with_peer(peer);
-
-        // AmneziaWG: apply interface-wide obfuscation. Absent → plain WireGuard.
-        if let Some(obf) = awg {
-            builder = builder.with_awg(build_gotatun_awg(obf)?);
-        }
+            .with_ip(gota_tun);
+        let builder = device::configure(builder, config, endpoint).map_err(invalid_config)?;
 
         let device = builder
             .build()
@@ -506,58 +420,48 @@ impl TunnelManager {
         self.tunnel.read().await.as_ref().map(|(_, m)| m.clone())
     }
 
-    /// Start WireGuard tunnel on desktop platforms (creates TUN device)
+    /// Start a WireGuard / AmneziaWG tunnel on desktop platforms (creates TUN device)
     #[cfg(not(target_os = "android"))]
     pub async fn start_wireguard(
         &self,
-        config: &WgConfig,
+        config: &TunnelConfig,
         interface_name: &str,
         tun_params: &TunParams,
         endpoint: std::net::SocketAddr,
-        awg: Option<&AwgObfuscation>,
     ) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = GotatunTunnel::new(config, interface_name, tun_params, endpoint, awg).await?;
+        let tunnel = GotatunTunnel::new(config, interface_name, tun_params, endpoint).await?;
         *tunnel_guard = Some((
             ActiveTunnel::WireGuard(tunnel),
             TunnelMeta {
-                protocol: if awg.is_some() {
-                    Protocol::AmneziaWg
-                } else {
-                    Protocol::WireGuard
-                },
+                protocol: wireguard_family(config),
                 endpoint: endpoint.to_string(),
-                address: config.address.clone(),
+                address: config.interface.address.to_string(),
             },
         ));
 
         Ok(())
     }
 
-    /// Start WireGuard / AmneziaWG tunnel using a raw file descriptor (Android only)
+    /// Start a WireGuard / AmneziaWG tunnel using a raw file descriptor (Android only)
     #[cfg(target_os = "android")]
     pub async fn start_wireguard_with_fd(
         &self,
-        config: &WgConfig,
+        config: &TunnelConfig,
         tun_fd: RawFd,
-        awg: Option<&AwgObfuscation>,
     ) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 
-        let tunnel = GotatunTunnel::from_fd(config, tun_fd, awg).await?;
+        let tunnel = GotatunTunnel::from_fd(config, tun_fd).await?;
         *tunnel_guard = Some((
             ActiveTunnel::WireGuard(tunnel),
             TunnelMeta {
-                protocol: if awg.is_some() {
-                    Protocol::AmneziaWg
-                } else {
-                    Protocol::WireGuard
-                },
-                endpoint: config.peer_endpoint.clone(),
-                address: config.address.clone(),
+                protocol: wireguard_family(config),
+                endpoint: config.peer.endpoint.to_string(),
+                address: config.interface.address.to_string(),
             },
         ));
 
@@ -673,6 +577,15 @@ impl Default for TunnelManager {
         Self {
             tunnel: RwLock::new(None),
         }
+    }
+}
+
+/// Which of the two gotatun-backed protocols a config is.
+fn wireguard_family(config: &TunnelConfig) -> Protocol {
+    if config.is_amneziawg() {
+        Protocol::AmneziaWg
+    } else {
+        Protocol::WireGuard
     }
 }
 

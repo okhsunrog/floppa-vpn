@@ -307,18 +307,10 @@ impl ConfigStore {
 fn summarize(protocol: Protocol, config: &ProtocolConfig) -> ConfigSummary {
     ConfigSummary {
         protocol,
-        address: config.address().to_string(),
-        server_endpoint: config.endpoint_str().to_string(),
-        dns: match config {
-            ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.dns.clone(),
-            ProtocolConfig::Vless(vless) => vless.dns.clone(),
-        },
-        allowed_ips: match config {
-            ProtocolConfig::WireGuard(wg) => wg.allowed_ips.clone(),
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.allowed_ips.clone(),
-            ProtocolConfig::Vless(vless) => vless.allowed_ips.clone(),
-        },
+        address: config.address(),
+        server_endpoint: config.endpoint_str(),
+        dns: config.dns_line(),
+        allowed_ips: config.allowed_ips_line(),
         mtu: config.get_mtu(),
     }
 }

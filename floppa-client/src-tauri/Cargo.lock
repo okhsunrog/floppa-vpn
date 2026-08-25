@@ -1518,11 +1518,11 @@ name = "floppa-client"
 version = "0.5.1"
 dependencies = [
  "async-trait",
- "base64 0.23.1",
  "bincode",
  "chrono",
  "dirs",
  "flate2",
+ "floppa-tunnel-config",
  "futures",
  "gotatun",
  "hostname",
@@ -1560,6 +1560,17 @@ dependencies = [
  "tun",
  "uuid",
  "wintun-bindings",
+]
+
+[[package]]
+name = "floppa-tunnel-config"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "gotatun",
+ "ipnetwork",
+ "serde",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

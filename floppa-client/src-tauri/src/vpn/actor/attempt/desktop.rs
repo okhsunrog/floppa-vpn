@@ -43,7 +43,7 @@ pub(super) async fn ladder(
         .await
         .map_err(|e| platform_error(StepKind::PrepareLink, e))?;
 
-    let endpoint_str = ctx.config.endpoint_str().to_string();
+    let endpoint_str = ctx.config.endpoint_str();
     let endpoint = tokio::net::lookup_host(&endpoint_str)
         .await
         .map_err(|e| AttemptError::ResolveFailed {
@@ -214,7 +214,7 @@ pub(super) async fn ladder(
         params: Some(ctx.params.clone()),
         adopted: false,
         server_endpoint: endpoint_str,
-        assigned_ip: ctx.config.address().to_string(),
+        assigned_ip: ctx.config.address(),
         connected_at: chrono::Utc::now().timestamp(),
         dark_since: None,
         // Set by the actor when it accepts the result; an attempt cannot resolve its own waiter.

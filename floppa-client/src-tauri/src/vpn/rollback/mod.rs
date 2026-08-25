@@ -282,31 +282,9 @@ impl RollbackStack {
 
 /// A /0 route is split into two /1s so it beats the system default without replacing it.
 ///
-/// Pure, and shared by every platform, so the [`Step::Routes`] payload records exactly the list
-/// that was handed to the OS.
-pub fn split_default(allowed_ips: &[IpNetwork], include_ipv6: bool) -> Vec<IpNetwork> {
-    let mut routes = Vec::new();
-    for network in allowed_ips {
-        if network.is_ipv6() && !include_ipv6 {
-            continue;
-        }
-        if network.prefix() == 0 {
-            let halves: [&str; 2] = if network.is_ipv4() {
-                ["0.0.0.0/1", "128.0.0.0/1"]
-            } else {
-                ["::/1", "8000::/1"]
-            };
-            for half in halves {
-                if let Ok(net) = half.parse() {
-                    routes.push(net);
-                }
-            }
-        } else {
-            routes.push(*network);
-        }
-    }
-    routes
-}
+/// Pure, and shared with the CLI through `floppa-tunnel-config`, so the [`Step::Routes`] payload
+/// records exactly the list that was handed to the OS.
+pub use floppa_tunnel_config::route::split_default;
 
 /// Undo everything on the stack, in reverse.
 ///
@@ -750,37 +728,5 @@ mod tests {
         let report = unwind(&mut recovered, None, &platform, &NoBackend, 0).await;
         assert!(report.is_clean());
         assert!(!Journal::default_path(dir.path()).exists());
-    }
-
-    #[test]
-    fn default_route_is_split_into_two_halves() {
-        assert_eq!(
-            split_default(&[net("0.0.0.0/0")], false),
-            vec![net("0.0.0.0/1"), net("128.0.0.0/1")]
-        );
-    }
-
-    #[test]
-    fn specific_routes_pass_through_untouched() {
-        let given = vec![net("10.0.0.0/8"), net("192.168.1.0/24")];
-        assert_eq!(split_default(&given, false), given);
-    }
-
-    #[test]
-    fn ipv6_is_dropped_when_the_host_has_it_disabled() {
-        let given = vec![net("0.0.0.0/0"), net("::/0")];
-        assert_eq!(
-            split_default(&given, false),
-            vec![net("0.0.0.0/1"), net("128.0.0.0/1")]
-        );
-        assert_eq!(
-            split_default(&given, true),
-            vec![
-                net("0.0.0.0/1"),
-                net("128.0.0.0/1"),
-                net("::/1"),
-                net("8000::/1")
-            ]
-        );
     }
 }

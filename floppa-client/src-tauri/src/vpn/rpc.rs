@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 /// so the encode succeeds and the decode does not — and it fails inside the framed transport, so
 /// it surfaces as "could not read from the transport" rather than as a decode error anyone can
 /// catch. This enum is externally tagged, which bincode encodes as a plain variant index.
+// Same shape as `ProtocolConfig`: the AmneziaWG variant is the largest by construction.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WireConfig {
     WireGuard(crate::vpn::state::WgConfig),

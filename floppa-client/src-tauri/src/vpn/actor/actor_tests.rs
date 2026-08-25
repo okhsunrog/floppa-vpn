@@ -78,7 +78,7 @@ impl VpnBackend for FakeBackend {
             protocol: config.protocol(),
             epoch: None,
             endpoint: endpoint.to_string(),
-            address: config.address().to_string(),
+            address: config.address(),
             connected_secs: Some(0),
         });
         Ok(())

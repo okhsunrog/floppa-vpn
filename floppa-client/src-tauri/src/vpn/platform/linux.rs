@@ -7,6 +7,7 @@
 use super::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
 use crate::vpn::protocol::InterfaceName;
 use async_trait::async_trait;
+use floppa_tunnel_config::route;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
@@ -540,10 +541,9 @@ const RESOLV_CONF: &str = "/etc/resolv.conf";
 /// Must match the prefix `set-resolv-conf` accepts in the helper.
 const RESOLV_TEMP_DIR: &str = "/tmp";
 
-/// The single-host route covering `endpoint`.
+/// The single-host route covering `endpoint`, as the helper takes it.
 fn endpoint_route(endpoint: IpAddr) -> String {
-    let prefix = if endpoint.is_ipv4() { 32 } else { 128 };
-    format!("{endpoint}/{prefix}")
+    route::endpoint_route(endpoint).to_string()
 }
 
 /// Parse the first `via` next hop out of `ip route show default` output.
@@ -551,17 +551,9 @@ fn endpoint_route(endpoint: IpAddr) -> String {
 /// A next hop that is not an address is an error, not a gateway: the string used to be passed on
 /// to the helper as-is and only rejected there.
 fn parse_default_gateway(route_output: &str) -> Result<Option<Gateway>, PlatformError> {
-    // "default via 192.168.1.1 dev eth0 proto dhcp metric 100"
-    route_output
-        .split_whitespace()
-        .skip_while(|&w| w != "via")
-        .nth(1)
-        .map(|s| {
-            s.parse::<Gateway>().map_err(|e| {
-                PlatformError::Failed(format!("unparseable default gateway {s:?}: {e}"))
-            })
-        })
-        .transpose()
+    route::parse_default_route(route_output)
+        .map(|gateway| gateway.map(|gateway| Gateway(gateway.via)))
+        .map_err(|e| PlatformError::Failed(e.to_string()))
 }
 
 #[cfg(test)]
@@ -595,14 +587,5 @@ mod tests {
     #[test]
     fn a_non_address_next_hop_is_an_error() {
         assert!(parse_default_gateway("default via garbage dev eth0").is_err());
-    }
-
-    #[test]
-    fn endpoint_routes_are_host_routes() {
-        assert_eq!(endpoint_route("1.2.3.4".parse().unwrap()), "1.2.3.4/32");
-        assert_eq!(
-            endpoint_route("2001:db8::1".parse().unwrap()),
-            "2001:db8::1/128"
-        );
     }
 }

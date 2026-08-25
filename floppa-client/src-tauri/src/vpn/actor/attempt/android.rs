@@ -12,7 +12,6 @@
 use super::{AttemptCtx, verify};
 use crate::vpn::actor::types::{AttemptError, AttemptPhase, UpStatus, WorldView};
 use crate::vpn::rollback::{RollbackStack, Step};
-use crate::vpn::state::ProtocolConfig;
 use tauri_plugin_vpn::VpnExt;
 use tracing::{debug, error, info};
 
@@ -51,7 +50,7 @@ pub(super) async fn ladder(
     // intermittently. The desktop ladder has always resolved before starting for the same reason.
     // The resolved address is handed over with the config, so the service never needs DNS at all.
     bail_if_cancelled!(ctx);
-    let host = ctx.config.endpoint_str().to_string();
+    let host = ctx.config.endpoint_str();
     let endpoint = tokio::net::lookup_host(&host)
         .await
         .map_err(|e| AttemptError::ResolveFailed {
@@ -105,8 +104,8 @@ pub(super) async fn ladder(
         protocol: ctx.protocol,
         params: Some(ctx.params.clone()),
         adopted: false,
-        server_endpoint: ctx.config.endpoint_str().to_string(),
-        assigned_ip: ctx.config.address().to_string(),
+        server_endpoint: ctx.config.endpoint_str(),
+        assigned_ip: ctx.config.address(),
         connected_at: chrono::Utc::now().timestamp(),
         dark_since: None,
         resolved: false,
@@ -162,16 +161,19 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
 fn build_config(ctx: &AttemptCtx) -> tauri_plugin_vpn::VpnConfig {
     use crate::vpn::actor::types::SplitMode;
 
-    let dns = match &ctx.config {
-        ProtocolConfig::WireGuard(wg) => wg.dns.clone(),
-        ProtocolConfig::AmneziaWg(awg) => awg.wg.dns.clone(),
-        ProtocolConfig::Vless(vless) => vless.dns.clone(),
-    };
+    // Resolvers only: `VpnService.Builder.addDnsServer` takes addresses, and a search domain on
+    // the DNS line would just be logged as an invalid server on the Kotlin side.
+    let dns_servers = ctx.config.dns_servers();
+    let dns =
+        (!dns_servers.is_empty()).then(|| floppa_tunnel_config::conf::comma_list(dns_servers));
 
     let mut config = tauri_plugin_vpn::VpnConfig {
-        ipv4_addr: ctx.config.address().to_string(),
+        ipv4_addr: ctx.config.address(),
         ipv6_addr: None,
-        routes: vec!["0.0.0.0/0".into(), "::/0".into()],
+        routes: floppa_tunnel_config::route::CATCH_ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         dns,
         mtu: ctx.config.get_mtu() as u32,
         disallowed_apps: vec![],

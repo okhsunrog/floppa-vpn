@@ -111,9 +111,14 @@ impl VpnRpc for VpnRpcServer {
         // the endpoint arrives already resolved: by now this device's DNS points into a tunnel
         // that does not exist yet, so resolving here would fail.
         let mut config: ProtocolConfig = config.into();
+        let literal = || {
+            endpoint
+                .parse::<floppa_tunnel_config::Endpoint>()
+                .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
+        };
         match &mut config {
-            ProtocolConfig::WireGuard(wg) => wg.peer_endpoint = endpoint,
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.peer_endpoint = endpoint,
+            ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
+            ProtocolConfig::AmneziaWg(awg) => awg.wg.set_endpoint(literal()?),
             // VLESS dials by address while taking its SNI from `server_name`, so substituting a
             // literal here does not disturb the REALITY handshake.
             ProtocolConfig::Vless(vless) => vless.server_addr = endpoint,
@@ -126,12 +131,12 @@ impl VpnRpc for VpnRpcServer {
             }
             ProtocolConfig::AmneziaWg(awg) => {
                 self.tunnel_manager
-                    .start_wireguard_with_fd(&awg.wg, tun_fd, Some(&awg.obfuscation))
+                    .start_wireguard_with_fd(&awg.tunnel(), tun_fd)
                     .await
             }
             ProtocolConfig::WireGuard(wg) => {
                 self.tunnel_manager
-                    .start_wireguard_with_fd(wg, tun_fd, None)
+                    .start_wireguard_with_fd(wg.tunnel(), tun_fd)
                     .await
             }
         };

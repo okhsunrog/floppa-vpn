@@ -34,18 +34,12 @@ impl VpnBackend for InProcessBackend {
         match config {
             ProtocolConfig::WireGuard(wg) => {
                 self.tunnel_manager
-                    .start_wireguard(wg, interface_name, tun_params, endpoint, None)
+                    .start_wireguard(wg.tunnel(), interface_name, tun_params, endpoint)
                     .await
             }
             ProtocolConfig::AmneziaWg(awg) => {
                 self.tunnel_manager
-                    .start_wireguard(
-                        &awg.wg,
-                        interface_name,
-                        tun_params,
-                        endpoint,
-                        Some(&awg.obfuscation),
-                    )
+                    .start_wireguard(&awg.tunnel(), interface_name, tun_params, endpoint)
                     .await
             }
             ProtocolConfig::Vless(vless) => {

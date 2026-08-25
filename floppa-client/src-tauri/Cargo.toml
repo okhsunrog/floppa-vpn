@@ -30,7 +30,6 @@ tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tokio = { version = "1", features = ["full"] }
 thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
-base64 = "0.23"
 dirs = "6"
 async-trait = "0.1"
 ipnetwork = { version = "0.21", features = ["serde"] }
@@ -43,6 +42,8 @@ tun = { version = "0.8", features = ["async"] }
 
 # VPN plugin for mobile platforms
 tauri-plugin-vpn = { path = "../../tauri-plugin-vpn" }
+# Config parsing, AmneziaWG parameters and route helpers shared with floppa-cli
+floppa-tunnel-config = { path = "../../floppa-tunnel-config", features = ["gotatun"] }
 tauri-plugin-deep-link = "2"
 hostname = "0.4.2"
 tauri-plugin-opener = "2.5.3"
