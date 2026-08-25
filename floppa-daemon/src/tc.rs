@@ -259,7 +259,7 @@ pub fn remove_peer_limit(interface: &str, peer_ip: &str) -> Result<()> {
 
 /// Update rate limit for an existing peer.
 /// Uses tc class change to modify the existing class.
-pub fn update_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Result<()> {
+fn update_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Result<()> {
     let ifb = ifb_device(interface);
     let class_id = ip_to_class_id(peer_ip)?;
     let classid_str = format!("1:{}", class_id);
@@ -306,6 +306,16 @@ pub fn update_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Resu
     info!(peer_ip, rate_mbit, class_id, "Updated rate limit for peer");
 
     Ok(())
+}
+
+/// Set the rate limit for a peer, whether or not it already has one.
+///
+/// Tries the cheap in-place class change first (the usual case for a
+/// subscription change) and falls back to creating class + filters when the
+/// class does not exist yet (fresh daemon start, tc rules are ephemeral).
+pub fn set_peer_limit(interface: &str, peer_ip: &str, rate_mbit: u32) -> Result<()> {
+    update_peer_limit(interface, peer_ip, rate_mbit)
+        .or_else(|_| add_peer_limit(interface, peer_ip, rate_mbit))
 }
 
 /// Cleanup all traffic control rules. Called on daemon shutdown.

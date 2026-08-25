@@ -3,6 +3,7 @@ use chrono::Utc;
 use floppa_core::{Config, DbPool};
 use sqlx::postgres::PgListener;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -19,41 +20,59 @@ struct ProtoTarget {
     total_bandwidth_mbps: u32,
 }
 
-/// Build the list of active protocol targets from config (WireGuard + optional AmneziaWG).
-fn proto_targets(config: &Config) -> Vec<ProtoTarget> {
-    let mut targets = vec![ProtoTarget {
-        protocol: "wireguard",
-        tool: "wg",
-        interface: config.wireguard.interface.clone(),
-        rate_limit_enabled: config
-            .wireguard
-            .rate_limit
-            .as_ref()
-            .map(|r| r.enabled)
-            .unwrap_or(false),
-        total_bandwidth_mbps: config
-            .wireguard
-            .rate_limit
-            .as_ref()
-            .map(|r| r.total_bandwidth_mbps)
-            .unwrap_or(1000),
-    }];
+/// Everything the sync functions need: the DB pool and the per-protocol interface
+/// targets, built once from config.
+struct SyncContext {
+    pool: DbPool,
+    targets: Vec<ProtoTarget>,
+}
 
-    if let Some(awg) = &config.amneziawg {
-        targets.push(ProtoTarget {
-            protocol: "amneziawg",
-            tool: "awg",
-            interface: awg.interface.clone(),
-            rate_limit_enabled: awg.rate_limit.as_ref().map(|r| r.enabled).unwrap_or(false),
-            total_bandwidth_mbps: awg
+impl SyncContext {
+    fn new(pool: DbPool, config: &Config) -> Self {
+        let mut targets = vec![ProtoTarget {
+            protocol: "wireguard",
+            tool: "wg",
+            interface: config.wireguard.interface.clone(),
+            rate_limit_enabled: config
+                .wireguard
+                .rate_limit
+                .as_ref()
+                .map(|r| r.enabled)
+                .unwrap_or(false),
+            total_bandwidth_mbps: config
+                .wireguard
                 .rate_limit
                 .as_ref()
                 .map(|r| r.total_bandwidth_mbps)
                 .unwrap_or(1000),
-        });
+        }];
+
+        if let Some(awg) = &config.amneziawg {
+            targets.push(ProtoTarget {
+                protocol: "amneziawg",
+                tool: "awg",
+                interface: awg.interface.clone(),
+                rate_limit_enabled: awg.rate_limit.as_ref().map(|r| r.enabled).unwrap_or(false),
+                total_bandwidth_mbps: awg
+                    .rate_limit
+                    .as_ref()
+                    .map(|r| r.total_bandwidth_mbps)
+                    .unwrap_or(1000),
+            });
+        }
+
+        Self { pool, targets }
     }
 
-    targets
+    /// The interface target for a peer's protocol, if that protocol is configured.
+    fn target(&self, protocol: &str) -> Option<&ProtoTarget> {
+        self.targets.iter().find(|t| t.protocol == protocol)
+    }
+
+    /// Whether any interface has tc rate limiting enabled.
+    fn any_rate_limited(&self) -> bool {
+        self.targets.iter().any(|t| t.rate_limit_enabled)
+    }
 }
 
 /// Notification channels the daemon subscribes to.
@@ -63,8 +82,10 @@ const LISTEN_CHANNELS: [&str; 2] = ["peer_changed", "subscription_changed"];
 /// - Listens for 'peer_changed' notifications for immediate sync
 /// - Periodic sync for traffic stats and expired subscriptions
 pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
+    let ctx = Arc::new(SyncContext::new(pool.clone(), config));
+
     // Initialize traffic control if enabled (per protocol interface)
-    for target in proto_targets(config) {
+    for target in &ctx.targets {
         if target.rate_limit_enabled {
             info!(interface = %target.interface, "Initializing traffic control");
             crate::tc::setup_tc(&target.interface, target.total_bandwidth_mbps)?;
@@ -74,30 +95,30 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     // Subscribe BEFORE the initial sync: a peer created while we reconcile would
     // otherwise fire a NOTIFY nobody is listening to, and stay pending until the
     // next periodic sync.
-    let listener = connect_listener(pool).await?;
+    let listener = connect_listener(&ctx.pool).await?;
 
     // Initial sync on startup: first put every `active` peer back onto its
     // interface (WireGuard/AmneziaWG interfaces don't survive a reboot and may
     // be recreated empty; `sync_peers` only looks at pending rows), then apply
     // pending changes, then re-create the ephemeral tc limits.
     info!("Running initial sync");
-    reconcile_active_peers(pool, config).await?;
-    sync_peers(pool, config).await?;
-    reapply_rate_limits(pool, config).await?;
+    reconcile_active_peers(&ctx).await?;
+    sync_peers(&ctx).await?;
+    reapply_rate_limits(&ctx).await?;
 
     // Spawn listener task
-    let pool_clone = pool.clone();
-    let config_clone = config.clone();
-    let listener_handle = tokio::spawn(async move {
-        if let Err(e) = listen_for_changes(listener, &pool_clone, &config_clone).await {
-            error!(error = %e, "Listener task failed");
+    let listener_handle = tokio::spawn({
+        let ctx = ctx.clone();
+        async move {
+            if let Err(e) = listen_for_changes(listener, &ctx).await {
+                error!(error = %e, "Listener task failed");
+            }
         }
     });
 
     // Periodic tasks (pending peers safety net, traffic stats, subscription checks)
     let periodic_handle = tokio::spawn({
-        let pool = pool.clone();
-        let config = config.clone();
+        let ctx = ctx.clone();
         async move {
             let interval = Duration::from_secs(15);
             // In-memory cache of last-seen WireGuard counters per public_key.
@@ -105,7 +126,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
             // Seed with current WG values so the first cycle computes a zero delta
             // instead of treating all accumulated counters as new traffic.
             let mut prev_wg_counters: HashMap<String, (u64, u64)> = HashMap::new();
-            for target in proto_targets(&config) {
+            for target in &ctx.targets {
                 if let Ok(stats) = crate::wg::get_peer_stats(target.tool, &target.interface) {
                     for (public_key, tx, rx, _) in stats {
                         prev_wg_counters.insert(public_key, (tx, rx));
@@ -113,16 +134,14 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
                 }
             }
             // Map public_key → (user_id, peer_id) for metrics labels
-            let mut peer_user_map = load_peer_user_map(&pool).await.unwrap_or_default();
+            let mut peer_user_map = load_peer_user_map(&ctx.pool).await.unwrap_or_default();
             loop {
                 tokio::time::sleep(interval).await;
-                if let Err(e) =
-                    periodic_sync(&pool, &config, &mut prev_wg_counters, &peer_user_map).await
-                {
+                if let Err(e) = periodic_sync(&ctx, &mut prev_wg_counters, &peer_user_map).await {
                     error!(error = %e, "Periodic sync failed");
                 }
                 // Refresh the map periodically (cheap query)
-                if let Ok(map) = load_peer_user_map(&pool).await {
+                if let Ok(map) = load_peer_user_map(&ctx.pool).await {
                     peer_user_map = map;
                 }
             }
@@ -149,11 +168,11 @@ async fn connect_listener(pool: &DbPool) -> Result<PgListener> {
 /// Catch up on everything that may have happened while no LISTEN connection was
 /// open: pending peers and (ephemeral) tc limits that a missed
 /// `subscription_changed` would have updated.
-async fn resync_after_reconnect(pool: &DbPool, config: &Config) {
-    if let Err(e) = sync_peers(pool, config).await {
+async fn resync_after_reconnect(ctx: &SyncContext) {
+    if let Err(e) = sync_peers(ctx).await {
         error!(error = %e, "Failed to sync peers after reconnect");
     }
-    if let Err(e) = reapply_rate_limits(pool, config).await {
+    if let Err(e) = reapply_rate_limits(ctx).await {
         error!(error = %e, "Failed to reapply rate limits after reconnect");
     }
 }
@@ -163,11 +182,7 @@ async fn resync_after_reconnect(pool: &DbPool, config: &Config) {
 /// Uses `try_recv` rather than `recv`: sqlx reconnects transparently on a dropped
 /// connection, but notifications sent while it was down are gone for good.
 /// `try_recv` surfaces that as `Ok(None)`, which is our cue for a full resync.
-async fn listen_for_changes(
-    mut listener: PgListener,
-    pool: &DbPool,
-    config: &Config,
-) -> Result<()> {
+async fn listen_for_changes(mut listener: PgListener, ctx: &SyncContext) -> Result<()> {
     loop {
         match listener.try_recv().await {
             Ok(Some(notification)) => {
@@ -179,14 +194,14 @@ async fn listen_for_changes(
 
                 match notification.channel() {
                     "peer_changed" => {
-                        if let Err(e) = sync_peers(pool, config).await {
+                        if let Err(e) = sync_peers(ctx).await {
                             error!(error = %e, "Failed to sync peers");
                         }
                     }
                     "subscription_changed" => {
                         // Payload is user_id
                         if let Ok(user_id) = notification.payload().parse::<i64>()
-                            && let Err(e) = update_user_rate_limit(pool, config, user_id).await
+                            && let Err(e) = update_user_rate_limit(ctx, user_id).await
                         {
                             error!(error = %e, user_id, "Failed to update rate limit");
                         }
@@ -196,18 +211,18 @@ async fn listen_for_changes(
             }
             Ok(None) => {
                 warn!("PgListener connection was lost and re-established; resyncing");
-                resync_after_reconnect(pool, config).await;
+                resync_after_reconnect(ctx).await;
             }
             Err(e) => {
                 error!(error = %e, "Listener error, reconnecting...");
                 let mut backoff = Duration::from_secs(1);
                 loop {
                     tokio::time::sleep(backoff).await;
-                    match connect_listener(pool).await {
+                    match connect_listener(&ctx.pool).await {
                         Ok(new_listener) => {
                             listener = new_listener;
                             info!("PgListener reconnected successfully");
-                            resync_after_reconnect(pool, config).await;
+                            resync_after_reconnect(ctx).await;
                             break;
                         }
                         Err(e) => {
@@ -233,20 +248,17 @@ async fn listen_for_changes(
 /// and silently stop working. `wg/awg set peer ...` is idempotent — re-adding a
 /// peer that's already present just refreshes its allowed-ips — so this is a
 /// no-op when the interface is already in sync and a full restore when it isn't.
-async fn reconcile_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
-    let targets = proto_targets(config);
-    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
-
+async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
     let peers = sqlx::query!(
         r#"SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!", protocol
            FROM peers WHERE sync_status = 'active'"#,
     )
-    .fetch_all(pool)
+    .fetch_all(&ctx.pool)
     .await?;
 
     let mut reconciled = 0u32;
     for peer in &peers {
-        let Some(target) = target_for(&peer.protocol) else {
+        let Some(target) = ctx.target(&peer.protocol) else {
             error!(
                 peer_id = peer.id,
                 protocol = %peer.protocol,
@@ -275,12 +287,10 @@ async fn reconcile_active_peers(pool: &DbPool, config: &Config) -> Result<()> {
 /// Re-apply tc rate limits for all active peers.
 /// Called on startup after tc infrastructure is (re)created, since tc rules
 /// are ephemeral and don't survive daemon restarts.
-async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
-    let targets = proto_targets(config);
-    if targets.iter().all(|t| !t.rate_limit_enabled) {
+async fn reapply_rate_limits(ctx: &SyncContext) -> Result<()> {
+    if !ctx.any_rate_limited() {
         return Ok(());
     }
-    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
 
     let peers = sqlx::query!(
         r#"
@@ -293,32 +303,25 @@ async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
         WHERE p.sync_status = 'active'
         "#,
     )
-    .fetch_all(pool)
+    .fetch_all(&ctx.pool)
     .await?;
 
     let mut applied = 0u32;
     for peer in &peers {
-        let Some(target) = target_for(&peer.protocol) else {
+        let Some(target) = ctx.target(&peer.protocol) else {
             continue;
         };
         if !target.rate_limit_enabled {
             continue;
         }
         if let Some(speed_limit) = peer.speed_limit_mbps {
-            // Try update first (class may already exist from sync_peers),
-            // fall back to add if the class doesn't exist yet
-            let result = crate::tc::update_peer_limit(
+            match crate::tc::set_peer_limit(
                 &target.interface,
                 &peer.assigned_ip,
                 speed_limit as u32,
-            )
-            .or_else(|_| {
-                crate::tc::add_peer_limit(&target.interface, &peer.assigned_ip, speed_limit as u32)
-            });
-            if let Err(e) = result {
-                error!(peer_id = peer.id, error = %e, "Failed to reapply rate limit");
-            } else {
-                applied += 1;
+            ) {
+                Ok(()) => applied += 1,
+                Err(e) => error!(peer_id = peer.id, error = %e, "Failed to reapply rate limit"),
             }
         }
     }
@@ -334,10 +337,7 @@ async fn reapply_rate_limits(pool: &DbPool, config: &Config) -> Result<()> {
 
 /// Sync pending peer additions/removals with WireGuard / AmneziaWG.
 /// Each peer is routed to its protocol's interface.
-async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
-    let targets = proto_targets(config);
-    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
-
+async fn sync_peers(ctx: &SyncContext) -> Result<()> {
     // Process pending additions
     let pending_add = sqlx::query!(
         r#"
@@ -351,11 +351,11 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
         WHERE p.sync_status = 'pending_add'
         "#,
     )
-    .fetch_all(pool)
+    .fetch_all(&ctx.pool)
     .await?;
 
     for peer in pending_add {
-        let Some(target) = target_for(&peer.protocol) else {
+        let Some(target) = ctx.target(&peer.protocol) else {
             error!(
                 peer_id = peer.id,
                 protocol = %peer.protocol,
@@ -392,7 +392,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                     "UPDATE peers SET sync_status = 'active' WHERE id = $1",
                     peer.id
                 )
-                .execute(pool)
+                .execute(&ctx.pool)
                 .await?;
                 info!(peer_id = peer.id, "Peer added successfully");
             }
@@ -406,11 +406,11 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
     let pending_remove = sqlx::query!(
         r#"SELECT id, public_key AS "public_key!", assigned_ip AS "assigned_ip!", protocol FROM peers WHERE sync_status = 'pending_remove'"#,
     )
-    .fetch_all(pool)
+    .fetch_all(&ctx.pool)
     .await?;
 
     for peer in pending_remove {
-        let Some(target) = target_for(&peer.protocol) else {
+        let Some(target) = ctx.target(&peer.protocol) else {
             error!(
                 peer_id = peer.id,
                 protocol = %peer.protocol,
@@ -432,7 +432,7 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
                     "UPDATE peers SET sync_status = 'removed' WHERE id = $1",
                     peer.id
                 )
-                .execute(pool)
+                .execute(&ctx.pool)
                 .await?;
                 info!(peer_id = peer.id, "Peer removed successfully");
             }
@@ -448,24 +448,21 @@ async fn sync_peers(pool: &DbPool, config: &Config) -> Result<()> {
 /// Periodic tasks: pick up pending peers whose NOTIFY was missed, update traffic
 /// stats, check expired subscriptions.
 async fn periodic_sync(
-    pool: &DbPool,
-    config: &Config,
+    ctx: &SyncContext,
     prev_wg_counters: &mut HashMap<String, (u64, u64)>,
     peer_user_map: &HashMap<String, (i64, i64)>,
 ) -> Result<()> {
-    sync_peers(pool, config).await?;
-    update_traffic_stats(pool, config, prev_wg_counters, peer_user_map).await?;
-    check_expired_subscriptions(pool).await?;
+    sync_peers(ctx).await?;
+    update_traffic_stats(ctx, prev_wg_counters, peer_user_map).await?;
+    check_expired_subscriptions(&ctx.pool).await?;
     Ok(())
 }
 
 /// Update rate limit for a user when their subscription changes
-async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) -> Result<()> {
-    let targets = proto_targets(config);
-    if targets.iter().all(|t| !t.rate_limit_enabled) {
+async fn update_user_rate_limit(ctx: &SyncContext, user_id: i64) -> Result<()> {
+    if !ctx.any_rate_limited() {
         return Ok(());
     }
-    let target_for = |protocol: &str| targets.iter().find(|t| t.protocol == protocol);
 
     // Get all active peers (any protocol) and current speed limit from plan
     let peers = sqlx::query!(
@@ -480,7 +477,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
         "#,
         user_id,
     )
-    .fetch_all(pool)
+    .fetch_all(&ctx.pool)
     .await?;
 
     if peers.is_empty() {
@@ -492,7 +489,7 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
     }
 
     for peer in peers {
-        let Some(target) = target_for(&peer.protocol) else {
+        let Some(target) = ctx.target(&peer.protocol) else {
             continue;
         };
         if !target.rate_limit_enabled {
@@ -500,22 +497,11 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
         }
         match peer.speed_limit_mbps {
             Some(speed_limit) => {
-                // Update or add rate limit
-                // Try update first, if it fails (class doesn't exist), add new
-                if crate::tc::update_peer_limit(
+                crate::tc::set_peer_limit(
                     &target.interface,
                     &peer.assigned_ip,
                     speed_limit as u32,
-                )
-                .is_err()
-                {
-                    // Class might not exist, try adding
-                    crate::tc::add_peer_limit(
-                        &target.interface,
-                        &peer.assigned_ip,
-                        speed_limit as u32,
-                    )?;
-                }
+                )?;
                 info!(
                     user_id,
                     peer_id = peer.id,
@@ -546,15 +532,14 @@ async fn update_user_rate_limit(pool: &DbPool, config: &Config, user_id: i64) ->
 /// If new < old (counter reset), we treat the new value as the full delta.
 ///
 async fn update_traffic_stats(
-    pool: &DbPool,
-    config: &Config,
+    ctx: &SyncContext,
     prev_wg_counters: &mut HashMap<String, (u64, u64)>,
     peer_user_map: &HashMap<String, (i64, i64)>,
 ) -> Result<()> {
     // Collect stats from every protocol interface; public keys are unique across protocols,
     // so the prev-counter map and peer→user map stay keyed by public_key.
     let mut stats: crate::wg::PeerStats = Vec::new();
-    for target in proto_targets(config) {
+    for target in &ctx.targets {
         match crate::wg::get_peer_stats(target.tool, &target.interface) {
             Ok(mut s) => stats.append(&mut s),
             Err(e) => {
@@ -580,22 +565,10 @@ async fn update_traffic_stats(
 
         prev_wg_counters.insert(public_key.clone(), (*wg_tx, *wg_rx));
 
-        if delta_tx == 0 && delta_rx == 0 {
-            // Still update last_handshake even if no traffic
-            if last_handshake.is_some() {
-                sqlx::query!(
-                    "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
-                    *last_handshake,
-                    public_key,
-                )
-                .execute(pool)
-                .await?;
-            }
-            continue;
-        }
-
         // Record traffic in Prometheus counters (keyed by user_id + peer_id)
-        if let Some(&(user_id, peer_id)) = peer_user_map.get(public_key) {
+        if (delta_tx > 0 || delta_rx > 0)
+            && let Some(&(user_id, peer_id)) = peer_user_map.get(public_key)
+        {
             let uid = user_id.to_string();
             let pid = peer_id.to_string();
             metrics::counter!("wg_tx_bytes_total", "user_id" => uid.clone(), "peer_id" => pid.clone())
@@ -604,14 +577,14 @@ async fn update_traffic_stats(
                 .increment(delta_rx);
         }
 
-        // Update last_handshake only (traffic tracking moved to VictoriaMetrics)
+        // Update last_handshake regardless of traffic (traffic itself lives in VictoriaMetrics)
         if let Some(handshake) = last_handshake {
             sqlx::query!(
                 "UPDATE peers SET last_handshake = $1 WHERE public_key = $2 AND sync_status = 'active'",
                 *handshake,
                 public_key,
             )
-            .execute(pool)
+            .execute(&ctx.pool)
             .await?;
         }
     }
