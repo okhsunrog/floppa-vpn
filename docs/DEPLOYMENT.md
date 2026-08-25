@@ -148,7 +148,7 @@ restarts in a minute — `systemctl reset-failed <unit>` after fixing the cause.
 ## 5. Database migrations
 
 `floppa-daemon` runs `migrations/` on startup through sqlx's embedded migrator, so a deploy that
-ships a new migration applies it as soon as the daemon restarts. Three of them deserve a check on
+ships a new migration applies it as soon as the daemon restarts. Four of them deserve a check on
 production before the deploy that carries them:
 
 - **0014** adds `CHECK` constraints pinning the closed value sets the code models as enums:
@@ -184,6 +184,24 @@ production before the deploy that carries them:
 
   Anything outside the sets above in `notification_log` must be fixed (or deleted — nothing
   reads such rows) before deploying; outliers in the other two columns are only worth a look.
+- **0017** makes "a user has at most one current subscription" a database invariant:
+  `subscriptions.is_current` plus the partial unique index `subscriptions_one_current`, and the
+  `current_subscriptions` view every reader (daemon, API, bot, VLESS registry) goes through.
+  The backfill marks one row per user current — the active one with the latest expiry
+  (permanent wins), else the most recently created — and never fails by itself, but a user
+  who holds several *active* rows today would silently lose all but one of them. Verify first:
+
+  ```sql
+  SELECT user_id, count(*) FROM subscriptions
+  WHERE expires_at IS NULL OR expires_at > NOW()
+  GROUP BY 1 HAVING count(*) > 1;
+  ```
+
+  It must return no rows (it did not, as of 2026-08-26). If it does, decide per user which
+  subscription is the real one and close the others (`UPDATE subscriptions SET expires_at =
+  NOW() WHERE id = …`) before deploying. Also from this version on, every new subscription
+  (trial, purchase, admin grant) closes and demotes the previous one, and a Telegram merge
+  keeps only the later-expiring of the two accounts' subscriptions.
 
 ## 6. Rate limits (tc)
 
