@@ -54,8 +54,8 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// Count one attempt for `key` in `scope`; `Err` once more than `max` attempts fall inside
-    /// the current `window`. The rejected attempt is counted too, so a client cannot keep the
-    /// window alive by hammering it — it has to actually back off.
+    /// the current window. Fixed window: it starts at the first attempt and ends `window`
+    /// later regardless of further traffic, and attempts over `max` are rejected until then.
     pub fn check(
         &self,
         scope: RateLimitScope,
