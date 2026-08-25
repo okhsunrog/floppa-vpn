@@ -1,7 +1,5 @@
-/**
- * Peer sync status
- */
-export type PeerSyncStatus = 'pending_add' | 'active' | 'pending_remove' | 'removed'
+/** Peer sync status — the server's enum, re-exported from the generated client. */
+export type { PeerSyncStatus } from '../client/types.gen'
 
 /**
  * Connection status for client app.

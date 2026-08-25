@@ -6,7 +6,9 @@ use std::str::FromStr;
 
 /// VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
 /// AmneziaWG adds interface-wide obfuscation and runs on its own server interface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT")]
 #[serde(rename_all = "lowercase")]
 pub enum Protocol {
@@ -65,7 +67,9 @@ impl TryFrom<&str> for Protocol {
 ///
 /// Stored in `peers.sync_status` (TEXT, CHECK-constrained by migration 0014); bind it in
 /// `query!` macros as `$n` with `PeerSyncStatus::Active as _`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum PeerSyncStatus {
@@ -81,7 +85,9 @@ pub enum PeerSyncStatus {
 
 /// How a subscription came to exist. Stored in `subscriptions.source` (TEXT, CHECK-constrained
 /// by migration 0014); bind it in `query!` macros as `$n` with `SubscriptionSource::Trial as _`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type, utoipa::ToSchema,
+)]
 #[sqlx(type_name = "TEXT", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum SubscriptionSource {

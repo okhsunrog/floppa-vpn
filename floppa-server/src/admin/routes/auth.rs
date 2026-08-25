@@ -34,14 +34,32 @@ pub struct AuthResponse {
     pub user: AuthUserInfo,
 }
 
+/// The user half of an [`AuthResponse`]; also what every login path resolves before a JWT
+/// is signed.
 #[derive(Clone, Serialize, ToSchema)]
 pub struct AuthUserInfo {
     id: i64,
+    /// Linked Telegram account, `None` for credential-only accounts.
+    telegram_id: Option<i64>,
     username: Option<String>,
     first_name: Option<String>,
     last_name: Option<String>,
     photo_url: Option<String>,
     is_admin: bool,
+}
+
+impl AuthUserInfo {
+    fn from_upsert(result: services::UpsertResult, telegram_id: Option<i64>) -> Self {
+        Self {
+            id: result.id,
+            telegram_id,
+            username: result.username,
+            first_name: result.first_name,
+            last_name: result.last_name,
+            photo_url: result.photo_url,
+            is_admin: result.is_admin,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -111,29 +129,16 @@ fn html_escape_attr(value: &str) -> String {
 
 /// Build a JWT + AuthResponse from an already-resolved user. Single point that signs the JWT;
 /// both the Telegram path and the credential (login+password) path converge here.
-fn build_auth_response(
-    state: &AppState,
-    result: services::UpsertResult,
-) -> Result<AuthResponse, ApiError> {
+fn build_auth_response(state: &AppState, user: AuthUserInfo) -> Result<AuthResponse, ApiError> {
     let token = create_jwt(
-        result.id,
-        result.is_admin,
+        user.id,
+        user.is_admin,
         &state.auth_secrets.jwt_secret,
         state.auth_config.jwt_expiration_hours,
     )
     .map_err(|e| ApiError::internal(format!("Failed to create JWT: {e}")))?;
 
-    Ok(AuthResponse {
-        token,
-        user: AuthUserInfo {
-            id: result.id,
-            username: result.username,
-            first_name: result.first_name,
-            last_name: result.last_name,
-            photo_url: result.photo_url,
-            is_admin: result.is_admin,
-        },
-    })
+    Ok(AuthResponse { token, user })
 }
 
 /// Upsert a Telegram user and create a JWT auth response.
@@ -154,7 +159,7 @@ async fn upsert_and_create_jwt(
     // unreachable from clients in Russia, so we serve avatars from our own origin.
     super::avatar::spawn_refresh_if_stale(state, result.id, telegram_id, result.photo_url.clone());
 
-    build_auth_response(state, result)
+    build_auth_response(state, AuthUserInfo::from_upsert(result, Some(telegram_id)))
 }
 
 async fn authenticate_telegram_user(
@@ -545,27 +550,17 @@ pub struct AccountLoginRequest {
     password: String,
 }
 
-/// Fetch a user's display fields by id, packaged as an `UpsertResult` for `build_auth_response`.
-async fn fetch_user_result(
-    state: &AppState,
-    user_id: i64,
-) -> Result<services::UpsertResult, ApiError> {
-    let u = sqlx::query!(
-        "SELECT id, username, first_name, last_name, photo_url, is_admin FROM users WHERE id = $1",
+/// Fetch the display fields of an existing user by id.
+async fn fetch_auth_user_info(state: &AppState, user_id: i64) -> Result<AuthUserInfo, ApiError> {
+    let user = sqlx::query_as!(
+        AuthUserInfo,
+        "SELECT id, telegram_id, username, first_name, last_name, photo_url, is_admin \
+         FROM users WHERE id = $1",
         user_id
     )
     .fetch_one(&state.pool)
     .await?;
-
-    Ok(services::UpsertResult {
-        id: u.id,
-        username: u.username,
-        first_name: u.first_name,
-        last_name: u.last_name,
-        photo_url: u.photo_url,
-        is_admin: u.is_admin,
-        trial_granted: false,
-    })
+    Ok(user)
 }
 
 /// Register a new account with a login + password (no Telegram). Grants a short taster trial
@@ -596,7 +591,10 @@ pub(super) async fn register_account(
     )?;
 
     let result = services::create_credential_user(&state.pool, &req.login, &req.password).await?;
-    Ok(Json(build_auth_response(&state, result)?))
+    Ok(Json(build_auth_response(
+        &state,
+        AuthUserInfo::from_upsert(result, None),
+    )?))
 }
 
 /// Log in with a login + password.
@@ -635,8 +633,8 @@ pub(super) async fn login_account(
     )?;
 
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
-    let result = fetch_user_result(&state, user_id).await?;
-    Ok(Json(build_auth_response(&state, result)?))
+    let user = fetch_auth_user_info(&state, user_id).await?;
+    Ok(Json(build_auth_response(&state, user)?))
 }
 
 #[cfg(test)]

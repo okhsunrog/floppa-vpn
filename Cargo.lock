@@ -1231,6 +1231,7 @@ dependencies = [
  "toml",
  "tracing",
  "url",
+ "utoipa",
  "uuid",
  "veil",
  "x25519-dalek 3.0.0",

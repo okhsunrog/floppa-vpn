@@ -5,6 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
+use floppa_core::{PeerSyncStatus, Protocol, SubscriptionSource};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -288,7 +289,8 @@ pub struct PeerDetail {
     id: i64,
     public_key: String,
     assigned_ip: String,
-    sync_status: String,
+    sync_status: PeerSyncStatus,
+    protocol: Protocol,
     download_bytes: i64,
     upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
@@ -307,7 +309,7 @@ pub struct SubscriptionDetail {
     speed_limit_mbps: Option<i32>,
     max_peers: i32,
     is_active: bool,
-    source: String,
+    source: SubscriptionSource,
 }
 
 /// Get user details (admin only)
@@ -339,14 +341,16 @@ pub(super) async fn get_user(
 
     let peer_rows = sqlx::query!(
         r#"
-        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status, p.last_handshake,
+        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
+               p.protocol AS "protocol: Protocol", p.last_handshake,
                ai.device_name, ai.device_id AS "device_id?"
         FROM peers p
         LEFT JOIN app_installations ai ON p.installation_id = ai.id
-        WHERE p.user_id = $1 AND p.sync_status != 'removed'
+        WHERE p.user_id = $1 AND p.sync_status != $2
         ORDER BY p.created_at DESC
         "#,
-        id
+        id,
+        PeerSyncStatus::Removed as _,
     )
     .fetch_all(&state.pool)
     .await?;
@@ -365,6 +369,7 @@ pub(super) async fn get_user(
                 public_key: r.public_key,
                 assigned_ip: r.assigned_ip,
                 sync_status: r.sync_status,
+                protocol: r.protocol,
                 download_bytes: download,
                 upload_bytes: upload,
                 last_handshake: r.last_handshake,
@@ -382,7 +387,7 @@ pub(super) async fn get_user(
                p.default_speed_limit_mbps as speed_limit_mbps,
                p.max_peers,
                (s.expires_at IS NULL OR s.expires_at > NOW()) as "is_active!",
-               s.source
+               s.source AS "source: SubscriptionSource"
         FROM subscriptions s
         JOIN plans p ON s.plan_id = p.id
         WHERE s.user_id = $1
@@ -578,9 +583,8 @@ pub struct PeerSummary {
     user_id: i64,
     username: Option<String>,
     assigned_ip: String,
-    sync_status: String,
-    /// Tunnel protocol: "wireguard" or "amneziawg".
-    protocol: String,
+    sync_status: PeerSyncStatus,
+    protocol: Protocol,
     download_bytes: i64,
     upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
@@ -610,16 +614,18 @@ pub(super) async fn list_peers(
     let rows = sqlx::query!(
         r#"
         SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
-               p.assigned_ip, p.sync_status, p.protocol, p.last_handshake,
+               p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
+               p.protocol AS "protocol: Protocol", p.last_handshake,
                ai.device_name, ai.device_id AS "device_id?", ai.app_version AS client_version,
                (SELECT pl.display_name FROM subscriptions s JOIN plans pl ON s.plan_id = pl.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) ORDER BY s.expires_at DESC NULLS FIRST LIMIT 1) AS plan_name,
                (u.vless_uuid IS NOT NULL) AS "has_vless!"
         FROM peers p
         JOIN users u ON p.user_id = u.id
         LEFT JOIN app_installations ai ON p.installation_id = ai.id
-        WHERE p.sync_status != 'removed'
+        WHERE p.sync_status != $1
         ORDER BY p.last_handshake DESC NULLS LAST
         "#,
+        PeerSyncStatus::Removed as _,
     )
     .fetch_all(&state.pool)
     .await?;

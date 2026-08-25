@@ -96,7 +96,10 @@ type SyncResult =
  */
 type PeerLookup = { found: 'yes'; id: number } | { found: 'no' } | { found: 'unknown' }
 
-async function lookupPeer(protocol: Protocol): Promise<PeerLookup> {
+/** The protocols that are backed by a per-device peer row on the server (VLESS is per-user). */
+type WgFamilyProtocol = Exclude<Protocol, 'vless'>
+
+async function lookupPeer(protocol: WgFamilyProtocol): Promise<PeerLookup> {
   const { data: peer, response } = await getMyPeerByDevice({
     path: { device_id: vpn.deviceId! },
     query: { protocol },
@@ -110,7 +113,10 @@ async function lookupPeer(protocol: Protocol): Promise<PeerLookup> {
  * VPN store. `allowCreate=false` only loads a pre-existing peer (so the secondary protocol never
  * consumes a peer slot). Returns an error outcome on subscription/limit failures during create.
  */
-async function syncWgFamilyPeer(protocol: Protocol, allowCreate: boolean): Promise<SyncResult> {
+async function syncWgFamilyPeer(
+  protocol: WgFamilyProtocol,
+  allowCreate: boolean,
+): Promise<SyncResult> {
   const lookup = await lookupPeer(protocol)
 
   if (lookup.found === 'yes') {
@@ -323,7 +329,9 @@ async function handleOutcome(outcome: CycleOutcome | null) {
         ? outcome.protocol
         : undefined
 
-  if (!verifyFailed || !vpn.deviceId) return
+  // VLESS has no per-device peer to look up: its config is per-user and never deleted by a
+  // peer removal, so a failed VLESS verification is not a "peer gone" signal.
+  if (!verifyFailed || verifyFailed === 'vless' || !vpn.deviceId) return
 
   reprovisioning.value = true
   try {

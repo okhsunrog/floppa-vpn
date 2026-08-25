@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT private_key_encrypted, assigned_ip, protocol\n        FROM peers\n        WHERE id = $1 AND user_id = $2 AND sync_status != 'removed'\n        ",
+  "query": "\n        SELECT private_key_encrypted, assigned_ip, protocol AS \"protocol: Protocol\"\n        FROM peers\n        WHERE id = $1 AND user_id = $2 AND sync_status != $3\n        ",
   "describe": {
     "columns": [
       {
@@ -27,7 +27,7 @@
       },
       {
         "ordinal": 2,
-        "name": "protocol",
+        "name": "protocol: Protocol",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -40,7 +40,8 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -49,5 +50,5 @@
       false
     ]
   },
-  "hash": "23a176d699a4fe6472802e4318fb98e4e0da5a72ff2d2629257e0d4f3446d7dc"
+  "hash": "4c9f0c338359a7aa6700d315dca72196a36a861aac62fc6e32cb886300032eb4"
 }

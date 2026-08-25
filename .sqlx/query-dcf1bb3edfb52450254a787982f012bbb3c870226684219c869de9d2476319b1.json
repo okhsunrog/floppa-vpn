@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status, p.protocol, p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != 'removed'\n        ORDER BY p.created_at DESC\n        ",
+  "query": "\n        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != $2\n        ORDER BY p.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "public_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "public_key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "assigned_ip",
         "type_info": "Text",
         "origin": {
@@ -26,8 +37,8 @@
         }
       },
       {
-        "ordinal": 2,
-        "name": "sync_status",
+        "ordinal": 3,
+        "name": "sync_status: PeerSyncStatus",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -37,8 +48,8 @@
         }
       },
       {
-        "ordinal": 3,
-        "name": "protocol",
+        "ordinal": 4,
+        "name": "protocol: Protocol",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -48,24 +59,13 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "last_handshake",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
             "table": "peers",
             "name": "last_handshake"
-          }
-        }
-      },
-      {
-        "ordinal": 5,
-        "name": "created_at",
-        "type_info": "Timestamptz",
-        "origin": {
-          "Table": {
-            "table": "peers",
-            "name": "created_at"
           }
         }
       },
@@ -94,7 +94,8 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text"
       ]
     },
     "nullable": [
@@ -102,11 +103,11 @@
       false,
       false,
       false,
-      true,
       false,
+      true,
       true,
       false
     ]
   },
-  "hash": "682d6c37332882c4986d6625ba4db6f8581bd8834703a0a85247d592335c21f5"
+  "hash": "dcf1bb3edfb52450254a787982f012bbb3c870226684219c869de9d2476319b1"
 }

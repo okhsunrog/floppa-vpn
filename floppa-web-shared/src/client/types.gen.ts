@@ -14,6 +14,13 @@ export type AccountRegisterRequest = {
     password: string;
 };
 
+/**
+ * The JSON error body every failing endpoint returns.
+ *
+ * 4xx messages are meant for the client and may describe the problem. 5xx messages are fixed
+ * strings: the details (config paths, crypto/DB errors, upstream responses) are logged exactly
+ * once, at the point where the error is mapped, and never sent to the client.
+ */
 export type ApiError = {
     error: string;
     message: string;
@@ -24,12 +31,20 @@ export type AuthResponse = {
     user: AuthUserInfo;
 };
 
+/**
+ * The user half of an [`AuthResponse`]; also what every login path resolves before a JWT
+ * is signed.
+ */
 export type AuthUserInfo = {
     first_name?: string | null;
     id: number;
     is_admin: boolean;
     last_name?: string | null;
     photo_url?: string | null;
+    /**
+     * Linked Telegram account, `None` for credential-only accounts.
+     */
+    telegram_id?: number | null;
     username?: string | null;
 };
 
@@ -41,10 +56,7 @@ export type CreatePeerRequest = {
     device_id?: string | null;
     device_name?: string | null;
     installation_id?: number | null;
-    /**
-     * Tunnel protocol: "wireguard" or "amneziawg". Defaults to "wireguard".
-     */
-    protocol?: string | null;
+    protocol?: null | Protocol;
 };
 
 export type CreatePeerResponse = {
@@ -155,11 +167,8 @@ export type MyPeer = {
     download_bytes: number;
     id: number;
     last_handshake?: string | null;
-    /**
-     * Tunnel protocol: "wireguard" or "amneziawg".
-     */
-    protocol: string;
-    sync_status: string;
+    protocol: Protocol;
+    sync_status: PeerSyncStatus;
     upload_bytes: number;
 };
 
@@ -178,10 +187,7 @@ export type MySubscription = {
     max_peers: number;
     plan_display_name: string;
     plan_name: string;
-    /**
-     * Subscription origin: 'trial' | 'taster' | 'admin_grant' | 'purchase'.
-     */
-    source: string;
+    source: SubscriptionSource;
     speed_limit_mbps?: number | null;
     starts_at: string;
 };
@@ -193,8 +199,9 @@ export type PeerDetail = {
     download_bytes: number;
     id: number;
     last_handshake?: string | null;
+    protocol: Protocol;
     public_key: string;
-    sync_status: string;
+    sync_status: PeerSyncStatus;
     upload_bytes: number;
 };
 
@@ -208,15 +215,20 @@ export type PeerSummary = {
     id: number;
     last_handshake?: string | null;
     plan_name?: string | null;
-    /**
-     * Tunnel protocol: "wireguard" or "amneziawg".
-     */
-    protocol: string;
-    sync_status: string;
+    protocol: Protocol;
+    sync_status: PeerSyncStatus;
     upload_bytes: number;
     user_id: number;
     username?: string | null;
 };
+
+/**
+ * Peer synchronization status with WireGuard interface.
+ *
+ * Stored in `peers.sync_status` (TEXT, CHECK-constrained by migration 0014); bind it in
+ * `query!` macros as `$n` with `PeerSyncStatus::Active as _`.
+ */
+export type PeerSyncStatus = 'pending_add' | 'active' | 'pending_remove' | 'removed';
 
 export type Plan = {
     default_speed_limit_mbps?: number | null;
@@ -229,6 +241,12 @@ export type Plan = {
     price_stars?: number | null;
     trial_minutes?: number | null;
 };
+
+/**
+ * VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
+ * AmneziaWG adds interface-wide obfuscation and runs on its own server interface.
+ */
+export type Protocol = 'wireguard' | 'amneziawg';
 
 export type PublicConfig = {
     /**
@@ -297,10 +315,16 @@ export type SubscriptionDetail = {
     plan_display_name: string;
     plan_id: number;
     plan_name: string;
-    source: string;
+    source: SubscriptionSource;
     speed_limit_mbps?: number | null;
     starts_at: string;
 };
+
+/**
+ * How a subscription came to exist. Stored in `subscriptions.source` (TEXT, CHECK-constrained
+ * by migration 0014); bind it in `query!` macros as `$n` with `SubscriptionSource::Trial as _`.
+ */
+export type SubscriptionSource = 'trial' | 'taster' | 'purchase' | 'admin_grant';
 
 /**
  * Data received from Telegram Login Widget
@@ -477,6 +501,10 @@ export type LoginAccountErrors = {
      * Invalid login or password
      */
     401: ApiError;
+    /**
+     * Too many attempts
+     */
+    429: ApiError;
 };
 
 export type LoginAccountError = LoginAccountErrors[keyof LoginAccountErrors];
@@ -503,6 +531,10 @@ export type RegisterAccountErrors = {
      * Login already taken
      */
     409: ApiError;
+    /**
+     * Too many attempts
+     */
+    429: ApiError;
 };
 
 export type RegisterAccountError = RegisterAccountErrors[keyof RegisterAccountErrors];
@@ -582,6 +614,10 @@ export type ExchangeTelegramLoginCodeErrors = {
      * Invalid or expired code
      */
     401: ApiError;
+    /**
+     * Too many attempts
+     */
+    429: ApiError;
 };
 
 export type ExchangeTelegramLoginCodeError = ExchangeTelegramLoginCodeErrors[keyof ExchangeTelegramLoginCodeErrors];
@@ -635,6 +671,10 @@ export type StartTelegramDeepLinkLoginErrors = {
      * Invalid request
      */
     400: ApiError;
+    /**
+     * Too many attempts
+     */
+    429: ApiError;
     /**
      * Server misconfiguration
      */
@@ -951,9 +991,9 @@ export type GetMyPeerByDeviceData = {
     };
     query?: {
         /**
-         * Tunnel protocol (wireguard|amneziawg)
+         * Tunnel protocol
          */
-        protocol?: string;
+        protocol?: Protocol;
     };
     url: '/me/peers/by-device/{device_id}';
 };

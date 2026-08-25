@@ -152,6 +152,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -196,6 +206,16 @@
           },
           "409": {
             "description": "Login already taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
             "content": {
               "application/json": {
                 "schema": {
@@ -339,6 +359,16 @@
                 }
               }
             }
+          },
+          "429": {
+            "description": "Too many attempts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
           }
         }
       }
@@ -418,6 +448,16 @@
           },
           "400": {
             "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts",
             "content": {
               "application/json": {
                 "schema": {
@@ -994,10 +1034,10 @@
           {
             "name": "protocol",
             "in": "query",
-            "description": "Tunnel protocol (wireguard|amneziawg)",
+            "description": "Tunnel protocol",
             "required": false,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/Protocol"
             }
           }
         ],
@@ -2430,6 +2470,7 @@
       },
       "ApiError": {
         "type": "object",
+        "description": "The JSON error body every failing endpoint returns.\n\n4xx messages are meant for the client and may describe the problem. 5xx messages are fixed\nstrings: the details (config paths, crypto/DB errors, upstream responses) are logged exactly\nonce, at the point where the error is mapped, and never sent to the client.",
         "required": [
           "error",
           "message"
@@ -2460,6 +2501,7 @@
       },
       "AuthUserInfo": {
         "type": "object",
+        "description": "The user half of an [`AuthResponse`]; also what every login path resolves before a JWT\nis signed.",
         "required": [
           "id",
           "is_admin"
@@ -2489,6 +2531,14 @@
               "string",
               "null"
             ]
+          },
+          "telegram_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Linked Telegram account, `None` for credential-only accounts."
           },
           "username": {
             "type": [
@@ -2536,11 +2586,15 @@
             "format": "int64"
           },
           "protocol": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Tunnel protocol: \"wireguard\" or \"amneziawg\". Defaults to \"wireguard\"."
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Protocol",
+                "description": "Tunnel protocol. Defaults to WireGuard when omitted (pre-AmneziaWG clients)."
+              }
+            ]
           }
         }
       },
@@ -2942,11 +2996,10 @@
             "format": "date-time"
           },
           "protocol": {
-            "type": "string",
-            "description": "Tunnel protocol: \"wireguard\" or \"amneziawg\"."
+            "$ref": "#/components/schemas/Protocol"
           },
           "sync_status": {
-            "type": "string"
+            "$ref": "#/components/schemas/PeerSyncStatus"
           },
           "upload_bytes": {
             "type": "integer",
@@ -3018,8 +3071,7 @@
             "type": "string"
           },
           "source": {
-            "type": "string",
-            "description": "Subscription origin: 'trial' | 'taster' | 'admin_grant' | 'purchase'."
+            "$ref": "#/components/schemas/SubscriptionSource"
           },
           "speed_limit_mbps": {
             "type": [
@@ -3041,6 +3093,7 @@
           "public_key",
           "assigned_ip",
           "sync_status",
+          "protocol",
           "download_bytes",
           "upload_bytes"
         ],
@@ -3075,11 +3128,14 @@
             ],
             "format": "date-time"
           },
+          "protocol": {
+            "$ref": "#/components/schemas/Protocol"
+          },
           "public_key": {
             "type": "string"
           },
           "sync_status": {
-            "type": "string"
+            "$ref": "#/components/schemas/PeerSyncStatus"
           },
           "upload_bytes": {
             "type": "integer",
@@ -3146,11 +3202,10 @@
             ]
           },
           "protocol": {
-            "type": "string",
-            "description": "Tunnel protocol: \"wireguard\" or \"amneziawg\"."
+            "$ref": "#/components/schemas/Protocol"
           },
           "sync_status": {
-            "type": "string"
+            "$ref": "#/components/schemas/PeerSyncStatus"
           },
           "upload_bytes": {
             "type": "integer",
@@ -3167,6 +3222,16 @@
             ]
           }
         }
+      },
+      "PeerSyncStatus": {
+        "type": "string",
+        "description": "Peer synchronization status with WireGuard interface.\n\nStored in `peers.sync_status` (TEXT, CHECK-constrained by migration 0014); bind it in\n`query!` macros as `$n` with `PeerSyncStatus::Active as _`.",
+        "enum": [
+          "pending_add",
+          "active",
+          "pending_remove",
+          "removed"
+        ]
       },
       "Plan": {
         "type": "object",
@@ -3224,6 +3289,14 @@
             "format": "int32"
           }
         }
+      },
+      "Protocol": {
+        "type": "string",
+        "description": "VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);\nAmneziaWG adds interface-wide obfuscation and runs on its own server interface.",
+        "enum": [
+          "wireguard",
+          "amneziawg"
+        ]
       },
       "PublicConfig": {
         "type": "object",
@@ -3436,7 +3509,7 @@
             "type": "string"
           },
           "source": {
-            "type": "string"
+            "$ref": "#/components/schemas/SubscriptionSource"
           },
           "speed_limit_mbps": {
             "type": [
@@ -3450,6 +3523,16 @@
             "format": "date-time"
           }
         }
+      },
+      "SubscriptionSource": {
+        "type": "string",
+        "description": "How a subscription came to exist. Stored in `subscriptions.source` (TEXT, CHECK-constrained\nby migration 0014); bind it in `query!` macros as `$n` with `SubscriptionSource::Trial as _`.",
+        "enum": [
+          "trial",
+          "taster",
+          "purchase",
+          "admin_grant"
+        ]
       },
       "TelegramAuthData": {
         "type": "object",

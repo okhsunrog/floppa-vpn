@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status, p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != 'removed'\n        ORDER BY p.created_at DESC\n        ",
+  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id\n        FROM peers p\n        JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3\n          AND p.sync_status NOT IN ('removed', 'pending_remove')\n        ",
   "describe": {
     "columns": [
       {
@@ -16,17 +16,6 @@
       },
       {
         "ordinal": 1,
-        "name": "public_key",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "peers",
-            "name": "public_key"
-          }
-        }
-      },
-      {
-        "ordinal": 2,
         "name": "assigned_ip",
         "type_info": "Text",
         "origin": {
@@ -37,13 +26,24 @@
         }
       },
       {
-        "ordinal": 3,
-        "name": "sync_status",
+        "ordinal": 2,
+        "name": "sync_status: PeerSyncStatus",
         "type_info": "Text",
         "origin": {
           "Table": {
             "table": "peers",
             "name": "sync_status"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "protocol: Protocol",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "protocol"
           }
         }
       },
@@ -60,6 +60,17 @@
       },
       {
         "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "device_name",
         "type_info": "Text",
         "origin": {
@@ -70,8 +81,8 @@
         }
       },
       {
-        "ordinal": 6,
-        "name": "device_id?",
+        "ordinal": 7,
+        "name": "device_id",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -83,7 +94,9 @@
     ],
     "parameters": {
       "Left": [
-        "Int8"
+        "Int8",
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -92,9 +105,10 @@
       false,
       false,
       true,
+      false,
       true,
       false
     ]
   },
-  "hash": "2976c456f5d069c78133d2851f1b77488817dfc0a1b7f2fed7c3ec7f4d3eb56e"
+  "hash": "82ac57f21846324edc18afc4bd7978cb9e241e7da7bf9779d8ae4447ce2f9d8d"
 }

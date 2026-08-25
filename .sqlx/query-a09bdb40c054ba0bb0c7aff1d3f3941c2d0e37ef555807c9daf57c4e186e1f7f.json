@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status, p.protocol, p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id\n        FROM peers p\n        JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3\n          AND p.sync_status NOT IN ('removed', 'pending_remove')\n        ",
+  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != $2\n        ORDER BY p.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -27,7 +27,7 @@
       },
       {
         "ordinal": 2,
-        "name": "sync_status",
+        "name": "sync_status: PeerSyncStatus",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -38,7 +38,7 @@
       },
       {
         "ordinal": 3,
-        "name": "protocol",
+        "name": "protocol: Protocol",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -82,7 +82,7 @@
       },
       {
         "ordinal": 7,
-        "name": "device_id",
+        "name": "device_id?",
         "type_info": "Text",
         "origin": {
           "Table": {
@@ -95,7 +95,6 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Text",
         "Text"
       ]
     },
@@ -110,5 +109,5 @@
       false
     ]
   },
-  "hash": "b49f498e80c12ec1c4fed7348fcb60359552cd7382a8739b656058990ce62002"
+  "hash": "a09bdb40c054ba0bb0c7aff1d3f3941c2d0e37ef555807c9daf57c4e186e1f7f"
 }
