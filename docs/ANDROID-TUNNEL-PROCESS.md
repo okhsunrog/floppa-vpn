@@ -141,15 +141,29 @@ pending request alive across it is arguing.
   - `TunnelInfo`, `RunningInfo` and the `starting`/`tun_ready` fields the old RPC carried are gone
     already; what remains is the `ServiceRegistry` that replaced them.
 
-### The device matrix 1b must pass
+### The device matrix
 
-| step | expected |
+Run on a Pixel 8 Pro, release build, 25 August 2026.
+
+| step | result |
 | --- | --- |
-| open the app | `:vpn` alive (bound), no notification |
-| Connect | started + foreground, tunnel up |
-| swipe-kill the UI | tunnel survives, reconnects on its own |
-| tunnel dies in the background | detected and rebuilt with no UI process |
-| Disconnect | foreground and started state dropped; process stays while the UI is bound |
-| close the app after Disconnect | process dies |
-| always-on start with no UI | intent raised to Up, tunnel built from the persisted intent |
-| log out | configs and intent cleared, tunnel stopped, nothing comes back |
+| open the app | `:vpn` alive (bound), no notification — **pass** |
+| Connect | started + foreground, connected in 0.8 s — **pass** |
+| kill the UI process | tunnel keeps carrying traffic — **pass** |
+| Wi-Fi ⇄ mobile roam | one rebind each way, no break (16 ms → 165 ms → 16 ms) — **pass** |
+| network cut for 3 min, no UI | silence at 180 s → probe → lost at +20 s → ladder retried → back 8 s after the network returned — **pass** |
+| Disconnect | notification gone, process stays while bound — **pass** |
+| close the app after Disconnect | both processes die — **pass** |
+| always-on start with no UI | intent raised from the persisted one, 0.8 s; a UI opened later shows the truth with no adoption — **pass** |
+| `:vpn` restarts under a live UI | *not runnable* — `am kill`/`am crash` are refused for a release build; covered by the host test in `rpc_server.rs` |
+| swipe-kill after a *fallback* connect | *not run* — forcing a mid-ladder failure needs a server-side change |
+| log out | *not run* — it signs the owner out |
+
+Two defects the device found, both fixed: the network callback watched the *default* network, which
+after the tunnel comes up is our own VPN — so a real Wi-Fi to mobile switch produced no callback at
+all; and a cold start by the system stood the service down mid-start, because a freshly booted actor
+publishes Disconnected before anything has asked it for a tunnel.
+
+One gap it also found: an outage longer than the reconnect budget ends in `LostGaveUp` and the
+intent is demoted, so only always-on brings the tunnel back afterwards. "There is no network at
+all" is arguably not a failure worth spending a pass on.
