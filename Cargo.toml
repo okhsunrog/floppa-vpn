@@ -6,6 +6,7 @@ members = [
     "floppa-server",
     "floppa-vless",
     "floppa-cli",
+    "floppa-tunnel-config",
 ]
 exclude = [
     "floppa-client/src-tauri",
@@ -55,5 +56,10 @@ utoipa = "5.5.0"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", features = ["http-listener"] }
 
-# Shared crate
+# WireGuard/AmneziaWG engine (fork of Mullvad's boringtun). floppa-client/src-tauri is outside the
+# workspace and pins the same tag by hand; bump both together.
+gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-2026-08-25", features = ["device", "tun"] }
+
+# Shared crates
 floppa-core = { path = "floppa-core" }
+floppa-tunnel-config = { path = "floppa-tunnel-config" }

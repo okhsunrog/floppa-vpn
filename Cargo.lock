@@ -1290,6 +1290,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "floppa-tunnel-config"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
+ "gotatun",
+ "ipnetwork",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "toml",
+]
+
+[[package]]
 name = "floppa-vless"
 version = "0.1.0"
 dependencies = [

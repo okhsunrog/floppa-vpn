@@ -1,0 +1,21 @@
+[package]
+name = "floppa-tunnel-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Client-side tunnel configuration shared by floppa-cli and floppa-client: the WireGuard/AmneziaWG .conf parser, AmneziaWG obfuscation parameters, VLESS defaults and pure route helpers"
+
+[features]
+# gotatun device builders (`device` module) for the clients that run the tunnel in-process.
+gotatun = ["dep:gotatun"]
+
+[dependencies]
+base64.workspace = true
+gotatun = { workspace = true, optional = true }
+ipnetwork = "0.21"
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+toml.workspace = true
