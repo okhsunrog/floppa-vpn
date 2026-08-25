@@ -1,4 +1,5 @@
 pub mod actor;
+pub mod autostart;
 pub mod backend;
 pub mod commands;
 pub mod config;
