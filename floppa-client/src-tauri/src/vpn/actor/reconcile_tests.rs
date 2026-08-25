@@ -35,6 +35,15 @@ fn up_intent(epoch: u64, order: &[Protocol], params: Option<TunnelParams>) -> In
 fn down(epoch: u64) -> Intent {
     Intent::Down {
         epoch: IntentEpoch(epoch),
+        forget: false,
+    }
+}
+
+/// The Down a wipe issues: it must leave nothing running, whoever started it.
+fn forget(epoch: u64) -> Intent {
+    Intent::Down {
+        epoch: IntentEpoch(epoch),
+        forget: true,
     }
 }
 
@@ -167,6 +176,50 @@ fn idle_and_down_stays_idle() {
 #[test]
 fn a_tunnel_nobody_wants_is_torn_down() {
     let d = go(&Status::Idle, &down(0), &running(AWG), t0());
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            reason: UnwindReason::ForeignTunnel,
+            ..
+        }
+    ));
+    assert!(has_stop_foreign(&d));
+}
+
+#[test]
+fn a_tunnel_the_system_started_by_itself_is_adopted_rather_than_killed() {
+    // Whether always-on restarts the service is the system toggle's decision, not ours. Killing
+    // the tunnel it brought back put the app in a fight with the OS — restart, kill, restart —
+    // with the UI claiming Disconnected throughout. Adopting it shows what is true, and leaves
+    // stopping it as an explicit act of the user's.
+    let rules = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]);
+    let d = go(
+        &Status::Idle,
+        &down(7),
+        &autonomous(AWG, rules.clone()),
+        t0(),
+    );
+    assert!(matches!(d.next, Status::Idle), "nothing is torn down");
+    assert!(!has_stop_foreign(&d));
+    match d.effects.as_slice() {
+        [Effect::AdoptAutonomous { protocol, params }] => {
+            assert_eq!(*protocol, AWG);
+            assert_eq!(params.as_ref(), Some(&rules), "with the rules it reports");
+        }
+        other => panic!("expected the intent to be promoted, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_wipe_stops_even_a_tunnel_the_system_started() {
+    // Forgetting the account is the one Down that has to leave nothing running, whoever started
+    // it: an always-on tunnel surviving a logout is the previous account's tunnel.
+    let d = go(
+        &Status::Idle,
+        &forget(7),
+        &autonomous(AWG, TunnelParams::default()),
+        t0(),
+    );
     assert!(matches!(
         d.next,
         Status::Unwinding {

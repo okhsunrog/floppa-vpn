@@ -20,6 +20,10 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IntentRequest {
     Down,
+    /// A Down that must also leave nothing running, whoever started it. Only a wipe asks for it:
+    /// an always-on tunnel the system brought back is adopted after an ordinary Disconnect, and
+    /// forgetting the account is exactly the case where that must not happen.
+    Forget,
     Up {
         order: Vec<Protocol>,
         params: TunnelParams,

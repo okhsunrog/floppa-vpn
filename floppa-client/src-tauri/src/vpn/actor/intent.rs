@@ -83,16 +83,30 @@ impl UpIntent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Intent {
-    Down { epoch: IntentEpoch },
+    Down {
+        epoch: IntentEpoch,
+        /// "Leave nothing behind", not merely "I do not want a tunnel".
+        ///
+        /// Set only by a wipe. It is what separates a user's Disconnect — after which a tunnel
+        /// the always-on toggle brings back is adopted, because restarting it was the system's
+        /// decision and stopping it again is the user's — from forgetting the account, which must
+        /// end with nothing running whoever started it.
+        forget: bool,
+    },
     Up(UpIntent),
 }
 
 impl Intent {
     pub fn epoch(&self) -> IntentEpoch {
         match self {
-            Self::Down { epoch } => *epoch,
+            Self::Down { epoch, .. } => *epoch,
             Self::Up(u) => u.epoch,
         }
+    }
+
+    /// Whether this Down is a wipe. See [`Intent::Down::forget`].
+    pub fn is_forget(&self) -> bool {
+        matches!(self, Self::Down { forget: true, .. })
     }
 
     pub fn params(&self) -> Option<&TunnelParams> {
@@ -111,6 +125,7 @@ impl Default for Intent {
     fn default() -> Self {
         Self::Down {
             epoch: IntentEpoch(0),
+            forget: false,
         }
     }
 }
