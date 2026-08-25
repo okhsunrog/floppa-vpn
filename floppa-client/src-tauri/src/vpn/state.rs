@@ -168,6 +168,86 @@ where
     Ok(entry.value.clone())
 }
 
+/// One item of a `DNS =` line, in wg-quick's reading of it: an IP address is a resolver, anything
+/// else is a search domain.
+///
+/// Both kinds are kept as the text they came in as. The search domains are not applied to the
+/// tunnel's resolver configuration yet; keeping them is what makes that possible later, and what
+/// lets a `.conf` written for wg-quick import at all — the strict parser used to reject the whole
+/// file over a `corp.example` it would then have ignored anyway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DnsEntry {
+    Server(IpAddr),
+    SearchDomain(String),
+}
+
+impl FromStr for DnsEntry {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(ip) = s.parse::<IpAddr>() {
+            return Ok(Self::Server(ip));
+        }
+        if is_plausible_hostname(s) {
+            return Ok(Self::SearchDomain(s.to_string()));
+        }
+        Err(format!(
+            "`{s}` is neither an IP address nor a search domain"
+        ))
+    }
+}
+
+/// The shape of a hostname (RFC 1123): dot-separated labels of ASCII letters, digits and hyphens,
+/// none empty, longer than 63 or starting or ending with a hyphen — and the last label not all
+/// digits, so a mistyped address such as `1.1.1` is not waved through as a domain.
+fn is_plausible_hostname(s: &str) -> bool {
+    let s = s.strip_suffix('.').unwrap_or(s);
+    if s.is_empty() || s.len() > 253 {
+        return false;
+    }
+    let label_ok = |label: &str| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    };
+    let mut labels = s.split('.').peekable();
+    let mut last_all_digits = false;
+    while let Some(label) = labels.next() {
+        if !label_ok(label) {
+            return false;
+        }
+        if labels.peek().is_none() {
+            last_all_digits = label.bytes().all(|b| b.is_ascii_digit());
+        }
+    }
+    !last_all_digits
+}
+
+/// The entries of a stored `DNS =` line. The text was checked at import, so an item that no
+/// longer parses can only come from an older store; it is skipped.
+fn dns_entries(dns: Option<&str>) -> Vec<DnsEntry> {
+    dns.map(|dns| {
+        dns.split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn dns_servers_of(dns: Option<&str>) -> Vec<IpAddr> {
+    dns_entries(dns)
+        .into_iter()
+        .filter_map(|entry| match entry {
+            DnsEntry::Server(ip) => Some(ip),
+            DnsEntry::SearchDomain(_) => None,
+        })
+        .collect()
+}
+
 fn checked_key(entry: &Entry) -> Result<String, ConfigParseError> {
     decode_key(&entry.value).map_err(|e| invalid(entry, e))?;
     Ok(entry.value.clone())
@@ -238,16 +318,25 @@ impl WgConfig {
         IpNetwork::from_str(&self.address)
     }
 
-    /// Get DNS servers as `Vec<IpAddr>`
+    /// Everything on the `DNS =` line: resolvers and search domains, in order.
+    pub fn dns_entries(&self) -> Vec<DnsEntry> {
+        dns_entries(self.dns.as_deref())
+    }
+
+    /// The resolvers only. Search domains are not applied to the tunnel yet.
     pub fn dns_servers(&self) -> Vec<IpAddr> {
-        self.dns
-            .as_ref()
-            .map(|dns| {
-                dns.split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect()
+        dns_servers_of(self.dns.as_deref())
+    }
+
+    /// The search domains only.
+    pub fn dns_search_domains(&self) -> Vec<String> {
+        self.dns_entries()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                DnsEntry::SearchDomain(domain) => Some(domain),
+                DnsEntry::Server(_) => None,
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     /// Get allowed IPs as `Vec<IpNetwork>`
@@ -284,7 +373,7 @@ impl WgConfig {
             )?)?,
             dns: sections
                 .interface("dns")
-                .map(checked_list::<IpAddr>)
+                .map(checked_list::<DnsEntry>)
                 .transpose()?,
             mtu: sections.interface("mtu").map(parsed::<u16>).transpose()?,
             peer_public_key: checked_key(required(
@@ -443,16 +532,9 @@ impl VlessVpnConfig {
         IpNetwork::from_str(&self.address)
     }
 
-    /// Get DNS servers as `Vec<IpAddr>`
+    /// The resolvers only; see [`WgConfig::dns_servers`].
     pub fn dns_servers(&self) -> Vec<IpAddr> {
-        self.dns
-            .as_ref()
-            .map(|dns| {
-                dns.split(',')
-                    .filter_map(|s| s.trim().parse().ok())
-                    .collect()
-            })
-            .unwrap_or_default()
+        dns_servers_of(self.dns.as_deref())
     }
 
     /// Get allowed IPs as `Vec<IpNetwork>`
@@ -777,6 +859,40 @@ mod tests {
     }
 
     #[test]
+    fn search_domains_on_the_dns_line_are_kept_and_never_mistaken_for_resolvers() {
+        // wg-quick reads a non-IP item as a search domain. The strict parser rejected the whole
+        // file over one, and the previous lenient one dropped it on the floor.
+        let raw = wg_conf("DNS = 1.1.1.1, corp.example, lan", "");
+        match ProtocolConfig::parse(&raw).unwrap() {
+            ProtocolConfig::WireGuard(wg) => {
+                assert_eq!(wg.dns.as_deref(), Some("1.1.1.1, corp.example, lan"));
+                assert_eq!(
+                    wg.dns_servers(),
+                    vec!["1.1.1.1".parse::<IpAddr>().unwrap()],
+                    "only the resolver reaches the platform"
+                );
+                assert_eq!(wg.dns_search_domains(), vec!["corp.example", "lan"]);
+            }
+            other => panic!("expected WireGuard, got {other:?}"),
+        }
+
+        // Neither an address nor a hostname is still a typo, not a domain.
+        for bad in [
+            "1.1.1",
+            "corp..example",
+            "-corp.example",
+            "corp example",
+            "::1::",
+        ] {
+            let raw = wg_conf(&format!("DNS = 1.1.1.1, {bad}"), "");
+            assert!(
+                matches!(err_of(&raw), ConfigParseError::InvalidValue { key, .. } if key == "dns"),
+                "`{bad}` must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn obfuscation_keys_make_it_an_amneziawg_conf() {
         let raw = wg_conf(
             "Jc = 4\nJmin = 40\nJmax = 70\nS1 = 15\nS2 = 18\nH1 = 5-10\nI1 = <b 0xf6>",
@@ -805,7 +921,7 @@ mod tests {
         // became 0 and the bad MTU became the default.
         for (interface, peer, key) in [
             ("", "AllowedIPs = 0.0.0.0/0, ::/O", "allowedips"),
-            ("DNS = 1.1.1.1, one.one", "", "dns"),
+            ("DNS = 1.1.1.1, 1.1.1", "", "dns"),
             ("Jc = four", "", "jc"),
             ("MTU = big", "", "mtu"),
             (
