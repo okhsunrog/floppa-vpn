@@ -51,13 +51,30 @@ impl MultiUserAuthenticator {
     /// Uses diff-based update: preserves existing limiters (and their unflushed
     /// traffic counters), updates speed limits when changed, adds new users,
     /// and removes users no longer in the set.
-    pub fn sync_users(&self, new_users: Vec<RegistryUser>) {
+    ///
+    /// Returns the unflushed traffic of the users that were removed, so the
+    /// caller can still record it — otherwise those bytes vanish with the limiter.
+    pub fn sync_users(&self, new_users: Vec<RegistryUser>) -> Vec<UserTraffic> {
         use rustc_hash::FxHashSet;
 
         let new_uuids: FxHashSet<[u8; 16]> = new_users.iter().map(|u| u.uuid).collect();
 
-        // Remove users not in the new set
-        self.users.retain(|uuid, _| new_uuids.contains(uuid));
+        // Remove users not in the new set, draining their counters first
+        let mut evicted = Vec::new();
+        self.users.retain(|uuid, info| {
+            if new_uuids.contains(uuid) {
+                return true;
+            }
+            let (bytes_read, bytes_written) = info.limiter.swap_counters();
+            if bytes_read > 0 || bytes_written > 0 {
+                evicted.push(UserTraffic {
+                    user_id: info.user_id,
+                    bytes_read,
+                    bytes_written,
+                });
+            }
+            false
+        });
 
         // Insert new users, update existing ones
         for user in new_users {
@@ -73,6 +90,8 @@ impl MultiUserAuthenticator {
                     limiter: Limiter::new(new_speed),
                 });
         }
+
+        evicted
     }
 
     /// Drain traffic counters from all users' limiters.
@@ -115,5 +134,44 @@ impl VlessAuthenticator for MultiUserAuthenticator {
 
     fn get_limiter(&self, uuid: &[u8; 16]) -> Option<Limiter> {
         self.users.get(uuid).map(|entry| entry.limiter.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user(n: u8, speed: Option<i32>) -> RegistryUser {
+        RegistryUser {
+            uuid: [n; 16],
+            user_id: n as i64,
+            speed_limit_mbps: speed,
+        }
+    }
+
+    #[test]
+    fn resync_drops_missing_users_and_keeps_the_rest() {
+        let auth = MultiUserAuthenticator::new();
+        assert!(
+            auth.sync_users(vec![user(1, Some(10)), user(2, None)])
+                .is_empty()
+        );
+        assert!(auth.authenticate(&[1; 16]));
+        assert!(auth.authenticate(&[2; 16]));
+        assert!(!auth.authenticate(&[3; 16]));
+
+        // User 2 gone: evicted, its (zero) traffic is not reported, user 1 survives.
+        let evicted = auth.sync_users(vec![user(1, Some(20))]);
+        assert!(evicted.is_empty());
+        assert!(auth.authenticate(&[1; 16]));
+        assert!(!auth.authenticate(&[2; 16]));
+        assert!(auth.get_limiter(&[1; 16]).is_some());
+        assert!(auth.get_limiter(&[2; 16]).is_none());
+    }
+
+    #[test]
+    fn mbps_conversion() {
+        assert_eq!(mbps_to_bps(Some(8)), 1_000_000.0);
+        assert_eq!(mbps_to_bps(None), f64::INFINITY);
     }
 }

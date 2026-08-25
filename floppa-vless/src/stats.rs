@@ -5,21 +5,34 @@
 
 use std::sync::Arc;
 
-use crate::auth::MultiUserAuthenticator;
+use crate::auth::{MultiUserAuthenticator, UserTraffic};
 
-/// Flush traffic counters from the authenticator to Prometheus metrics.
-pub fn flush_traffic(auth: &MultiUserAuthenticator) {
-    let deltas = auth.flush_traffic();
-    if deltas.is_empty() {
-        return;
-    }
+/// Totals of one flush, for logging.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlushSummary {
+    pub users: usize,
+    pub bytes_read: u64,
+    pub bytes_written: u64,
+}
 
-    for delta in &deltas {
+/// Record per-user traffic deltas into the Prometheus counters.
+pub fn record_traffic(deltas: &[UserTraffic]) -> FlushSummary {
+    let mut summary = FlushSummary::default();
+    for delta in deltas {
         let uid = delta.user_id.to_string();
         metrics::counter!("vless_tx_bytes_total", "user_id" => uid.clone())
             .increment(delta.bytes_written);
         metrics::counter!("vless_rx_bytes_total", "user_id" => uid).increment(delta.bytes_read);
+        summary.users += 1;
+        summary.bytes_read += delta.bytes_read;
+        summary.bytes_written += delta.bytes_written;
     }
+    summary
+}
+
+/// Flush traffic counters from the authenticator to Prometheus metrics.
+pub fn flush_traffic(auth: &MultiUserAuthenticator) -> FlushSummary {
+    record_traffic(&auth.flush_traffic())
 }
 
 /// Background task: periodic traffic flush.

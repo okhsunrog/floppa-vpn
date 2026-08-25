@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use sqlx::postgres::PgPoolOptions;
+use tokio::signal::unix::{SignalKind, signal};
 use tracing::{error, info};
 
 use shoes_lite::address::{NetLocation, NetLocationMask};
@@ -195,26 +196,36 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Run until shutdown signal or a background task panics
-    tokio::select! {
-        _ = accept_loop => {},
+    // Run until a shutdown signal, or until a background task dies — in which
+    // case exit non-zero so systemd restarts a fully working process rather
+    // than leaving one that no longer syncs users or flushes stats.
+    let mut sigterm = signal(SignalKind::terminate())?;
+    let outcome: anyhow::Result<()> = tokio::select! {
+        _ = accept_loop => Ok(()),
         _ = tokio::signal::ctrl_c() => {
             info!("Received SIGINT, shutting down...");
+            Ok(())
         }
-        r = listener_handle => {
-            error!("LISTEN/NOTIFY task exited unexpectedly: {r:?}");
+        _ = sigterm.recv() => {
+            info!("Received SIGTERM, shutting down...");
+            Ok(())
         }
-        r = periodic_handle => {
-            error!("Periodic sync task exited unexpectedly: {r:?}");
-        }
-        r = flush_handle => {
-            error!("Traffic flush task exited unexpectedly: {r:?}");
-        }
-    }
+        r = listener_handle => Err(anyhow::anyhow!("LISTEN/NOTIFY task exited unexpectedly: {r:?}")),
+        r = periodic_handle => Err(anyhow::anyhow!("Periodic sync task exited unexpectedly: {r:?}")),
+        r = flush_handle => Err(anyhow::anyhow!("Traffic flush task exited unexpectedly: {r:?}")),
+    };
 
-    // Flush remaining traffic stats before exit
-    stats::flush_traffic(&authenticator);
+    // Record whatever the limiters still hold. The counters only reach
+    // VictoriaMetrics if it scrapes before the process is gone, so say how much
+    // is at stake instead of silently dropping it.
+    let summary = stats::flush_traffic(&authenticator);
+    info!(
+        users = summary.users,
+        bytes_read = summary.bytes_read,
+        bytes_written = summary.bytes_written,
+        "Final traffic flush; not yet scraped bytes are lost at exit"
+    );
 
     info!("floppa-vless stopped");
-    Ok(())
+    outcome
 }

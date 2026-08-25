@@ -57,7 +57,16 @@ pub async fn full_sync(pool: &PgPool, auth: &Arc<MultiUserAuthenticator>) -> any
     }
 
     let count = users.len();
-    auth.sync_users(users);
+    let evicted = auth.sync_users(users);
+    if !evicted.is_empty() {
+        let summary = crate::stats::record_traffic(&evicted);
+        info!(
+            users = summary.users,
+            bytes_read = summary.bytes_read,
+            bytes_written = summary.bytes_written,
+            "Recorded traffic of users removed from the registry"
+        );
+    }
 
     info!(count, "Registry synced from database");
     Ok(())
