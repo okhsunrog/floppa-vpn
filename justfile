@@ -76,6 +76,12 @@ fmt-kotlin: ensure-ktfmt
 
 # Android Lint on the VPN plugin — the only linter that sees Android platform misuse
 # (API-level guards, manifest correctness, policy-sensitive intents). ktfmt only formats.
+#
+# Not in ci.yml, and this is why: Gradle cannot configure the project until
+# `gen/android/tauri.settings.gradle` exists. It carries absolute paths into the local cargo
+# registry, so it is gitignored, and the only command that writes it is `tauri android build`.
+# So the automated run lives in release.yml, right after the APK build that has already paid that
+# cost. Use this recipe during development; `client-check` calls it.
 lint-kotlin:
     #!/usr/bin/env bash
     set -euo pipefail
