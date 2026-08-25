@@ -18,6 +18,15 @@ struct Cli {
     #[arg(long, global = true)]
     log_file: Option<String>,
 
+    /// Login token file (default: <config dir>/floppa-cli/token; under sudo, the invoking
+    /// user's config dir)
+    #[arg(long, global = true, env = "FLOPPA_TOKEN_FILE")]
+    token_file: Option<std::path::PathBuf>,
+
+    /// Login token, bypassing the token file (prefer the env var over the flag)
+    #[arg(long, global = true, env = "FLOPPA_TOKEN", hide_env_values = true)]
+    token: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -102,9 +111,11 @@ async fn main() -> Result<()> {
     };
     tracing_log::LogTracer::init().ok();
 
+    let tokens = auth::TokenSource::new(cli.token, cli.token_file);
+
     match cli.command {
         Command::Login { api_url } => {
-            auth::login(&api_url).await?;
+            auth::login(&api_url, &tokens).await?;
         }
         Command::Connect {
             config,
@@ -117,8 +128,7 @@ async fn main() -> Result<()> {
                 Some(path) => std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?,
                 None => {
-                    let token = auth::load_token()?
-                        .context("Not logged in. Run `floppa-cli login` first.")?;
+                    let token = tokens.require()?;
                     let client = api::ApiClient::new(&api_url, &token);
                     let me = client.get_me().await?;
                     if let Some(ref sub) = me.subscription {
@@ -145,8 +155,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Peers { api_url } => {
-            let token =
-                auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
+            let token = tokens.require()?;
             let client = api::ApiClient::new(&api_url, &token);
             let peers = client.list_peers().await?;
             if peers.is_empty() {
@@ -169,8 +178,7 @@ async fn main() -> Result<()> {
             peer_id,
             api_url,
         } => {
-            let token =
-                auth::load_token()?.context("Not logged in. Run `floppa-cli login` first.")?;
+            let token = tokens.require()?;
             let client = api::ApiClient::new(&api_url, &token);
             let config = match (protocol, peer_id) {
                 (api::Protocol::WireGuard | api::Protocol::AmneziaWg, Some(id)) => {
@@ -186,7 +194,7 @@ async fn main() -> Result<()> {
             print!("{config}");
         }
         Command::Logout => {
-            auth::logout()?;
+            tokens.remove()?;
             eprintln!("Logged out.");
         }
     }

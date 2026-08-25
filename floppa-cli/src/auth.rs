@@ -1,21 +1,151 @@
 use anyhow::{Context, Result, anyhow};
 use std::fs;
-use std::path::PathBuf;
+use std::io::Write;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::api::ApiClient;
 
+/// The uid/gid of the user behind `sudo`, so files created in their home stay theirs.
+struct SudoUser {
+    home: PathBuf,
+    uid: u32,
+    gid: u32,
+}
+
+/// `connect` needs root, so the CLI usually runs under sudo, where HOME and the config dir point
+/// at root's. The token was saved by the invoking user: look there instead.
+fn sudo_user() -> Option<SudoUser> {
+    let user = std::env::var("SUDO_USER").ok()?;
+    let uid: u32 = std::env::var("SUDO_UID").ok()?.parse().ok()?;
+    let gid: u32 = std::env::var("SUDO_GID").ok()?.parse().ok()?;
+    if uid == 0 {
+        return None;
+    }
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    let home = passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        (fields.next()? == user).then(|| fields.nth(4).map(PathBuf::from))?
+    })?;
+    Some(SudoUser { home, uid, gid })
+}
+
 fn config_dir() -> Result<PathBuf> {
-    let dir = dirs::config_dir()
-        .ok_or_else(|| anyhow!("Cannot determine config directory"))?
-        .join("floppa-cli");
-    fs::create_dir_all(&dir)?;
+    let sudo = sudo_user();
+    let base = match &sudo {
+        Some(sudo) => sudo.home.join(".config"),
+        None => dirs::config_dir().ok_or_else(|| anyhow!("Cannot determine config directory"))?,
+    };
+    let dir = base.join("floppa-cli");
+    if !dir.is_dir() {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .with_context(|| format!("Failed to create {}", dir.display()))?;
+        give_to_sudo_user(&dir, sudo.as_ref());
+    }
     Ok(dir)
+}
+
+/// Files created as root in the invoking user's home are handed back to that user, so a later
+/// unprivileged `login` can replace them.
+fn give_to_sudo_user(path: &Path, sudo: Option<&SudoUser>) {
+    if let Some(sudo) = sudo
+        && let Err(e) = std::os::unix::fs::chown(path, Some(sudo.uid), Some(sudo.gid))
+    {
+        eprintln!("Could not chown {} to the sudo user: {e}", path.display());
+    }
+}
+
+/// Write `content` to `path` with mode 0600 from the first byte: a temp file in the same
+/// directory, then an atomic rename over the destination.
+fn write_private(path: &Path, content: &str) -> Result<()> {
+    let tmp = path.with_extension("tmp");
+    let _ = fs::remove_file(&tmp);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .with_context(|| format!("Failed to create {}", tmp.display()))?;
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    give_to_sudo_user(&tmp, sudo_user().as_ref());
+    fs::rename(&tmp, path).with_context(|| format!("Failed to write {}", path.display()))
 }
 
 fn token_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("token"))
+}
+
+/// Where the login token comes from: `FLOPPA_TOKEN` inline, or a file (`--token-file` /
+/// `FLOPPA_TOKEN_FILE`, default `<config dir>/floppa-cli/token`).
+pub struct TokenSource {
+    inline: Option<String>,
+    file: Option<PathBuf>,
+}
+
+impl TokenSource {
+    pub fn new(inline: Option<String>, file: Option<PathBuf>) -> Self {
+        Self { inline, file }
+    }
+
+    fn path(&self) -> Result<PathBuf> {
+        match &self.file {
+            Some(path) => Ok(path.clone()),
+            None => token_path(),
+        }
+    }
+
+    pub fn load(&self) -> Result<Option<String>> {
+        if let Some(token) = self.inline.as_deref().map(str::trim)
+            && !token.is_empty()
+        {
+            return Ok(Some(token.to_string()));
+        }
+        let path = self.path()?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let token = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read token file {}", path.display()))?
+            .trim()
+            .to_string();
+        Ok((!token.is_empty()).then_some(token))
+    }
+
+    /// The token, or the error the user needs to see.
+    pub fn require(&self) -> Result<String> {
+        self.load()?
+            .context("Not logged in. Run `floppa-cli login` first.")
+    }
+
+    fn save(&self, token: &str) -> Result<()> {
+        let path = self.path()?;
+        if let Some(parent) = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty() && !p.is_dir())
+        {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        }
+        write_private(&path, token)
+    }
+
+    pub fn remove(&self) -> Result<()> {
+        let path = self.path()?;
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
 }
 
 /// What the server tracks a peer by: a stable per-installation UUID plus a display name.
@@ -34,7 +164,7 @@ pub fn device_identity() -> Result<DeviceIdentity> {
         }
         _ => {
             let id = uuid::Uuid::new_v4().to_string();
-            fs::write(&path, format!("{id}\n"))
+            write_private(&path, &format!("{id}\n"))
                 .with_context(|| format!("Failed to save device id to {}", path.display()))?;
             id
         }
@@ -51,44 +181,8 @@ fn hostname() -> String {
         .unwrap_or_else(|_| "floppa-cli".to_string())
 }
 
-pub fn load_token() -> Result<Option<String>> {
-    let path = token_path()?;
-    if path.exists() {
-        let token = fs::read_to_string(&path)
-            .context("Failed to read token file")?
-            .trim()
-            .to_string();
-        if token.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(token))
-    } else {
-        Ok(None)
-    }
-}
-
-fn save_token(token: &str) -> Result<()> {
-    let path = token_path()?;
-    fs::write(&path, token).context("Failed to save token")?;
-    // Restrict permissions
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
-}
-
-pub fn logout() -> Result<()> {
-    let path = token_path()?;
-    if path.exists() {
-        fs::remove_file(&path)?;
-    }
-    Ok(())
-}
-
 /// Run the login flow: start local server, open browser, capture code, exchange for JWT.
-pub async fn login(api_url: &str) -> Result<()> {
+pub async fn login(api_url: &str, tokens: &TokenSource) -> Result<()> {
     // Bind to a random port on 127.0.0.1
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
@@ -112,7 +206,7 @@ pub async fn login(api_url: &str) -> Result<()> {
 
     // Exchange code for JWT
     let auth = ApiClient::exchange_code(api_url, &code).await?;
-    save_token(&auth.token)?;
+    tokens.save(&auth.token)?;
 
     let name = auth
         .user
@@ -183,4 +277,30 @@ fn urlencoding(s: &str) -> String {
             _ => format!("%{:02X}", c as u8),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn write_private_creates_0600_and_replaces_atomically() {
+        let dir = std::env::temp_dir().join(format!("floppa-cli-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("token");
+
+        write_private(&path, "first").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        write_private(&path, "second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+        assert!(!path.with_extension("tmp").exists());
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
