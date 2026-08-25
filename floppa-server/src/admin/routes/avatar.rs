@@ -35,6 +35,31 @@ use super::AppState;
 /// Re-download a user's avatar if it's older than this.
 const AVATAR_TTL_DAYS: i64 = 7;
 
+/// Largest avatar we are willing to download and cache. Telegram profile photos are a few
+/// hundred KB; anything bigger is not an avatar.
+const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
+
+/// Read a response body, giving up as soon as it exceeds [`MAX_AVATAR_BYTES`] — the body is
+/// never buffered past the cap, whatever Content-Length claimed (or didn't).
+async fn read_capped(mut resp: reqwest::Response) -> Option<Vec<u8>> {
+    if resp
+        .content_length()
+        .is_some_and(|len| len > MAX_AVATAR_BYTES as u64)
+    {
+        debug!(url = %resp.url(), "avatar: response larger than the cap, skipped");
+        return None;
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = resp.chunk().await.ok()? {
+        if bytes.len() + chunk.len() > MAX_AVATAR_BYTES {
+            debug!(url = %resp.url(), "avatar: body exceeded the cap, skipped");
+            return None;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Some(bytes)
+}
+
 // =============================================================================
 // Download + cache (background)
 // =============================================================================
@@ -124,7 +149,7 @@ async fn fetch_via_bot(state: &AppState, telegram_id: i64) -> Option<Vec<u8>> {
     if !resp.status().is_success() {
         return None;
     }
-    Some(resp.bytes().await.ok()?.to_vec())
+    read_capped(resp).await
 }
 
 /// Fallback: download the stored `photo_url` directly from the server.
@@ -140,7 +165,7 @@ async fn fetch_via_url(state: &AppState, url: &str) -> Option<(Vec<u8>, String)>
         .filter(|ct| ct.starts_with("image/"))
         .unwrap_or("image/jpeg")
         .to_string();
-    let bytes = resp.bytes().await.ok()?.to_vec();
+    let bytes = read_capped(resp).await?;
     Some((bytes, content_type))
 }
 

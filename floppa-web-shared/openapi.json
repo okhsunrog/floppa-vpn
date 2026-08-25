@@ -3023,7 +3023,8 @@
         "required": [
           "wg_download_bytes",
           "wg_upload_bytes",
-          "peers"
+          "peers",
+          "traffic_available"
         ],
         "properties": {
           "peers": {
@@ -3031,6 +3032,10 @@
             "items": {
               "$ref": "#/components/schemas/MyPeer"
             }
+          },
+          "traffic_available": {
+            "type": "boolean",
+            "description": "False when the metrics backend could not be queried: every byte counter in this\nresponse is then a placeholder zero, not a measurement."
           },
           "vless": {
             "oneOf": [
@@ -3446,7 +3451,8 @@
           "total_upload_bytes",
           "active_subscriptions",
           "total_payments",
-          "total_stars_revenue"
+          "total_stars_revenue",
+          "traffic_available"
         ],
         "properties": {
           "active_peers": {
@@ -3476,6 +3482,10 @@
           "total_users": {
             "type": "integer",
             "format": "int64"
+          },
+          "traffic_available": {
+            "type": "boolean",
+            "description": "False when the metrics backend could not be queried (byte counters are then zero)."
           }
         }
       },
@@ -3694,7 +3704,8 @@
           "wg_download_bytes",
           "wg_upload_bytes",
           "peers",
-          "subscriptions"
+          "subscriptions",
+          "traffic_available"
         ],
         "properties": {
           "created_at": {
@@ -3744,6 +3755,10 @@
               "null"
             ],
             "format": "int64"
+          },
+          "traffic_available": {
+            "type": "boolean",
+            "description": "False when the metrics backend could not be queried: every byte counter in this\nresponse is then a placeholder zero, not a measurement."
           },
           "username": {
             "type": [

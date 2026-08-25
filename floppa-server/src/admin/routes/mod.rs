@@ -20,7 +20,7 @@ use tokio::sync::RwLock;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
-use crate::admin::rate_limit::RateLimiter;
+use crate::admin::{rate_limit::RateLimiter, vm_client::VmClient};
 
 /// Request header the client app sends with its own semver version; the 426 middleware compares
 /// it against `min_client_version`, and CORS must allow it.
@@ -35,6 +35,8 @@ pub enum StartupError {
     InvalidEncryptionKey(#[from] floppa_core::crypto::CryptoError),
     #[error("config.toml: min_client_version {0:?} is not a semver version: {1}")]
     InvalidMinClientVersion(String, semver::Error),
+    #[error("failed to build the HTTP client: {0}")]
+    HttpClient(reqwest::Error),
 }
 
 #[derive(Clone)]
@@ -54,8 +56,10 @@ pub struct AppState {
     /// AmneziaWG server public key (None if AmneziaWG is not configured).
     pub awg_public_key: Option<String>,
     pub bot: Bot,
+    /// Outbound HTTP (Telegram file downloads, avatar URLs) with short timeouts — a hung
+    /// upstream must not hold a request or a background task forever.
     pub http_client: reqwest::Client,
-    pub vm_url: String,
+    pub vm: VmClient,
     telegram_login_states: Arc<RwLock<TtlMap<PendingTelegramLoginState>>>,
     telegram_login_codes: Arc<RwLock<TtlMap<PendingTelegramLoginCode>>>,
     /// Fixed-window counters for the unauthenticated auth endpoints.
@@ -341,6 +345,11 @@ impl AppState {
             .as_ref()
             .map(|m| m.victoria_metrics_url.clone())
             .unwrap_or_else(|| "http://127.0.0.1:8428".to_string());
+        let http_client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .map_err(StartupError::HttpClient)?;
 
         Ok(Self {
             pool,
@@ -353,8 +362,8 @@ impl AppState {
             wg_public_key,
             awg_public_key,
             bot,
-            http_client: reqwest::Client::new(),
-            vm_url,
+            vm: VmClient::new(http_client.clone(), vm_url),
+            http_client,
             telegram_login_states: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
             telegram_login_codes: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),
             rate_limiter: Arc::new(RateLimiter::default()),

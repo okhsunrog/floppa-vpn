@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            (SELECT MAX(ai.app_version) FROM app_installations ai WHERE ai.user_id = u.id) as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        ORDER BY u.created_at DESC\n        ",
+  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            latest_ai.app_version as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        ORDER BY u.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -107,7 +107,12 @@
         "ordinal": 10,
         "name": "client_version",
         "type_info": "Text",
-        "origin": "Expression"
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "app_version"
+          }
+        }
       },
       {
         "ordinal": 11,
@@ -130,9 +135,9 @@
       false,
       null,
       null,
-      null,
+      true,
       null
     ]
   },
-  "hash": "edd071f48ec09713690250cfef80ae1becd74b351dab4115643395a51f43c0d2"
+  "hash": "c18f5afb1d4e06d738891f32a07425423a09a80e115e20f1928e5ad5fae63cbf"
 }

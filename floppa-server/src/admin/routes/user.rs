@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 use teloxide::{prelude::*, types::InputFile};
 use utoipa::ToSchema;
 
-use crate::admin::{auth::AuthUser, error::ApiError, vm_client};
+use crate::admin::{
+    auth::AuthUser,
+    error::ApiError,
+    vm_client::{self, Traffic, TrafficMetric},
+};
 
 use super::AppState;
 
@@ -168,6 +172,9 @@ pub struct MyPeersResponse {
     peers: Vec<MyPeer>,
     /// VLESS info (None if VLESS not configured on server)
     vless: Option<VlessInfo>,
+    /// False when the metrics backend could not be queried: every byte counter in this
+    /// response is then a placeholder zero, not a measurement.
+    traffic_available: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -475,14 +482,22 @@ pub(super) async fn get_my_peers(
     .await?;
 
     let peer_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
-        .await
-        .unwrap_or_default();
+    let peer_traffic =
+        vm_client::logged("peer_traffic", state.vm.peer_traffic(&peer_ids, 30).await);
+    let wg_traffic = vm_client::logged(
+        "user_traffic(wg)",
+        state
+            .vm
+            .user_traffic(TrafficMetric::Wg, auth.user_id, 30)
+            .await,
+    );
+    let mut traffic_available = peer_traffic.is_some() && wg_traffic.is_some();
+    let peer_traffic = peer_traffic.unwrap_or_default();
 
     let peers: Vec<MyPeer> = rows
         .into_iter()
         .map(|r| {
-            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let Traffic { download, upload } = peer_traffic.get(&r.id).copied().unwrap_or_default();
             MyPeer {
                 id: r.id,
                 assigned_ip: r.assigned_ip,
@@ -499,10 +514,10 @@ pub(super) async fn get_my_peers(
         .collect();
 
     // User-level WG traffic (includes removed peers)
-    let (wg_download_bytes, wg_upload_bytes) =
-        vm_client::user_wg_traffic(&state.http_client, &state.vm_url, auth.user_id, 30)
-            .await
-            .unwrap_or((0, 0));
+    let Traffic {
+        download: wg_download_bytes,
+        upload: wg_upload_bytes,
+    } = wg_traffic.unwrap_or_default();
 
     // VLESS info (only if server has VLESS configured)
     let vless = if state.config.vless.is_some() {
@@ -514,15 +529,20 @@ pub(super) async fn get_my_peers(
         .await?
         .unwrap_or(false);
 
-        let (download_bytes, upload_bytes) =
-            vm_client::user_vless_traffic(&state.http_client, &state.vm_url, auth.user_id, 30)
-                .await
-                .unwrap_or((0, 0));
+        let vless_traffic = vm_client::logged(
+            "user_traffic(vless)",
+            state
+                .vm
+                .user_traffic(TrafficMetric::Vless, auth.user_id, 30)
+                .await,
+        );
+        traffic_available &= vless_traffic.is_some();
+        let Traffic { download, upload } = vless_traffic.unwrap_or_default();
 
         Some(VlessInfo {
             has_uuid,
-            download_bytes,
-            upload_bytes,
+            download_bytes: download,
+            upload_bytes: upload,
         })
     } else {
         None
@@ -533,6 +553,7 @@ pub(super) async fn get_my_peers(
         wg_upload_bytes,
         peers,
         vless,
+        traffic_available,
     }))
 }
 
@@ -732,12 +753,10 @@ pub(super) async fn get_my_peer_by_device(
         .await?
         .ok_or_else(|| ApiError::not_found("No peer for this device"))?;
 
-    let (download, upload) =
-        vm_client::peer_traffic(&state.http_client, &state.vm_url, &[row.id], 30)
-            .await
-            .ok()
+    let Traffic { download, upload } =
+        vm_client::logged("peer_traffic", state.vm.peer_traffic(&[row.id], 30).await)
             .and_then(|m| m.get(&row.id).copied())
-            .unwrap_or((0, 0));
+            .unwrap_or_default();
 
     Ok(Json(MyPeer {
         id: row.id,

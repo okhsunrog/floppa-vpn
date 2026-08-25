@@ -12,7 +12,11 @@ use floppa_core::{
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use crate::admin::{auth::AdminUser, error::ApiError, vm_client};
+use crate::admin::{
+    auth::AdminUser,
+    error::ApiError,
+    vm_client::{self, Traffic, TrafficMetric},
+};
 
 use super::AppState;
 
@@ -25,6 +29,8 @@ pub struct Stats {
     active_subscriptions: i64,
     total_payments: i64,
     total_stars_revenue: i64,
+    /// False when the metrics backend could not be queried (byte counters are then zero).
+    traffic_available: bool,
 }
 
 /// Get system statistics (admin only)
@@ -56,19 +62,19 @@ pub(super) async fn get_stats(
     .fetch_one(&state.pool)
     .await?;
 
-    let (total_download_bytes, total_upload_bytes) =
-        vm_client::system_traffic(&state.http_client, &state.vm_url, 30)
-            .await
-            .unwrap_or((0, 0));
+    let traffic = vm_client::logged("system_traffic", state.vm.system_traffic(30).await);
+    let traffic_available = traffic.is_some();
+    let Traffic { download, upload } = traffic.unwrap_or_default();
 
     Ok(Json(Stats {
         total_users: stats.total_users,
         active_peers: stats.active_peers,
-        total_download_bytes,
-        total_upload_bytes,
+        total_download_bytes: download,
+        total_upload_bytes: upload,
         active_subscriptions: stats.active_subscriptions,
         total_payments: stats.total_payments,
         total_stars_revenue: stats.total_stars_revenue,
+        traffic_available,
     }))
 }
 
@@ -144,9 +150,16 @@ pub(super) async fn list_users(
             u.created_at,
             (SELECT p.display_name FROM subscriptions s JOIN plans p ON s.plan_id = p.id WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW()) LIMIT 1) as active_plan,
             (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!",
-            (SELECT MAX(ai.app_version) FROM app_installations ai WHERE ai.user_id = u.id) as client_version,
+            latest_ai.app_version as client_version,
             (u.vless_uuid IS NOT NULL) as "has_vless!"
         FROM users u
+        LEFT JOIN LATERAL (
+            SELECT ai.app_version
+            FROM app_installations ai
+            WHERE ai.user_id = u.id
+            ORDER BY ai.last_seen_at DESC
+            LIMIT 1
+        ) latest_ai ON true
         ORDER BY u.created_at DESC
         "#,
     )
@@ -306,6 +319,9 @@ pub struct UserDetail {
     peers: Vec<PeerDetail>,
     vless: Option<VlessAdminInfo>,
     subscriptions: Vec<SubscriptionDetail>,
+    /// False when the metrics backend could not be queried: every byte counter in this
+    /// response is then a placeholder zero, not a measurement.
+    traffic_available: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -387,14 +403,19 @@ pub(super) async fn get_user(
     .await?;
 
     let peer_ids: Vec<i64> = peer_rows.iter().map(|r| r.id).collect();
-    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
-        .await
-        .unwrap_or_default();
+    let peer_traffic =
+        vm_client::logged("peer_traffic", state.vm.peer_traffic(&peer_ids, 30).await);
+    let wg_traffic = vm_client::logged(
+        "user_traffic(wg)",
+        state.vm.user_traffic(TrafficMetric::Wg, id, 30).await,
+    );
+    let mut traffic_available = peer_traffic.is_some() && wg_traffic.is_some();
+    let peer_traffic = peer_traffic.unwrap_or_default();
 
     let peers: Vec<PeerDetail> = peer_rows
         .into_iter()
         .map(|r| {
-            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let Traffic { download, upload } = peer_traffic.get(&r.id).copied().unwrap_or_default();
             PeerDetail {
                 id: r.id,
                 public_key: r.public_key,
@@ -430,10 +451,10 @@ pub(super) async fn get_user(
     .await?;
 
     // User-level WG traffic (includes removed peers)
-    let (wg_download_bytes, wg_upload_bytes) =
-        vm_client::user_wg_traffic(&state.http_client, &state.vm_url, id, 30)
-            .await
-            .unwrap_or((0, 0));
+    let Traffic {
+        download: wg_download_bytes,
+        upload: wg_upload_bytes,
+    } = wg_traffic.unwrap_or_default();
 
     // VLESS info (only if server has VLESS configured)
     let vless = if state.config.vless.is_some() {
@@ -443,15 +464,17 @@ pub(super) async fn get_user(
                 .await?
                 .unwrap_or(false);
 
-        let (download_bytes, upload_bytes) =
-            vm_client::user_vless_traffic(&state.http_client, &state.vm_url, id, 30)
-                .await
-                .unwrap_or((0, 0));
+        let vless_traffic = vm_client::logged(
+            "user_traffic(vless)",
+            state.vm.user_traffic(TrafficMetric::Vless, id, 30).await,
+        );
+        traffic_available &= vless_traffic.is_some();
+        let Traffic { download, upload } = vless_traffic.unwrap_or_default();
 
         Some(VlessAdminInfo {
             has_uuid,
-            download_bytes,
-            upload_bytes,
+            download_bytes: download,
+            upload_bytes: upload,
         })
     } else {
         None
@@ -471,6 +494,7 @@ pub(super) async fn get_user(
         peers,
         vless,
         subscriptions,
+        traffic_available,
     }))
 }
 
@@ -639,14 +663,13 @@ pub(super) async fn list_peers(
     .await?;
 
     let peer_ids: Vec<i64> = rows.iter().map(|r| r.id).collect();
-    let traffic = vm_client::peer_traffic(&state.http_client, &state.vm_url, &peer_ids, 30)
-        .await
+    let traffic = vm_client::logged("peer_traffic", state.vm.peer_traffic(&peer_ids, 30).await)
         .unwrap_or_default();
 
     let peers: Vec<PeerSummary> = rows
         .into_iter()
         .map(|r| {
-            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let Traffic { download, upload } = traffic.get(&r.id).copied().unwrap_or_default();
             PeerSummary {
                 id: r.id,
                 user_id: r.user_id,
@@ -720,14 +743,16 @@ pub(super) async fn list_vless_peers(
     .fetch_all(&state.pool)
     .await?;
 
-    let traffic = vm_client::all_vless_traffic(&state.http_client, &state.vm_url, 30)
-        .await
-        .unwrap_or_default();
+    let traffic = vm_client::logged(
+        "all_traffic(vless)",
+        state.vm.all_traffic(TrafficMetric::Vless, 30).await,
+    )
+    .unwrap_or_default();
 
     let peers: Vec<VlessPeerSummary> = rows
         .into_iter()
         .map(|r| {
-            let (download, upload) = traffic.get(&r.id).copied().unwrap_or((0, 0));
+            let Traffic { download, upload } = traffic.get(&r.id).copied().unwrap_or_default();
             VlessPeerSummary {
                 user_id: r.id,
                 username: r.username,

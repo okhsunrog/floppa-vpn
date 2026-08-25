@@ -174,6 +174,11 @@ export type MyPeer = {
 
 export type MyPeersResponse = {
     peers: Array<MyPeer>;
+    /**
+     * False when the metrics backend could not be queried: every byte counter in this
+     * response is then a placeholder zero, not a measurement.
+     */
+    traffic_available: boolean;
     vless?: null | VlessInfo;
     /**
      * Total WG traffic for this user (includes removed peers), last 30 days.
@@ -305,6 +310,10 @@ export type Stats = {
     total_stars_revenue: number;
     total_upload_bytes: number;
     total_users: number;
+    /**
+     * False when the metrics backend could not be queried (byte counters are then zero).
+     */
+    traffic_available: boolean;
 };
 
 export type SubscriptionDetail = {
@@ -370,6 +379,11 @@ export type UserDetail = {
     photo_url?: string | null;
     subscriptions: Array<SubscriptionDetail>;
     telegram_id?: number | null;
+    /**
+     * False when the metrics backend could not be queried: every byte counter in this
+     * response is then a placeholder zero, not a measurement.
+     */
+    traffic_available: boolean;
     username?: string | null;
     vless?: null | VlessAdminInfo;
     /**
