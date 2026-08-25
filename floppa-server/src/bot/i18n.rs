@@ -3,6 +3,7 @@
 use floppa_core::DbPool;
 use floppa_core::billing::PurchasablePlan;
 use floppa_core::models::Lang;
+use floppa_core::services::MergePrompt;
 
 pub struct Messages {
     // /start
@@ -58,8 +59,10 @@ pub struct Messages {
     pub link_invalid: &'static str,
     pub link_already: &'static str,
     pub link_success: &'static str,
-    /// Placeholders: {date}, {devices}, {plan}
+    /// The established account this Telegram already has. Placeholders: {date}, {devices}, {plan}
     pub link_merge_prompt: &'static str,
+    /// The account it would be merged into. Placeholders: {login}, {date}
+    pub link_merge_target: &'static str,
     pub link_merge_warning: &'static str,
     pub link_merge_confirm: &'static str,
     pub link_merge_cancel: &'static str,
@@ -121,7 +124,8 @@ static EN: Messages = Messages {
     link_already: "This Telegram is already linked to your account.",
     link_success: "✅ Telegram linked! You can now buy plans and receive notifications here.",
     link_merge_prompt: "This Telegram already has a Floppa VPN account (since {date}, {devices} device(s), plan: {plan}).",
-    link_merge_warning: "Merging will move it into the account you're signed in to on the app. This can't be undone.",
+    link_merge_target: "Merging will move it into the account {login} (created {date}) — the one this link was created from in the app. Its subscription, devices and payments will belong to that account, and this can't be undone.",
+    link_merge_warning: "⚠️ If you did not create this link yourself, press Cancel: whoever did would take over your account.",
     link_merge_confirm: "Merge & link",
     link_merge_cancel: "Cancel",
     link_merge_done: "✅ Merged! Your account has been recovered and linked.",
@@ -182,7 +186,8 @@ static RU: Messages = Messages {
     link_already: "Этот Telegram уже привязан к вашему аккаунту.",
     link_success: "✅ Telegram привязан! Теперь здесь можно покупать тарифы и получать уведомления.",
     link_merge_prompt: "К этому Telegram уже привязан аккаунт Floppa VPN (с {date}, устройств: {devices}, тариф: {plan}).",
-    link_merge_warning: "Объединение перенесёт его в аккаунт, в который вы вошли в приложении. Это необратимо.",
+    link_merge_target: "Объединение перенесёт его в аккаунт {login} (создан {date}) — тот, из которого эта ссылка была создана в приложении. Подписка, устройства и платежи перейдут в этот аккаунт, и отменить это нельзя.",
+    link_merge_warning: "⚠️ Если вы не создавали эту ссылку сами — нажмите «Отмена»: иначе тот, кто её создал, получит ваш аккаунт.",
     link_merge_confirm: "Объединить и привязать",
     link_merge_cancel: "Отмена",
     link_merge_done: "✅ Готово! Аккаунт восстановлен и привязан.",
@@ -282,19 +287,20 @@ pub fn format_invoice_title(msgs: &Messages, name: &str, days: i32) -> String {
     format!("{name} ({days} {})", msgs.buy_plan_days)
 }
 
-/// Build the merge-confirmation prompt describing the established account being folded in.
-pub fn format_link_merge_prompt(
-    msgs: &Messages,
-    created: chrono::DateTime<chrono::Utc>,
-    devices: i64,
-    plan: Option<&str>,
-) -> String {
-    let body = msgs
+/// Build the merge-confirmation prompt: the established account being folded in, the account
+/// it goes into (so a link the user did not create stands out), and the warning.
+pub fn format_link_merge_prompt(msgs: &Messages, prompt: &MergePrompt) -> String {
+    let date = |at: chrono::DateTime<chrono::Utc>| at.format("%Y-%m-%d").to_string();
+    let husk = msgs
         .link_merge_prompt
-        .replace("{date}", &created.format("%Y-%m-%d").to_string())
-        .replace("{devices}", &devices.to_string())
-        .replace("{plan}", plan.unwrap_or("—"));
-    format!("{body}\n\n{}", msgs.link_merge_warning)
+        .replace("{date}", &date(prompt.husk.created_at))
+        .replace("{devices}", &prompt.husk.devices.to_string())
+        .replace("{plan}", prompt.husk.plan.as_deref().unwrap_or("—"));
+    let survivor = msgs
+        .link_merge_target
+        .replace("{login}", prompt.survivor.login.as_deref().unwrap_or("—"))
+        .replace("{date}", &date(prompt.survivor.created_at));
+    format!("{husk}\n\n{survivor}\n\n{}", msgs.link_merge_warning)
 }
 
 /// Format invoice description with optional proration info.

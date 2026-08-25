@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET\n               telegram_id = $2,\n               username   = COALESCE(username, $3),\n               first_name = COALESCE(first_name, $4),\n               last_name  = COALESCE(last_name, $5),\n               language   = COALESCE(language, $6)\n           WHERE id = $1 AND telegram_id IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d6990572d7bca7c8e24ca4f512ef720bc59c720f0e4229d96e0700eabdfb13dd"
+}

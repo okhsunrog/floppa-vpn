@@ -1,7 +1,7 @@
 //! Shared business logic used by both bot and admin.
 
 use crate::error::{FloppaError, Result};
-use crate::models::{Lang, PeerSyncStatus, Protocol, SubscriptionSource};
+use crate::models::{Lang, LinkCodeKind, PeerSyncStatus, Protocol, SubscriptionSource};
 use crate::{Config, DbPool, encrypt_private_key};
 use chrono::{DateTime, Duration, Utc};
 use ipnetwork::Ipv4Network;
@@ -421,36 +421,287 @@ pub async fn set_credential_for_user(
     }
 }
 
-/// Attach a Telegram identity to an existing user that has no Telegram yet (branch A), filling in
-/// any missing profile fields, and grant the one-time real trial. The caller must have already
-/// verified that no OTHER row owns `tg_id`. Returns whether a real trial was granted on this call.
-pub async fn attach_telegram_simple(
-    pool: &DbPool,
-    user_id: i64,
-    tg_id: i64,
-    username: Option<&str>,
-    first_name: Option<&str>,
-    last_name: Option<&str>,
-) -> Result<bool> {
-    sqlx::query!(
-        r#"
-        UPDATE users SET
-            telegram_id = $2,
-            username   = COALESCE(username, $3),
-            first_name = COALESCE(first_name, $4),
-            last_name  = COALESCE(last_name, $5)
-        WHERE id = $1
-        "#,
-        user_id,
-        tg_id,
-        username,
-        first_name,
-        last_name,
+// ── Telegram link / merge ──
+//
+// The app mints a one-time `telegram_link_codes` row and sends the user to the bot with
+// `/start link_<code>`. What happens next depends on whether the Telegram is already attached
+// to some account; the bot only renders the outcomes below.
+
+/// The Telegram identity presenting a link code.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TelegramIdentity<'a> {
+    pub telegram_id: i64,
+    pub username: Option<&'a str>,
+    pub first_name: Option<&'a str>,
+    pub last_name: Option<&'a str>,
+    pub language: Option<Lang>,
+}
+
+/// What a user sees about an account before agreeing to merge it (see [`MergePrompt`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountSummary {
+    pub id: i64,
+    /// The credential login (`auth_identities.provider_uid`), if the account has one.
+    pub login: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub devices: i64,
+    /// Display name of the active plan, if any.
+    pub plan: Option<String>,
+}
+
+/// The two accounts a merge would combine: `husk` (this Telegram's established account, folded
+/// in and deleted) and `survivor` (the account that minted the link code, kept). Showing the
+/// survivor is what lets the user notice a link they did not create themselves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergePrompt {
+    pub code: String,
+    pub survivor: AccountSummary,
+    pub husk: AccountSummary,
+}
+
+/// Outcome of `/start link_<code>` (see [`begin_telegram_link`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkStart {
+    /// The Telegram was free and is now attached to the account that minted the code.
+    Attached { trial_granted: bool },
+    /// The Telegram already belongs to that very account; the code is spent.
+    AlreadyLinked,
+    /// The Telegram belongs to a different account — nothing was changed; ask the user to
+    /// confirm with [`confirm_telegram_merge`] (the code stays valid until then).
+    MergeRequired(MergePrompt),
+    /// Unknown, spent or expired code.
+    InvalidCode,
+}
+
+/// Outcome of confirming a merge prompt (see [`confirm_telegram_merge`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// `husk_id` was folded into `survivor_id` and deleted.
+    Merged { survivor_id: i64, husk_id: i64 },
+    /// The Telegram already belongs to the account that minted the code (an earlier tap or
+    /// `/start` did the work); the code is spent.
+    AlreadyLinked,
+    /// The established account vanished between prompt and confirmation, so there was nothing
+    /// to merge: the Telegram was simply attached to the account that minted the code.
+    Attached { trial_granted: bool },
+    /// Unknown, spent or expired code — or the minting account acquired a Telegram meanwhile.
+    InvalidCode,
+}
+
+/// Lock a live link code (unspent, unexpired) and return the account that minted it.
+async fn lock_link_code(tx: &mut PgTransaction<'_>, code: &str) -> Result<Option<i64>> {
+    let user_id = sqlx::query_scalar!(
+        "SELECT user_id FROM telegram_link_codes \
+         WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW() FOR UPDATE",
+        code,
     )
-    .execute(pool)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(user_id)
+}
+
+/// Spend a live link code, stamping how it was used. Returns whether this call spent it.
+async fn consume_link_code(
+    tx: &mut PgTransaction<'_>,
+    code: &str,
+    kind: LinkCodeKind,
+) -> Result<bool> {
+    let spent = sqlx::query!(
+        "UPDATE telegram_link_codes SET consumed_at = NOW(), kind = $2 \
+         WHERE code = $1 AND consumed_at IS NULL AND expires_at > NOW()",
+        code,
+        kind as _,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(spent.rows_affected() == 1)
+}
+
+/// Spend `code` as a simple link and attach `identity` to the account that minted it, filling
+/// in profile fields it lacks. Returns that account's id, or `None` when the code was not live
+/// or the account already has a Telegram — in which case nothing is changed.
+async fn attach_telegram_in_tx(
+    tx: &mut PgTransaction<'_>,
+    code: &str,
+    identity: TelegramIdentity<'_>,
+) -> Result<Option<i64>> {
+    let Some(session_user_id) = lock_link_code(tx, code).await? else {
+        return Ok(None);
+    };
+    let attached = sqlx::query!(
+        r#"UPDATE users SET
+               telegram_id = $2,
+               username   = COALESCE(username, $3),
+               first_name = COALESCE(first_name, $4),
+               last_name  = COALESCE(last_name, $5),
+               language   = COALESCE(language, $6)
+           WHERE id = $1 AND telegram_id IS NULL"#,
+        session_user_id,
+        identity.telegram_id,
+        identity.username,
+        identity.first_name,
+        identity.last_name,
+        identity.language as _,
+    )
+    .execute(&mut **tx)
+    .await?;
+    if attached.rows_affected() != 1 {
+        return Ok(None);
+    }
+    consume_link_code(tx, code, LinkCodeKind::Simple).await?;
+    Ok(Some(session_user_id))
+}
+
+/// Attach a free Telegram identity to the account that minted `code`, spending the code in the
+/// same transaction, then grant the one-time real trial. The caller must have checked that no
+/// other account owns the Telegram (see [`begin_telegram_link`], which does).
+///
+/// Returns whether a real trial was granted, or `None` when another request spent the code
+/// first (or the account is no longer attachable) — nothing is changed in that case.
+pub async fn attach_telegram(
+    pool: &DbPool,
+    code: &str,
+    identity: TelegramIdentity<'_>,
+) -> Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+    let Some(session_user_id) = attach_telegram_in_tx(&mut tx, code, identity).await? else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    tx.commit().await?;
+
+    // Trial claiming is independently idempotent; identity attachment and code consumption are
+    // the security-sensitive pair that must commit together.
+    let granted = grant_real_trial_if_unused(pool, session_user_id).await?;
+    Ok(Some(granted))
+}
+
+async fn summarize_account(executor: impl PgExecutor<'_>, user_id: i64) -> Result<AccountSummary> {
+    let row = sqlx::query!(
+        r#"SELECT
+               u.id, u.created_at,
+               (SELECT provider_uid FROM auth_identities
+                  WHERE user_id = u.id AND provider = 'password') AS login,
+               (SELECT COUNT(*) FROM app_installations WHERE user_id = u.id) AS "devices!",
+               (SELECT p.display_name FROM subscriptions s
+                  JOIN plans p ON s.plan_id = p.id
+                  WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW())
+                  ORDER BY s.expires_at DESC NULLS FIRST
+                  LIMIT 1) AS plan
+           FROM users u WHERE u.id = $1"#,
+        user_id,
+    )
+    .fetch_one(executor)
+    .await?;
+    Ok(AccountSummary {
+        id: row.id,
+        login: row.login,
+        created_at: row.created_at,
+        devices: row.devices,
+        plan: row.plan,
+    })
+}
+
+/// Handle `/start link_<code>` for `identity`: attach it when it is free, report when it is
+/// already on the minting account, or describe both accounts so the user can decide about a
+/// merge. Only the attach path changes anything (and spends the code).
+pub async fn begin_telegram_link(
+    pool: &DbPool,
+    code: &str,
+    identity: TelegramIdentity<'_>,
+) -> Result<LinkStart> {
+    let mut tx = pool.begin().await?;
+    let Some(session_user_id) = lock_link_code(&mut tx, code).await? else {
+        return Ok(LinkStart::InvalidCode);
+    };
+    let owner = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE telegram_id = $1",
+        identity.telegram_id,
+    )
+    .fetch_optional(&mut *tx)
     .await?;
 
-    grant_real_trial_if_unused(pool, user_id).await
+    match owner {
+        Some(owner) if owner == session_user_id => {
+            consume_link_code(&mut tx, code, LinkCodeKind::Simple).await?;
+            tx.commit().await?;
+            Ok(LinkStart::AlreadyLinked)
+        }
+        Some(husk_id) => {
+            let survivor = summarize_account(&mut *tx, session_user_id).await?;
+            let husk = summarize_account(&mut *tx, husk_id).await?;
+            tx.rollback().await?;
+            Ok(LinkStart::MergeRequired(MergePrompt {
+                code: code.to_owned(),
+                survivor,
+                husk,
+            }))
+        }
+        None => {
+            // Release the code lock; `attach_telegram` re-locks it in its own transaction so a
+            // concurrent `/start` with the same code still sees exactly one winner.
+            tx.rollback().await?;
+            Ok(match attach_telegram(pool, code, identity).await? {
+                Some(trial_granted) => LinkStart::Attached { trial_granted },
+                None => LinkStart::InvalidCode,
+            })
+        }
+    }
+}
+
+/// The user confirmed a [`MergePrompt`]: fold the account owning `telegram_id` into the account
+/// that minted `code`, spending the code in the same transaction. Re-resolves both accounts, so
+/// a prompt that sat around while things changed still ends in a consistent state.
+pub async fn confirm_telegram_merge(
+    pool: &DbPool,
+    code: &str,
+    identity: TelegramIdentity<'_>,
+) -> Result<MergeOutcome> {
+    let mut tx = pool.begin().await?;
+    let Some(survivor_id) = lock_link_code(&mut tx, code).await? else {
+        return Ok(MergeOutcome::InvalidCode);
+    };
+    let owner = sqlx::query_scalar!(
+        "SELECT id FROM users WHERE telegram_id = $1",
+        identity.telegram_id,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    match owner {
+        Some(owner) if owner == survivor_id => {
+            consume_link_code(&mut tx, code, LinkCodeKind::Simple).await?;
+            tx.commit().await?;
+            Ok(MergeOutcome::AlreadyLinked)
+        }
+        Some(husk_id) => {
+            if !merge_telegram_into_session_in_tx(&mut tx, survivor_id, husk_id).await? {
+                tx.rollback().await?;
+                return Ok(MergeOutcome::InvalidCode);
+            }
+            consume_link_code(&mut tx, code, LinkCodeKind::Merge).await?;
+            tx.commit().await?;
+            warn!(
+                "Merged Telegram account user_id={husk_id} into user_id={survivor_id} \
+                 (telegram_id={})",
+                identity.telegram_id
+            );
+            Ok(MergeOutcome::Merged {
+                survivor_id,
+                husk_id,
+            })
+        }
+        None => {
+            let Some(session_user_id) = attach_telegram_in_tx(&mut tx, code, identity).await?
+            else {
+                tx.rollback().await?;
+                return Ok(MergeOutcome::InvalidCode);
+            };
+            tx.commit().await?;
+            let trial_granted = grant_real_trial_if_unused(pool, session_user_id).await?;
+            Ok(MergeOutcome::Attached { trial_granted })
+        }
+    }
 }
 
 /// Merge the established Telegram account `husk_id` INTO the current-session account `survivor_id`
@@ -466,11 +717,26 @@ pub async fn merge_telegram_into_session(
     survivor_id: i64,
     husk_id: i64,
 ) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    if !merge_telegram_into_session_in_tx(&mut tx, survivor_id, husk_id).await? {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+/// [`merge_telegram_into_session`] inside the caller's transaction, so the link code that
+/// authorised the merge can be spent atomically with it. Makes no changes when it returns
+/// `Ok(false)`; the caller decides whether to roll back.
+async fn merge_telegram_into_session_in_tx(
+    tx: &mut PgTransaction<'_>,
+    survivor_id: i64,
+    husk_id: i64,
+) -> Result<bool> {
     if survivor_id == husk_id {
         return Ok(false);
     }
-
-    let mut tx = pool.begin().await?;
 
     // Lock both rows and capture the husk's fields.
     let husk = sqlx::query!(
@@ -479,22 +745,20 @@ pub async fn merge_telegram_into_session(
            FROM users WHERE id = $1 FOR UPDATE"#,
         husk_id,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
     let survivor = sqlx::query!(
         "SELECT telegram_id FROM users WHERE id = $1 FOR UPDATE",
         survivor_id,
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
 
     // Preconditions: survivor has no Telegram, husk still owns one.
     let Some(tg_id) = husk.telegram_id else {
-        tx.rollback().await?;
         return Ok(false);
     };
     if survivor.telegram_id.is_some() {
-        tx.rollback().await?;
         return Ok(false);
     }
 
@@ -512,17 +776,17 @@ pub async fn merge_telegram_into_session(
         husk.trial_used_at,
         husk.created_at,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // Revoke the husk's VLESS (fires the daemon notify) before it is deleted.
     sqlx::query!("UPDATE users SET vless_uuid = NULL WHERE id = $1", husk_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // 2. Free the husk's telegram_id before assigning it to the survivor (partial-unique).
     sqlx::query!("UPDATE users SET telegram_id = NULL WHERE id = $1", husk_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // 3. Move telegram_id + profile onto the survivor (COALESCE keeps the survivor's own values).
@@ -543,7 +807,7 @@ pub async fn merge_telegram_into_session(
         husk.photo_url,
         husk.language,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // 4. Re-point every child FK husk → survivor BEFORE deleting the husk.
@@ -570,7 +834,7 @@ pub async fn merge_telegram_into_session(
         husk_id,
         PeerSyncStatus::PendingRemove as _,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         r#"UPDATE peers p SET installation_id = s.id
@@ -580,7 +844,7 @@ pub async fn merge_telegram_into_session(
         survivor_id,
         husk_id,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         r#"DELETE FROM app_installations h
@@ -589,14 +853,14 @@ pub async fn merge_telegram_into_session(
         survivor_id,
         husk_id,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         "UPDATE app_installations SET user_id = $1 WHERE user_id = $2",
         survivor_id,
         husk_id,
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // 4b–4d. peers (CASCADE), payments (RESTRICT), subscriptions + notification_log (CASCADE).
@@ -605,28 +869,28 @@ pub async fn merge_telegram_into_session(
         survivor_id,
         husk_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         "UPDATE payments SET user_id = $1 WHERE user_id = $2",
         survivor_id,
         husk_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         "UPDATE subscriptions SET user_id = $1 WHERE user_id = $2",
         survivor_id,
         husk_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query!(
         "UPDATE notification_log SET user_id = $1 WHERE user_id = $2",
         survivor_id,
         husk_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     // auth_identities + telegram_link_codes are intentionally NOT re-pointed: the husk's are
@@ -634,7 +898,7 @@ pub async fn merge_telegram_into_session(
 
     // 5. Delete the now-empty husk.
     sqlx::query!("DELETE FROM users WHERE id = $1", husk_id)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
     // 6. Re-pointing rows by user_id fires no trigger (notify_subscription_changed only watches
@@ -644,10 +908,9 @@ pub async fn merge_telegram_into_session(
         "SELECT pg_notify('subscription_changed', ($1::bigint)::text)",
         survivor_id
     )
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
-    tx.commit().await?;
     Ok(true)
 }
 
@@ -1448,24 +1711,66 @@ mod tests {
 
     // ── Telegram link + merge ──
 
+    /// Mint a link code for `user_id` the way `POST /me/link/telegram` does.
+    async fn mint_link_code(pool: &DbPool, user_id: i64, code: &str) {
+        sqlx::query!(
+            "INSERT INTO telegram_link_codes (code, user_id, expires_at) \
+             VALUES ($1, $2, NOW() + INTERVAL '10 minutes')",
+            code,
+            user_id,
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn link_code_state(pool: &DbPool, code: &str) -> (bool, Option<LinkCodeKind>) {
+        let row = sqlx::query!(
+            r#"SELECT consumed_at, kind AS "kind: LinkCodeKind" FROM telegram_link_codes WHERE code = $1"#,
+            code
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        (row.consumed_at.is_some(), row.kind)
+    }
+
+    fn identity(telegram_id: i64) -> TelegramIdentity<'static> {
+        TelegramIdentity {
+            telegram_id,
+            username: Some("tguser"),
+            first_name: Some("Tg"),
+            last_name: None,
+            language: Some(Lang::Ru),
+        }
+    }
+
     #[sqlx::test(migrations = "../migrations")]
     async fn test_attach_telegram_grants_real_trial(pool: DbPool) {
         get_basic_plan_id(&pool).await;
         let user = create_credential_user(&pool, "newbie", "password123")
             .await
             .unwrap();
+        mint_link_code(&pool, user.id, "code-1").await;
 
-        let granted =
-            attach_telegram_simple(&pool, user.id, 55555, Some("tguser"), Some("Tg"), None)
-                .await
-                .unwrap();
-        assert!(granted);
-
-        let tg = sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", user.id)
-            .fetch_one(&pool)
+        let granted = attach_telegram(&pool, "code-1", identity(55555))
             .await
             .unwrap();
-        assert_eq!(tg, Some(55555));
+        assert_eq!(granted, Some(true));
+
+        let row = sqlx::query!(
+            r#"SELECT telegram_id, username, first_name, language AS "language: Lang"
+               FROM users WHERE id = $1"#,
+            user.id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(row.telegram_id, Some(55555));
+        // The credential login stays; only missing profile fields are filled in.
+        assert_eq!(row.username.as_deref(), Some("newbie"));
+        assert_eq!(row.first_name.as_deref(), Some("Tg"));
+        assert_eq!(row.language, Some(Lang::Ru));
 
         let trial_count = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM subscriptions WHERE user_id = $1 AND source = 'trial'",
@@ -1475,6 +1780,197 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(trial_count, Some(1));
+        assert_eq!(
+            link_code_state(&pool, "code-1").await,
+            (true, Some(LinkCodeKind::Simple))
+        );
+
+        // The code is spent: a second Telegram cannot take the same account.
+        let again = attach_telegram(&pool, "code-1", identity(66666))
+            .await
+            .unwrap();
+        assert_eq!(again, None);
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn telegram_link_code_has_exactly_one_winner(pool: DbPool) {
+        let user_id = sqlx::query_scalar::<_, i64>(
+            "INSERT INTO users (username) VALUES ('link-target') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        mint_link_code(&pool, user_id, "one-time-code").await;
+
+        let (first, second) = tokio::join!(
+            attach_telegram(&pool, "one-time-code", identity(11111)),
+            attach_telegram(&pool, "one-time-code", identity(22222)),
+        );
+        let winners = [first.unwrap(), second.unwrap()]
+            .into_iter()
+            .filter(Option::is_some)
+            .count();
+        assert_eq!(winners, 1);
+
+        let telegram_id =
+            sqlx::query_scalar!("SELECT telegram_id FROM users WHERE id = $1", user_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(matches!(telegram_id, Some(11111 | 22222)));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_begin_telegram_link_outcomes(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+        let session = create_credential_user(&pool, "session_login", "password123")
+            .await
+            .unwrap();
+
+        // Unknown and expired codes change nothing.
+        assert_eq!(
+            begin_telegram_link(&pool, "nope", identity(1))
+                .await
+                .unwrap(),
+            LinkStart::InvalidCode
+        );
+        sqlx::query!(
+            "INSERT INTO telegram_link_codes (code, user_id, expires_at) VALUES ('stale', $1, NOW() - INTERVAL '1 minute')",
+            session.id
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            begin_telegram_link(&pool, "stale", identity(1))
+                .await
+                .unwrap(),
+            LinkStart::InvalidCode
+        );
+
+        // A free Telegram is attached and gets the real trial.
+        mint_link_code(&pool, session.id, "fresh").await;
+        assert_eq!(
+            begin_telegram_link(&pool, "fresh", identity(1))
+                .await
+                .unwrap(),
+            LinkStart::Attached {
+                trial_granted: true
+            }
+        );
+
+        // The same Telegram again, on a new code: nothing to do, code spent.
+        mint_link_code(&pool, session.id, "again").await;
+        assert_eq!(
+            begin_telegram_link(&pool, "again", identity(1))
+                .await
+                .unwrap(),
+            LinkStart::AlreadyLinked
+        );
+        assert_eq!(
+            link_code_state(&pool, "again").await,
+            (true, Some(LinkCodeKind::Simple))
+        );
+
+        // A Telegram owned by another account: describe both sides, spend nothing.
+        let other = create_credential_user(&pool, "other_login", "password123")
+            .await
+            .unwrap();
+        let husk = seed_user(&pool, 777).await;
+        seed_subscription(&pool, husk, basic).await;
+        sqlx::query!(
+            "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devX')",
+            husk
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        mint_link_code(&pool, other.id, "merge-me").await;
+        let LinkStart::MergeRequired(prompt) =
+            begin_telegram_link(&pool, "merge-me", identity(777))
+                .await
+                .unwrap()
+        else {
+            panic!("expected a merge prompt");
+        };
+        assert_eq!(prompt.code, "merge-me");
+        assert_eq!(prompt.survivor.id, other.id);
+        assert_eq!(prompt.survivor.login.as_deref(), Some("other_login"));
+        assert_eq!(prompt.survivor.devices, 0);
+        assert_eq!(prompt.husk.id, husk);
+        assert_eq!(prompt.husk.login, None);
+        assert_eq!(prompt.husk.devices, 1);
+        assert_eq!(prompt.husk.plan.as_deref(), Some("Basic"));
+        assert_eq!(link_code_state(&pool, "merge-me").await, (false, None));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn test_confirm_telegram_merge_outcomes(pool: DbPool) {
+        let basic = get_basic_plan_id(&pool).await;
+
+        // Merged: the husk is gone, the survivor owns the Telegram, the code is spent as a merge.
+        let survivor = create_credential_user(&pool, "survivor", "password123")
+            .await
+            .unwrap();
+        let husk = seed_user(&pool, 4242).await;
+        seed_subscription(&pool, husk, basic).await;
+        mint_link_code(&pool, survivor.id, "merge").await;
+        assert_eq!(
+            confirm_telegram_merge(&pool, "merge", identity(4242))
+                .await
+                .unwrap(),
+            MergeOutcome::Merged {
+                survivor_id: survivor.id,
+                husk_id: husk,
+            }
+        );
+        let owner = sqlx::query_scalar!("SELECT id FROM users WHERE telegram_id = 4242")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(owner, survivor.id);
+        assert_eq!(
+            link_code_state(&pool, "merge").await,
+            (true, Some(LinkCodeKind::Merge))
+        );
+        // A second tap on the same button finds the code spent.
+        assert_eq!(
+            confirm_telegram_merge(&pool, "merge", identity(4242))
+                .await
+                .unwrap(),
+            MergeOutcome::InvalidCode
+        );
+        // A fresh code for the now-linked pair has nothing left to merge.
+        mint_link_code(&pool, survivor.id, "linked").await;
+        assert_eq!(
+            confirm_telegram_merge(&pool, "linked", identity(4242))
+                .await
+                .unwrap(),
+            MergeOutcome::AlreadyLinked
+        );
+
+        // The husk vanished between prompt and confirmation: attach instead of failing.
+        let lonely = create_credential_user(&pool, "lonely", "password123")
+            .await
+            .unwrap();
+        let gone = seed_user(&pool, 5151).await;
+        mint_link_code(&pool, lonely.id, "gone").await;
+        sqlx::query!("DELETE FROM users WHERE id = $1", gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            confirm_telegram_merge(&pool, "gone", identity(5151))
+                .await
+                .unwrap(),
+            MergeOutcome::Attached {
+                trial_granted: true
+            }
+        );
+        assert_eq!(
+            link_code_state(&pool, "gone").await,
+            (true, Some(LinkCodeKind::Simple))
+        );
     }
 
     #[sqlx::test(migrations = "../migrations")]

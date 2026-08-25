@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               u.id, u.created_at,\n               (SELECT provider_uid FROM auth_identities\n                  WHERE user_id = u.id AND provider = 'password') AS login,\n               (SELECT COUNT(*) FROM app_installations WHERE user_id = u.id) AS \"devices!\",\n               (SELECT p.display_name FROM subscriptions s\n                  JOIN plans p ON s.plan_id = p.id\n                  WHERE s.user_id = u.id AND (s.expires_at IS NULL OR s.expires_at > NOW())\n                  ORDER BY s.expires_at DESC NULLS FIRST\n                  LIMIT 1) AS plan\n           FROM users u WHERE u.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "login",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "devices!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "plan",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "93c42e16ae4a683496ac4a62ae008c0929c1c967baa4ef47f7ff4da022629253"
+}
