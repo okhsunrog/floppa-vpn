@@ -41,6 +41,9 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
+  test: {
+    include: ['src/**/*.test.ts'],
+  },
 
   plugins: lazyPlugins(async () => {
     const [{ default: vue }, { default: ui }, { default: vueDevTools }] = await Promise.all([

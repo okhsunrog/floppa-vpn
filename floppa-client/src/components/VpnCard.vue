@@ -18,6 +18,7 @@ import { useVpnStore } from '../stores/vpnStore'
 import type { CycleOutcome, Protocol } from '../bindings'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
+import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
@@ -313,17 +314,20 @@ async function handleOutcome(outcome: CycleOutcome | null) {
  *
  * When a live tunnel drops, the actor reconnects on its own — there is no caller awaiting that
  * epoch, so if it eventually gives up, nothing would ever surface it. This watcher is the only
- * consumer of those. It ignores anything produced while a command of ours is in flight, because
- * `handleConnect` already owns that outcome, and it remembers the epoch it handled so a state
- * refresh cannot make it fire twice.
+ * consumer of those. It remembers the `{ epoch, outcome }` pair it handled so a state refresh
+ * cannot make it fire twice, and only that pair: the epoch alone is shared with the `connected`
+ * that preceded the loss, and keying on it was what silenced `lost_gave_up` for good. Whether a
+ * command of ours is in flight is irrelevant — `handleConnect` only ever receives the outcome
+ * that ends its own cycle, never the loss of a tunnel that cycle already delivered.
  */
-const handledEpoch = ref<number | null>(null)
+let handledOutcome: HandledOutcome | null = null
 watch(
   () => vpn.lastOutcome,
   async (outcome) => {
-    if (!outcome || vpn.requesting) return
-    if (handledEpoch.value === vpn.state.epoch) return
-    handledEpoch.value = vpn.state.epoch
+    if (!outcome) return
+    const epoch = vpn.state.epoch
+    if (!isUnhandledOutcome(handledOutcome, epoch, outcome)) return
+    handledOutcome = { epoch, outcome: outcome.outcome }
 
     if (outcome.outcome === 'lost_gave_up') {
       console.info('[VpnCard] the tunnel dropped and reconnecting gave up')
