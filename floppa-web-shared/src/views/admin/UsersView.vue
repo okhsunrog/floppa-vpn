@@ -12,7 +12,7 @@ import {
 import { getAvatarsBatch } from '../../client/sdk.gen'
 import type { UserSummary } from '../../client/types.gen'
 import type { TableColumn, TableRow } from '@nuxt/ui'
-import { describeError, formatDate, isApiError } from '../../utils'
+import { describeError, formatDate, isApiError, toIntOrNull } from '../../utils'
 import { useClientPagination, useSearchFilter } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 
@@ -75,11 +75,19 @@ const columns = computed<TableColumn<UserSummary>[]>(() => [
 
 // Add User dialog
 const addUserDialog = ref(false)
-const addUserTelegramId = ref<number | undefined>(undefined)
+const addUserTelegramId = ref<number | null>(null)
 const addUserName = ref('')
 const addUserPlanId = ref<number | undefined>(undefined)
-const addUserDays = ref(30)
+const addUserDays = ref<number | null>(30)
 const addUserPermanent = ref(false)
+
+const addUserValid = computed(
+  () =>
+    addUserTelegramId.value !== null &&
+    addUserTelegramId.value > 0 &&
+    addUserPlanId.value !== undefined &&
+    (addUserPermanent.value || (addUserDays.value !== null && addUserDays.value >= 1)),
+)
 
 const addUserMut = useMutation({
   ...createUserMutation(),
@@ -110,7 +118,7 @@ watch(addUserPlanId, (planId) => {
 })
 
 function openAddUserDialog() {
-  addUserTelegramId.value = undefined
+  addUserTelegramId.value = null
   addUserName.value = ''
   addUserDays.value = 30
   addUserPermanent.value = false
@@ -118,14 +126,14 @@ function openAddUserDialog() {
 }
 
 async function addUser() {
-  if (!addUserTelegramId.value || !addUserPlanId.value) return
+  if (!addUserValid.value || addUserTelegramId.value === null || !addUserPlanId.value) return
   try {
     await addUserMut.mutateAsync({
       body: {
         telegram_id: addUserTelegramId.value,
         first_name: addUserName.value || undefined,
         plan_id: addUserPlanId.value,
-        days: addUserPermanent.value ? undefined : addUserDays.value,
+        days: addUserPermanent.value ? undefined : (addUserDays.value ?? undefined),
         permanent: addUserPermanent.value,
       },
     })
@@ -314,7 +322,12 @@ async function addUser() {
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">Telegram ID *</label>
-            <UInput type="number" v-model.number="addUserTelegramId" placeholder="123456789" />
+            <UInput
+              type="number"
+              :model-value="addUserTelegramId ?? undefined"
+              @update:model-value="(v: string | number) => (addUserTelegramId = toIntOrNull(v))"
+              placeholder="123456789"
+            />
           </div>
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUsers.nameLabel') }}</label>
@@ -334,7 +347,12 @@ async function addUser() {
           </div>
           <div v-if="!addUserPermanent" class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUserDetail.days') }}</label>
-            <UInput type="number" v-model.number="addUserDays" :min="1" />
+            <UInput
+              type="number"
+              :model-value="addUserDays ?? undefined"
+              @update:model-value="(v: string | number) => (addUserDays = toIntOrNull(v))"
+              :min="1"
+            />
           </div>
         </div>
       </template>
@@ -348,7 +366,7 @@ async function addUser() {
         <UButton
           :label="t('common.create')"
           :loading="addUserMut.asyncStatus.value === 'loading'"
-          :disabled="!addUserTelegramId || !addUserPlanId"
+          :disabled="!addUserValid"
           @click="addUser"
         />
       </template>

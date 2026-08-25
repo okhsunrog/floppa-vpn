@@ -19,6 +19,7 @@ import {
   formatDateTime,
   formatSpeedLimit,
   handleExternalLinkClick,
+  toIntOrNull,
 } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import type { PeerSyncStatus } from '../../types'
@@ -128,8 +129,13 @@ const submitting = computed(
 // Subscription dialog (set/change)
 const subDialog = ref(false)
 const subPlanId = ref<number | undefined>(undefined)
-const subDays = ref(30)
+const subDays = ref<number | null>(30)
 const subPermanent = ref(false)
+const subValid = computed(
+  () =>
+    subPlanId.value !== undefined &&
+    (subPermanent.value || (subDays.value !== null && subDays.value >= 1)),
+)
 
 // Delete subscription confirm
 const deleteSubConfirm = ref(false)
@@ -190,13 +196,13 @@ function openSetSubDialog() {
 }
 
 async function setSubscription() {
-  if (!user.value || !subPlanId.value) return
+  if (!user.value || !subPlanId.value || !subValid.value) return
   try {
     await setSubMut.mutateAsync({
       path: { id: user.value.id },
       body: {
         plan_id: subPlanId.value,
-        days: subPermanent.value ? undefined : subDays.value,
+        days: subPermanent.value ? undefined : (subDays.value ?? undefined),
         permanent: subPermanent.value,
       },
     })
@@ -655,7 +661,12 @@ async function doRemovePeer() {
           </div>
           <div v-if="!subPermanent" class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUserDetail.days') }}</label>
-            <UInput type="number" v-model.number="subDays" :min="1" />
+            <UInput
+              type="number"
+              :model-value="subDays ?? undefined"
+              @update:model-value="(v: string | number) => (subDays = toIntOrNull(v))"
+              :min="1"
+            />
           </div>
         </div>
       </template>
@@ -669,7 +680,7 @@ async function doRemovePeer() {
         <UButton
           :label="t('common.save')"
           :loading="submitting"
-          :disabled="!subPlanId"
+          :disabled="!subValid"
           @click="setSubscription"
         />
       </template>

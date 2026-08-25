@@ -12,6 +12,7 @@ import {
 import type { Plan, CreatePlanRequest, UpdatePlanRequest } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 import { durationUnit } from '../../utils/format'
+import { toIntOrNull } from '../../utils/number'
 import { describeError } from '../../utils/apiError'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import { useConfirmAction } from '../../composables/adminList'
@@ -38,7 +39,11 @@ const submitting = computed(
 const planDialog = ref(false)
 const isEditing = ref(false)
 const editingPlanId = ref<number | null>(null)
-const planForm = ref<CreatePlanRequest>({
+// Same shape as the request, except max_peers may be empty while the admin is typing; the
+// request is only built once `planValid` says every field is usable.
+type PlanForm = Omit<CreatePlanRequest, 'max_peers'> & { max_peers: number | null }
+
+const planForm = ref<PlanForm>({
   name: '',
   display_name: '',
   default_speed_limit_mbps: null,
@@ -64,6 +69,21 @@ const trialUnitItems = computed(() => [
   { label: t('adminPlans.unitHours'), value: 'hours' },
   { label: t('adminPlans.unitDays'), value: 'days' },
 ])
+const planValid = computed(() => {
+  const f = planForm.value
+  const positiveOrEmpty = (n: number | null | undefined) => n == null || n >= 1
+  return (
+    f.name.trim() !== '' &&
+    f.display_name.trim() !== '' &&
+    f.max_peers !== null &&
+    f.max_peers >= 1 &&
+    positiveOrEmpty(f.default_speed_limit_mbps) &&
+    positiveOrEmpty(f.price_stars) &&
+    positiveOrEmpty(f.period_days) &&
+    positiveOrEmpty(f.trial_minutes)
+  )
+})
+
 function formatTrial(min: number): string {
   const { unit, n } = durationUnit(min)
   return t(`adminPlans.${unit}`, { n })
@@ -121,28 +141,23 @@ function openEditPlanDialog(plan: Plan) {
 }
 
 async function savePlan() {
-  if (!planForm.value.name || !planForm.value.display_name) {
-    toast.add({
-      title: t('common.validation'),
-      description: t('adminPlans.nameRequired'),
-      color: 'warning',
-    })
-    return
-  }
+  const form = planForm.value
+  if (!planValid.value || form.max_peers === null) return
+  const body: CreatePlanRequest = { ...form, max_peers: form.max_peers }
   try {
     if (isEditing.value && editingPlanId.value) {
       const update: UpdatePlanRequest = {
-        display_name: planForm.value.display_name,
-        default_speed_limit_mbps: planForm.value.default_speed_limit_mbps,
-        max_peers: planForm.value.max_peers,
-        is_public: planForm.value.is_public,
-        trial_minutes: planForm.value.trial_minutes,
-        price_stars: planForm.value.price_stars,
-        period_days: planForm.value.period_days,
-        clear_speed_limit: planForm.value.default_speed_limit_mbps == null,
-        clear_trial_minutes: planForm.value.trial_minutes == null,
-        clear_price_stars: planForm.value.price_stars == null,
-        clear_period_days: planForm.value.period_days == null,
+        display_name: body.display_name,
+        default_speed_limit_mbps: body.default_speed_limit_mbps,
+        max_peers: body.max_peers,
+        is_public: body.is_public,
+        trial_minutes: body.trial_minutes,
+        price_stars: body.price_stars,
+        period_days: body.period_days,
+        clear_speed_limit: body.default_speed_limit_mbps == null,
+        clear_trial_minutes: body.trial_minutes == null,
+        clear_price_stars: body.price_stars == null,
+        clear_period_days: body.period_days == null,
       }
       await updateMut.mutateAsync({
         path: { id: editingPlanId.value },
@@ -154,7 +169,7 @@ async function savePlan() {
         color: 'success',
       })
     } else {
-      await createMut.mutateAsync({ body: planForm.value })
+      await createMut.mutateAsync({ body })
       toast.add({
         title: t('common.success'),
         description: t('adminPlans.planCreated'),
@@ -374,8 +389,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 type="number"
                 :model-value="planForm.default_speed_limit_mbps?.toString()"
                 @update:model-value="
-                  (v: string | number) =>
-                    (planForm.default_speed_limit_mbps = v === '' ? null : Number(v))
+                  (v: string | number) => (planForm.default_speed_limit_mbps = toIntOrNull(v))
                 "
                 :placeholder="t('common.unlimited')"
                 :min="1"
@@ -383,7 +397,12 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             </div>
             <div class="flex flex-col gap-1.5">
               <label class="text-sm font-medium">{{ t('adminPlans.maxPeers') }}</label>
-              <UInput type="number" v-model.number="planForm.max_peers" :min="1" />
+              <UInput
+                type="number"
+                :model-value="planForm.max_peers ?? undefined"
+                @update:model-value="(v: string | number) => (planForm.max_peers = toIntOrNull(v))"
+                :min="1"
+              />
             </div>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -393,7 +412,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 type="number"
                 :model-value="planForm.price_stars?.toString()"
                 @update:model-value="
-                  (v: string | number) => (planForm.price_stars = v === '' ? null : Number(v))
+                  (v: string | number) => (planForm.price_stars = toIntOrNull(v))
                 "
                 placeholder="-"
                 :min="1"
@@ -405,7 +424,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 type="number"
                 :model-value="planForm.period_days?.toString()"
                 @update:model-value="
-                  (v: string | number) => (planForm.period_days = v === '' ? null : Number(v))
+                  (v: string | number) => (planForm.period_days = toIntOrNull(v))
                 "
                 :placeholder="t('adminPlans.permanent')"
                 :min="1"
@@ -420,9 +439,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                   type="number"
                   class="flex-1"
                   :model-value="trialValue?.toString()"
-                  @update:model-value="
-                    (v: string | number) => (trialValue = v === '' ? null : Number(v))
-                  "
+                  @update:model-value="(v: string | number) => (trialValue = toIntOrNull(v))"
                   :placeholder="t('adminPlans.notATrial')"
                   :min="1"
                 />
@@ -448,6 +465,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
         <UButton
           :label="isEditing ? t('common.save') : t('common.create')"
           :loading="submitting"
+          :disabled="!planValid"
           @click="savePlan"
         />
       </template>
