@@ -11,7 +11,7 @@ import {
   deleteMyPeerMutation,
   regenerateMyVlessConfigMutation,
 } from '../../client/@pinia/colada.gen'
-import { getMyPeerConfig, sendMyPeerConfig } from '../../client/sdk.gen'
+import { getMyPeerConfig, getMyVlessConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
 import type { DropdownMenuItem } from '@nuxt/ui'
 import { describeError, formatBytes, formatDate, formatDateTime } from '../../utils'
@@ -248,9 +248,7 @@ async function downloadConfig() {
 async function showVlessConfig() {
   vlessLoading.value = true
   try {
-    const { data } = await import('../../client/sdk.gen').then((m) =>
-      m.getMyVlessConfig({ throwOnError: true }),
-    )
+    const { data } = await getMyVlessConfig({ throwOnError: true })
     vlessUri.value = data.uri
     vlessDialog.value = true
   } catch (e) {
