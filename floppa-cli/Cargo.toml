@@ -26,5 +26,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log = "0.2.0"
 tracing-appender = "0.2.4"
+uuid = { version = "1.25.0", features = ["v4"] }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }

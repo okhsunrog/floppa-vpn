@@ -132,7 +132,9 @@ async fn main() -> Result<()> {
                     } else {
                         bail!("No active subscription");
                     }
-                    client.config_for(protocol).await?
+                    client
+                        .config_for(protocol, &auth::device_identity()?)
+                        .await?
                 }
             };
 
@@ -175,7 +177,11 @@ async fn main() -> Result<()> {
                     client.get_peer_config(id).await?
                 }
                 (api::Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
-                (protocol, None) => client.config_for(protocol).await?,
+                (protocol, None) => {
+                    client
+                        .config_for(protocol, &auth::device_identity()?)
+                        .await?
+                }
             };
             print!("{config}");
         }

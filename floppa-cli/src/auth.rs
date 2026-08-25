@@ -18,6 +18,39 @@ fn token_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("token"))
 }
 
+/// What the server tracks a peer by: a stable per-installation UUID plus a display name.
+pub struct DeviceIdentity {
+    pub id: String,
+    pub name: String,
+}
+
+/// The device identity of this CLI installation. The id is generated once and persisted in the
+/// config dir, so every run finds its own peer instead of adopting another device's.
+pub fn device_identity() -> Result<DeviceIdentity> {
+    let path = config_dir()?.join("device_id");
+    let id = match fs::read_to_string(&path) {
+        Ok(existing) if uuid::Uuid::parse_str(existing.trim()).is_ok() => {
+            existing.trim().to_string()
+        }
+        _ => {
+            let id = uuid::Uuid::new_v4().to_string();
+            fs::write(&path, format!("{id}\n"))
+                .with_context(|| format!("Failed to save device id to {}", path.display()))?;
+            id
+        }
+    };
+    Ok(DeviceIdentity {
+        id,
+        name: hostname(),
+    })
+}
+
+fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_string()))
+        .unwrap_or_else(|_| "floppa-cli".to_string())
+}
+
 pub fn load_token() -> Result<Option<String>> {
     let path = token_path()?;
     if path.exists() {
