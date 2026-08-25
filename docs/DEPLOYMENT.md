@@ -140,7 +140,7 @@ restarts in a minute — `systemctl reset-failed <unit>` after fixing the cause.
 ## 5. Database migrations
 
 `floppa-daemon` runs `migrations/` on startup through sqlx's embedded migrator, so a deploy that
-ships a new migration applies it as soon as the daemon restarts. Two of them deserve a check on
+ships a new migration applies it as soon as the daemon restarts. Three of them deserve a check on
 production before the deploy that carries them:
 
 - **0014** adds `CHECK` constraints pinning the closed value sets the code models as enums:
@@ -160,6 +160,22 @@ production before the deploy that carries them:
 - **0015** drops `subscriptions.payment_id`, which nothing ever wrote or read (payments link
   the other way, via `payments.subscription_id`). No data is lost; there is no way back short
   of re-adding the column.
+- **0016** adds the same kind of `CHECK` constraints for the bot's value sets:
+  `users.language` ∈ {`en`, `ru`}, `telegram_link_codes.kind` ∈ {`simple`, `merge`},
+  `notification_log.kind` ∈ {`expiry_1d_before`, `expiry_now`} (NULL passes for the first two).
+  The migration first sets any outlier in the two nullable columns to NULL — `users.language`
+  was historically copied straight from the `lang:…` callback data, which a client controls —
+  but `notification_log.kind` is `NOT NULL` and left untouched, so a stray value there fails the
+  migration. Verify first:
+
+  ```sql
+  SELECT DISTINCT language FROM users;
+  SELECT DISTINCT kind     FROM telegram_link_codes;
+  SELECT DISTINCT kind     FROM notification_log;
+  ```
+
+  Anything outside the sets above in `notification_log` must be fixed (or deleted — nothing
+  reads such rows) before deploying; outliers in the other two columns are only worth a look.
 
 ## 6. Rate limits (tc)
 

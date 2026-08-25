@@ -64,7 +64,7 @@ impl TryFrom<&str> for Protocol {
 }
 
 /// What a bot notification was about; `notification_log.kind` (TEXT, CHECK-constrained by
-/// migration 0017). The `(subscription_id, kind)` unique index makes each kind fire once per
+/// migration 0016). The `(subscription_id, kind)` unique index makes each kind fire once per
 /// subscription. Bind as `NotificationKind::ExpiryNow as _`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT")]
@@ -80,7 +80,7 @@ pub enum NotificationKind {
 }
 
 /// How a Telegram link code was consumed; `telegram_link_codes.kind` (TEXT, NULL until
-/// consumed, CHECK-constrained by migration 0017). Bind as `LinkCodeKind::Simple as _`.
+/// consumed, CHECK-constrained by migration 0016). Bind as `LinkCodeKind::Simple as _`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
