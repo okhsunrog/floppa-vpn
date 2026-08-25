@@ -101,6 +101,19 @@ class FloppaVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
+        // Only our own plugin starts this service with a configuration. The system also starts it
+        // — with `Intent(action = android.net.VpnService)` and no extras — for always-on VPN,
+        // which this service does not support: there is no stored configuration to rebuild a
+        // tunnel from, and honouring the intent used to establish an empty TUN with an invented
+        // address, go foreground saying "Connecting…" and bind an RPC with epoch 0 that nobody
+        // would ever send a tunnel request to. In lockdown mode that left the device without a
+        // network. Refuse before startForeground so no notification is ever shown for it.
+        if (intent.action == SERVICE_INTERFACE || !intent.hasExtra(EXTRA_EPOCH)) {
+            Log.w(TAG, "Start intent is not from the plugin (action=${intent.action}), ignoring")
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         // Before anything that can fail or tear down: onDestroy stops by this value, and reading
         // it later meant a start that threw left the previous instance's generation in the field.
         epoch = intent.getLongExtra(EXTRA_EPOCH, 0L)
@@ -243,12 +256,29 @@ class FloppaVpnService : VpnService() {
         )
     }
 
+    /**
+     * Build and establish the TUN from the start intent.
+     *
+     * The address, routes and MTU are required: the plugin always sends them, and a TUN built from
+     * a made-up default would carry a default route into a tunnel nobody configured. Anything
+     * missing is an error, not a fallback.
+     */
     private fun createTunInterface(intent: Intent): ParcelFileDescriptor {
-        val ipv4Addr = intent.getStringExtra(EXTRA_IPV4_ADDR) ?: "10.0.0.2/24"
+        val ipv4Addr =
+            intent.getStringExtra(EXTRA_IPV4_ADDR)
+                ?: throw IllegalArgumentException("start intent has no $EXTRA_IPV4_ADDR")
         val ipv6Addr = intent.getStringExtra(EXTRA_IPV6_ADDR)
-        val routes = intent.getStringArrayExtra(EXTRA_ROUTES) ?: emptyArray()
+        val routes =
+            intent.getStringArrayExtra(EXTRA_ROUTES)
+                ?: throw IllegalArgumentException("start intent has no $EXTRA_ROUTES")
         val dns = intent.getStringExtra(EXTRA_DNS)
-        val mtu = intent.getIntExtra(EXTRA_MTU, 1280)
+        if (!intent.hasExtra(EXTRA_MTU)) {
+            throw IllegalArgumentException("start intent has no $EXTRA_MTU")
+        }
+        val mtu = intent.getIntExtra(EXTRA_MTU, 0)
+        if (mtu <= 0) {
+            throw IllegalArgumentException("invalid MTU: $mtu")
+        }
         val disallowedApps = intent.getStringArrayExtra(EXTRA_DISALLOWED_APPS) ?: emptyArray()
         val allowedApps = intent.getStringArrayExtra(EXTRA_ALLOWED_APPS) ?: emptyArray()
 

@@ -37,7 +37,8 @@ import java.io.ByteArrayOutputStream
 
 @InvokeArg
 class VpnConfigArgs {
-    var ipv4Addr: String = "10.0.0.2/24"
+    /** Required; the service refuses a start intent without it rather than inventing one. */
+    var ipv4Addr: String? = null
     var ipv6Addr: String? = null
     var routes: Array<String> = emptyArray()
     var dns: String? = null
@@ -102,6 +103,12 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
                 "startVpn args parsed: ipv4=${args.ipv4Addr}, routes=${args.routes.joinToString()}, dns=${args.dns}, mtu=${args.mtu}",
             )
 
+            val ipv4Addr = args.ipv4Addr
+            if (ipv4Addr.isNullOrEmpty()) {
+                invoke.reject("ipv4Addr is required")
+                return
+            }
+
             // Check if VPN is prepared
             val prepareIntent = VpnService.prepare(activity)
             if (prepareIntent != null) {
@@ -115,7 +122,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
             // Start the VPN service in :vpn process
             val intent =
                 Intent(activity, FloppaVpnService::class.java).apply {
-                    putExtra(FloppaVpnService.EXTRA_IPV4_ADDR, args.ipv4Addr)
+                    putExtra(FloppaVpnService.EXTRA_IPV4_ADDR, ipv4Addr)
                     putExtra(FloppaVpnService.EXTRA_IPV6_ADDR, args.ipv6Addr)
                     putExtra(FloppaVpnService.EXTRA_ROUTES, args.routes)
                     putExtra(FloppaVpnService.EXTRA_DNS, args.dns)
@@ -141,8 +148,8 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
     /**
      * Stop the service out of band.
      *
-     * The normal stop is the RPC `stop`, after which the service stops itself. This path exists
-     * for the instance the RPC cannot reach: a bind that failed, a socket file that went missing.
+     * The normal stop is the RPC `stop`, after which the service stops itself. This path exists for
+     * the instance the RPC cannot reach: a bind that failed, a socket file that went missing.
      * ACTION_STOP is delivered to onStartCommand of whichever instance is alive and runs the same
      * shutdown sequence there (nativeStop, cleanup, stopSelf). `startService` is refused while the
      * app is in the background (API 26+), so `stopService` — the plain API, and what `startVpn`
