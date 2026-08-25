@@ -8,16 +8,6 @@
   </head>
   
   <body>
-    <script>
-      (function() {
-        try {
-          var saved = localStorage.getItem('theme') || 'nord';
-          document.documentElement.setAttribute('data-theme', saved);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'nord');
-        }
-      })();
-    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
