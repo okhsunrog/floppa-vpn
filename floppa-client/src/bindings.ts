@@ -108,19 +108,19 @@ export const commands = {
 	 */
 	webviewLog: (level: WebviewLevel, message: string) => __TAURI_INVOKE<void>("webview_log", { level, message }),
 	/**
-	 *  Hand the session over to Rust, or take it away.
+	 *  Hand the server session over to Rust, or take it away.
 	 * 
-	 *  Called by the frontend whenever the auth store's token changes — sign-in, every sliding
-	 *  refresh, sign-out — and once at startup for a token restored from `localStorage`. `token` is
-	 *  `None` exactly when the user is signed out, and then the stored credentials are removed rather
-	 *  than left to rot: they are what an autonomous repair would authenticate with, and a signed-out
-	 *  device must not be able to make peers.
+	 *  Called by the frontend whenever any part of it changes: the token on sign-in, on every sliding
+	 *  refresh and on sign-out, and the device identity as soon as the plugin reports it. `token` is
+	 *  `None` exactly when the user is signed out, and then the stored session is removed rather than
+	 *  left to rot — it is what a background repair would authenticate with, and a signed-out device
+	 *  must not be able to make peers.
 	 * 
-	 *  The `base_url` comes from the frontend because the frontend is where it is configured
-	 *  (`VITE_API_URL`, baked in at build time). Keeping a second copy compiled into Rust would mean
-	 *  two places to change and one of them silently wrong.
+	 *  A session that arrives incomplete (the token is there but the device id has not been read yet)
+	 *  is written anyway and replaced when the rest lands: [`session::load`] refuses to return
+	 *  anything it could not provision with, so a half-written one is simply not used.
 	 */
-	setServerCredentials: (baseUrl: string, token: string | null) => typedError<null, string>(__TAURI_INVOKE("set_server_credentials", { baseUrl, token })),
+	setServerSession: (baseUrl: string, token: string | null, deviceId: string | null, deviceName: string | null) => typedError<null, string>(__TAURI_INVOKE("set_server_session", { baseUrl, token, deviceId, deviceName })),
 };
 
 /** Events */

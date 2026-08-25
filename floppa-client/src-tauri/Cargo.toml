@@ -54,7 +54,7 @@ shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
 flate2 = "1.1.9"
 tar = "0.4.44"
 tokio-util = { version = "0.7.18", features = ["rt"] }
-reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "charset"] }
+floppa-api-client = { version = "0.1.0", path = "../../floppa-api-client" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 

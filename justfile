@@ -205,10 +205,11 @@ build-frontend:
     vp install --frozen-lockfile
     vp run --filter floppa-face build
 
-# Regenerate OpenAPI TypeScript client (no running backend needed)
+# Regenerate the API clients — TypeScript and Rust — from the server's own annotations
 openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json
     cd floppa-web-shared && vp exec openapi-ts
+    cargo run -p xtask -- api-types
 
 # Regenerate tauri-specta bindings (no running app needed)
 bindings:

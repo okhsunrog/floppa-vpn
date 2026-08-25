@@ -1,0 +1,19 @@
+[package]
+name = "floppa-api-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The client side of the Floppa VPN server API: generated types, one HTTP client, and peer provisioning"
+
+[dependencies]
+async-trait = "0.1.92"
+chrono = { workspace = true, features = ["serde"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "charset"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid = { version = "1.25.0", features = ["serde"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

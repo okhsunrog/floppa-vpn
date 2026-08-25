@@ -7,6 +7,8 @@ members = [
     "floppa-vless",
     "floppa-cli",
     "floppa-tunnel-config",
+    "floppa-api-client",
+    "xtask",
 ]
 exclude = [
     "floppa-client/src-tauri",

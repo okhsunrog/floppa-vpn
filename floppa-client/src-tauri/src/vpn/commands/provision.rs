@@ -1,31 +1,41 @@
 //! Peer provisioning: what the frontend hands over, and what it asks for.
 
-use crate::provision::creds::{self, ServerCredentials};
+use crate::provision::session::{self, ServerSession};
 use crate::vpn::config::config_dir;
 use tracing::info;
 
-/// Hand the session over to Rust, or take it away.
+/// Hand the server session over to Rust, or take it away.
 ///
-/// Called by the frontend whenever the auth store's token changes — sign-in, every sliding
-/// refresh, sign-out — and once at startup for a token restored from `localStorage`. `token` is
-/// `None` exactly when the user is signed out, and then the stored credentials are removed rather
-/// than left to rot: they are what an autonomous repair would authenticate with, and a signed-out
-/// device must not be able to make peers.
+/// Called by the frontend whenever any part of it changes: the token on sign-in, on every sliding
+/// refresh and on sign-out, and the device identity as soon as the plugin reports it. `token` is
+/// `None` exactly when the user is signed out, and then the stored session is removed rather than
+/// left to rot — it is what a background repair would authenticate with, and a signed-out device
+/// must not be able to make peers.
 ///
-/// The `base_url` comes from the frontend because the frontend is where it is configured
-/// (`VITE_API_URL`, baked in at build time). Keeping a second copy compiled into Rust would mean
-/// two places to change and one of them silently wrong.
+/// A session that arrives incomplete (the token is there but the device id has not been read yet)
+/// is written anyway and replaced when the rest lands: [`session::load`] refuses to return
+/// anything it could not provision with, so a half-written one is simply not used.
 #[tauri::command]
 #[specta::specta]
-pub fn set_server_credentials(base_url: String, token: Option<String>) -> Result<(), String> {
+pub fn set_server_session(
+    base_url: String,
+    token: Option<String>,
+    device_id: Option<String>,
+    device_name: Option<String>,
+) -> Result<(), String> {
     let dir = config_dir()?;
     match token {
         Some(token) => {
-            creds::store(&dir, Some(ServerCredentials::new(base_url, token)))?;
-            info!("the server session is available to the tunnel process");
+            let stored =
+                ServerSession::new(base_url, token, device_id.unwrap_or_default(), device_name);
+            let usable = stored.is_usable();
+            session::store(&dir, Some(stored))?;
+            if usable {
+                info!("the server session is available to the tunnel process");
+            }
         }
         None => {
-            creds::store(&dir, None)?;
+            session::store(&dir, None)?;
             info!("the server session was cleared");
         }
     }

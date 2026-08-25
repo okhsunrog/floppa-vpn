@@ -106,20 +106,22 @@ installApiInterceptors(client, authStore, {
     }),
 })
 
-// Hand the session to Rust, and keep handing it over.
+// Hand the server session to Rust, and keep handing it over.
 //
 // One watcher rather than a call at each of sign-in, refresh and sign-out: the token ref is what
 // all three of those *are*, and the sliding refresh writes it from inside an interceptor that
-// nothing else observes. `immediate` covers the fourth case, a token restored from localStorage
-// before any of them happens.
+// nothing else observes. The device identity is watched alongside it because it arrives from the
+// Android plugin on its own schedule, and a session missing it cannot provision anything.
+// `immediate` covers the case none of them cover: a token restored from localStorage at startup.
 //
 // This is what lets the tunnel process talk to the server with nobody looking at the app: it has
 // no webview, so it has no localStorage, so without this it could reconnect a tunnel but never
 // replace a peer that had been deleted underneath it.
+const vpnStore = useVpnStore()
 watch(
-  () => authStore.token,
-  (token) => {
-    void commands.setServerCredentials(API_URL, token).then((result) => {
+  () => [authStore.token, vpnStore.deviceId, vpnStore.deviceName] as const,
+  ([token, deviceId, deviceName]) => {
+    void commands.setServerSession(API_URL, token, deviceId, deviceName).then((result) => {
       if (result.status === 'error') {
         console.warn('[auth] the tunnel process was not given the session:', result.error)
       }

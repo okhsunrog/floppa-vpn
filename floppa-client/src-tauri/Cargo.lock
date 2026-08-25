@@ -1467,6 +1467,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "floppa-api-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "floppa-client"
 version = "0.5.1"
 dependencies = [
@@ -1474,6 +1488,7 @@ dependencies = [
  "chrono",
  "dirs",
  "flate2",
+ "floppa-api-client",
  "floppa-tunnel-config",
  "futures",
  "gotatun",
@@ -1481,7 +1496,6 @@ dependencies = [
  "ipnetwork",
  "jni 0.22.4",
  "keyring",
- "reqwest",
  "serde",
  "serde_json",
  "shoes-lite",

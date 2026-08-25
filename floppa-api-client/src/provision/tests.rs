@@ -1,11 +1,14 @@
 //! The provisioning logic, driven by fakes.
 //!
-//! Every one of these was a bug at some point in the frontend implementation this replaces, or
-//! guards the distinction that made those bugs possible.
+//! Each of these guards a distinction that the hand-written clients this replaces got wrong at
+//! least once.
 
 use super::*;
-use crate::vpn::actor::types::AttemptFailure;
-use api::{CreatePeerResponse, MeResponse, MyPeer, PublicConfig, Refusal, VlessConfigResponse};
+use crate::client::Refusal;
+use crate::schema::{
+    CreatePeerResponse, InstallationResponse, MeResponse, MyPeer, MySubscription, PeerSyncStatus,
+    PublicConfig, SubscriptionSource, VlessConfigResponse,
+};
 use std::sync::Mutex;
 
 /// What the fake server answers when asked about one protocol's peer: its id, "no such peer", or
@@ -18,16 +21,16 @@ struct FakeApi {
     subscribed: bool,
     me_unreachable: bool,
     amneziawg: bool,
-    /// Per protocol: what `peer_by_device` answers.
-    peers: Mutex<Vec<(WgProtocol, PeerAnswer)>>,
+    peers: Mutex<Vec<(Protocol, PeerAnswer)>>,
+    /// Consumed by the first `create_peer`; later ones succeed.
     create: Mutex<Option<Result<CreatePeerResponse, ApiFailure>>>,
-    vless: Option<Result<String, ApiFailure>>,
-    created: Mutex<Vec<WgProtocol>>,
-    looked_up: Mutex<Vec<WgProtocol>>,
+    vless: Option<String>,
+    created: Mutex<Vec<Protocol>>,
+    looked_up: Mutex<Vec<Protocol>>,
 }
 
 impl FakeApi {
-    fn answers(&self, protocol: WgProtocol) -> PeerAnswer {
+    fn answers(&self, protocol: Protocol) -> PeerAnswer {
         self.peers
             .lock()
             .unwrap()
@@ -38,6 +41,33 @@ impl FakeApi {
     }
 }
 
+fn subscription() -> MySubscription {
+    MySubscription {
+        plan_name: "test".into(),
+        plan_display_name: "Test".into(),
+        source: SubscriptionSource::AdminGrant,
+        starts_at: chrono::Utc::now(),
+        expires_at: None,
+        speed_limit_mbps: None,
+        max_peers: 3,
+    }
+}
+
+fn peer(id: i64, protocol: Protocol) -> MyPeer {
+    MyPeer {
+        id,
+        assigned_ip: "10.0.0.2".into(),
+        sync_status: PeerSyncStatus::Active,
+        protocol,
+        download_bytes: 0,
+        upload_bytes: 0,
+        last_handshake: None,
+        created_at: chrono::Utc::now(),
+        device_name: None,
+        device_id: Some("device-1".into()),
+    }
+}
+
 #[async_trait]
 impl ProvisionApi for FakeApi {
     async fn me(&self) -> Result<MeResponse, ApiFailure> {
@@ -45,25 +75,35 @@ impl ProvisionApi for FakeApi {
             return Err(ApiFailure::Unreachable("no network".into()));
         }
         Ok(MeResponse {
-            subscription: self.subscribed.then(|| serde_json::json!({"plan": "test"})),
+            id: 1,
+            is_admin: false,
+            has_credential: false,
+            telegram_linked: false,
+            telegram_id: None,
+            username: None,
+            first_name: None,
+            last_name: None,
+            photo_url: None,
+            subscription: self.subscribed.then(subscription),
         })
     }
 
     async fn public_config(&self) -> Result<PublicConfig, ApiFailure> {
         Ok(PublicConfig {
             amneziawg_available: self.amneziawg,
-            vless_available: false,
+            vless_available: self.vless.is_some(),
+            telegram_bot_username: None,
         })
     }
 
     async fn peer_by_device(
         &self,
         _device_id: &str,
-        protocol: WgProtocol,
+        protocol: Protocol,
     ) -> Result<Option<MyPeer>, ApiFailure> {
         self.looked_up.lock().unwrap().push(protocol);
         self.answers(protocol)
-            .map(|found| found.map(|id| MyPeer { id }))
+            .map(|found| found.map(|id| peer(id, protocol)))
     }
 
     async fn peer_config(&self, id: i64) -> Result<String, ApiFailure> {
@@ -71,21 +111,24 @@ impl ProvisionApi for FakeApi {
     }
 
     async fn create_peer(&self, req: &CreatePeerRequest) -> Result<CreatePeerResponse, ApiFailure> {
-        self.created.lock().unwrap().push(req.protocol);
+        let protocol = req
+            .protocol
+            .expect("a peer is always created for a protocol");
+        self.created.lock().unwrap().push(protocol);
         self.create
             .lock()
             .unwrap()
             .take()
             .unwrap_or(Ok(CreatePeerResponse {
                 id: 1,
+                assigned_ip: "10.0.0.3".into(),
                 config: "[Interface]\n# fresh\n".into(),
             }))
     }
 
     async fn vless_config(&self) -> Result<VlessConfigResponse, ApiFailure> {
         match &self.vless {
-            Some(Ok(uri)) => Ok(VlessConfigResponse { uri: uri.clone() }),
-            Some(Err(e)) => Err(e.clone()),
+            Some(uri) => Ok(VlessConfigResponse { uri: uri.clone() }),
             None => Err(ApiFailure::Refused(Refusal {
                 status: 404,
                 code: Some(ApiErrorCode::VlessNotConfigured),
@@ -97,9 +140,17 @@ impl ProvisionApi for FakeApi {
 
     async fn upsert_installation(
         &self,
-        _req: &UpsertInstallationRequest,
-    ) -> Result<(), ApiFailure> {
-        Ok(())
+        req: &UpsertInstallationRequest,
+    ) -> Result<InstallationResponse, ApiFailure> {
+        Ok(InstallationResponse {
+            id: 1,
+            device_id: req.device_id.clone(),
+            device_name: req.device_name.clone(),
+            platform: req.platform.clone(),
+            app_version: req.app_version.clone(),
+            created_at: chrono::Utc::now(),
+            last_seen_at: chrono::Utc::now(),
+        })
     }
 }
 
@@ -111,12 +162,12 @@ struct FakeSink {
 
 #[async_trait]
 impl ConfigSink for FakeSink {
-    async fn import(&self, raw: String) -> Result<Protocol, String> {
+    async fn import(&self, raw: String) -> Result<(), String> {
         if self.refuse {
             return Err("not a config this client understands".into());
         }
         self.imported.lock().unwrap().push(raw);
-        Ok(Protocol::WireGuard)
+        Ok(())
     }
 
     async fn has_any(&self) -> bool {
@@ -151,7 +202,7 @@ async fn a_server_that_cannot_be_asked_never_reads_as_a_peer_that_is_gone() {
     let api = FakeApi {
         subscribed: true,
         peers: Mutex::new(vec![(
-            WgProtocol::Wireguard,
+            Protocol::Wireguard,
             Err(ApiFailure::Unreachable("no network".into())),
         )]),
         ..Default::default()
@@ -159,11 +210,11 @@ async fn a_server_that_cannot_be_asked_never_reads_as_a_peer_that_is_gone() {
     let sink = FakeSink::default();
 
     let result =
-        sync_wg_family_peer(&api, &sink, &identity(), true, WgProtocol::Wireguard, true).await;
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
 
     assert_eq!(result, SyncResult::Offline);
-    // The thing this test exists for: nothing was created. Reading the failure as "no peer" is
-    // what used to make an offline start burn a peer slot on a duplicate.
+    // What this test exists for: nothing was created. Reading the failure as "no peer" is what
+    // makes an offline start burn a slot from the account's peer limit on a duplicate.
     assert!(api.created.lock().unwrap().is_empty());
 }
 
@@ -171,21 +222,26 @@ async fn a_server_that_cannot_be_asked_never_reads_as_a_peer_that_is_gone() {
 async fn a_lookup_reports_the_three_answers_apart() {
     let api = FakeApi {
         peers: Mutex::new(vec![
-            (WgProtocol::Wireguard, Ok(Some(7))),
+            (Protocol::Wireguard, Ok(Some(7))),
             (
-                WgProtocol::Amneziawg,
-                Err(ApiFailure::Unreachable("x".into())),
+                Protocol::Amneziawg,
+                Err(ApiFailure::Unreachable("no network".into())),
             ),
         ]),
         ..Default::default()
     };
     assert_eq!(
-        lookup_peer(&api, "device-1", WgProtocol::Wireguard).await,
+        lookup_peer(&api, "device-1", Protocol::Wireguard).await,
         PeerLookup::Found(7)
     );
     assert_eq!(
-        lookup_peer(&api, "device-1", WgProtocol::Amneziawg).await,
+        lookup_peer(&api, "device-1", Protocol::Amneziawg).await,
         PeerLookup::Unknown
+    );
+    // Nothing recorded for this one, so the fake answers "no such peer".
+    assert_eq!(
+        lookup_peer(&api, "device-2", Protocol::Wireguard).await,
+        PeerLookup::Found(7)
     );
 }
 
@@ -197,13 +253,13 @@ async fn a_lookup_reports_the_three_answers_apart() {
 async fn an_existing_peer_is_adopted_rather_than_replaced() {
     let api = FakeApi {
         subscribed: true,
-        peers: Mutex::new(vec![(WgProtocol::Wireguard, Ok(Some(42)))]),
+        peers: Mutex::new(vec![(Protocol::Wireguard, Ok(Some(42)))]),
         ..Default::default()
     };
     let sink = FakeSink::default();
 
     let result =
-        sync_wg_family_peer(&api, &sink, &identity(), true, WgProtocol::Wireguard, true).await;
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
 
     assert_eq!(result, SyncResult::Ok);
     assert!(api.created.lock().unwrap().is_empty());
@@ -220,7 +276,7 @@ async fn a_missing_peer_is_created_only_when_creating_is_allowed() {
 
     // The secondary protocol on a server that does not offer it: looked up, never created.
     let result =
-        sync_wg_family_peer(&api, &sink, &identity(), true, WgProtocol::Amneziawg, false).await;
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Amneziawg, false).await;
 
     assert_eq!(result, SyncResult::Ok);
     assert!(api.created.lock().unwrap().is_empty());
@@ -248,9 +304,9 @@ async fn a_refusal_keeps_the_reason_the_server_gave() {
         let sink = FakeSink::default();
 
         let result =
-            sync_wg_family_peer(&api, &sink, &identity(), true, WgProtocol::Wireguard, true).await;
+            sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
 
-        assert_eq!(result, SyncResult::Failed { error: expected });
+        assert_eq!(result, SyncResult::Failed(expected));
     }
 }
 
@@ -260,14 +316,9 @@ async fn a_device_without_a_subscription_is_told_so_before_the_server_has_to_say
     let sink = FakeSink::default();
 
     let result =
-        sync_wg_family_peer(&api, &sink, &identity(), false, WgProtocol::Wireguard, true).await;
+        sync_wg_family_peer(&api, &sink, &identity(), false, Protocol::Wireguard, true).await;
 
-    assert_eq!(
-        result,
-        SyncResult::Failed {
-            error: SyncError::NoSubscription
-        }
-    );
+    assert_eq!(result, SyncResult::Failed(SyncError::NoSubscription));
     assert!(api.created.lock().unwrap().is_empty());
 }
 
@@ -296,9 +347,10 @@ async fn a_server_offering_amneziawg_provisions_both_and_prefers_it() {
     let sink = FakeSink::default();
 
     assert_eq!(sync_peers(&api, &sink, &identity()).await, SyncResult::Ok);
-
-    let created = api.created.lock().unwrap().clone();
-    assert_eq!(created, vec![WgProtocol::Amneziawg, WgProtocol::Wireguard]);
+    assert_eq!(
+        *api.created.lock().unwrap(),
+        vec![Protocol::Amneziawg, Protocol::Wireguard]
+    );
 }
 
 #[tokio::test]
@@ -311,10 +363,9 @@ async fn a_server_without_amneziawg_provisions_wireguard_and_only_wireguard() {
     let sink = FakeSink::default();
 
     assert_eq!(sync_peers(&api, &sink, &identity()).await, SyncResult::Ok);
-
     // The secondary is looked up and left alone: creating it would make a peer for a protocol
     // this server cannot carry.
-    assert_eq!(*api.created.lock().unwrap(), vec![WgProtocol::Wireguard]);
+    assert_eq!(*api.created.lock().unwrap(), vec![Protocol::Wireguard]);
 }
 
 #[tokio::test]
@@ -322,8 +373,8 @@ async fn a_bonus_peer_that_cannot_be_made_does_not_fail_the_sync() {
     let api = FakeApi {
         subscribed: true,
         amneziawg: true,
-        peers: Mutex::new(vec![(WgProtocol::Amneziawg, Ok(Some(5)))]),
-        // The one create call this sync makes is the secondary's, and it is refused.
+        // The primary already exists, so the one create this sync attempts is the secondary's.
+        peers: Mutex::new(vec![(Protocol::Amneziawg, Ok(Some(5)))]),
         create: Mutex::new(Some(Err(refusal(
             403,
             ApiErrorCode::PeerLimitReached,
@@ -351,10 +402,29 @@ async fn a_server_without_vless_is_not_a_failed_sync() {
 }
 
 #[tokio::test]
+async fn a_vless_uri_is_stored_like_any_other_config() {
+    let api = FakeApi {
+        subscribed: true,
+        vless: Some("vless://uuid@host:443?security=reality".into()),
+        ..Default::default()
+    };
+    let sink = FakeSink::default();
+
+    assert_eq!(sync_peers(&api, &sink, &identity()).await, SyncResult::Ok);
+    assert!(
+        sink.imported
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|raw| raw.starts_with("vless://"))
+    );
+}
+
+#[tokio::test]
 async fn a_config_that_does_not_import_is_a_failure_and_not_a_silent_success() {
     let api = FakeApi {
         subscribed: true,
-        peers: Mutex::new(vec![(WgProtocol::Wireguard, Ok(Some(3)))]),
+        peers: Mutex::new(vec![(Protocol::Wireguard, Ok(Some(3)))]),
         ..Default::default()
     };
     let sink = FakeSink {
@@ -363,107 +433,12 @@ async fn a_config_that_does_not_import_is_a_failure_and_not_a_silent_success() {
     };
 
     let result =
-        sync_wg_family_peer(&api, &sink, &identity(), true, WgProtocol::Wireguard, true).await;
+        sync_wg_family_peer(&api, &sink, &identity(), true, Protocol::Wireguard, true).await;
 
     assert!(matches!(
         result,
-        SyncResult::Failed {
-            error: SyncError::CreateFailed { .. }
-        }
+        SyncResult::Failed(SyncError::CreateFailed { .. })
     ));
-}
-
-// ---------------------------------------------------------------------------
-// Planning what a finished cycle means
-// ---------------------------------------------------------------------------
-
-fn failure(protocol: Protocol, error: AttemptError) -> AttemptFailure {
-    AttemptFailure {
-        protocol,
-        error,
-        pass: 0,
-    }
-}
-
-#[test]
-fn a_cycle_that_connected_over_a_fallback_owes_the_one_it_stepped_over_a_peer() {
-    let outcome = CycleOutcome::Connected {
-        protocol: Protocol::WireGuard,
-        adopted: false,
-        failures: vec![failure(Protocol::AmneziaWg, AttemptError::VerifyFailed)],
-    };
-    assert_eq!(
-        plan_outcome(&outcome),
-        OutcomePlan::Repair {
-            protocol: WgProtocol::Amneziawg
-        }
-    );
-}
-
-#[test]
-fn a_cycle_that_connected_cleanly_owes_nothing() {
-    let outcome = CycleOutcome::Connected {
-        protocol: Protocol::AmneziaWg,
-        adopted: false,
-        failures: vec![],
-    };
-    assert_eq!(plan_outcome(&outcome), OutcomePlan::Ignore);
-}
-
-#[test]
-fn the_protocol_that_failed_verification_is_found_by_name_not_by_position() {
-    // WireGuard was tried last and timed out; AmneziaWG is the one whose peer may be gone.
-    let outcome = CycleOutcome::Exhausted {
-        failures: vec![
-            failure(Protocol::AmneziaWg, AttemptError::VerifyFailed),
-            failure(Protocol::WireGuard, AttemptError::TimedOut),
-        ],
-    };
-    assert_eq!(
-        plan_outcome(&outcome),
-        OutcomePlan::Reprovision {
-            protocol: WgProtocol::Amneziawg
-        }
-    );
-}
-
-#[test]
-fn a_failure_no_new_peer_would_fix_asks_for_no_new_peer() {
-    let outcome = CycleOutcome::Exhausted {
-        failures: vec![failure(
-            Protocol::WireGuard,
-            AttemptError::ResolveFailed {
-                host: "vpn.example".into(),
-                detail: "no DNS".into(),
-            },
-        )],
-    };
-    assert_eq!(plan_outcome(&outcome), OutcomePlan::Ignore);
-}
-
-#[test]
-fn vless_never_asks_for_a_peer_because_it_has_none() {
-    let outcome = CycleOutcome::Exhausted {
-        failures: vec![failure(Protocol::Vless, AttemptError::VerifyFailed)],
-    };
-    assert_eq!(plan_outcome(&outcome), OutcomePlan::Ignore);
-
-    let lost = CycleOutcome::LostGaveUp {
-        protocol: Protocol::Vless,
-        passes: 3,
-    };
-    assert_eq!(plan_outcome(&lost), OutcomePlan::Ignore);
-}
-
-#[test]
-fn the_endings_that_are_nobodys_fault_ask_for_nothing() {
-    for outcome in [
-        CycleOutcome::Cancelled,
-        CycleOutcome::Down,
-        CycleOutcome::UnwindFailed,
-    ] {
-        assert_eq!(plan_outcome(&outcome), OutcomePlan::Ignore);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -474,13 +449,13 @@ fn the_endings_that_are_nobodys_fault_ask_for_nothing() {
 async fn a_peer_that_is_still_there_is_left_alone() {
     let api = FakeApi {
         subscribed: true,
-        peers: Mutex::new(vec![(WgProtocol::Amneziawg, Ok(Some(9)))]),
+        peers: Mutex::new(vec![(Protocol::Amneziawg, Ok(Some(9)))]),
         ..Default::default()
     };
     let sink = FakeSink::default();
 
     assert_eq!(
-        repair_peer(&api, &sink, &identity(), WgProtocol::Amneziawg).await,
+        repair_peer(&api, &sink, &identity(), Protocol::Amneziawg).await,
         RepairOutcome::PeerExists
     );
     assert!(api.created.lock().unwrap().is_empty());
@@ -496,17 +471,17 @@ async fn a_peer_that_is_gone_is_replaced() {
     let sink = FakeSink::default();
 
     assert_eq!(
-        repair_peer(&api, &sink, &identity(), WgProtocol::Amneziawg).await,
+        repair_peer(&api, &sink, &identity(), Protocol::Amneziawg).await,
         RepairOutcome::Recreated
     );
-    assert!(api.created.lock().unwrap().contains(&WgProtocol::Amneziawg));
+    assert!(api.created.lock().unwrap().contains(&Protocol::Amneziawg));
 }
 
 #[tokio::test]
 async fn a_repair_that_cannot_reach_the_server_concludes_nothing() {
     let api = FakeApi {
         peers: Mutex::new(vec![(
-            WgProtocol::Amneziawg,
+            Protocol::Amneziawg,
             Err(ApiFailure::Unreachable("no network".into())),
         )]),
         ..Default::default()
@@ -514,7 +489,7 @@ async fn a_repair_that_cannot_reach_the_server_concludes_nothing() {
     let sink = FakeSink::default();
 
     assert_eq!(
-        repair_peer(&api, &sink, &identity(), WgProtocol::Amneziawg).await,
+        repair_peer(&api, &sink, &identity(), Protocol::Amneziawg).await,
         RepairOutcome::Unreachable
     );
     assert!(api.created.lock().unwrap().is_empty());
