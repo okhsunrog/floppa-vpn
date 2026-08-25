@@ -259,7 +259,7 @@ pub(super) async fn get_my_avatar(
 /// Get a user's cached avatar (admin).
 #[utoipa::path(
     get,
-    path = "/admin/users/{id}/avatar",
+    path = "/users/{id}/avatar",
     tag = "admin",
     security(("bearer" = [])),
     params(("id" = i64, Path, description = "User ID")),
@@ -288,7 +288,7 @@ pub struct AvatarBatchRequest {
 /// keyed by user id (string). Avoids one request per row in the admin user list.
 #[utoipa::path(
     post,
-    path = "/admin/avatars",
+    path = "/avatars",
     tag = "admin",
     security(("bearer" = [])),
     request_body = AvatarBatchRequest,

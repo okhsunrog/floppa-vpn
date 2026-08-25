@@ -141,10 +141,21 @@ async fn main() -> Result<()> {
             .allow_credentials(true)
     };
 
+    // The request span records the path only: query strings carry Telegram login signatures
+    // and one-time codes, which must not end up in the logs.
+    let trace = TraceLayer::new_for_http().make_span_with(|req: &axum::extract::Request| {
+        tracing::info_span!(
+            "request",
+            method = %req.method(),
+            path = req.uri().path(),
+            version = ?req.version(),
+        )
+    });
+
     let app = Router::new()
         .nest("/api", api_router)
         .merge(static_routes)
-        .layer(TraceLayer::new_for_http())
+        .layer(trace)
         .layer(cors);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));

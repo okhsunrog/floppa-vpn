@@ -100,8 +100,30 @@ pub(super) fn generate_link_code() -> String {
     format!("{:032x}", random::<u128>())
 }
 
-fn is_allowed_redirect_uri(uri: &str) -> bool {
-    uri.starts_with("floppa://") || uri.starts_with("http://127.0.0.1:")
+/// Parse a deep-link `redirect_uri` and accept only the app's own scheme (`floppa://…`) or the
+/// desktop loopback listener (`http://127.0.0.1:<port>/…`); anything else is `None`.
+fn parse_redirect_uri(uri: &str) -> Option<url::Url> {
+    let url = url::Url::parse(uri).ok()?;
+    let allowed = match url.scheme() {
+        "floppa" => true,
+        "http" => url.host_str() == Some("127.0.0.1") && url.port().is_some(),
+        _ => false,
+    };
+    allowed.then_some(url)
+}
+
+/// Render `value` as a JavaScript string literal (quotes included) that is safe inside a
+/// `<script>` block: JSON escaping handles quotes, backslashes and control characters, and
+/// `<`, `>`, `&` plus the U+2028/2029 line terminators are escaped on top so neither
+/// `</script>` nor a line break can end the literal early.
+fn js_string_literal(value: &str) -> String {
+    serde_json::to_string(value)
+        .expect("a str always serializes")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 fn detect_request_origin(headers: &HeaderMap) -> Option<String> {
@@ -218,13 +240,13 @@ pub(super) async fn start_telegram_deep_link_login(
         Duration::minutes(15),
     )?;
 
-    if !is_allowed_redirect_uri(&query.redirect_uri) {
+    let redirect_uri = parse_redirect_uri(&query.redirect_uri).ok_or_else(|| {
         warn!(
             "Rejected deep-link auth start with invalid redirect URI: {}",
             query.redirect_uri
         );
-        return Err(ApiError::bad_request("Invalid redirect URI"));
-    }
+        ApiError::bad_request("Invalid redirect URI")
+    })?;
 
     let bot_username = state
         .config
@@ -244,7 +266,7 @@ pub(super) async fn start_telegram_deep_link_login(
         now,
         state_token.clone(),
         super::PendingTelegramLoginState {
-            redirect_uri: query.redirect_uri.clone(),
+            redirect_uri,
             expires_at: now + Duration::minutes(10),
         },
     );
@@ -327,15 +349,9 @@ pub(super) async fn telegram_deep_link_callback(
         },
     );
 
-    let separator = if login_state.redirect_uri.contains('?') {
-        '&'
-    } else {
-        '?'
-    };
-    let deep_link_uri = format!(
-        "{}{}code={}",
-        login_state.redirect_uri, separator, login_code
-    );
+    let mut deep_link = login_state.redirect_uri;
+    deep_link.query_pairs_mut().append_pair("code", &login_code);
+    let deep_link = deep_link.to_string();
 
     let html = format!(
         r#"<!doctype html>
@@ -390,7 +406,7 @@ pub(super) async fn telegram_deep_link_callback(
     <div class="card">
       <h1>Floppa VPN</h1>
       <p class="hint">Opening the app&hellip;</p>
-      <a class="btn btn-primary" id="open" href="{deep_link}">Open Floppa VPN</a>
+      <a class="btn btn-primary" id="open" href="{deep_link_attr}">Open Floppa VPN</a>
       <hr class="divider" />
       <p class="code-label">Paste this into the app:</p>
       <div class="code-box" id="code-box">{code}</div>
@@ -411,14 +427,14 @@ pub(super) async fn telegram_deep_link_callback(
       <p class="copied" id="copied"></p>
     </div>
     <script>
-      window.location.href = "{deep_link}";
+      window.location.href = {deep_link_js};
 
       function copyCode() {{
-        navigator.clipboard.writeText("{code}").then(function() {{
+        navigator.clipboard.writeText({code_js}).then(function() {{
           document.getElementById("copied").textContent = "Copied!";
         }}, function() {{
           var t = document.createElement("textarea");
-          t.value = "{code}";
+          t.value = {code_js};
           document.body.appendChild(t);
           t.select();
           document.execCommand("copy");
@@ -429,8 +445,10 @@ pub(super) async fn telegram_deep_link_callback(
     </script>
   </body>
 </html>"#,
-        deep_link = html_escape_attr(&deep_link_uri),
+        deep_link_attr = html_escape_attr(&deep_link),
+        deep_link_js = js_string_literal(&deep_link),
         code = html_escape_attr(&login_code),
+        code_js = js_string_literal(&login_code),
     );
 
     Ok(Html(html))
@@ -639,7 +657,34 @@ pub(super) async fn login_account(
 
 #[cfg(test)]
 mod tests {
-    use super::generate_link_code;
+    use super::{generate_link_code, js_string_literal, parse_redirect_uri};
+
+    #[test]
+    fn redirect_uri_allowlist() {
+        assert!(parse_redirect_uri("floppa://auth").is_some());
+        assert!(parse_redirect_uri("floppa://auth/cb?x=1").is_some());
+        assert!(parse_redirect_uri("http://127.0.0.1:43123/callback").is_some());
+        for bad in [
+            "http://127.0.0.1/callback",
+            "http://localhost:43123/callback",
+            "https://127.0.0.1:43123/callback",
+            "https://evil.example/floppa://auth",
+            "javascript:alert(1)",
+            "not a url",
+        ] {
+            assert!(parse_redirect_uri(bad).is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn js_string_literal_cannot_break_out_of_a_script_block() {
+        let lit = js_string_literal("floppa://a?\"</script><script>alert(1)</script>&\u{2028}x");
+        assert!(lit.starts_with('"') && lit.ends_with('"'));
+        assert!(!lit.contains('<') && !lit.contains('>') && !lit.contains('&'));
+        assert!(!lit.contains('\u{2028}'));
+        assert!(!lit[1..lit.len() - 1].contains("\"</"));
+        assert_eq!(js_string_literal("plain"), "\"plain\"");
+    }
 
     /// Telegram rejects deep-link `start` payloads over 64 chars and inline-button
     /// `callback_data` over 64 bytes; the link code travels as both `link_<code>`

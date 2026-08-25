@@ -6,115 +6,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/admin/avatars": {
-      "post": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,\nkeyed by user id (string). Avoids one request per row in the admin user list.",
-        "operationId": "get_avatars_batch",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AvatarBatchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Map of user id → data URL",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not an admin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/admin/users/{id}/avatar": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Get a user's cached avatar (admin).",
-        "operationId": "get_user_avatar",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "User ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Avatar image bytes",
-            "content": {
-              "image/jpeg": {}
-            }
-          },
-          "304": {
-            "description": "Not modified"
-          },
-          "403": {
-            "description": "Not an admin",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "No avatar cached",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
     "/auth/account/login": {
       "post": {
         "tags": [
@@ -477,6 +368,58 @@
             }
           }
         }
+      }
+    },
+    "/avatars": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,\nkeyed by user id (string). Avoids one request per row in the admin user list.",
+        "operationId": "get_avatars_batch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AvatarBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Map of user id → data URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
       }
     },
     "/config": {
@@ -1997,6 +1940,63 @@
           },
           "404": {
             "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/users/{id}/avatar": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get a user's cached avatar (admin).",
+        "operationId": "get_user_avatar",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Avatar image bytes",
+            "content": {
+              "image/jpeg": {}
+            }
+          },
+          "304": {
+            "description": "Not modified"
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No avatar cached",
             "content": {
               "application/json": {
                 "schema": {
@@ -3982,6 +3982,13 @@
             ]
           }
         }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
       }
     }
   }

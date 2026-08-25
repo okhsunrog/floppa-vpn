@@ -444,65 +444,6 @@ export type VlessPeerSummary = {
     username?: string | null;
 };
 
-export type GetAvatarsBatchData = {
-    body: AvatarBatchRequest;
-    path?: never;
-    query?: never;
-    url: '/admin/avatars';
-};
-
-export type GetAvatarsBatchErrors = {
-    /**
-     * Not an admin
-     */
-    403: ApiError;
-};
-
-export type GetAvatarsBatchError = GetAvatarsBatchErrors[keyof GetAvatarsBatchErrors];
-
-export type GetAvatarsBatchResponses = {
-    /**
-     * Map of user id → data URL
-     */
-    200: {
-        [key: string]: string;
-    };
-};
-
-export type GetAvatarsBatchResponse = GetAvatarsBatchResponses[keyof GetAvatarsBatchResponses];
-
-export type GetUserAvatarData = {
-    body?: never;
-    path: {
-        /**
-         * User ID
-         */
-        id: number;
-    };
-    query?: never;
-    url: '/admin/users/{id}/avatar';
-};
-
-export type GetUserAvatarErrors = {
-    /**
-     * Not an admin
-     */
-    403: ApiError;
-    /**
-     * No avatar cached
-     */
-    404: ApiError;
-};
-
-export type GetUserAvatarError = GetUserAvatarErrors[keyof GetUserAvatarErrors];
-
-export type GetUserAvatarResponses = {
-    /**
-     * Avatar image bytes
-     */
-    200: unknown;
-};
-
 export type LoginAccountData = {
     body: AccountLoginRequest;
     path?: never;
@@ -703,6 +644,33 @@ export type StartTelegramDeepLinkLoginResponses = {
      */
     200: unknown;
 };
+
+export type GetAvatarsBatchData = {
+    body: AvatarBatchRequest;
+    path?: never;
+    query?: never;
+    url: '/avatars';
+};
+
+export type GetAvatarsBatchErrors = {
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+};
+
+export type GetAvatarsBatchError = GetAvatarsBatchErrors[keyof GetAvatarsBatchErrors];
+
+export type GetAvatarsBatchResponses = {
+    /**
+     * Map of user id → data URL
+     */
+    200: {
+        [key: string]: string;
+    };
+};
+
+export type GetAvatarsBatchResponse = GetAvatarsBatchResponses[keyof GetAvatarsBatchResponses];
 
 export type GetPublicConfigData = {
     body?: never;
@@ -1529,6 +1497,38 @@ export type GetUserResponses = {
 };
 
 export type GetUserResponse = GetUserResponses[keyof GetUserResponses];
+
+export type GetUserAvatarData = {
+    body?: never;
+    path: {
+        /**
+         * User ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/users/{id}/avatar';
+};
+
+export type GetUserAvatarErrors = {
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * No avatar cached
+     */
+    404: ApiError;
+};
+
+export type GetUserAvatarError = GetUserAvatarErrors[keyof GetUserAvatarErrors];
+
+export type GetUserAvatarResponses = {
+    /**
+     * Avatar image bytes
+     */
+    200: unknown;
+};
 
 export type SetUserCredentialData = {
     body: SetUserCredentialRequest;

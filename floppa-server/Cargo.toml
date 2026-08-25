@@ -38,6 +38,7 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 reqwest = { version = "0.13.2", features = ["json", "query"] }
 thiserror.workspace = true
+url = "2.5.8"
 
 [build-dependencies]
 chrono.workspace = true
@@ -45,3 +46,4 @@ memory-serve = "2.1.0"
 
 [dev-dependencies]
 sqlx = { workspace = true, features = ["migrate"] }
+tower = { version = "0.5.3", features = ["util"] }

@@ -68,7 +68,8 @@ pub struct AppState {
 
 #[derive(Clone)]
 struct PendingTelegramLoginState {
-    redirect_uri: String,
+    /// Validated by `auth::parse_redirect_uri`.
+    redirect_uri: url::Url,
     expires_at: DateTime<Utc>,
 }
 
@@ -164,16 +165,39 @@ impl<V: Expiring> TtlMap<V> {
     }
 }
 
+/// Name of the security scheme the `security(("bearer" = []))` attributes on the handlers
+/// refer to; declared here so the spec is self-consistent and generated clients know to send
+/// `Authorization: Bearer <jwt>`.
+const BEARER_SCHEME: &str = "bearer";
+
 fn openapi_router() -> OpenApiRouter<AppState> {
+    use utoipa::openapi::{
+        ComponentsBuilder, InfoBuilder, OpenApiBuilder,
+        security::{HttpAuthScheme, HttpBuilder, SecurityScheme},
+    };
+
     OpenApiRouter::with_openapi(
-        utoipa::openapi::OpenApiBuilder::new()
+        OpenApiBuilder::new()
             .info(
-                utoipa::openapi::InfoBuilder::new()
+                InfoBuilder::new()
                     .title("Floppa VPN Admin API")
                     .description(Some("API for Floppa VPN admin panel and user management"))
                     .version(crate::VERSION)
                     .build(),
             )
+            .components(Some(
+                ComponentsBuilder::new()
+                    .security_scheme(
+                        BEARER_SCHEME,
+                        SecurityScheme::Http(
+                            HttpBuilder::new()
+                                .scheme(HttpAuthScheme::Bearer)
+                                .bearer_format("JWT")
+                                .build(),
+                        ),
+                    )
+                    .build(),
+            ))
             .build(),
     )
     // Public endpoints

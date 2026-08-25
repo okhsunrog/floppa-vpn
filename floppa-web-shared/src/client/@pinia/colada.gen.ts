@@ -8,12 +8,40 @@ import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallati
 import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetAvatarsBatchData, GetAvatarsBatchError, GetAvatarsBatchResponse, GetMeData, GetMeError, GetMeResponse, GetMyAvatarData, GetMyAvatarError, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserAvatarData, GetUserAvatarError, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListPublicPlansData, ListPublicPlansResponse, ListUsersData, ListUsersError, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, LoginAccountData, LoginAccountError, LoginAccountResponse, PollTelegramLinkData, PollTelegramLinkError, PollTelegramLinkResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RegisterAccountData, RegisterAccountError, RegisterAccountResponse, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetMyCredentialData, SetMyCredentialError, SetMyCredentialResponse, SetSubscriptionData, SetSubscriptionError, SetUserCredentialData, SetUserCredentialError, SetUserCredentialResponse, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, StartTelegramLinkData, StartTelegramLinkError, StartTelegramLinkResponse, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
 
 /**
- * Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,
- * keyed by user id (string). Avoids one request per row in the admin user list.
+ * Log in with a login + password.
  */
-export const getAvatarsBatchMutation = (options?: Partial<Options<GetAvatarsBatchData>>): UseMutationOptions<GetAvatarsBatchResponse, Options<GetAvatarsBatchData>, GetAvatarsBatchError> => ({
+export const loginAccountMutation = (options?: Partial<Options<LoginAccountData>>): UseMutationOptions<LoginAccountResponse, Options<LoginAccountData>, LoginAccountError> => ({
     mutation: async (vars) => {
-        const { data } = await getAvatarsBatch({
+        const { data } = await loginAccount({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+/**
+ * Register a new account with a login + password (no Telegram). Grants a short taster trial
+ * (duration comes from the 'taster' plan's `trial_minutes`).
+ */
+export const registerAccountMutation = (options?: Partial<Options<RegisterAccountData>>): UseMutationOptions<RegisterAccountResponse, Options<RegisterAccountData>, RegisterAccountError> => ({
+    mutation: async (vars) => {
+        const { data } = await registerAccount({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+/**
+ * Authenticate via Telegram Login Widget
+ */
+export const telegramLoginMutation = (options?: Partial<Options<TelegramLoginData>>): UseMutationOptions<TelegramLoginResponse, Options<TelegramLoginData>, TelegramLoginError> => ({
+    mutation: async (vars) => {
+        const { data } = await telegramLogin({
             ...options,
             ...vars,
             throwOnError: true
@@ -56,66 +84,6 @@ const createQueryKey = <TOptions extends Options>(id: string, options?: TOptions
     }
     return [params];
 };
-
-export const getUserAvatarQueryKey = (options: Options<GetUserAvatarData>) => createQueryKey('getUserAvatar', options);
-
-/**
- * Get a user's cached avatar (admin).
- */
-export const getUserAvatarQuery = defineQueryOptions<Options<GetUserAvatarData>, unknown, GetUserAvatarError>((options: Options<GetUserAvatarData>) => ({
-    key: getUserAvatarQueryKey(options),
-    query: async (context) => {
-        const { data } = await getUserAvatar({
-            ...options,
-            ...context,
-            throwOnError: true
-        });
-        return data;
-    }
-}));
-
-/**
- * Log in with a login + password.
- */
-export const loginAccountMutation = (options?: Partial<Options<LoginAccountData>>): UseMutationOptions<LoginAccountResponse, Options<LoginAccountData>, LoginAccountError> => ({
-    mutation: async (vars) => {
-        const { data } = await loginAccount({
-            ...options,
-            ...vars,
-            throwOnError: true
-        });
-        return data;
-    }
-});
-
-/**
- * Register a new account with a login + password (no Telegram). Grants a short taster trial
- * (duration comes from the 'taster' plan's `trial_minutes`).
- */
-export const registerAccountMutation = (options?: Partial<Options<RegisterAccountData>>): UseMutationOptions<RegisterAccountResponse, Options<RegisterAccountData>, RegisterAccountError> => ({
-    mutation: async (vars) => {
-        const { data } = await registerAccount({
-            ...options,
-            ...vars,
-            throwOnError: true
-        });
-        return data;
-    }
-});
-
-/**
- * Authenticate via Telegram Login Widget
- */
-export const telegramLoginMutation = (options?: Partial<Options<TelegramLoginData>>): UseMutationOptions<TelegramLoginResponse, Options<TelegramLoginData>, TelegramLoginError> => ({
-    mutation: async (vars) => {
-        const { data } = await telegramLogin({
-            ...options,
-            ...vars,
-            throwOnError: true
-        });
-        return data;
-    }
-});
 
 export const telegramDeepLinkCallbackQueryKey = (options?: Options<TelegramDeepLinkCallbackData>) => createQueryKey('telegramDeepLinkCallback', options);
 
@@ -180,6 +148,21 @@ export const startTelegramDeepLinkLoginQuery = defineQueryOptions<Options<StartT
         return data;
     }
 }));
+
+/**
+ * Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,
+ * keyed by user id (string). Avoids one request per row in the admin user list.
+ */
+export const getAvatarsBatchMutation = (options?: Partial<Options<GetAvatarsBatchData>>): UseMutationOptions<GetAvatarsBatchResponse, Options<GetAvatarsBatchData>, GetAvatarsBatchError> => ({
+    mutation: async (vars) => {
+        const { data } = await getAvatarsBatch({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
 
 export const getPublicConfigQueryKey = (options?: Options<GetPublicConfigData>) => createQueryKey('getPublicConfig', options);
 
@@ -613,6 +596,23 @@ export const getUserQuery = defineQueryOptions<Options<GetUserData>, GetUserResp
     key: getUserQueryKey(options),
     query: async (context) => {
         const { data } = await getUser({
+            ...options,
+            ...context,
+            throwOnError: true
+        });
+        return data;
+    }
+}));
+
+export const getUserAvatarQueryKey = (options: Options<GetUserAvatarData>) => createQueryKey('getUserAvatar', options);
+
+/**
+ * Get a user's cached avatar (admin).
+ */
+export const getUserAvatarQuery = defineQueryOptions<Options<GetUserAvatarData>, unknown, GetUserAvatarError>((options: Options<GetUserAvatarData>) => ({
+    key: getUserAvatarQueryKey(options),
+    query: async (context) => {
+        const { data } = await getUserAvatar({
             ...options,
             ...context,
             throwOnError: true

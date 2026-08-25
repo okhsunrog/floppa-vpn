@@ -19,24 +19,6 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
 };
 
 /**
- * Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,
- * keyed by user id (string). Avoids one request per row in the admin user list.
- */
-export const getAvatarsBatch = <ThrowOnError extends boolean = false>(options: Options<GetAvatarsBatchData, ThrowOnError>): RequestResult<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError> => (options.client ?? client).post<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError>({
-    url: '/admin/avatars',
-    ...options,
-    headers: {
-        'Content-Type': 'application/json',
-        ...options.headers
-    }
-});
-
-/**
- * Get a user's cached avatar (admin).
- */
-export const getUserAvatar = <ThrowOnError extends boolean = false>(options: Options<GetUserAvatarData, ThrowOnError>): RequestResult<GetUserAvatarResponses, GetUserAvatarErrors, ThrowOnError> => (options.client ?? client).get<GetUserAvatarResponses, GetUserAvatarErrors, ThrowOnError>({ url: '/admin/users/{id}/avatar', ...options });
-
-/**
  * Log in with a login + password.
  */
 export const loginAccount = <ThrowOnError extends boolean = false>(options: Options<LoginAccountData, ThrowOnError>): RequestResult<LoginAccountResponses, LoginAccountErrors, ThrowOnError> => (options.client ?? client).post<LoginAccountResponses, LoginAccountErrors, ThrowOnError>({
@@ -110,6 +92,20 @@ export const telegramMiniAppAuth = <ThrowOnError extends boolean = false>(option
 export const startTelegramDeepLinkLogin = <ThrowOnError extends boolean = false>(options: Options<StartTelegramDeepLinkLoginData, ThrowOnError>): RequestResult<StartTelegramDeepLinkLoginResponses, StartTelegramDeepLinkLoginErrors, ThrowOnError> => (options.client ?? client).get<StartTelegramDeepLinkLoginResponses, StartTelegramDeepLinkLoginErrors, ThrowOnError>({ url: '/auth/telegram/start', ...options });
 
 /**
+ * Batch-fetch cached avatars as data URLs (admin). Returns only users that have a cached avatar,
+ * keyed by user id (string). Avoids one request per row in the admin user list.
+ */
+export const getAvatarsBatch = <ThrowOnError extends boolean = false>(options: Options<GetAvatarsBatchData, ThrowOnError>): RequestResult<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError> => (options.client ?? client).post<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/avatars',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * Get public configuration
  */
 export const getPublicConfig = <ThrowOnError extends boolean = false>(options?: Options<GetPublicConfigData, ThrowOnError>): RequestResult<GetPublicConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetPublicConfigResponses, unknown, ThrowOnError>({ url: '/config', ...options });
@@ -117,28 +113,45 @@ export const getPublicConfig = <ThrowOnError extends boolean = false>(options?: 
 /**
  * List all app installations (admin only)
  */
-export const listInstallations = <ThrowOnError extends boolean = false>(options?: Options<ListInstallationsData, ThrowOnError>): RequestResult<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError> => (options?.client ?? client).get<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError>({ url: '/installations', ...options });
+export const listInstallations = <ThrowOnError extends boolean = false>(options?: Options<ListInstallationsData, ThrowOnError>): RequestResult<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError> => (options?.client ?? client).get<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/installations',
+    ...options
+});
 
 /**
  * Delete an app installation (admin only). Its live peers are queued for removal — a device
  * that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
  */
-export const deleteInstallation = <ThrowOnError extends boolean = false>(options: Options<DeleteInstallationData, ThrowOnError>): RequestResult<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError>({ url: '/installations/{id}', ...options });
+export const deleteInstallation = <ThrowOnError extends boolean = false>(options: Options<DeleteInstallationData, ThrowOnError>): RequestResult<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/installations/{id}',
+    ...options
+});
 
 /**
  * Get current authenticated user info
  */
-export const getMe = <ThrowOnError extends boolean = false>(options?: Options<GetMeData, ThrowOnError>): RequestResult<GetMeResponses, GetMeErrors, ThrowOnError> => (options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({ url: '/me', ...options });
+export const getMe = <ThrowOnError extends boolean = false>(options?: Options<GetMeData, ThrowOnError>): RequestResult<GetMeResponses, GetMeErrors, ThrowOnError> => (options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me',
+    ...options
+});
 
 /**
  * Get the current user's cached avatar.
  */
-export const getMyAvatar = <ThrowOnError extends boolean = false>(options?: Options<GetMyAvatarData, ThrowOnError>): RequestResult<GetMyAvatarResponses, GetMyAvatarErrors, ThrowOnError> => (options?.client ?? client).get<GetMyAvatarResponses, GetMyAvatarErrors, ThrowOnError>({ url: '/me/avatar', ...options });
+export const getMyAvatar = <ThrowOnError extends boolean = false>(options?: Options<GetMyAvatarData, ThrowOnError>): RequestResult<GetMyAvatarResponses, GetMyAvatarErrors, ThrowOnError> => (options?.client ?? client).get<GetMyAvatarResponses, GetMyAvatarErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/avatar',
+    ...options
+});
 
 /**
  * Set or change the login + password (backup access) for the current account.
  */
 export const setMyCredential = <ThrowOnError extends boolean = false>(options: Options<SetMyCredentialData, ThrowOnError>): RequestResult<SetMyCredentialResponses, SetMyCredentialErrors, ThrowOnError> => (options.client ?? client).post<SetMyCredentialResponses, SetMyCredentialErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/credentials',
     ...options,
     headers: {
@@ -151,6 +164,7 @@ export const setMyCredential = <ThrowOnError extends boolean = false>(options: O
  * Upsert an app installation (device registration)
  */
 export const upsertMyInstallation = <ThrowOnError extends boolean = false>(options: Options<UpsertMyInstallationData, ThrowOnError>): RequestResult<UpsertMyInstallationResponses, UpsertMyInstallationErrors, ThrowOnError> => (options.client ?? client).post<UpsertMyInstallationResponses, UpsertMyInstallationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/installations',
     ...options,
     headers: {
@@ -162,22 +176,35 @@ export const upsertMyInstallation = <ThrowOnError extends boolean = false>(optio
 /**
  * Poll whether the Telegram link has completed (the app calls this after opening the deep link).
  */
-export const pollTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<PollTelegramLinkData, ThrowOnError>): RequestResult<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).get<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError>({ url: '/me/link/telegram/poll', ...options });
+export const pollTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<PollTelegramLinkData, ThrowOnError>): RequestResult<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).get<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/link/telegram/poll',
+    ...options
+});
 
 /**
  * Start linking a Telegram account to the current account (returns a bot deep link + code).
  */
-export const startTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<StartTelegramLinkData, ThrowOnError>): RequestResult<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).post<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError>({ url: '/me/link/telegram/start', ...options });
+export const startTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<StartTelegramLinkData, ThrowOnError>): RequestResult<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).post<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/link/telegram/start',
+    ...options
+});
 
 /**
  * List current user's peers and VLESS info
  */
-export const getMyPeers = <ThrowOnError extends boolean = false>(options?: Options<GetMyPeersData, ThrowOnError>): RequestResult<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError> => (options?.client ?? client).get<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError>({ url: '/me/peers', ...options });
+export const getMyPeers = <ThrowOnError extends boolean = false>(options?: Options<GetMyPeersData, ThrowOnError>): RequestResult<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError> => (options?.client ?? client).get<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/peers',
+    ...options
+});
 
 /**
  * Create a new WireGuard peer for the current user
  */
 export const createMyPeer = <ThrowOnError extends boolean = false>(options?: Options<CreateMyPeerData, ThrowOnError>): RequestResult<CreateMyPeerResponses, CreateMyPeerErrors, ThrowOnError> => (options?.client ?? client).post<CreateMyPeerResponses, CreateMyPeerErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers',
     ...options,
     headers: {
@@ -189,52 +216,89 @@ export const createMyPeer = <ThrowOnError extends boolean = false>(options?: Opt
 /**
  * Get a peer by device_id (+ protocol) for the current user
  */
-export const getMyPeerByDevice = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerByDeviceData, ThrowOnError>): RequestResult<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError>({ url: '/me/peers/by-device/{device_id}', ...options });
+export const getMyPeerByDevice = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerByDeviceData, ThrowOnError>): RequestResult<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/peers/by-device/{device_id}',
+    ...options
+});
 
 /**
  * Delete a peer owned by the current user
  */
-export const deleteMyPeer = <ThrowOnError extends boolean = false>(options: Options<DeleteMyPeerData, ThrowOnError>): RequestResult<DeleteMyPeerResponses, DeleteMyPeerErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMyPeerResponses, DeleteMyPeerErrors, ThrowOnError>({ url: '/me/peers/{id}', ...options });
+export const deleteMyPeer = <ThrowOnError extends boolean = false>(options: Options<DeleteMyPeerData, ThrowOnError>): RequestResult<DeleteMyPeerResponses, DeleteMyPeerErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMyPeerResponses, DeleteMyPeerErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/peers/{id}',
+    ...options
+});
 
 /**
  * Get WireGuard config for a peer owned by the current user
  */
-export const getMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerConfigData, ThrowOnError>): RequestResult<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError>({ url: '/me/peers/{id}/config', ...options });
+export const getMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerConfigData, ThrowOnError>): RequestResult<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/peers/{id}/config',
+    ...options
+});
 
 /**
  * Send WireGuard config to user via Telegram bot
  */
-export const sendMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<SendMyPeerConfigData, ThrowOnError>): RequestResult<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).post<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError>({ url: '/me/peers/{id}/send-config', ...options });
+export const sendMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<SendMyPeerConfigData, ThrowOnError>): RequestResult<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).post<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/peers/{id}/send-config',
+    ...options
+});
 
 /**
  * Get VLESS config for the current user (generates UUID on first call)
  */
-export const getMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<GetMyVlessConfigData, ThrowOnError>): RequestResult<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).get<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError>({ url: '/me/vless-config', ...options });
+export const getMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<GetMyVlessConfigData, ThrowOnError>): RequestResult<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).get<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/vless-config',
+    ...options
+});
 
 /**
  * Regenerate VLESS UUID for the current user (old UUID stops working immediately)
  */
-export const regenerateMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<RegenerateMyVlessConfigData, ThrowOnError>): RequestResult<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).post<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError>({ url: '/me/vless-config/regenerate', ...options });
+export const regenerateMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<RegenerateMyVlessConfigData, ThrowOnError>): RequestResult<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).post<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/vless-config/regenerate',
+    ...options
+});
 
 /**
  * List all peers (admin only)
  */
-export const listPeers = <ThrowOnError extends boolean = false>(options?: Options<ListPeersData, ThrowOnError>): RequestResult<ListPeersResponses, ListPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListPeersResponses, ListPeersErrors, ThrowOnError>({ url: '/peers', ...options });
+export const listPeers = <ThrowOnError extends boolean = false>(options?: Options<ListPeersData, ThrowOnError>): RequestResult<ListPeersResponses, ListPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListPeersResponses, ListPeersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/peers',
+    ...options
+});
 
 /**
  * Delete a peer by ID (admin only)
  */
-export const deleteAdminPeer = <ThrowOnError extends boolean = false>(options: Options<DeleteAdminPeerData, ThrowOnError>): RequestResult<DeleteAdminPeerResponses, DeleteAdminPeerErrors, ThrowOnError> => (options.client ?? client).delete<DeleteAdminPeerResponses, DeleteAdminPeerErrors, ThrowOnError>({ url: '/peers/{id}', ...options });
+export const deleteAdminPeer = <ThrowOnError extends boolean = false>(options: Options<DeleteAdminPeerData, ThrowOnError>): RequestResult<DeleteAdminPeerResponses, DeleteAdminPeerErrors, ThrowOnError> => (options.client ?? client).delete<DeleteAdminPeerResponses, DeleteAdminPeerErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/peers/{id}',
+    ...options
+});
 
 /**
  * List all plans (admin only)
  */
-export const listPlans = <ThrowOnError extends boolean = false>(options?: Options<ListPlansData, ThrowOnError>): RequestResult<ListPlansResponses, ListPlansErrors, ThrowOnError> => (options?.client ?? client).get<ListPlansResponses, ListPlansErrors, ThrowOnError>({ url: '/plans', ...options });
+export const listPlans = <ThrowOnError extends boolean = false>(options?: Options<ListPlansData, ThrowOnError>): RequestResult<ListPlansResponses, ListPlansErrors, ThrowOnError> => (options?.client ?? client).get<ListPlansResponses, ListPlansErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/plans',
+    ...options
+});
 
 /**
  * Create a new plan (admin only)
  */
 export const createPlan = <ThrowOnError extends boolean = false>(options: Options<CreatePlanData, ThrowOnError>): RequestResult<CreatePlanResponses, CreatePlanErrors, ThrowOnError> => (options.client ?? client).post<CreatePlanResponses, CreatePlanErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans',
     ...options,
     headers: {
@@ -252,12 +316,17 @@ export const listPublicPlans = <ThrowOnError extends boolean = false>(options?: 
 /**
  * Delete a plan (admin only). Fails if plan has subscriptions.
  */
-export const deletePlan = <ThrowOnError extends boolean = false>(options: Options<DeletePlanData, ThrowOnError>): RequestResult<DeletePlanResponses, DeletePlanErrors, ThrowOnError> => (options.client ?? client).delete<DeletePlanResponses, DeletePlanErrors, ThrowOnError>({ url: '/plans/{id}', ...options });
+export const deletePlan = <ThrowOnError extends boolean = false>(options: Options<DeletePlanData, ThrowOnError>): RequestResult<DeletePlanResponses, DeletePlanErrors, ThrowOnError> => (options.client ?? client).delete<DeletePlanResponses, DeletePlanErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/plans/{id}',
+    ...options
+});
 
 /**
  * Update a plan (admin only)
  */
 export const updatePlan = <ThrowOnError extends boolean = false>(options: Options<UpdatePlanData, ThrowOnError>): RequestResult<UpdatePlanResponses, UpdatePlanErrors, ThrowOnError> => (options.client ?? client).patch<UpdatePlanResponses, UpdatePlanErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans/{id}',
     ...options,
     headers: {
@@ -269,18 +338,27 @@ export const updatePlan = <ThrowOnError extends boolean = false>(options: Option
 /**
  * Get system statistics (admin only)
  */
-export const getStats = <ThrowOnError extends boolean = false>(options?: Options<GetStatsData, ThrowOnError>): RequestResult<GetStatsResponses, GetStatsErrors, ThrowOnError> => (options?.client ?? client).get<GetStatsResponses, GetStatsErrors, ThrowOnError>({ url: '/stats', ...options });
+export const getStats = <ThrowOnError extends boolean = false>(options?: Options<GetStatsData, ThrowOnError>): RequestResult<GetStatsResponses, GetStatsErrors, ThrowOnError> => (options?.client ?? client).get<GetStatsResponses, GetStatsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/stats',
+    ...options
+});
 
 /**
  * List all users (admin only)
  */
-export const listUsers = <ThrowOnError extends boolean = false>(options?: Options<ListUsersData, ThrowOnError>): RequestResult<ListUsersResponses, ListUsersErrors, ThrowOnError> => (options?.client ?? client).get<ListUsersResponses, ListUsersErrors, ThrowOnError>({ url: '/users', ...options });
+export const listUsers = <ThrowOnError extends boolean = false>(options?: Options<ListUsersData, ThrowOnError>): RequestResult<ListUsersResponses, ListUsersErrors, ThrowOnError> => (options?.client ?? client).get<ListUsersResponses, ListUsersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users',
+    ...options
+});
 
 /**
  * Pre-register a user by telegram_id and assign a subscription (admin only).
  * When the user later authenticates via Telegram, their account and subscription will be waiting.
  */
 export const createUser = <ThrowOnError extends boolean = false>(options: Options<CreateUserData, ThrowOnError>): RequestResult<CreateUserResponses, CreateUserErrors, ThrowOnError> => (options.client ?? client).post<CreateUserResponses, CreateUserErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users',
     ...options,
     headers: {
@@ -292,12 +370,26 @@ export const createUser = <ThrowOnError extends boolean = false>(options: Option
 /**
  * Get user details (admin only)
  */
-export const getUser = <ThrowOnError extends boolean = false>(options: Options<GetUserData, ThrowOnError>): RequestResult<GetUserResponses, GetUserErrors, ThrowOnError> => (options.client ?? client).get<GetUserResponses, GetUserErrors, ThrowOnError>({ url: '/users/{id}', ...options });
+export const getUser = <ThrowOnError extends boolean = false>(options: Options<GetUserData, ThrowOnError>): RequestResult<GetUserResponses, GetUserErrors, ThrowOnError> => (options.client ?? client).get<GetUserResponses, GetUserErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}',
+    ...options
+});
+
+/**
+ * Get a user's cached avatar (admin).
+ */
+export const getUserAvatar = <ThrowOnError extends boolean = false>(options: Options<GetUserAvatarData, ThrowOnError>): RequestResult<GetUserAvatarResponses, GetUserAvatarErrors, ThrowOnError> => (options.client ?? client).get<GetUserAvatarResponses, GetUserAvatarErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/avatar',
+    ...options
+});
 
 /**
  * Set (or reset) a login + password for a user — admin-issued recovery access.
  */
 export const setUserCredential = <ThrowOnError extends boolean = false>(options: Options<SetUserCredentialData, ThrowOnError>): RequestResult<SetUserCredentialResponses, SetUserCredentialErrors, ThrowOnError> => (options.client ?? client).post<SetUserCredentialResponses, SetUserCredentialErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/credential',
     ...options,
     headers: {
@@ -309,18 +401,27 @@ export const setUserCredential = <ThrowOnError extends boolean = false>(options:
 /**
  * Remove all active peers for a user (admin only)
  */
-export const removePeer = <ThrowOnError extends boolean = false>(options: Options<RemovePeerData, ThrowOnError>): RequestResult<RemovePeerResponses, RemovePeerErrors, ThrowOnError> => (options.client ?? client).delete<RemovePeerResponses, RemovePeerErrors, ThrowOnError>({ url: '/users/{id}/peer', ...options });
+export const removePeer = <ThrowOnError extends boolean = false>(options: Options<RemovePeerData, ThrowOnError>): RequestResult<RemovePeerResponses, RemovePeerErrors, ThrowOnError> => (options.client ?? client).delete<RemovePeerResponses, RemovePeerErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/peer',
+    ...options
+});
 
 /**
  * Delete (expire) a user's active subscription (admin only)
  */
-export const deleteSubscription = <ThrowOnError extends boolean = false>(options: Options<DeleteSubscriptionData, ThrowOnError>): RequestResult<DeleteSubscriptionResponses, DeleteSubscriptionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteSubscriptionResponses, DeleteSubscriptionErrors, ThrowOnError>({ url: '/users/{id}/subscription', ...options });
+export const deleteSubscription = <ThrowOnError extends boolean = false>(options: Options<DeleteSubscriptionData, ThrowOnError>): RequestResult<DeleteSubscriptionResponses, DeleteSubscriptionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteSubscriptionResponses, DeleteSubscriptionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/subscription',
+    ...options
+});
 
 /**
  * Set (create or replace) a user's subscription (admin only).
  * If the user already has an active subscription, it will be expired first.
  */
 export const setSubscription = <ThrowOnError extends boolean = false>(options: Options<SetSubscriptionData, ThrowOnError>): RequestResult<SetSubscriptionResponses, SetSubscriptionErrors, ThrowOnError> => (options.client ?? client).put<SetSubscriptionResponses, SetSubscriptionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/subscription',
     ...options,
     headers: {
@@ -332,11 +433,19 @@ export const setSubscription = <ThrowOnError extends boolean = false>(options: O
 /**
  * Regenerate VLESS UUID for a user (admin only). Old UUID stops working immediately.
  */
-export const regenerateAdminVlessConfig = <ThrowOnError extends boolean = false>(options: Options<RegenerateAdminVlessConfigData, ThrowOnError>): RequestResult<RegenerateAdminVlessConfigResponses, RegenerateAdminVlessConfigErrors, ThrowOnError> => (options.client ?? client).post<RegenerateAdminVlessConfigResponses, RegenerateAdminVlessConfigErrors, ThrowOnError>({ url: '/users/{id}/vless-config/regenerate', ...options });
+export const regenerateAdminVlessConfig = <ThrowOnError extends boolean = false>(options: Options<RegenerateAdminVlessConfigData, ThrowOnError>): RequestResult<RegenerateAdminVlessConfigResponses, RegenerateAdminVlessConfigErrors, ThrowOnError> => (options.client ?? client).post<RegenerateAdminVlessConfigResponses, RegenerateAdminVlessConfigErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/vless-config/regenerate',
+    ...options
+});
 
 export const getVersion = <ThrowOnError extends boolean = false>(options?: Options<GetVersionData, ThrowOnError>): RequestResult<GetVersionResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetVersionResponses, unknown, ThrowOnError>({ url: '/version', ...options });
 
 /**
  * List all users with VLESS configs (admin only)
  */
-export const listVlessPeers = <ThrowOnError extends boolean = false>(options?: Options<ListVlessPeersData, ThrowOnError>): RequestResult<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError>({ url: '/vless-peers', ...options });
+export const listVlessPeers = <ThrowOnError extends boolean = false>(options?: Options<ListVlessPeersData, ThrowOnError>): RequestResult<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/vless-peers',
+    ...options
+});
