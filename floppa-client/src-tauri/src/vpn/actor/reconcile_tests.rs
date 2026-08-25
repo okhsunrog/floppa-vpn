@@ -49,6 +49,24 @@ fn running(protocol: Protocol) -> World {
         endpoint: "vpn.example:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),
+        params: None,
+        autonomous: false,
+    })
+}
+
+/// A tunnel the Android service brought up by itself from the autostart bundle: it reports the
+/// rules it was built with and an epoch no UI intent can have minted.
+fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
+    World::Running(RunningTunnel {
+        protocol,
+        epoch: Some(IntentEpoch(
+            crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 1,
+        )),
+        endpoint: "203.0.113.7:51820".into(),
+        address: "10.0.0.2/32".into(),
+        connected_secs: Some(30),
+        params: Some(params),
+        autonomous: true,
     })
 }
 
@@ -265,6 +283,214 @@ fn a_tunnel_of_an_unwanted_protocol_is_replaced_not_adopted() {
         t0(),
     );
     assert!(matches!(d.next, Status::Unwinding { .. }));
+}
+
+// ------------------------------------------------------------------- autonomous (always-on) tunnels
+
+#[test]
+fn a_tunnel_the_service_started_by_itself_is_adopted_at_startup_with_its_rules() {
+    // The system brought the service up for always-on VPN and it rebuilt the tunnel from the
+    // bundle the last connect wrote. The UI process that opens later must take it over as Up,
+    // with the protocol and the split rules the service reports — not tear it down as foreign.
+    let rules = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]);
+    let d = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG, WG], None),
+        &autonomous(AWG, rules.clone()),
+        t0(),
+    );
+    match &d.next {
+        Status::Up(u) => {
+            assert!(u.adopted);
+            assert_eq!(u.protocol, AWG);
+            assert_eq!(
+                u.params.as_ref(),
+                Some(&rules),
+                "the owner's rules are taken along"
+            );
+            assert_eq!(u.server_endpoint, "203.0.113.7:51820");
+            assert!(u.resolved);
+        }
+        other => panic!("expected adoption, got {other:?}"),
+    }
+    assert!(has_remember(&d));
+    assert!(!has_unwind(&d));
+    assert!(matches!(
+        resolved(&d),
+        Some((
+            IntentEpoch(1),
+            CycleOutcome::Connected {
+                protocol: AWG,
+                adopted: true
+            }
+        ))
+    ));
+}
+
+#[test]
+fn an_adopted_autonomous_tunnel_is_torn_down_by_the_users_disconnect() {
+    // Adopted first, then Disconnect. Nothing on the held stack started this tunnel, so the
+    // first unwind undoes nothing; the world still reporting Running is what makes the table
+    // re-run it with a backend stop. Only a confirmed Clear ends in Idle with Down resolved.
+    let rules = TunnelParams::default();
+    let now = t0();
+    let adopted = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG], None),
+        &autonomous(AWG, rules.clone()),
+        now,
+    )
+    .next;
+    assert!(matches!(&adopted, Status::Up(u) if u.adopted));
+
+    let d = go(&adopted, &down(2), &autonomous(AWG, rules.clone()), now);
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            reason: UnwindReason::IntentDown,
+            cycle: None,
+            ..
+        }
+    ));
+    assert!(has_unwind(&d));
+
+    // The teardown reports done while the service still answers Running: not done.
+    let d = unwind_done(&d.next, &down(2), &autonomous(AWG, rules), now);
+    assert!(matches!(d.next, Status::Unwinding { tries: 1, .. }));
+    assert!(has_stop_foreign(&d));
+
+    let d = unwind_done(&d.next, &down(2), &World::Clear, now);
+    assert!(matches!(d.next, Status::Idle));
+    assert!(matches!(
+        resolved(&d),
+        Some((IntentEpoch(2), CycleOutcome::Down))
+    ));
+}
+
+#[test]
+fn switching_protocol_away_from_an_adopted_autonomous_tunnel_rebuilds() {
+    // The always-on tunnel is AmneziaWG; the user picks VLESS. Not satisfied by what is running,
+    // so it is torn down and the new order is started once the teardown is confirmed.
+    let now = t0();
+    let adopted = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG, VLESS], None),
+        &autonomous(AWG, TunnelParams::default()),
+        now,
+    )
+    .next;
+
+    let d = go(
+        &adopted,
+        &up_intent(2, &[VLESS], params()),
+        &autonomous(AWG, TunnelParams::default()),
+        now,
+    );
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            reason: UnwindReason::IntentChanged,
+            cycle: Some(_),
+            ..
+        }
+    ));
+    assert!(has_unwind(&d));
+
+    let d = unwind_done(
+        &d.next,
+        &up_intent(2, &[VLESS], params()),
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(d.next, Status::Connecting { .. }));
+    assert!(has_begin(&d, VLESS));
+}
+
+#[test]
+fn a_connect_with_the_rules_the_running_tunnel_reports_is_a_hand_over() {
+    // The service says what it built; a caller asking for exactly that has nothing to rebuild.
+    // This is row 5c, and it is the only way a caller-issued intent ever adopts from Idle.
+    let rules = TunnelParams::new(SplitMode::Include, vec!["org.example".into()]);
+    let d = go(
+        &Status::Idle,
+        &up_intent(3, &[AWG], Some(rules.clone())),
+        &autonomous(AWG, rules.clone()),
+        t0(),
+    );
+    match &d.next {
+        Status::Up(u) => {
+            assert!(u.adopted);
+            assert_eq!(u.params.as_ref(), Some(&rules));
+        }
+        other => panic!("expected a hand-over, got {other:?}"),
+    }
+    assert!(matches!(
+        resolved(&d),
+        Some((
+            IntentEpoch(3),
+            CycleOutcome::Connected { adopted: true, .. }
+        ))
+    ));
+}
+
+#[test]
+fn a_connect_with_other_rules_than_the_running_tunnel_reports_rebuilds() {
+    // Known to differ is as good a reason as unknown: keeping it would route the wrong apps.
+    let d = go(
+        &Status::Idle,
+        &up_intent(
+            3,
+            &[AWG],
+            Some(TunnelParams::new(SplitMode::Exclude, vec!["a".into()])),
+        ),
+        &autonomous(AWG, TunnelParams::default()),
+        t0(),
+    );
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            reason: UnwindReason::WrongProtocol,
+            cycle: Some(_),
+            ..
+        }
+    ));
+    assert!(has_stop_foreign(&d));
+}
+
+#[test]
+fn an_autonomous_tunnel_of_a_protocol_with_no_config_is_replaced_not_adopted() {
+    // The bootstrap order is built from the stored configs. A service tunnel of a protocol the
+    // user has since removed the config for is not one this intent accepts.
+    let d = go(
+        &Status::Idle,
+        &up_intent(1, &[WG], None),
+        &autonomous(VLESS, TunnelParams::default()),
+        t0(),
+    );
+    assert!(matches!(
+        d.next,
+        Status::Unwinding {
+            reason: UnwindReason::WrongProtocol,
+            cycle: None,
+            ..
+        }
+    ));
+    assert!(has_stop_foreign(&d));
+}
+
+#[test]
+fn with_no_bundle_the_service_starts_nothing_and_startup_rests_idle() {
+    // The `:vpn` side of "bundle missing" is Kotlin stopping the service; from here it is the
+    // same world as any other launch with nothing running, and the startup intent must not
+    // dial out by itself.
+    let d = go(
+        &Status::Idle,
+        &up_intent(1, &[AWG], None),
+        &World::Clear,
+        t0(),
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(d.effects.is_empty());
 }
 
 // ------------------------------------------------------------------------------------ Connecting

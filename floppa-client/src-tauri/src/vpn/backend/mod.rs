@@ -16,7 +16,7 @@ mod android_ipc;
 
 use super::platform::TunParams;
 use super::state::ProtocolConfig;
-use crate::vpn::actor::types::Observation;
+use crate::vpn::actor::types::{Observation, TunnelParams};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -85,11 +85,15 @@ pub trait VpnBackend: Send + Sync {
     ///
     /// `epoch` identifies the request, so a service instance that has been superseded can refuse
     /// it instead of obeying. Meaningless for an in-process backend, which has no service to ask.
+    ///
+    /// `params` are the split rules the service's descriptor was built with. They travel so the
+    /// service can report them back to whoever finds the tunnel later.
     async fn start_tunnel(
         &self,
         _epoch: u64,
         _config: &ProtocolConfig,
         _endpoint: SocketAddr,
+        _params: &TunnelParams,
     ) -> Result<(), BackendError> {
         Err(BackendError::Unsupported)
     }

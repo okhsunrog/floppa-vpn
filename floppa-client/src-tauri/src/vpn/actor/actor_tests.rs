@@ -80,6 +80,8 @@ impl VpnBackend for FakeBackend {
             endpoint: endpoint.to_string(),
             address: config.address(),
             connected_secs: Some(0),
+            params: None,
+            autonomous: false,
         });
         Ok(())
     }
@@ -548,6 +550,8 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
         endpoint: "127.0.0.1:51820".into(),
         address: "10.0.0.2/32".into(),
         connected_secs: Some(1),
+        params: None,
+        autonomous: false,
     });
     // Let the observer see it.
     tokio::time::sleep(Duration::from_secs(2)).await;

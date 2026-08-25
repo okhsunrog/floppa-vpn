@@ -88,7 +88,7 @@ pub(super) async fn ladder(
     ctx.phase(AttemptPhase::Configuring).await;
     wait_for_service(ctx).await?;
     ctx.backend
-        .start_tunnel(ctx.epoch.0, &ctx.config, endpoint)
+        .start_tunnel(ctx.epoch.0, &ctx.config, endpoint, &ctx.params)
         .await
         .map_err(|e| AttemptError::PeerStartFailed {
             detail: e.to_string(),

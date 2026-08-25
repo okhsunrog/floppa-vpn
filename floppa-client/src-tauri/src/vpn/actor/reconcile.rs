@@ -152,9 +152,9 @@ fn start_or_idle(up: &UpIntent, now: Instant, policy: &Policy) -> Decision {
     }
 }
 
-/// Adopt a running tunnel. `params` is what it was built with when that is known — it is our
-/// own, started by an attempt of the same epoch that we had already given up on — and `None`
-/// for a tunnel we did not start, whose split rules cannot be known.
+/// Adopt a running tunnel. `params` is what it was built with when that is known — reported by
+/// the process that owns it, or our own from an attempt of the same epoch that we had already
+/// given up on — and `None` for a tunnel whose split rules cannot be known.
 fn adopt(
     up: &UpIntent,
     rt: &RunningTunnel,
@@ -212,13 +212,26 @@ pub fn reconcile(
             // 4: the normal start — but only for an intent that knows what to build.
             (Rel::Same(up) | Rel::Newer(up), World::Clear) => start_or_idle(up, now, policy),
             (Rel::Same(up) | Rel::Newer(up), World::Running(rt)) => {
-                // 5a: only the bootstrap intent adopts. It is the one that carries no params,
-                // because it is not asking for any particular tunnel — just for whatever is there.
-                if up.accepts(rt.protocol) && up.params.is_none() {
-                    adopt(up, rt, None, now_unix)
+                // 5a: the bootstrap intent adopts. It is the one that carries no params, because
+                // it is not asking for any particular tunnel — just for whatever is there. When
+                // the owner reports the rules the tunnel was built with — the Android service
+                // does, for a tunnel it started over the RPC or by itself from the autostart
+                // bundle — they are taken along, so a later Connect with the same rules is a
+                // hand-over rather than a rebuild.
+                //
+                // 5c: a caller-issued intent adopts too, but only a tunnel whose owner reports
+                // exactly the rules it asked for. An intent that wants the tunnel that is
+                // already there has nothing to rebuild.
+                let same_rules = match (&up.params, &rt.params) {
+                    (None, _) => true,
+                    (Some(want), Some(have)) => want == have,
+                    (Some(_), None) => false,
+                };
+                if up.accepts(rt.protocol) && same_rules {
+                    adopt(up, rt, rt.params.clone(), now_unix)
                 } else {
-                    // 5b, 6: we cannot know what split rules a tunnel we did not start was built
-                    // with, so a caller who asked for specific rules gets a rebuild. Silently
+                    // 5b, 6: a tunnel whose split rules are unknown, or known to differ, cannot
+                    // satisfy a caller who asked for specific ones: it gets a rebuild. Silently
                     // keeping a tunnel with the wrong split rules is a data-leak-shaped bug. An
                     // intent without params has no cycle: the obstruction is removed and it
                     // goes back to Idle rather than building something it cannot specify.
@@ -383,11 +396,15 @@ pub fn reconcile(
                 epoch: cycle.epoch,
                 outcome: CycleOutcome::Cancelled,
             }),
-            // 26: a tunnel appeared while we were waiting to retry. If it carries this cycle's
-            // epoch it is ours — an attempt that was given up on but whose service came up late
-            // — so its params are known. Otherwise it is somebody's, and they are not.
+            // 26: a tunnel appeared while we were waiting to retry. Its params are what its
+            // owner reports; failing that, if it carries this cycle's epoch it is ours — an
+            // attempt that was given up on but whose service came up late — so they are the
+            // cycle's own. Otherwise it is somebody's, and they are not known.
             (Rel::Same(up), World::Running(rt)) if cycle.order.contains(&rt.protocol) => {
-                let params = (rt.epoch == Some(cycle.epoch)).then(|| cycle.params.clone());
+                let params = rt
+                    .params
+                    .clone()
+                    .or_else(|| (rt.epoch == Some(cycle.epoch)).then(|| cycle.params.clone()));
                 adopt(up, rt, params, now_unix)
             }
             // 27

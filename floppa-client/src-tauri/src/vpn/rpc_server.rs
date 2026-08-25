@@ -7,12 +7,22 @@ use super::rpc::{RunningInfo, TunnelInfo, VpnRpc};
 pub use super::rpc_listener::RpcServerHandle;
 use super::state::ProtocolConfig;
 use super::tunnel::TunnelManager;
+use crate::vpn::actor::types::TunnelParams;
 use futures::StreamExt;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tarpc::context::Context;
 use tarpc::server::Channel;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, error, info, warn};
+
+/// How the tunnel on this service's descriptor was started, reported back with every
+/// observation so the UI process learns it from the owner rather than guessing.
+#[derive(Debug, Clone)]
+pub struct Started {
+    pub params: TunnelParams,
+    pub autonomous: bool,
+}
 
 /// What the service is holding before any tunnel exists.
 ///
@@ -25,6 +35,8 @@ pub struct ServiceState {
     /// The descriptor handed over by `VpnService.Builder.establish()`.
     tun_fd: std::sync::Mutex<Option<std::os::fd::RawFd>>,
     start_error: std::sync::Mutex<Option<String>>,
+    /// Set once a tunnel is up on the descriptor.
+    started: std::sync::Mutex<Option<Started>>,
 }
 
 impl ServiceState {
@@ -33,6 +45,7 @@ impl ServiceState {
             epoch,
             tun_fd: std::sync::Mutex::new(Some(tun_fd)),
             start_error: std::sync::Mutex::new(None),
+            started: std::sync::Mutex::new(None),
         }
     }
 
@@ -48,6 +61,95 @@ impl ServiceState {
 
     fn error(&self) -> Option<String> {
         self.start_error.lock().ok()?.clone()
+    }
+
+    fn set_started(&self, started: Started) {
+        if let Ok(mut guard) = self.started.lock() {
+            *guard = Some(started);
+        }
+    }
+
+    fn started(&self) -> Option<Started> {
+        self.started.lock().ok()?.clone()
+    }
+}
+
+/// Bring a tunnel up on the descriptor this service holds.
+///
+/// The one start path. The RPC `start_tunnel` reaches it after checking the request's epoch; an
+/// autonomous start (`nativeStartTunnelFromBundle`) reaches it with what the bundle held. Whatever
+/// the route in, what is recorded about the running tunnel — its params, whether anyone asked for
+/// it — and what the notification says come out of this function alone.
+///
+/// The protocol arrives with the config instead of being recovered by inspecting it, and the
+/// endpoint arrives already resolved: by now this device's DNS points into a tunnel that does not
+/// exist yet, so resolving here would fail.
+pub async fn bring_up(
+    service: &ServiceState,
+    tunnel_manager: &TunnelManager,
+    mut config: ProtocolConfig,
+    endpoint: SocketAddr,
+    started: Started,
+) -> Result<(), String> {
+    let Some(tun_fd) = service.take_fd() else {
+        let e = "the tunnel descriptor has already been used".to_string();
+        service.set_error(e.clone());
+        return Err(e);
+    };
+
+    // Through the parser rather than by field, so an IPv6 literal is bracketed the way the
+    // `.conf` grammar wants it.
+    let literal = || {
+        endpoint
+            .to_string()
+            .parse::<floppa_tunnel_config::Endpoint>()
+            .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
+    };
+    match &mut config {
+        ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
+        ProtocolConfig::AmneziaWg(awg) => awg.wg.set_endpoint(literal()?),
+        // VLESS dials by address while taking its SNI from `server_name`, so substituting a
+        // literal here does not disturb the REALITY handshake.
+        ProtocolConfig::Vless(vless) => vless.server_addr = endpoint.to_string(),
+    }
+    let result = match &config {
+        ProtocolConfig::Vless(vless) => {
+            tunnel_manager
+                .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
+                .await
+        }
+        ProtocolConfig::AmneziaWg(awg) => {
+            tunnel_manager
+                .start_wireguard_with_fd(&awg.tunnel(), tun_fd)
+                .await
+        }
+        ProtocolConfig::WireGuard(wg) => {
+            tunnel_manager
+                .start_wireguard_with_fd(wg.tunnel(), tun_fd)
+                .await
+        }
+    };
+
+    match result.map_err(|e| e.to_string()) {
+        Ok(()) => {
+            info!(
+                protocol = %config.protocol(),
+                autonomous = started.autonomous,
+                "tunnel started"
+            );
+            service.set_started(started);
+            // The notification has been saying "connecting" since the service came up; this is
+            // the first moment it is entitled to say anything else.
+            super::jni_entry::set_service_connected(true);
+            Ok(())
+        }
+        Err(e) => {
+            // Recorded as well as returned: the caller may already have given up, and the next
+            // observation should still say why rather than looking like an idle service.
+            error!("failed to start the tunnel: {e}");
+            service.set_error(e.clone());
+            Err(e)
+        }
     }
 }
 
@@ -66,11 +168,24 @@ impl VpnRpc for VpnRpcServer {
             .map(|d| d.as_secs());
         let stats = self.tunnel_manager.get_stats().await;
         // Running-ness and identity come out of the same Option, which is why they are one field.
-        let running = self.tunnel_manager.meta().await.map(|m| RunningInfo {
-            protocol: m.protocol,
-            endpoint: m.endpoint,
-            address: m.address,
-            connected_secs,
+        // `started` is written before the tunnel is observable and read after, so a running tunnel
+        // without it cannot occur; the default is there to keep the match total, not to be seen.
+        let running = self.tunnel_manager.meta().await.map(|m| {
+            let started = self.service.started().unwrap_or_else(|| {
+                warn!("a tunnel is running but nothing recorded how it was started");
+                Started {
+                    params: TunnelParams::default(),
+                    autonomous: false,
+                }
+            });
+            RunningInfo {
+                protocol: m.protocol,
+                endpoint: m.endpoint,
+                address: m.address,
+                connected_secs,
+                params: started.params,
+                autonomous: started.autonomous,
+            }
         });
         let start_error = self.service.error();
         TunnelInfo {
@@ -92,6 +207,7 @@ impl VpnRpc for VpnRpcServer {
         epoch: u64,
         config: crate::vpn::rpc::WireConfig,
         endpoint: String,
+        params: TunnelParams,
     ) -> Result<(), String> {
         // A request for a generation we have moved past is not ours to obey.
         if epoch != self.service.epoch {
@@ -100,64 +216,20 @@ impl VpnRpc for VpnRpcServer {
                 self.service.epoch
             ));
         }
-
-        let Some(tun_fd) = self.service.take_fd() else {
-            let e = "the tunnel descriptor has already been used".to_string();
-            self.service.set_error(e.clone());
-            return Err(e);
-        };
-
-        // The protocol arrives with the config instead of being recovered by inspecting it, and
-        // the endpoint arrives already resolved: by now this device's DNS points into a tunnel
-        // that does not exist yet, so resolving here would fail.
-        let mut config: ProtocolConfig = config.into();
-        let literal = || {
-            endpoint
-                .parse::<floppa_tunnel_config::Endpoint>()
-                .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
-        };
-        match &mut config {
-            ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
-            ProtocolConfig::AmneziaWg(awg) => awg.wg.set_endpoint(literal()?),
-            // VLESS dials by address while taking its SNI from `server_name`, so substituting a
-            // literal here does not disturb the REALITY handshake.
-            ProtocolConfig::Vless(vless) => vless.server_addr = endpoint,
-        }
-        let result = match &config {
-            ProtocolConfig::Vless(vless) => {
-                self.tunnel_manager
-                    .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
-                    .await
-            }
-            ProtocolConfig::AmneziaWg(awg) => {
-                self.tunnel_manager
-                    .start_wireguard_with_fd(&awg.tunnel(), tun_fd)
-                    .await
-            }
-            ProtocolConfig::WireGuard(wg) => {
-                self.tunnel_manager
-                    .start_wireguard_with_fd(wg.tunnel(), tun_fd)
-                    .await
-            }
-        };
-
-        match result.map_err(|e| e.to_string()) {
-            Ok(()) => {
-                info!(protocol = %config.protocol(), "tunnel started");
-                // The notification has been saying "connecting" since the service came up; this is
-                // the first moment it is entitled to say anything else.
-                #[cfg(target_os = "android")]
-                super::jni_entry::set_service_connected(true);
-                Ok(())
-            }
-            Err(e) => {
-                // Recorded as well as returned: the caller may already have given up, and the next
-                // observation should still say why rather than looking like an idle service.
-                error!("failed to start the tunnel: {e}");
-                self.service.set_error(e.clone());
-                Err(e)
-            }
-        }
+        let endpoint: SocketAddr = endpoint
+            .parse()
+            .map_err(|e| format!("endpoint `{endpoint}`: {e}"))?;
+        bring_up(
+            &self.service,
+            &self.tunnel_manager,
+            config.into(),
+            endpoint,
+            Started {
+                params,
+                autonomous: false,
+            },
+        )
+        .await
     }
 
     async fn stop(self, _ctx: Context) -> Result<(), String> {

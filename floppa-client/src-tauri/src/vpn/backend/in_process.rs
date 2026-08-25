@@ -73,6 +73,10 @@ impl VpnBackend for InProcessBackend {
                     .get_connection_duration()
                     .await
                     .map(|d| d.as_secs()),
+                // In-process, the actor is the only thing that ever starts a tunnel, and it
+                // keeps the params itself; a tunnel found here after a restart cannot exist.
+                params: None,
+                autonomous: false,
             }),
             None => None,
         };

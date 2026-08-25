@@ -14,7 +14,8 @@
 
 use super::{BackendError, VpnBackend};
 use crate::vpn::actor::types::{
-    Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, WorldView,
+    Observation, RawStats, RunningTunnel, TunnelObservation, TunnelParams, UnreachableCause,
+    WorldView,
 };
 use crate::vpn::rpc::VpnRpcClient;
 use crate::vpn::state::ProtocolConfig;
@@ -130,6 +131,7 @@ impl VpnBackend for AndroidIpcBackend {
         epoch: u64,
         config: &ProtocolConfig,
         endpoint: std::net::SocketAddr,
+        params: &TunnelParams,
     ) -> Result<(), BackendError> {
         let client = self
             .get_client_typed()
@@ -142,7 +144,7 @@ impl VpnBackend for AndroidIpcBackend {
         let ctx = Self::deadline(std::time::Duration::from_secs(15));
         let wire = crate::vpn::rpc::WireConfig::from(config);
         match client
-            .start_tunnel(ctx, epoch, wire, endpoint.to_string())
+            .start_tunnel(ctx, epoch, wire, endpoint.to_string(), params.clone())
             .await
         {
             Ok(result) => result.map_err(|detail| BackendError::ServiceRefused { detail }),
@@ -266,6 +268,8 @@ impl VpnBackend for AndroidIpcBackend {
                         endpoint: r.endpoint,
                         address: r.address,
                         connected_secs: r.connected_secs,
+                        params: Some(r.params),
+                        autonomous: r.autonomous,
                     }),
                     starting: info.starting,
                     start_error: info.start_error,

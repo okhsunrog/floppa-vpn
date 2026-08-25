@@ -4,7 +4,7 @@
 //! [`Policy`] make of it. The distinction that matters is [`World::Dark`]: not knowing is never
 //! evidence that there is no tunnel.
 
-use super::intent::IntentEpoch;
+use super::intent::{IntentEpoch, TunnelParams};
 use super::policy::Policy;
 use crate::vpn::protocol::Protocol;
 use std::time::Instant;
@@ -85,6 +85,14 @@ pub struct RunningTunnel {
     pub endpoint: String,
     pub address: String,
     pub connected_secs: Option<u64>,
+    /// The split rules it was built with, when the owning process reports them. Known for every
+    /// tunnel the Android service starts — over the RPC or from the autostart bundle — and
+    /// unknown for one found by an in-process backend after a restart. Knowing them is what
+    /// lets a tunnel be adopted *with* its rules rather than as a black box.
+    pub params: Option<TunnelParams>,
+    /// Started by the service on its own (always-on, boot, lockdown), from the bundle the last
+    /// successful connect wrote — not by any intent of this or any other UI process.
+    pub autonomous: bool,
 }
 
 /// The third axis of the decision table, derived purely from an [`Observation`], the clock and the

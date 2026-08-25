@@ -3,6 +3,7 @@
 //! The service trait is Android-only, because tarpc is an Android-only dependency. The payload type
 //! is not gated: it is plain data, and gating it would mean its tests compile on one target only.
 
+use crate::vpn::actor::types::TunnelParams;
 use crate::vpn::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,12 @@ pub struct RunningInfo {
     pub endpoint: String,
     pub address: String,
     pub connected_secs: Option<u64>,
+    /// The split rules the tunnel was built with. The service is told them at every start, so a
+    /// UI process that finds this tunnel later can adopt it knowing what it routes — and hand a
+    /// Connect with the same rules over to it instead of rebuilding.
+    pub params: TunnelParams,
+    /// Started by the service itself from the autostart bundle, with no UI process involved.
+    pub autonomous: bool,
 }
 
 /// All tunnel info returned in a single RPC call.
@@ -116,7 +123,14 @@ pub trait VpnRpc {
     /// `endpoint` is the already-resolved `ip:port`. It is resolved by the caller because by the
     /// time this service exists, name resolution on the device points at a tunnel that is not up
     /// yet — so the service must never need DNS.
-    async fn start_tunnel(epoch: u64, config: WireConfig, endpoint: String) -> Result<(), String>;
+    /// `params` are the split rules the descriptor was built with; the service only echoes them,
+    /// so that whoever finds this tunnel later learns what it routes from its owner.
+    async fn start_tunnel(
+        epoch: u64,
+        config: WireConfig,
+        endpoint: String,
+        params: TunnelParams,
+    ) -> Result<(), String>;
 
     /// Stop the tunnel and VPN service.
     async fn stop() -> Result<(), String>;
@@ -190,6 +204,29 @@ AllowedIPs = 0.0.0.0/0
             roundtrip(&sent).is_err(),
             "if this ever passes, bincode has become self-describing and WireConfig can go"
         );
+    }
+
+    #[test]
+    fn the_tunnel_info_survives_bincode_with_its_params() {
+        use crate::vpn::actor::types::SplitMode;
+        let sent = TunnelInfo {
+            running: Some(RunningInfo {
+                protocol: crate::vpn::protocol::Protocol::AmneziaWg,
+                endpoint: "203.0.113.7:51820".into(),
+                address: "10.0.0.2/32".into(),
+                connected_secs: Some(12),
+                params: TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]),
+                autonomous: true,
+            }),
+            epoch: crate::vpn::autostart::AUTONOMOUS_EPOCH_BASE + 3,
+            starting: false,
+            start_error: None,
+            last_packet_received: Some(1),
+            tx_bytes: Some(10),
+            rx_bytes: Some(20),
+        };
+        let received = roundtrip(&sent).expect("the reply type must round-trip");
+        assert_eq!(received, sent);
     }
 
     #[test]
