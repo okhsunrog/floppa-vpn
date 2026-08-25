@@ -1245,6 +1245,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "serde",
  "sqlx",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "tracing-subscriber",
