@@ -227,7 +227,7 @@ pub fn start_server(
         tunnel_manager,
         service,
     };
-    super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream| {
+    super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream, cancel| {
         debug!("UI process connected to RPC server");
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
         let transport =
@@ -235,13 +235,18 @@ pub fn start_server(
         let channel = tarpc::server::BaseChannel::with_defaults(transport);
         let server = server.clone();
         tokio::spawn(async move {
-            channel
-                .execute(server.serve())
-                .for_each(|resp| async {
+            // The connection dies with its generation. Each of these tasks holds a clone of one
+            // generation's state, and without the token they answered from it for as long as the
+            // stream stayed open — so a client that had cached the connection went on talking to
+            // an instance that had been torn down.
+            tokio::select! {
+                _ = channel.execute(server.serve()).for_each(|resp| async {
                     tokio::spawn(resp);
-                })
-                .await;
-            debug!("UI process disconnected from RPC server");
+                }) => debug!("UI process disconnected from RPC server"),
+                _ = cancel.cancelled() => {
+                    debug!("this generation is gone; closing the connection it was serving");
+                }
+            }
         });
     })
     .map_err(|e| format!("Failed to bind Unix socket at {socket_path}: {e}"))

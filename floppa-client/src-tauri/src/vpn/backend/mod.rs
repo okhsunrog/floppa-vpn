@@ -103,6 +103,17 @@ pub trait VpnBackend: Send + Sync {
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), BackendError>;
 
+    /// "The next answer should come from this service generation."
+    ///
+    /// Set once, right after a service start is asked for. Until that generation answers, a reply
+    /// from any other one means the cached connection still points at the instance being replaced,
+    /// and it is dropped so the next look reconnects. Without it a cached connection to a dying
+    /// instance kept answering `OtherGeneration` for the whole attempt budget, and the protocol
+    /// was reported as failed to start.
+    ///
+    /// Meaningless for an in-process backend, which has no service and no connection.
+    fn expect_generation(&self, _generation: u64) {}
+
     /// Look at the world.
     ///
     /// The single way to learn anything about the tunnel, and the reason there is no longer an

@@ -75,6 +75,11 @@ pub(super) async fn ladder(
         generation: ctx.generation,
     });
 
+    // From here on, only this generation's answers count. Anything else is the instance being
+    // replaced still holding the cached connection, and the backend drops it so the next look
+    // reconnects — otherwise the poll below spends the whole budget reading a dying service.
+    ctx.backend.expect_generation(ctx.generation);
+
     ctx.app
         .vpn()
         .start(vpn_config)

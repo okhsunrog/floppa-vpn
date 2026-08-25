@@ -20,7 +20,7 @@ use crate::vpn::actor::types::{
 use crate::vpn::rpc::VpnRpcClient;
 use crate::vpn::state::ProtocolConfig;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri_plugin_vpn::VpnExt;
 use tokio::sync::Mutex;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
@@ -35,6 +35,12 @@ pub struct AndroidIpcBackend {
     /// Tracks whether the last connection attempt failed, to suppress repeated log messages.
     /// Only the first failure and recovery are logged.
     last_connect_failed: AtomicBool,
+    /// The generation we are waiting to hear from, or [`NO_EXPECTATION`].
+    ///
+    /// One-shot: set when a service start is asked for, cleared the moment that generation
+    /// answers. While it is set, an answer from any other generation means the cached connection
+    /// belongs to the instance being replaced, so it is dropped.
+    expected_generation: AtomicU64,
 }
 
 impl AndroidIpcBackend {
@@ -44,6 +50,7 @@ impl AndroidIpcBackend {
             app,
             client: Mutex::new(None),
             last_connect_failed: AtomicBool::new(false),
+            expected_generation: AtomicU64::new(NO_EXPECTATION),
         }
     }
 
@@ -111,6 +118,25 @@ impl AndroidIpcBackend {
     async fn invalidate_client(&self) {
         *self.client.lock().await = None;
     }
+
+    /// Drop the cached connection when the generation answering is not the one we are waiting
+    /// for, and stop waiting once it is.
+    async fn police_generation(&self, answered: u64) {
+        let expected = self.expected_generation.load(Ordering::Relaxed);
+        if expected == NO_EXPECTATION {
+            return;
+        }
+        if answered == expected {
+            self.expected_generation
+                .store(NO_EXPECTATION, Ordering::Relaxed);
+            return;
+        }
+        debug!(
+            answered,
+            expected, "a superseded service instance answered; dropping the connection to it"
+        );
+        self.invalidate_client().await;
+    }
 }
 
 #[async_trait]
@@ -157,7 +183,15 @@ impl VpnBackend for AndroidIpcBackend {
         }
     }
 
+    fn expect_generation(&self, generation: u64) {
+        self.expected_generation
+            .store(generation, Ordering::Relaxed);
+    }
+
     async fn stop(&self) -> Result<(), BackendError> {
+        // Nothing is being waited for once we are pulling the service down.
+        self.expected_generation
+            .store(NO_EXPECTATION, Ordering::Relaxed);
         let client = match self.get_client_typed().await {
             Ok(client) => client,
             // Nothing is listening — which is not the same as nothing running. A service whose
@@ -258,29 +292,34 @@ impl VpnBackend for AndroidIpcBackend {
 
         let ctx = Self::deadline(RPC_DEADLINE);
         match client.get_full_info(ctx).await {
-            Ok(info) => Observation {
-                observed_at,
-                view: WorldView::Reachable(TunnelObservation {
-                    generation: info.generation,
-                    running: info.running.map(|r| RunningTunnel {
-                        protocol: r.protocol,
-                        generation: Some(info.generation),
-                        endpoint: r.endpoint,
-                        address: r.address,
-                        connected_secs: r.connected_secs,
-                        params: Some(r.params),
-                        autonomous: r.autonomous,
+            Ok(info) => {
+                self.police_generation(info.generation).await;
+                Observation {
+                    observed_at,
+                    view: WorldView::Reachable(TunnelObservation {
+                        generation: info.generation,
+                        running: info.running.map(|r| RunningTunnel {
+                            protocol: r.protocol,
+                            generation: Some(info.generation),
+                            endpoint: r.endpoint,
+                            address: r.address,
+                            connected_secs: r.connected_secs,
+                            params: Some(r.params),
+                            autonomous: r.autonomous,
+                        }),
+                        starting: info.starting,
+                        tun_ready: info.tun_ready,
+                        start_error: info.start_error,
+                        raw_stats: match (info.tx_bytes, info.rx_bytes) {
+                            (Some(tx_bytes), Some(rx_bytes)) => {
+                                Some(RawStats { tx_bytes, rx_bytes })
+                            }
+                            _ => None,
+                        },
+                        last_packet_secs: info.last_packet_received,
                     }),
-                    starting: info.starting,
-                    tun_ready: info.tun_ready,
-                    start_error: info.start_error,
-                    raw_stats: match (info.tx_bytes, info.rx_bytes) {
-                        (Some(tx_bytes), Some(rx_bytes)) => Some(RawStats { tx_bytes, rx_bytes }),
-                        _ => None,
-                    },
-                    last_packet_secs: info.last_packet_received,
-                }),
-            },
+                }
+            }
             Err(e) => {
                 warn!("RPC get_full_info failed: {e}");
                 self.invalidate_client().await;
@@ -307,3 +346,6 @@ const RPC_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// How long the `:vpn` process may stay silent before its tunnel is presumed lost.
 const LIVENESS_GRACE: std::time::Duration = std::time::Duration::from_secs(6);
+
+/// "Any generation may answer." No service start ever mints zero.
+const NO_EXPECTATION: u64 = 0;

@@ -13,22 +13,34 @@
 use std::path::{Path, PathBuf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 /// Handle to a running accept loop. Drop or call `shutdown()` to stop it.
 pub struct RpcServerHandle {
     shutdown_tx: watch::Sender<bool>,
+    /// Cancels the tasks serving the connections this loop accepted. Handed to each of them, so
+    /// they end with the generation that owns them.
+    connections: CancellationToken,
     socket_path: PathBuf,
 }
 
 impl RpcServerHandle {
-    /// Stop accepting connections. The socket file is left in place.
+    /// Stop accepting connections, and end the ones already accepted. The socket file is left in
+    /// place.
     ///
-    /// Deliberately: the path is shared between service generations, and by the time the previous
-    /// generation is shut down the next one has usually already bound the same path (see
-    /// `SERVER_EPOCH` in `jni_entry.rs`). Unlinking here would remove *its* socket.
+    /// Leaving the file is deliberate: the path is shared between service generations, and by the
+    /// time the previous generation is shut down the next one has usually already bound the same
+    /// path (see `SERVER_GENERATION` in `jni_entry.rs`). Unlinking here would remove *its* socket.
+    ///
+    /// Ending the open connections is equally deliberate, and was missing: a task serving a
+    /// connection held its own clone of the generation's state and answered from it long after
+    /// the generation was gone, so a cached client in the UI process kept talking to a dead
+    /// instance — it saw the wrong generation until the attempt budget ran out, and a stop sent
+    /// down that connection stopped whichever service was live by then.
     pub fn shutdown(&self) {
         let _ = self.shutdown_tx.send(true);
+        self.connections.cancel();
     }
 
     /// Stop accepting connections and unlink the socket file.
@@ -49,21 +61,27 @@ impl RpcServerHandle {
 }
 
 impl Drop for RpcServerHandle {
-    /// A handle that goes away without an explicit `shutdown()` still ends the loop. The
-    /// alternative — a loop that outlives every way of reaching it — is not a state worth keeping.
+    /// A handle that goes away without an explicit `shutdown()` still ends the loop and its
+    /// connections. The alternative — a loop that outlives every way of reaching it — is not a
+    /// state worth keeping.
     fn drop(&mut self) {
         let _ = self.shutdown_tx.send(true);
+        self.connections.cancel();
     }
 }
 
 /// Bind a Unix socket at `socket_path` and hand every accepted connection to `on_connect` until
 /// the returned handle is shut down or dropped.
 ///
+/// `on_connect` is given the connection *and* the generation's cancellation token, and must stop
+/// serving when it fires: a connection that outlives its generation answers for a service instance
+/// that no longer exists.
+///
 /// A stale socket file at the path is removed first. The loop runs as a task on the current Tokio
 /// runtime, so this must be called from within one.
 pub fn listen(
     socket_path: &Path,
-    mut on_connect: impl FnMut(UnixStream) + Send + 'static,
+    mut on_connect: impl FnMut(UnixStream, CancellationToken) + Send + 'static,
 ) -> std::io::Result<RpcServerHandle> {
     match std::fs::remove_file(socket_path) {
         Ok(()) => debug!("Removed stale socket: {}", socket_path.display()),
@@ -78,12 +96,14 @@ pub fn listen(
     info!("tarpc server listening on {}", socket_path.display());
 
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let connections = CancellationToken::new();
+    let handed_out = connections.clone();
 
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 result = listener.accept() => match result {
-                    Ok((stream, _addr)) => on_connect(stream),
+                    Ok((stream, _addr)) => on_connect(stream, handed_out.clone()),
                     Err(e) => error!("Failed to accept connection: {e}"),
                 },
                 changed = shutdown_rx.changed() => {
@@ -107,6 +127,7 @@ pub fn listen(
 
     Ok(RpcServerHandle {
         shutdown_tx,
+        connections,
         socket_path: socket_path.to_path_buf(),
     })
 }
@@ -136,7 +157,7 @@ mod tests {
         let path = dir.path().join("vpn.sock");
         let accepted = Arc::new(AtomicUsize::new(0));
         let counter = accepted.clone();
-        let handle = listen(&path, move |_stream| {
+        let handle = listen(&path, move |_stream, _cancel| {
             counter.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
@@ -162,7 +183,7 @@ mod tests {
     async fn shutdown_ends_the_accept_loop_and_unlink_removes_the_socket() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vpn.sock");
-        let handle = listen(&path, |_stream| {}).unwrap();
+        let handle = listen(&path, |_stream, _cancel| {}).unwrap();
 
         UnixStream::connect(&path).await.expect("the loop is up");
         handle.shutdown();
@@ -170,5 +191,42 @@ mod tests {
 
         handle.shutdown_and_unlink();
         assert!(!path.exists());
+    }
+
+    /// The rule the zombie-connection bug broke: a connection accepted by a generation must not
+    /// outlive it. Without this the task serving it kept answering from the old generation's
+    /// state, and a client that had cached that connection never noticed the handover.
+    #[tokio::test]
+    async fn shutting_down_ends_the_connections_that_were_already_accepted() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vpn.sock");
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let ended = Arc::new(AtomicUsize::new(0));
+        let (seen, done) = (accepted.clone(), ended.clone());
+        let handle = listen(&path, move |_stream, cancel| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            let done = done.clone();
+            tokio::spawn(async move {
+                cancel.cancelled().await;
+                done.fetch_add(1, Ordering::SeqCst);
+            });
+        })
+        .unwrap();
+
+        let _client = UnixStream::connect(&path).await.expect("the loop is up");
+        wait_for(&accepted, "the connection was accepted").await;
+
+        handle.shutdown();
+        wait_for(&ended, "the accepted connection was told to stop").await;
+    }
+
+    async fn wait_for(counter: &AtomicUsize, what: &str) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while counter.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting until {what}"));
     }
 }
