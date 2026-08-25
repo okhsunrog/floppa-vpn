@@ -28,7 +28,7 @@ jsonwebtoken.workspace = true
 hmac.workspace = true
 sha2.workspace = true
 hex.workspace = true
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
+utoipa = { workspace = true, features = ["axum_extras", "chrono"] }
 utoipa-axum = "0.2"
 memory-serve = "2.1.0"
 form_urlencoded = "1.2.2"
