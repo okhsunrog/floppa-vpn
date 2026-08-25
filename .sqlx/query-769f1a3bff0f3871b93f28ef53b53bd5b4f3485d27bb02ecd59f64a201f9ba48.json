@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET\n               trial_used_at = LEAST(trial_used_at, $2),\n               created_at    = LEAST(created_at, $3)\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "769f1a3bff0f3871b93f28ef53b53bd5b4f3485d27bb02ecd59f64a201f9ba48"
+}

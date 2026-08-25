@@ -378,14 +378,15 @@ pub async fn merge_telegram_into_session(
 
     // 1. Reconcile user-level columns onto the survivor (LEAST ignores NULLs in Postgres, so an
     //    already-used trial on either side marks the merged account as trial-used).
+    //    `is_admin` is deliberately NOT carried over: a merge link is minted by any credential
+    //    account, so inheriting the husk's admin flag would turn a phished link into a privilege
+    //    escalation. Admin rights come from config / an explicit admin action only.
     sqlx::query!(
         r#"UPDATE users SET
-               is_admin      = is_admin OR $2,
-               trial_used_at = LEAST(trial_used_at, $3),
-               created_at    = LEAST(created_at, $4)
+               trial_used_at = LEAST(trial_used_at, $2),
+               created_at    = LEAST(created_at, $3)
            WHERE id = $1"#,
         survivor_id,
-        husk.is_admin,
         husk.trial_used_at,
         husk.created_at,
     )
@@ -512,6 +513,16 @@ pub async fn merge_telegram_into_session(
     sqlx::query!("DELETE FROM users WHERE id = $1", husk_id)
         .execute(&mut *tx)
         .await?;
+
+    // 6. Re-pointing rows by user_id fires no trigger (notify_subscription_changed only watches
+    //    plan_id/expires_at), yet the survivor's peers must now be rate-limited by the plan it
+    //    just inherited. Tell the daemon explicitly; the payload is the user_id it recomputes for.
+    sqlx::query!(
+        "SELECT pg_notify('subscription_changed', ($1::bigint)::text)",
+        survivor_id
+    )
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
     Ok(true)
@@ -1174,10 +1185,13 @@ mod tests {
         // Husk: the established Telegram account with a used trial, a subscription, peers, a payment,
         // and two installations — one sharing device 'devA' with the survivor (must dedup).
         let husk = seed_user(&pool, 99999).await;
-        sqlx::query!("UPDATE users SET trial_used_at = NOW() WHERE id = $1", husk)
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query!(
+            "UPDATE users SET trial_used_at = NOW(), is_admin = true WHERE id = $1",
+            husk
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         seed_subscription(&pool, husk, basic).await;
         let husk_inst_a = sqlx::query_scalar!(
             "INSERT INTO app_installations (user_id, device_id) VALUES ($1, 'devA') RETURNING id",
@@ -1209,10 +1223,22 @@ mod tests {
         .await
         .unwrap();
 
+        // The daemon learns about the survivor's new plan through this channel.
+        let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
+            .await
+            .unwrap();
+        listener.listen("subscription_changed").await.unwrap();
+
         let merged = merge_telegram_into_session(&pool, survivor.id, husk)
             .await
             .unwrap();
         assert!(merged);
+
+        let notification = tokio::time::timeout(std::time::Duration::from_secs(5), listener.recv())
+            .await
+            .expect("merge must notify the daemon")
+            .unwrap();
+        assert_eq!(notification.payload(), survivor.id.to_string());
 
         // Husk row is gone.
         let husk_exists =
@@ -1222,9 +1248,10 @@ mod tests {
                 .unwrap();
         assert_eq!(husk_exists, Some(false));
 
-        // Survivor now owns the Telegram id and is marked trial-used (no re-trialing).
+        // Survivor now owns the Telegram id and is marked trial-used (no re-trialing), but does
+        // NOT inherit the husk's admin flag.
         let row = sqlx::query!(
-            "SELECT telegram_id, trial_used_at FROM users WHERE id = $1",
+            "SELECT telegram_id, trial_used_at, is_admin FROM users WHERE id = $1",
             survivor.id
         )
         .fetch_one(&pool)
@@ -1232,6 +1259,7 @@ mod tests {
         .unwrap();
         assert_eq!(row.telegram_id, Some(99999));
         assert!(row.trial_used_at.is_some());
+        assert!(!row.is_admin);
 
         // Payment survived and re-pointed (RESTRICT would have failed the delete otherwise).
         let payment_owner =
