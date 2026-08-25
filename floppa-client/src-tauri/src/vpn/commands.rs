@@ -6,34 +6,13 @@ use super::backend::VpnBackend;
 use super::config as vpn_config;
 use super::protocol::Protocol;
 use super::store::ConfigError;
+use crate::logging::capture::{CaptureSession, LogCaptureStatus};
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, State};
+use std::sync::Arc;
+use tauri::{AppHandle, Manager, State};
 #[allow(unused_imports)]
 use tracing::{error, info, warn};
-
-static LOG_CAPTURE_STATE: OnceLock<Mutex<LogCaptureState>> = OnceLock::new();
-
-#[derive(Default)]
-struct LogCaptureState {
-    active: Option<ActiveLogCapture>,
-    latest_capture_id: Option<String>,
-}
-
-struct ActiveLogCapture {
-    id: String,
-    previous_config: crate::logging::LogConfig,
-    capture_config: crate::logging::LogConfig,
-    started_at: String,
-}
-
-#[derive(Clone, Debug, Serialize, Type)]
-pub struct LogCaptureStatus {
-    pub active: bool,
-    pub capture_id: Option<String>,
-}
 
 /// Get the persistent device ID.
 /// Android: ANDROID_ID (stable across reinstalls, per signing key).
@@ -313,30 +292,8 @@ pub async fn set_status_bar_style(
 /// Get current diagnostic capture status.
 #[tauri::command]
 #[specta::specta]
-pub fn get_log_capture_status() -> LogCaptureStatus {
-    let state = LOG_CAPTURE_STATE.get_or_init(|| Mutex::new(LogCaptureState::default()));
-    state
-        .lock()
-        .map(|guard| LogCaptureStatus {
-            active: guard.active.is_some(),
-            capture_id: guard
-                .active
-                .as_ref()
-                .map(|capture| capture.id.clone())
-                .or_else(|| guard.latest_capture_id.clone())
-                .or_else(|| {
-                    crate::logging::get_log_dir()
-                        .and_then(|log_dir| latest_capture_dir(log_dir.as_path()))
-                        .and_then(|path| {
-                            path.file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                        })
-                }),
-        })
-        .unwrap_or(LogCaptureStatus {
-            active: false,
-            capture_id: None,
-        })
+pub async fn get_log_capture_status(app: AppHandle) -> LogCaptureStatus {
+    app.state::<CaptureSession>().status().await
 }
 
 /// Start a diagnostic capture. This enables verbose runtime logs and starts
@@ -344,97 +301,18 @@ pub fn get_log_capture_status() -> LogCaptureStatus {
 #[tauri::command]
 #[specta::specta]
 pub async fn start_log_capture(
-    backend: State<'_, Arc<dyn VpnBackend>>,
+    session: State<'_, CaptureSession>,
 ) -> Result<LogCaptureStatus, String> {
-    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
-    let state = LOG_CAPTURE_STATE.get_or_init(|| Mutex::new(LogCaptureState::default()));
-
-    {
-        let guard = state.lock().map_err(|_| "Capture state poisoned")?;
-        if let Some(active) = &guard.active {
-            return Ok(LogCaptureStatus {
-                active: true,
-                capture_id: Some(active.id.clone()),
-            });
-        }
-    }
-
-    let capture_id = chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string();
-    let previous_config = crate::logging::get_log_config();
-    let mut capture_config = previous_config.clone();
-    capture_config.profile = crate::logging::LogProfile::Verbose;
-
-    crate::logging::apply_log_config(&capture_config);
-    backend.set_log_config(&capture_config).await;
-    if let Err(e) = crate::logging::write_active_capture_id(log_dir, &capture_id) {
-        crate::logging::apply_log_config(&previous_config);
-        backend.set_log_config(&previous_config).await;
-        return Err(e);
-    }
-    if let Err(e) = crate::logging::start_file_capture(log_dir, "ui", &capture_id) {
-        crate::logging::clear_active_capture_id(log_dir);
-        crate::logging::apply_log_config(&previous_config);
-        backend.set_log_config(&previous_config).await;
-        return Err(e);
-    }
-    backend.start_log_capture(&capture_id).await;
-
-    info!(capture_id, "Diagnostic log capture started");
-
-    {
-        let mut guard = state.lock().map_err(|_| "Capture state poisoned")?;
-        guard.active = Some(ActiveLogCapture {
-            id: capture_id.clone(),
-            previous_config,
-            capture_config,
-            started_at: chrono::Local::now().to_rfc3339(),
-        });
-        guard.latest_capture_id = Some(capture_id.clone());
-    }
-
-    Ok(LogCaptureStatus {
-        active: true,
-        capture_id: Some(capture_id),
-    })
+    session.start().await.map_err(|e| e.to_string())
 }
 
 /// Stop the active diagnostic capture and restore the previous runtime profile.
 #[tauri::command]
 #[specta::specta]
 pub async fn stop_log_capture(
-    backend: State<'_, Arc<dyn VpnBackend>>,
+    session: State<'_, CaptureSession>,
 ) -> Result<LogCaptureStatus, String> {
-    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
-    let state = LOG_CAPTURE_STATE.get_or_init(|| Mutex::new(LogCaptureState::default()));
-    let active = {
-        let mut guard = state.lock().map_err(|_| "Capture state poisoned")?;
-        guard.active.take()
-    };
-
-    let Some(active) = active else {
-        return Ok(get_log_capture_status());
-    };
-
-    info!(capture_id = active.id, "Diagnostic log capture stopping");
-    backend.stop_log_capture().await;
-    let _ = crate::logging::stop_file_capture();
-    crate::logging::clear_active_capture_id(log_dir);
-
-    crate::logging::apply_log_config(&active.previous_config);
-    backend.set_log_config(&active.previous_config).await;
-
-    write_capture_manifest(log_dir, &active)?;
-    cleanup_old_captures(log_dir);
-
-    {
-        let mut guard = state.lock().map_err(|_| "Capture state poisoned")?;
-        guard.latest_capture_id = Some(active.id.clone());
-    }
-
-    Ok(LogCaptureStatus {
-        active: false,
-        capture_id: Some(active.id),
-    })
+    session.stop().await.map_err(|e| e.to_string())
 }
 
 /// Export latest diagnostic capture as a tar.gz archive via native save dialog.
@@ -442,15 +320,13 @@ pub async fn stop_log_capture(
 #[tauri::command]
 #[specta::specta]
 pub async fn export_logs(app: AppHandle) -> Result<bool, String> {
-    let log_dir = crate::logging::get_log_dir().ok_or("Log directory not initialized")?;
-    let capture_dir = latest_capture_dir(log_dir).ok_or("No diagnostic captures found")?;
-    let capture_id = capture_dir
-        .file_name()
-        .map(|name| name.to_string_lossy().to_string())
-        .ok_or("Invalid capture directory")?;
-    let archive_buf = build_log_archive(&capture_dir)?;
-
-    let filename = format!("floppa-logs-{capture_id}.tar.gz");
+    let archive = app
+        .state::<CaptureSession>()
+        .export()
+        .await
+        .map_err(|e| e.to_string())?;
+    let filename = archive.filename;
+    let archive_buf = archive.bytes;
 
     #[cfg(not(target_os = "android"))]
     {
@@ -498,130 +374,6 @@ pub async fn export_logs(app: AppHandle) -> Result<bool, String> {
     }
 
     Ok(true)
-}
-
-fn latest_capture_dir(log_dir: &Path) -> Option<PathBuf> {
-    let captures_dir = log_dir.join("captures");
-    let mut dirs = std::fs::read_dir(captures_dir)
-        .ok()?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect::<Vec<_>>();
-    dirs.sort();
-    dirs.pop()
-}
-
-fn write_capture_manifest(log_dir: &Path, capture: &ActiveLogCapture) -> Result<(), String> {
-    let capture_dir = log_dir.join("captures").join(&capture.id);
-    let stopped_at = chrono::Local::now().to_rfc3339();
-
-    let log_config_json = serde_json::to_vec_pretty(&capture.capture_config)
-        .map_err(|e| format!("Failed to serialize capture log config: {e}"))?;
-    std::fs::write(capture_dir.join("log-config.json"), log_config_json)
-        .map_err(|e| format!("Failed to write capture log config: {e}"))?;
-
-    let manifest = serde_json::json!({
-        "schema_version": 1,
-        "capture_id": capture.id,
-        "started_at": capture.started_at,
-        "stopped_at": stopped_at,
-        "app_version": env!("CARGO_PKG_VERSION"),
-        "profile_during_capture": capture.capture_config.profile.clone(),
-        "custom_filter_enabled": capture.capture_config.custom_filter_enabled,
-        "custom_filter": capture.capture_config.custom_filter.clone(),
-        "files": capture_file_entries(&capture_dir),
-    });
-
-    let manifest_json = serde_json::to_vec_pretty(&manifest)
-        .map_err(|e| format!("Failed to serialize capture manifest: {e}"))?;
-    std::fs::write(capture_dir.join("manifest.json"), manifest_json)
-        .map_err(|e| format!("Failed to write capture manifest: {e}"))?;
-    Ok(())
-}
-
-fn capture_file_entries(capture_dir: &Path) -> Vec<serde_json::Value> {
-    let mut files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(capture_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && let Ok(metadata) = path.metadata()
-                && let Some(name) = path.file_name()
-            {
-                files.push(serde_json::json!({
-                    "name": name.to_string_lossy(),
-                    "bytes": metadata.len(),
-                }));
-            }
-        }
-    }
-    files.sort_by_key(|entry| {
-        entry
-            .get("name")
-            .and_then(|name| name.as_str())
-            .unwrap_or_default()
-            .to_string()
-    });
-    files
-}
-
-fn cleanup_old_captures(log_dir: &Path) {
-    let captures_dir = log_dir.join("captures");
-    let Ok(entries) = std::fs::read_dir(&captures_dir) else {
-        return;
-    };
-
-    let now = std::time::SystemTime::now();
-    let max_age = std::time::Duration::from_secs(7 * 24 * 60 * 60);
-    let mut dirs = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .collect::<Vec<_>>();
-    dirs.sort();
-
-    let keep_from = dirs.len().saturating_sub(3);
-    for (idx, path) in dirs.iter().enumerate() {
-        let old_by_count = idx < keep_from;
-        let old_by_age = path
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|modified| now.duration_since(modified).ok())
-            .is_some_and(|age| age > max_age);
-        if old_by_count || old_by_age {
-            let _ = std::fs::remove_dir_all(path);
-        }
-    }
-}
-
-fn build_log_archive(capture_dir: &Path) -> Result<Vec<u8>, String> {
-    let mut archive_buf = Vec::new();
-    {
-        let gz_encoder =
-            flate2::write::GzEncoder::new(&mut archive_buf, flate2::Compression::default());
-        let mut tar_builder = tar::Builder::new(gz_encoder);
-
-        let entries =
-            std::fs::read_dir(capture_dir).map_err(|e| format!("Failed to read capture: {e}"))?;
-
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file()
-                && let Some(name) = path.file_name()
-            {
-                tar_builder
-                    .append_path_with_name(&path, name)
-                    .map_err(|e| format!("Failed to add file to archive: {e}"))?;
-            }
-        }
-
-        tar_builder
-            .finish()
-            .map_err(|e| format!("Failed to finalize archive: {e}"))?;
-    }
-    Ok(archive_buf)
 }
 
 /// Get the current log configuration.

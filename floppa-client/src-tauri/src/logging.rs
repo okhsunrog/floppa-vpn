@@ -1,3 +1,5 @@
+pub mod capture;
+
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, Write};
@@ -21,7 +23,6 @@ static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static FILE_CAPTURE: OnceLock<Mutex<Option<FileCapture>>> = OnceLock::new();
 
 const LOG_CONFIG_FILENAME: &str = "log-config.json";
-const ACTIVE_CAPTURE_FILENAME: &str = "active-capture";
 
 /// Upper bound on one process's capture file.
 ///
@@ -44,7 +45,8 @@ pub enum LogProcess {
 }
 
 impl LogProcess {
-    const fn capture_name(self) -> &'static str {
+    /// The name of this process's file inside a capture directory.
+    pub(crate) const fn capture_name(self) -> &'static str {
         match self {
             Self::Ui => "ui",
             Self::Vpn => "vpn",
@@ -208,21 +210,29 @@ pub fn apply_log_config(config: &LogConfig) {
     }
 }
 
+/// Why this process could not begin writing its capture file.
+#[derive(Debug, thiserror::Error)]
+pub enum FileCaptureError {
+    #[error("Failed to create capture directory: {0}")]
+    CreateDir(#[source] io::Error),
+    #[error("Failed to open capture log: {0}")]
+    Open(#[source] io::Error),
+}
+
 /// Start writing log events to the capture file for this process.
 pub fn start_file_capture(
     log_dir: &Path,
     process_name: &'static str,
     capture_id: &str,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, FileCaptureError> {
     let capture_dir = log_dir.join("captures").join(capture_id);
-    std::fs::create_dir_all(&capture_dir)
-        .map_err(|e| format!("Failed to create capture directory: {e}"))?;
+    std::fs::create_dir_all(&capture_dir).map_err(FileCaptureError::CreateDir)?;
     let path = capture_dir.join(format!("{process_name}.log"));
     let file = File::options()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|e| format!("Failed to open capture log: {e}"))?;
+        .map_err(FileCaptureError::Open)?;
     // Resuming an existing file (a restarted `:vpn` process) counts what is already there.
     let written = file.metadata().map(|m| m.len()).unwrap_or(0);
 
@@ -251,22 +261,6 @@ pub fn stop_file_capture() -> Option<PathBuf> {
     lock.lock()
         .ok()
         .and_then(|mut guard| guard.take().map(|capture| capture.path))
-}
-
-pub fn active_capture_id(log_dir: &Path) -> Option<String> {
-    std::fs::read_to_string(log_dir.join(ACTIVE_CAPTURE_FILENAME))
-        .ok()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty())
-}
-
-pub fn write_active_capture_id(log_dir: &Path, capture_id: &str) -> Result<(), String> {
-    std::fs::write(log_dir.join(ACTIVE_CAPTURE_FILENAME), capture_id)
-        .map_err(|e| format!("Failed to write active capture marker: {e}"))
-}
-
-pub fn clear_active_capture_id(log_dir: &Path) {
-    let _ = std::fs::remove_file(log_dir.join(ACTIVE_CAPTURE_FILENAME));
 }
 
 /// Initialize tracing for `process`.
@@ -311,7 +305,7 @@ pub fn init_tracing(log_dir: &Path, process: LogProcess) {
             .try_init();
     }
 
-    match (process, active_capture_id(log_dir)) {
+    match (process, capture::active_capture_id(log_dir)) {
         // The service restarted under a running capture: keep writing to the same one.
         (LogProcess::Vpn, Some(capture_id)) => {
             let _ = start_file_capture(log_dir, process.capture_name(), &capture_id);
@@ -324,7 +318,7 @@ pub fn init_tracing(log_dir: &Path, process: LogProcess) {
                 capture_id,
                 "removing a capture marker left by a previous run"
             );
-            clear_active_capture_id(log_dir);
+            capture::clear_active_capture_id(log_dir);
         }
         (_, None) => {}
     }

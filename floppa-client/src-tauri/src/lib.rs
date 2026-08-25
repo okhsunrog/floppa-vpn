@@ -202,6 +202,17 @@ pub fn run() {
                 app.manage(backend);
             }
 
+            // Diagnostic captures have one owner, so start, stop and export run under one lock.
+            // Created here rather than with the builder because on Android the backend it
+            // relays to exists only from this point.
+            {
+                let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
+                app.manage(logging::capture::CaptureSession::new(
+                    log_dir.clone(),
+                    backend,
+                ));
+            }
+
             // Spawn the tunnel actor. From here on it is the only thing that touches the tunnel:
             // every command is a message to it, and the published state is the only thing the UI
             // reads. Crash recovery and adoption of a surviving tunnel happen in its bootstrap.
