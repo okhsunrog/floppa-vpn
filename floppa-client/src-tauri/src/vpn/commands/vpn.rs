@@ -85,7 +85,6 @@ pub async fn clear_configs(tunnel: State<'_, TunnelHandle>) -> Result<(), Intent
 /// Forget which protocol last worked, so the next connect probes from the top of the order again.
 #[tauri::command]
 #[specta::specta]
-pub async fn forget_preferred_protocol(tunnel: State<'_, TunnelHandle>) -> Result<(), ()> {
-    tunnel.forget_preferred().await;
-    Ok(())
+pub async fn forget_preferred_protocol(tunnel: State<'_, TunnelHandle>) -> Result<(), IntentError> {
+    tunnel.forget_preferred().await
 }

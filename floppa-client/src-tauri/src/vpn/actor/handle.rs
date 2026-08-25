@@ -143,16 +143,16 @@ impl TunnelHandle {
         rx.await.map_err(|_| IntentError::ActorGone)?
     }
 
-    pub async fn forget_preferred(&self) {
+    /// Forget which protocol last worked. Infallible only in the sense that there is nothing to
+    /// refuse — a dead actor is still a failure, and swallowing it meant the settings modal said
+    /// "reset" over an actor that had stopped answering.
+    pub async fn forget_preferred(&self) -> Result<(), IntentError> {
         let (reply, rx) = oneshot::channel();
-        if self
-            .tx
+        self.tx
             .send(Command::ForgetPreferred { reply })
             .await
-            .is_ok()
-        {
-            let _ = rx.await;
-        }
+            .map_err(|_| IntentError::ActorGone)?;
+        rx.await.map_err(|_| IntentError::ActorGone)
     }
 
     /// Resolves once the actor has nothing in flight. Used on exit.

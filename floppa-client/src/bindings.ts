@@ -54,7 +54,7 @@ export const commands = {
 	 */
 	clearConfigs: () => typedError<null, IntentError>(__TAURI_INVOKE("clear_configs")),
 	/**  Forget which protocol last worked, so the next connect probes from the top of the order again. */
-	forgetPreferredProtocol: () => typedError<null, null>(__TAURI_INVOKE("forget_preferred_protocol")),
+	forgetPreferredProtocol: () => typedError<null, IntentError>(__TAURI_INVOKE("forget_preferred_protocol")),
 	/**  Get list of installed apps for split tunneling (Android only) */
 	getInstalledApps: () => typedError<AppInfo[], string>(__TAURI_INVOKE("get_installed_apps")),
 	/**  Check if battery optimization is disabled (Android only) */

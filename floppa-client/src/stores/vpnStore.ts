@@ -357,7 +357,9 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.forgetPreferredProtocol()
         if (result.status === 'error') {
-          error.value = { kind: 'unexpected', detail: 'forget_preferred_protocol was refused' }
+          // Typed now: the command used to be declared infallible, so a dead actor came back as
+          // a refusal with no reason and the settings modal showed a success toast over it.
+          error.value = result.error
           return false
         }
         await refresh()

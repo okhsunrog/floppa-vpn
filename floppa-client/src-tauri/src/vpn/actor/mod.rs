@@ -482,16 +482,27 @@ impl TunnelActor {
         epoch
     }
 
-    /// A cosmetic sub-phase update. Never a reconcile input: it moves the label, not the state.
+    /// A sub-phase update. Never a reconcile input: it moves the label, not the state.
+    ///
+    /// With one exception, and it is not cosmetic: leaving `Preparing` restarts the attempt's
+    /// budget, once. Preparing is where the desktop ladder installs its privileged helper, and
+    /// that spawns `pkexec` and waits for a human — so on a first run the budget was spent
+    /// waiting for a password prompt, row 11 recorded the protocol as `TimedOut`, and the
+    /// password the user then typed arrived to find the attempt cancelled. The budget is meant to
+    /// bound *our* work, and our work starts here.
     fn apply_progress(&mut self, epoch: IntentEpoch, index: usize, phase: AttemptPhase) {
+        let budget = self.policy.attempt_budget;
         if let Status::Connecting {
             cycle,
             phase: current,
-            ..
+            deadline,
         } = &mut self.status
             && cycle.epoch == epoch
             && cycle.index == index
         {
+            if *current == AttemptPhase::Preparing && phase != AttemptPhase::Preparing {
+                *deadline = Instant::now() + budget;
+            }
             *current = phase;
         }
     }
