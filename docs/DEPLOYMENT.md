@@ -192,7 +192,8 @@ reading `tc -s class show dev wg-floppa` or debugging a limit:
 - The peer's `u32` filter (dst IP on egress, src IP on the IFB) lives at `prio = <offset in
   decimal>` — one filter per prio, so removing a peer deletes the filter by prio alone.
 - A new peer stays `pending_add` until both its WireGuard entry and its tc class are in place;
-  if `tc` fails the daemon leaves it pending and retries on the next sync.
+  if `tc` fails the daemon takes the just-added peer off the interface again (so it never runs
+  unlimited), leaves it pending and retries on the next sync.
 
 ## 7. Verify
 

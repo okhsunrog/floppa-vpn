@@ -454,9 +454,10 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
         }
 
         // The peer is only `active` once both the interface and tc agree. If the
-        // limit can't be applied, leave it `pending_add` and retry on the next
-        // sync (add_peer / add_peer_limit are idempotent) rather than letting an
-        // unlimited peer through.
+        // limit can't be applied, take the peer back off the interface — it was
+        // just added and would otherwise run unlimited until the retry — and leave
+        // it `pending_add` for the next sync (add_peer / remove_peer /
+        // add_peer_limit are all idempotent).
         if target.rate_limit_enabled
             && let Some(speed_limit) = peer.speed_limit_mbps
         {
@@ -466,8 +467,17 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
                 error!(
                     peer_id = peer.id,
                     error = %e,
-                    "Failed to apply rate limit; peer stays pending_add"
+                    "Failed to apply rate limit; removing the peer again, stays pending_add"
                 );
+                if let Err(e) =
+                    crate::wg::remove_peer(target.tool, &target.interface, &peer.public_key)
+                {
+                    error!(
+                        peer_id = peer.id,
+                        error = %e,
+                        "Failed to remove the unlimited peer from the interface"
+                    );
+                }
                 continue;
             }
             info!(peer_id = peer.id, speed_limit, "Rate limit applied");
