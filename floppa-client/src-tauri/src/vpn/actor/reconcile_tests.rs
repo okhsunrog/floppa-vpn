@@ -1509,3 +1509,124 @@ fn a_newer_intent_arriving_during_a_teardown_is_honoured_the_moment_it_completes
         "the superseded epoch's waiter is released, not the new one's"
     );
 }
+
+#[test]
+fn an_expired_deadline_walks_the_order_then_the_passes_then_gives_up() {
+    // U4, U5 and U6: the deadline's own ending, which the table tests never reached — every
+    // AttemptTimedOut test stopped at the entry to Unwinding. A timeout advances the cycle
+    // exactly as a reported failure does, and ends it the same way.
+    let now = t0();
+    let intent = up_intent(1, &[AWG, WG], params());
+
+    // U4: not the last protocol in the order — try the next one.
+    let mut first = cycle(1, &[AWG, WG], 2);
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::AttemptTimedOut, Some(first.clone()), 0),
+        &intent,
+        &World::Clear,
+        now,
+    );
+    assert!(has_begin(&d, WG), "expected the next protocol, got {d:?}");
+
+    // U5: the last protocol, with a pass left — back off and start the order again.
+    first.index = 1;
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::AttemptTimedOut, Some(first.clone()), 0),
+        &intent,
+        &World::Clear,
+        now,
+    );
+    match &d.next {
+        Status::Retrying { cycle, .. } => assert_eq!((cycle.index, cycle.pass), (0, 1)),
+        other => panic!("expected a retry, got {other:?}"),
+    }
+
+    // U6: the last protocol of the last pass — the cycle is over.
+    first.pass = 1;
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::AttemptTimedOut, Some(first), 0),
+        &intent,
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(has_demote(&d));
+    assert!(matches!(outcome(&d), Some(CycleOutcome::Exhausted { .. })));
+}
+
+#[test]
+fn a_down_that_lands_during_someone_elses_teardown_still_reports_down() {
+    // U1 used to report Cancelled unless the teardown's own reason was IntentDown, so a
+    // Disconnect that arrived while a dead tunnel was being torn down was told its request had
+    // been superseded — by itself. Cancelled belongs to the cycle the Down displaced, and it is
+    // resolved separately.
+    let now = t0();
+    let d = unwind_done(
+        &unwinding_status(UnwindReason::TunnelDied, Some(cycle(1, &[AWG], 3)), 0),
+        &down(2),
+        &World::Clear,
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    let resolutions: Vec<_> = d
+        .effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::Resolve { epoch, outcome } => Some((*epoch, outcome.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        resolutions,
+        vec![
+            (IntentEpoch(2), CycleOutcome::Down),
+            (IntentEpoch(1), CycleOutcome::Cancelled),
+        ]
+    );
+}
+
+#[test]
+fn a_newer_intent_the_running_tunnel_already_satisfies_is_a_hand_over_not_a_rebuild() {
+    // Row 13, and rows 14/15 beside it: pressing Connect with the same rules while connected
+    // hands the tunnel to the new epoch. Only a confirmed Clear — the tunnel is really gone —
+    // turns it into a reconnect, and darkness resolves nobody.
+    let now = t0();
+    let status = Status::Up(up_status(1, AWG, params()));
+    let intent = up_intent(2, &[AWG], params());
+
+    let d = go(&status, &intent, &running(AWG), now);
+    match &d.next {
+        Status::Up(u) => assert_eq!(u.epoch, IntentEpoch(2)),
+        other => panic!("expected a hand-over, got {other:?}"),
+    }
+    assert!(matches!(
+        resolved(&d),
+        Some((IntentEpoch(2), CycleOutcome::Connected { .. }))
+    ));
+
+    // 15: dark is not authoritative, so the epoch takes the tunnel but nobody is told it worked.
+    let d = go(&status, &intent, &World::Dark, now);
+    match &d.next {
+        Status::Up(u) => {
+            assert_eq!(u.epoch, IntentEpoch(2));
+            assert!(!u.resolved, "nothing authoritative has confirmed it");
+        }
+        other => panic!("expected a hand-over, got {other:?}"),
+    }
+    assert!(resolved(&d).is_none());
+
+    // 14: it is confirmed gone, so the new epoch gets the reconnect budget rather than a
+    // hand-over of nothing.
+    let d = go(&status, &intent, &World::Clear, now);
+    match &d.next {
+        Status::Unwinding {
+            cycle: Some(c),
+            reason: UnwindReason::TunnelDied,
+            ..
+        } => {
+            assert_eq!(c.epoch, IntentEpoch(2));
+            assert!(c.born_from_loss);
+        }
+        other => panic!("expected a reconnect teardown, got {other:?}"),
+    }
+}

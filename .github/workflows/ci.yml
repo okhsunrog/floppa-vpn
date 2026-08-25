@@ -210,6 +210,16 @@ jobs:
       - name: Test (vpn plugin)
         run: cargo test --manifest-path tauri-plugin-vpn/Cargo.toml
 
+      # bindings.ts is generated from the Rust command set and the specta types that cross the
+      # boundary, and it is hand-editable in the sense that nothing stopped anyone. A stale one
+      # type-checks perfectly and lies about the contract at runtime, so it is checked here for
+      # the same reason the OpenAPI client is.
+      - name: Check tauri-specta bindings are up to date
+        run: |
+          cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --bin export_bindings
+          git diff --exit-code -- floppa-client/src/bindings.ts \
+            || (echo "::error::bindings.ts is stale. Run 'just bindings' and commit the changes." && exit 1)
+
   # Same reason as the Windows job: the Android branch is cfg-gated, so a Linux-host clippy run
   # never compiles it. Uses cargo-ndk rather than a full APK build — it needs no keystore and no
   # Gradle, and it is stricter, because the APK build only runs `cargo build`.
