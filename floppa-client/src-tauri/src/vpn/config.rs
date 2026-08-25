@@ -1,6 +1,6 @@
-use super::protocol::{Preference, Protocol};
-use super::state::{SavedVpnConfigs, WgConfig};
+use super::state::SavedVpnConfigs;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tracing::{info, warn};
@@ -9,7 +9,14 @@ use tracing::{info, warn};
 const KEYRING_SERVICE: &str = "floppa-vpn";
 #[cfg(not(target_os = "android"))]
 const KEYRING_ENTRY: &str = "vpn-config";
+/// The keyring entry releases before 0.5.1 wrote. Nothing reads it any more; logout still
+/// clears it so an install that upgraded through 0.5.1 does not keep a stale key around.
+#[cfg(not(target_os = "android"))]
+const LEGACY_KEYRING_ENTRY: &str = "wg-config";
 const CONFIG_FILENAME: &str = "vpn-config.json";
+/// What the keyring is called when a stored shape is reported.
+#[cfg(not(target_os = "android"))]
+const KEYRING_SOURCE: &str = "the OS keyring";
 
 /// Tauri app config dir, set once at startup
 static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -113,8 +120,8 @@ enum Storage {
 /// The envelope actually written to either storage.
 ///
 /// `updated_at` decides which copy wins when both exist — the one written last, whichever storage
-/// it landed in. Older entries without the envelope parse through [`parse_stored_configs`] with
-/// `updated_at = 0`, so anything written since always beats them.
+/// it landed in. The bare payload 0.5.1 wrote reads through [`parse_stored`] with
+/// `updated_at = 0`, so anything written since always beats it.
 #[derive(Serialize)]
 struct StoredConfigsRef<'a> {
     updated_at: i64,
@@ -210,21 +217,11 @@ fn load_from_keyring() -> KeyringRead {
         }
     };
     match entry.get_password() {
-        Ok(stored) => match parse_stored(&stored) {
+        Ok(stored) => match parse_stored(&stored, KEYRING_SOURCE) {
             Some(loaded) => KeyringRead::Found(Box::new(loaded)),
             None => KeyringRead::Empty,
         },
-        Err(keyring::Error::NoEntry) => match load_legacy_keyring() {
-            Some(wg) => KeyringRead::Found(Box::new(Loaded {
-                updated_at: 0,
-                configs: SavedVpnConfigs {
-                    preferred_protocol: Preference(Some(Protocol::WireGuard)),
-                    wireguard: Some(wg),
-                    ..Default::default()
-                },
-            })),
-            None => KeyringRead::Empty,
-        },
+        Err(keyring::Error::NoEntry) => KeyringRead::Empty,
         Err(e) => {
             warn!("Keyring load failed, trying file fallback: {e}");
             KeyringRead::Unavailable
@@ -310,7 +307,7 @@ pub fn delete_configs() {
                 Err(e) => warn!("Failed to delete VPN config from keyring: {e}"),
             }
         }
-        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, "wg-config") {
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, LEGACY_KEYRING_ENTRY) {
             match entry.delete_credential() {
                 Ok(()) => info!("Legacy WG config deleted from OS keyring"),
                 Err(keyring::Error::NoEntry) => {}
@@ -334,94 +331,37 @@ fn remove_config_file() {
     }
 }
 
-/// Parse whatever a storage held: the envelope first, then the older bare formats at
-/// `updated_at = 0`.
-fn parse_stored(stored: &str) -> Option<Loaded> {
-    if let Ok(StoredConfigs {
-        updated_at,
-        configs,
-    }) = serde_json::from_str::<StoredConfigs>(stored)
-        && configs.has_any()
-    {
-        return Some(Loaded {
+/// Parse what a storage held, naming `source` (the file, or the keyring) when it is unusable.
+///
+/// Two shapes are read: the envelope, and the bare [`SavedVpnConfigs`] payload that 0.5.1 wrote,
+/// which has no timestamp and so counts as older than anything. Whatever else is there — the
+/// shapes releases before 0.5.1 wrote, or a hand-edited file — is dropped with a warning: the app
+/// provisions a fresh peer from the server anyway.
+fn parse_stored(stored: &str, source: impl Display) -> Option<Loaded> {
+    let (updated_at, configs) = match serde_json::from_str::<StoredConfigs>(stored) {
+        Ok(StoredConfigs {
             updated_at,
             configs,
-        });
-    }
-    parse_stored_configs(stored).map(|configs| Loaded {
-        updated_at: 0,
+        }) => (updated_at, configs),
+        Err(_) => match serde_json::from_str::<SavedVpnConfigs>(stored) {
+            Ok(configs) if configs.has_any() => {
+                info!("VPN configs in {source} predate the envelope; migrating");
+                (0, configs)
+            }
+            Ok(_) => {
+                warn!("Ignoring VPN configs in {source}: not a shape this version reads");
+                return None;
+            }
+            Err(e) => {
+                warn!("Ignoring VPN configs in {source}: {e}");
+                return None;
+            }
+        },
+    };
+    configs.has_any().then_some(Loaded {
+        updated_at,
         configs,
     })
-}
-
-/// Parse stored configs — try new SavedVpnConfigs format first, fall back to old single ProtocolConfig, then legacy WG.
-fn parse_stored_configs(stored: &str) -> Option<SavedVpnConfigs> {
-    use super::state::ProtocolConfig;
-
-    // Try new dual-config format
-    if let Ok(configs) = serde_json::from_str::<SavedVpnConfigs>(stored)
-        && configs.has_any()
-    {
-        return Some(configs);
-    }
-    // Try old single ProtocolConfig format
-    if let Ok(config) = serde_json::from_str::<ProtocolConfig>(stored) {
-        return Some(match config {
-            ProtocolConfig::WireGuard(wg) => SavedVpnConfigs {
-                preferred_protocol: Preference(Some(Protocol::WireGuard)),
-                wireguard: Some(wg),
-                ..Default::default()
-            },
-            ProtocolConfig::AmneziaWg(awg) => SavedVpnConfigs {
-                preferred_protocol: Preference(Some(Protocol::AmneziaWg)),
-                amneziawg: Some(awg),
-                ..Default::default()
-            },
-            ProtocolConfig::Vless(vless) => SavedVpnConfigs {
-                preferred_protocol: Preference(Some(Protocol::Vless)),
-                vless: Some(vless),
-                ..Default::default()
-            },
-        });
-    }
-    // Fall back to legacy WG config format
-    match WgConfig::from_config_str(stored) {
-        Ok(wg) => {
-            info!("Loaded legacy WireGuard config, migrating to new format");
-            Some(SavedVpnConfigs {
-                preferred_protocol: Preference(Some(Protocol::WireGuard)),
-                wireguard: Some(wg),
-                ..Default::default()
-            })
-        }
-        Err(e) => {
-            warn!("Failed to parse stored config: {e}");
-            None
-        }
-    }
-}
-
-/// Try loading from legacy keyring entry ("wg-config").
-#[cfg(not(target_os = "android"))]
-fn load_legacy_keyring() -> Option<WgConfig> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, "wg-config").ok()?;
-    match entry.get_password() {
-        Ok(config_str) => {
-            info!("Legacy WG config loaded from OS keyring");
-            match WgConfig::from_config_str(&config_str) {
-                Ok(wg) => Some(wg),
-                Err(e) => {
-                    warn!("Failed to parse legacy WG config from keyring: {e}");
-                    None
-                }
-            }
-        }
-        Err(keyring::Error::NoEntry) => None,
-        Err(e) => {
-            warn!("Failed to load legacy WG config from keyring: {e}");
-            None
-        }
-    }
 }
 
 fn save_config_file(json: &str) {
@@ -450,7 +390,7 @@ fn save_config_file(json: &str) {
 fn load_configs_file() -> Option<Loaded> {
     let path = get_config_dir().ok()?.join(CONFIG_FILENAME);
     match std::fs::read_to_string(&path) {
-        Ok(json) => parse_stored(&json),
+        Ok(json) => parse_stored(&json, path.display()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             warn!("Failed to read config file {path:?}: {e}");
@@ -462,16 +402,19 @@ fn load_configs_file() -> Option<Loaded> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vpn::protocol::{Preference, Protocol};
+    use crate::vpn::state::WgConfig;
+
+    const WG_CONF: &str = "[Interface]\nPrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=\nAddress = 10.0.0.2/24\n[Peer]\nPublicKey = HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.com:51820\n";
+
+    /// What 0.5.1 wrote to the keyring and the file: the bare payload, with the protocol still
+    /// the `active_protocol` string.
+    const V0_5_1_PAYLOAD: &str = r#"{"active_protocol":"wireguard","wireguard":{"private_key":"gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=","address":"10.0.0.2/24","dns":"1.1.1.1","mtu":null,"peer_public_key":"HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=","peer_preshared_key":null,"peer_endpoint":"vpn.example.com:51820","allowed_ips":"0.0.0.0/0","persistent_keepalive":25},"amneziawg":null,"vless":null}"#;
 
     fn configs() -> SavedVpnConfigs {
         SavedVpnConfigs {
             preferred_protocol: Preference(Some(Protocol::WireGuard)),
-            wireguard: Some(
-                WgConfig::from_config_str(
-                    "[Interface]\nPrivateKey = gI6EdUSYvn8ugXOt8QQD6Yc+JyiZxIhp3GInSWRfWGE=\nAddress = 10.0.0.2/24\n[Peer]\nPublicKey = HIgo9xNzJMWLKASShiTqIybxZ0U3wGLiUeJ1PKf8ykw=\nAllowedIPs = 0.0.0.0/0\nEndpoint = vpn.example.com:51820\n",
-                )
-                .unwrap(),
-            ),
+            wireguard: Some(WgConfig::from_config_str(WG_CONF).unwrap()),
             ..Default::default()
         }
     }
@@ -479,7 +422,7 @@ mod tests {
     #[test]
     fn the_envelope_round_trips_with_its_timestamp() {
         let json = envelope(&configs()).unwrap();
-        let loaded = parse_stored(&json).unwrap();
+        let loaded = parse_stored(&json, "test").unwrap();
         assert!(loaded.updated_at > 0);
         assert_eq!(
             loaded.configs.preferred_protocol,
@@ -489,10 +432,39 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_legacy_payload_reads_as_older_than_anything() {
-        let bare = serde_json::to_string(&configs()).unwrap();
-        let loaded = parse_stored(&bare).unwrap();
+    fn an_envelope_holding_no_config_is_nothing() {
+        let json = envelope(&SavedVpnConfigs::default()).unwrap();
+        assert!(parse_stored(&json, "test").is_none());
+    }
+
+    #[test]
+    fn the_0_5_1_payload_loads_as_older_than_anything_and_resaves_as_an_envelope() {
+        let loaded = parse_stored(V0_5_1_PAYLOAD, "test").unwrap();
         assert_eq!(loaded.updated_at, 0);
-        assert!(loaded.configs.wireguard.is_some());
+        assert_eq!(
+            loaded.configs.preferred_protocol,
+            Preference(Some(Protocol::WireGuard))
+        );
+        let wg = serde_json::to_value(loaded.configs.wireguard.as_ref().unwrap()).unwrap();
+        assert_eq!(wg["peer_endpoint"], "vpn.example.com:51820");
+        assert_eq!(wg["persistent_keepalive"], 25);
+
+        let json = envelope(&loaded.configs).unwrap();
+        let resaved: StoredConfigs = serde_json::from_str(&json).unwrap();
+        assert!(resaved.updated_at > 0);
+        assert!(resaved.configs.wireguard.is_some());
+    }
+
+    #[test]
+    fn shapes_older_than_0_5_1_are_ignored() {
+        // Pre-0.5: one `ProtocolConfig`.
+        let single = format!(
+            r#"{{"protocol":"wireguard","config":{}}}"#,
+            serde_json::to_string(configs().wireguard.as_ref().unwrap()).unwrap()
+        );
+        assert!(parse_stored(&single, "test").is_none());
+        // Older still: the raw WireGuard `.conf` text.
+        assert!(parse_stored(WG_CONF, "test").is_none());
+        assert!(parse_stored("", "test").is_none());
     }
 }
