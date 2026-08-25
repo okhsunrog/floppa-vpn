@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteInstallationData, DeleteInstallationErrors, DeleteInstallationResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetAvatarsBatchData, GetAvatarsBatchErrors, GetAvatarsBatchResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyAvatarData, GetMyAvatarErrors, GetMyAvatarResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserAvatarData, GetUserAvatarErrors, GetUserAvatarResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListInstallationsData, ListInstallationsErrors, ListInstallationsResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListPublicPlansData, ListPublicPlansResponses, ListUsersData, ListUsersErrors, ListUsersResponses, ListVlessPeersData, ListVlessPeersErrors, ListVlessPeersResponses, LoginAccountData, LoginAccountErrors, LoginAccountResponses, PollTelegramLinkData, PollTelegramLinkErrors, PollTelegramLinkResponses, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigErrors, RegenerateAdminVlessConfigResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RegisterAccountData, RegisterAccountErrors, RegisterAccountResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetMyCredentialData, SetMyCredentialErrors, SetMyCredentialResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, SetUserCredentialData, SetUserCredentialErrors, SetUserCredentialResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, StartTelegramLinkData, StartTelegramLinkErrors, StartTelegramLinkResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramDeepLinkCallbackResponses, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses, UpsertMyInstallationData, UpsertMyInstallationErrors, UpsertMyInstallationResponses } from './types.gen';
+import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteInstallationData, DeleteInstallationErrors, DeleteInstallationResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeleteMySessionData, DeleteMySessionErrors, DeleteMySessionResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, DeleteUserSessionData, DeleteUserSessionErrors, DeleteUserSessionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetAvatarsBatchData, GetAvatarsBatchErrors, GetAvatarsBatchResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyAvatarData, GetMyAvatarErrors, GetMyAvatarResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMySessionsData, GetMySessionsErrors, GetMySessionsResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserAvatarData, GetUserAvatarErrors, GetUserAvatarResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListInstallationsData, ListInstallationsErrors, ListInstallationsResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListPublicPlansData, ListPublicPlansResponses, ListUsersData, ListUsersErrors, ListUserSessionsData, ListUserSessionsErrors, ListUserSessionsResponses, ListUsersResponses, ListVlessPeersData, ListVlessPeersErrors, ListVlessPeersResponses, LoginAccountData, LoginAccountErrors, LoginAccountResponses, PollTelegramLinkData, PollTelegramLinkErrors, PollTelegramLinkResponses, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigErrors, RegenerateAdminVlessConfigResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RegisterAccountData, RegisterAccountErrors, RegisterAccountResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, RevokeAllMySessionsData, RevokeAllMySessionsErrors, RevokeAllMySessionsResponses, RevokeAllUserSessionsData, RevokeAllUserSessionsErrors, RevokeAllUserSessionsResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetMyCredentialData, SetMyCredentialErrors, SetMyCredentialResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, SetUserCredentialData, SetUserCredentialErrors, SetUserCredentialResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, StartTelegramLinkData, StartTelegramLinkErrors, StartTelegramLinkResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramDeepLinkCallbackResponses, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses, UpsertMyInstallationData, UpsertMyInstallationErrors, UpsertMyInstallationResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -121,7 +121,8 @@ export const listInstallations = <ThrowOnError extends boolean = false>(options?
 
 /**
  * Delete an app installation (admin only). Its live peers are queued for removal — a device
- * that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
+ * that is gone must not keep a tunnel or a peer slot — and detached before the row goes, and
+ * the sessions the device held are revoked.
  */
 export const deleteInstallation = <ThrowOnError extends boolean = false>(options: Options<DeleteInstallationData, ThrowOnError>): RequestResult<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteInstallationResponses, DeleteInstallationErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
@@ -246,6 +247,35 @@ export const getMyPeerConfig = <ThrowOnError extends boolean = false>(options: O
 export const sendMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<SendMyPeerConfigData, ThrowOnError>): RequestResult<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).post<SendMyPeerConfigResponses, SendMyPeerConfigErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers/{id}/send-config',
+    ...options
+});
+
+/**
+ * List the current user's live sessions (devices), most recently seen first.
+ */
+export const getMySessions = <ThrowOnError extends boolean = false>(options?: Options<GetMySessionsData, ThrowOnError>): RequestResult<GetMySessionsResponses, GetMySessionsErrors, ThrowOnError> => (options?.client ?? client).get<GetMySessionsResponses, GetMySessionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/sessions',
+    ...options
+});
+
+/**
+ * Sign out everywhere: every session of the current user is revoked, the caller's included,
+ * and tokens issued before sessions existed stop working too.
+ */
+export const revokeAllMySessions = <ThrowOnError extends boolean = false>(options?: Options<RevokeAllMySessionsData, ThrowOnError>): RequestResult<RevokeAllMySessionsResponses, RevokeAllMySessionsErrors, ThrowOnError> => (options?.client ?? client).post<RevokeAllMySessionsResponses, RevokeAllMySessionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/sessions/revoke-all',
+    ...options
+});
+
+/**
+ * Sign out one of the current user's sessions. Signing out the current one works too; the
+ * next request with that token gets a 401.
+ */
+export const deleteMySession = <ThrowOnError extends boolean = false>(options: Options<DeleteMySessionData, ThrowOnError>): RequestResult<DeleteMySessionResponses, DeleteMySessionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMySessionResponses, DeleteMySessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/me/sessions/{id}',
     ...options
 });
 
@@ -404,6 +434,35 @@ export const setUserCredential = <ThrowOnError extends boolean = false>(options:
 export const removePeer = <ThrowOnError extends boolean = false>(options: Options<RemovePeerData, ThrowOnError>): RequestResult<RemovePeerResponses, RemovePeerErrors, ThrowOnError> => (options.client ?? client).delete<RemovePeerResponses, RemovePeerErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/peer',
+    ...options
+});
+
+/**
+ * List a user's live sessions (admin only). `current` is always false here: the list is
+ * about the user's tokens, not the admin's.
+ */
+export const listUserSessions = <ThrowOnError extends boolean = false>(options: Options<ListUserSessionsData, ThrowOnError>): RequestResult<ListUserSessionsResponses, ListUserSessionsErrors, ThrowOnError> => (options.client ?? client).get<ListUserSessionsResponses, ListUserSessionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/sessions',
+    ...options
+});
+
+/**
+ * Sign a user out everywhere (admin only): every session is revoked and tokens issued before
+ * sessions existed stop working too.
+ */
+export const revokeAllUserSessions = <ThrowOnError extends boolean = false>(options: Options<RevokeAllUserSessionsData, ThrowOnError>): RequestResult<RevokeAllUserSessionsResponses, RevokeAllUserSessionsErrors, ThrowOnError> => (options.client ?? client).post<RevokeAllUserSessionsResponses, RevokeAllUserSessionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/sessions/revoke-all',
+    ...options
+});
+
+/**
+ * Revoke one of a user's sessions (admin only).
+ */
+export const deleteUserSession = <ThrowOnError extends boolean = false>(options: Options<DeleteUserSessionData, ThrowOnError>): RequestResult<DeleteUserSessionResponses, DeleteUserSessionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteUserSessionResponses, DeleteUserSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/users/{id}/sessions/{sid}',
     ...options
 });
 

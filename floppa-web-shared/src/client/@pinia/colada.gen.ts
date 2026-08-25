@@ -4,8 +4,8 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
-import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallation, deleteMyPeer, deletePlan, deleteSubscription, exchangeTelegramLoginCode, getAvatarsBatch, getMe, getMyAvatar, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMyVlessConfig, getPublicConfig, getStats, getUser, getUserAvatar, getVersion, listInstallations, listPeers, listPlans, listPublicPlans, listUsers, listVlessPeers, loginAccount, type Options, pollTelegramLink, regenerateAdminVlessConfig, regenerateMyVlessConfig, registerAccount, removePeer, sendMyPeerConfig, setMyCredential, setSubscription, setUserCredential, startTelegramDeepLinkLogin, startTelegramLink, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan, upsertMyInstallation } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetAvatarsBatchData, GetAvatarsBatchError, GetAvatarsBatchResponse, GetMeData, GetMeError, GetMeResponse, GetMyAvatarData, GetMyAvatarError, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserAvatarData, GetUserAvatarError, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListPublicPlansData, ListPublicPlansResponse, ListUsersData, ListUsersError, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, LoginAccountData, LoginAccountError, LoginAccountResponse, PollTelegramLinkData, PollTelegramLinkError, PollTelegramLinkResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RegisterAccountData, RegisterAccountError, RegisterAccountResponse, RemovePeerData, RemovePeerError, SendMyPeerConfigData, SendMyPeerConfigError, SetMyCredentialData, SetMyCredentialError, SetMyCredentialResponse, SetSubscriptionData, SetSubscriptionError, SetUserCredentialData, SetUserCredentialError, SetUserCredentialResponse, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, StartTelegramLinkData, StartTelegramLinkError, StartTelegramLinkResponse, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
+import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallation, deleteMyPeer, deleteMySession, deletePlan, deleteSubscription, deleteUserSession, exchangeTelegramLoginCode, getAvatarsBatch, getMe, getMyAvatar, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMySessions, getMyVlessConfig, getPublicConfig, getStats, getUser, getUserAvatar, getVersion, listInstallations, listPeers, listPlans, listPublicPlans, listUsers, listUserSessions, listVlessPeers, loginAccount, type Options, pollTelegramLink, regenerateAdminVlessConfig, regenerateMyVlessConfig, registerAccount, removePeer, revokeAllMySessions, revokeAllUserSessions, sendMyPeerConfig, setMyCredential, setSubscription, setUserCredential, startTelegramDeepLinkLogin, startTelegramLink, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan, upsertMyInstallation } from '../sdk.gen';
+import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeleteMySessionData, DeleteMySessionError, DeleteMySessionResponse, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, DeleteUserSessionData, DeleteUserSessionError, DeleteUserSessionResponse, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetAvatarsBatchData, GetAvatarsBatchError, GetAvatarsBatchResponse, GetMeData, GetMeError, GetMeResponse, GetMyAvatarData, GetMyAvatarError, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMySessionsData, GetMySessionsError, GetMySessionsResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserAvatarData, GetUserAvatarError, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListPublicPlansData, ListPublicPlansResponse, ListUsersData, ListUsersError, ListUserSessionsData, ListUserSessionsError, ListUserSessionsResponse, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, LoginAccountData, LoginAccountError, LoginAccountResponse, PollTelegramLinkData, PollTelegramLinkError, PollTelegramLinkResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RegisterAccountData, RegisterAccountError, RegisterAccountResponse, RemovePeerData, RemovePeerError, RevokeAllMySessionsData, RevokeAllMySessionsError, RevokeAllMySessionsResponse, RevokeAllUserSessionsData, RevokeAllUserSessionsError, RevokeAllUserSessionsResponse, SendMyPeerConfigData, SendMyPeerConfigError, SetMyCredentialData, SetMyCredentialError, SetMyCredentialResponse, SetSubscriptionData, SetSubscriptionError, SetUserCredentialData, SetUserCredentialError, SetUserCredentialResponse, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, StartTelegramLinkData, StartTelegramLinkError, StartTelegramLinkResponse, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
 
 /**
  * Log in with a login + password.
@@ -200,7 +200,8 @@ export const listInstallationsQuery = defineQueryOptions<Options<ListInstallatio
 
 /**
  * Delete an app installation (admin only). Its live peers are queued for removal — a device
- * that is gone must not keep a tunnel or a peer slot — and detached before the row goes.
+ * that is gone must not keep a tunnel or a peer slot — and detached before the row goes, and
+ * the sessions the device held are revoked.
  */
 export const deleteInstallationMutation = (options?: Partial<Options<DeleteInstallationData>>): UseMutationOptions<unknown, Options<DeleteInstallationData>, DeleteInstallationError> => ({
     mutation: async (vars) => {
@@ -391,6 +392,53 @@ export const getMyPeerConfigQuery = defineQueryOptions<Options<GetMyPeerConfigDa
 export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerConfigData>>): UseMutationOptions<unknown, Options<SendMyPeerConfigData>, SendMyPeerConfigError> => ({
     mutation: async (vars) => {
         const { data } = await sendMyPeerConfig({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+export const getMySessionsQueryKey = (options?: Options<GetMySessionsData>) => createQueryKey('getMySessions', options);
+
+/**
+ * List the current user's live sessions (devices), most recently seen first.
+ */
+export const getMySessionsQuery = defineQueryOptions<Options<GetMySessionsData>, GetMySessionsResponse, GetMySessionsError>((options?: Options<GetMySessionsData>) => ({
+    key: getMySessionsQueryKey(options),
+    query: async (context) => {
+        const { data } = await getMySessions({
+            ...options,
+            ...context,
+            throwOnError: true
+        });
+        return data;
+    }
+}));
+
+/**
+ * Sign out everywhere: every session of the current user is revoked, the caller's included,
+ * and tokens issued before sessions existed stop working too.
+ */
+export const revokeAllMySessionsMutation = (options?: Partial<Options<RevokeAllMySessionsData>>): UseMutationOptions<RevokeAllMySessionsResponse, Options<RevokeAllMySessionsData>, RevokeAllMySessionsError> => ({
+    mutation: async (vars) => {
+        const { data } = await revokeAllMySessions({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+/**
+ * Sign out one of the current user's sessions. Signing out the current one works too; the
+ * next request with that token gets a 401.
+ */
+export const deleteMySessionMutation = (options?: Partial<Options<DeleteMySessionData>>): UseMutationOptions<DeleteMySessionResponse, Options<DeleteMySessionData>, DeleteMySessionError> => ({
+    mutation: async (vars) => {
+        const { data } = await deleteMySession({
             ...options,
             ...vars,
             throwOnError: true
@@ -641,6 +689,53 @@ export const setUserCredentialMutation = (options?: Partial<Options<SetUserCrede
 export const removePeerMutation = (options?: Partial<Options<RemovePeerData>>): UseMutationOptions<unknown, Options<RemovePeerData>, RemovePeerError> => ({
     mutation: async (vars) => {
         const { data } = await removePeer({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+export const listUserSessionsQueryKey = (options: Options<ListUserSessionsData>) => createQueryKey('listUserSessions', options);
+
+/**
+ * List a user's live sessions (admin only). `current` is always false here: the list is
+ * about the user's tokens, not the admin's.
+ */
+export const listUserSessionsQuery = defineQueryOptions<Options<ListUserSessionsData>, ListUserSessionsResponse, ListUserSessionsError>((options: Options<ListUserSessionsData>) => ({
+    key: listUserSessionsQueryKey(options),
+    query: async (context) => {
+        const { data } = await listUserSessions({
+            ...options,
+            ...context,
+            throwOnError: true
+        });
+        return data;
+    }
+}));
+
+/**
+ * Sign a user out everywhere (admin only): every session is revoked and tokens issued before
+ * sessions existed stop working too.
+ */
+export const revokeAllUserSessionsMutation = (options?: Partial<Options<RevokeAllUserSessionsData>>): UseMutationOptions<RevokeAllUserSessionsResponse, Options<RevokeAllUserSessionsData>, RevokeAllUserSessionsError> => ({
+    mutation: async (vars) => {
+        const { data } = await revokeAllUserSessions({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+/**
+ * Revoke one of a user's sessions (admin only).
+ */
+export const deleteUserSessionMutation = (options?: Partial<Options<DeleteUserSessionData>>): UseMutationOptions<DeleteUserSessionResponse, Options<DeleteUserSessionData>, DeleteUserSessionError> => ({
+    mutation: async (vars) => {
+        const { data } = await deleteUserSession({
             ...options,
             ...vars,
             throwOnError: true

@@ -497,7 +497,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Delete an app installation (admin only). Its live peers are queued for removal — a device\nthat is gone must not keep a tunnel or a peer slot — and detached before the row goes.",
+        "summary": "Delete an app installation (admin only). Its live peers are queued for removal — a device\nthat is gone must not keep a tunnel or a peer slot — and detached before the row goes, and\nthe sessions the device held are revoked.",
         "operationId": "delete_installation",
         "parameters": [
           {
@@ -513,7 +513,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Installation deleted, its peers queued for removal"
+            "description": "Installation deleted, its peers queued for removal and its sessions revoked"
           },
           "401": {
             "description": "Unauthorized",
@@ -1177,6 +1177,125 @@
           },
           "502": {
             "description": "Failed to send via Telegram",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/sessions": {
+      "get": {
+        "tags": [
+          "user"
+        ],
+        "summary": "List the current user's live sessions (devices), most recently seen first.",
+        "operationId": "get_my_sessions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/sessions/revoke-all": {
+      "post": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Sign out everywhere: every session of the current user is revoked, the caller's included,\nand tokens issued before sessions existed stop working too.",
+        "operationId": "revoke_all_my_sessions",
+        "responses": {
+          "204": {
+            "description": "All sessions revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/sessions/{id}": {
+      "delete": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Sign out one of the current user's sessions. Signing out the current one works too; the\nnext request with that token gets a 401.",
+        "operationId": "delete_my_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such live session",
             "content": {
               "application/json": {
                 "schema": {
@@ -2149,6 +2268,209 @@
           },
           "404": {
             "description": "No active peers found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/users/{id}/sessions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "List a user's live sessions (admin only). `current` is always false here: the list is\nabout the user's tokens, not the admin's.",
+        "operationId": "list_user_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/users/{id}/sessions/revoke-all": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Sign a user out everywhere (admin only): every session is revoked and tokens issued before\nsessions existed stop working too.",
+        "operationId": "revoke_all_user_sessions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "All sessions revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/users/{id}/sessions/{sid}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Revoke one of a user's sessions (admin only).",
+        "operationId": "delete_user_session",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sid",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked"
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such live session for this user",
             "content": {
               "application/json": {
                 "schema": {
@@ -3386,6 +3708,77 @@
             "format": "int32"
           }
         }
+      },
+      "SessionInfo": {
+        "type": "object",
+        "description": "One live login of a user, as shown in \"Devices & sessions\".",
+        "required": [
+          "id",
+          "kind",
+          "created_at",
+          "last_seen_at",
+          "current"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "current": {
+            "type": "boolean",
+            "description": "True for the session the request itself was made with."
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "installation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SessionKind",
+            "description": "Which login path opened it."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Device description recorded when the app registered its installation on this session."
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Bumped by authenticated requests, at most once an hour."
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionKind": {
+        "type": "string",
+        "description": "Which login path minted an API session; `sessions.kind` (TEXT, CHECK-constrained by\nmigration 0018). Bind as `SessionKind::DeepLink as _`.",
+        "enum": [
+          "telegram_widget",
+          "mini_app",
+          "deep_link",
+          "credential",
+          "legacy"
+        ]
       },
       "SetCredentialRequest": {
         "type": "object",

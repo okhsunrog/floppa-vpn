@@ -279,6 +279,39 @@ export type PublicPlan = {
     trial_minutes?: number | null;
 };
 
+/**
+ * One live login of a user, as shown in "Devices & sessions".
+ */
+export type SessionInfo = {
+    created_at: string;
+    /**
+     * True for the session the request itself was made with.
+     */
+    current: boolean;
+    device_name?: string | null;
+    id: string;
+    installation_id?: number | null;
+    /**
+     * Which login path opened it.
+     */
+    kind: SessionKind;
+    /**
+     * Device description recorded when the app registered its installation on this session.
+     */
+    label?: string | null;
+    /**
+     * Bumped by authenticated requests, at most once an hour.
+     */
+    last_seen_at: string;
+    platform?: string | null;
+};
+
+/**
+ * Which login path minted an API session; `sessions.kind` (TEXT, CHECK-constrained by
+ * migration 0018). Bind as `SessionKind::DeepLink as _`.
+ */
+export type SessionKind = 'telegram_widget' | 'mini_app' | 'deep_link' | 'credential' | 'legacy';
+
 export type SetCredentialRequest = {
     login: string;
     password: string;
@@ -742,7 +775,7 @@ export type DeleteInstallationError = DeleteInstallationErrors[keyof DeleteInsta
 
 export type DeleteInstallationResponses = {
     /**
-     * Installation deleted, its peers queued for removal
+     * Installation deleted, its peers queued for removal and its sessions revoked
      */
     200: unknown;
 };
@@ -1100,6 +1133,87 @@ export type SendMyPeerConfigResponses = {
      */
     200: unknown;
 };
+
+export type GetMySessionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/sessions';
+};
+
+export type GetMySessionsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type GetMySessionsError = GetMySessionsErrors[keyof GetMySessionsErrors];
+
+export type GetMySessionsResponses = {
+    200: Array<SessionInfo>;
+};
+
+export type GetMySessionsResponse = GetMySessionsResponses[keyof GetMySessionsResponses];
+
+export type RevokeAllMySessionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/sessions/revoke-all';
+};
+
+export type RevokeAllMySessionsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type RevokeAllMySessionsError = RevokeAllMySessionsErrors[keyof RevokeAllMySessionsErrors];
+
+export type RevokeAllMySessionsResponses = {
+    /**
+     * All sessions revoked
+     */
+    204: void;
+};
+
+export type RevokeAllMySessionsResponse = RevokeAllMySessionsResponses[keyof RevokeAllMySessionsResponses];
+
+export type DeleteMySessionData = {
+    body?: never;
+    path: {
+        /**
+         * Session ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/me/sessions/{id}';
+};
+
+export type DeleteMySessionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * No such live session
+     */
+    404: ApiError;
+};
+
+export type DeleteMySessionError = DeleteMySessionErrors[keyof DeleteMySessionErrors];
+
+export type DeleteMySessionResponses = {
+    /**
+     * Session revoked
+     */
+    204: void;
+};
+
+export type DeleteMySessionResponse = DeleteMySessionResponses[keyof DeleteMySessionResponses];
 
 export type GetMyVlessConfigData = {
     body?: never;
@@ -1611,6 +1725,121 @@ export type RemovePeerResponses = {
      */
     200: unknown;
 };
+
+export type ListUserSessionsData = {
+    body?: never;
+    path: {
+        /**
+         * User ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/users/{id}/sessions';
+};
+
+export type ListUserSessionsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * User not found
+     */
+    404: ApiError;
+};
+
+export type ListUserSessionsError = ListUserSessionsErrors[keyof ListUserSessionsErrors];
+
+export type ListUserSessionsResponses = {
+    200: Array<SessionInfo>;
+};
+
+export type ListUserSessionsResponse = ListUserSessionsResponses[keyof ListUserSessionsResponses];
+
+export type RevokeAllUserSessionsData = {
+    body?: never;
+    path: {
+        /**
+         * User ID
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/users/{id}/sessions/revoke-all';
+};
+
+export type RevokeAllUserSessionsErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * User not found
+     */
+    404: ApiError;
+};
+
+export type RevokeAllUserSessionsError = RevokeAllUserSessionsErrors[keyof RevokeAllUserSessionsErrors];
+
+export type RevokeAllUserSessionsResponses = {
+    /**
+     * All sessions revoked
+     */
+    204: void;
+};
+
+export type RevokeAllUserSessionsResponse = RevokeAllUserSessionsResponses[keyof RevokeAllUserSessionsResponses];
+
+export type DeleteUserSessionData = {
+    body?: never;
+    path: {
+        /**
+         * User ID
+         */
+        id: number;
+        /**
+         * Session ID
+         */
+        sid: string;
+    };
+    query?: never;
+    url: '/users/{id}/sessions/{sid}';
+};
+
+export type DeleteUserSessionErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * Not an admin
+     */
+    403: ApiError;
+    /**
+     * No such live session for this user
+     */
+    404: ApiError;
+};
+
+export type DeleteUserSessionError = DeleteUserSessionErrors[keyof DeleteUserSessionErrors];
+
+export type DeleteUserSessionResponses = {
+    /**
+     * Session revoked
+     */
+    204: void;
+};
+
+export type DeleteUserSessionResponse = DeleteUserSessionResponses[keyof DeleteUserSessionResponses];
 
 export type DeleteSubscriptionData = {
     body?: never;
