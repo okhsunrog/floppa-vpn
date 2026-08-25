@@ -105,18 +105,23 @@ impl ConfigStore {
     /// The probe order actually usable right now: the caller's order narrowed to protocols we hold
     /// a config for, with the last known-good one moved to the front so a reconnect goes straight
     /// to what worked.
+    ///
+    /// The rest keeps the caller's relative order. A swap would have put whatever was first into
+    /// the preferred protocol's old slot, demoting the caller's first choice behind everything
+    /// that happened to sit between them.
     pub fn resolve_order(&self, requested: &[Protocol]) -> Vec<Protocol> {
-        let mut order: Vec<Protocol> = requested
-            .iter()
-            .copied()
-            .filter(|p| self.get(*p).is_some())
-            .collect();
-        order.dedup();
+        let mut order: Vec<Protocol> = Vec::with_capacity(requested.len());
+        for p in requested {
+            if self.get(*p).is_some() && !order.contains(p) {
+                order.push(*p);
+            }
+        }
 
         if let Some(preferred) = self.preferred()
             && let Some(pos) = order.iter().position(|p| *p == preferred)
         {
-            order.swap(0, pos);
+            let preferred = order.remove(pos);
+            order.insert(0, preferred);
         }
         order
     }
@@ -178,6 +183,8 @@ Endpoint = vpn.example.com:51820
 AllowedIPs = 0.0.0.0/0
 ";
 
+    const VLESS_URI: &str = "vless://0f7f6d3c-0a1c-4f1e-9d3a-1b2c3d4e5f60@vpn.example.com:443?security=reality&sni=example.com&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=0123abcd&flow=xtls-rprx-vision#floppa";
+
     /// A store that never touches the keyring or the filesystem.
     fn store_with(configs: SavedVpnConfigs) -> ConfigStore {
         ConfigStore { configs }
@@ -237,6 +244,45 @@ AllowedIPs = 0.0.0.0/0
         assert_eq!(
             store.resolve_order(&[Protocol::AmneziaWg, Protocol::WireGuard]),
             vec![Protocol::AmneziaWg, Protocol::WireGuard]
+        );
+    }
+
+    #[test]
+    fn moving_the_preferred_protocol_first_keeps_the_rest_in_the_requested_order() {
+        // A swap put the caller's first choice into the preferred protocol's old slot — behind
+        // everything between them — so the fallback after the known-good protocol was wrong.
+        let store = store_with(SavedVpnConfigs {
+            wireguard: Some(wg()),
+            amneziawg: Some(AwgConfig {
+                wg: wg(),
+                obfuscation: Default::default(),
+            }),
+            vless: Some(VlessVpnConfig::from_uri(VLESS_URI).expect("fixture must parse")),
+            preferred_protocol: Preference(Some(Protocol::Vless)),
+        });
+        assert_eq!(
+            store.resolve_order(&[Protocol::AmneziaWg, Protocol::WireGuard, Protocol::Vless]),
+            vec![Protocol::Vless, Protocol::AmneziaWg, Protocol::WireGuard],
+        );
+    }
+
+    #[test]
+    fn a_protocol_requested_twice_is_probed_once() {
+        let store = store_with(SavedVpnConfigs {
+            wireguard: Some(wg()),
+            amneziawg: Some(AwgConfig {
+                wg: wg(),
+                obfuscation: Default::default(),
+            }),
+            ..Default::default()
+        });
+        assert_eq!(
+            store.resolve_order(&[
+                Protocol::WireGuard,
+                Protocol::AmneziaWg,
+                Protocol::WireGuard
+            ]),
+            vec![Protocol::WireGuard, Protocol::AmneziaWg],
         );
     }
 
