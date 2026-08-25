@@ -791,10 +791,10 @@ pub async fn create_peer(
     })
 }
 
-/// Allocate the next available client IP from `subnet` without the cross-transaction lock.
-/// Only safe when nothing else allocates concurrently; production goes through
-/// [`create_peer`], which takes the advisory lock.
-pub async fn allocate_ip(
+/// Lock-free allocation for the allocator's own tests. Production allocates only through
+/// [`create_peer`], which serializes allocators with an advisory lock.
+#[cfg(test)]
+async fn allocate_ip(
     pool: &DbPool,
     subnet: Ipv4Network,
     reserved: &[Ipv4Addr],

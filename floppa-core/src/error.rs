@@ -5,15 +5,6 @@ pub enum FloppaError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
-    #[error("User not found: telegram_id={0}")]
-    UserNotFound(i64),
-
-    #[error("Peer not found: id={0}")]
-    PeerNotFound(i64),
-
-    #[error("Subscription expired")]
-    SubscriptionExpired,
-
     #[error("No active subscription")]
     NoActiveSubscription,
 

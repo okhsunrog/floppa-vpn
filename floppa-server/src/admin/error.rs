@@ -67,27 +67,12 @@ impl From<FloppaError> for ApiError {
                 ),
                 status: StatusCode::CONFLICT,
             },
-            FloppaError::PeerNotFound(id) => Self {
-                error: "peer_not_found".into(),
-                message: format!("Peer not found: id={id}"),
-                status: StatusCode::NOT_FOUND,
-            },
-            FloppaError::UserNotFound(id) => Self {
-                error: "user_not_found".into(),
-                message: format!("User not found: telegram_id={id}"),
-                status: StatusCode::NOT_FOUND,
-            },
             FloppaError::NoAvailableIps => Self {
                 error: "no_available_ips".into(),
                 message: "No available IPs in subnet".into(),
                 status: StatusCode::INTERNAL_SERVER_ERROR,
             },
             FloppaError::Database(e) => Self::from(e),
-            FloppaError::SubscriptionExpired => Self {
-                error: "subscription_expired".into(),
-                message: "Subscription expired".into(),
-                status: StatusCode::PAYMENT_REQUIRED,
-            },
             FloppaError::VlessNotConfigured => Self {
                 error: "vless_not_configured".into(),
                 message: "VLESS is not configured on this server".into(),
