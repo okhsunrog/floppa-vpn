@@ -23,6 +23,33 @@ use crate::schema::{
     UpsertInstallationRequest, VlessConfigResponse,
 };
 
+/// The TLS configuration every request goes out on.
+///
+/// Built once, with the Mozilla root store compiled in, rather than left to `reqwest`'s default —
+/// which is the *platform* verifier, and on Android that needs a JNI handshake with the system
+/// trust store before it will do anything. Without it the first HTTPS request panics with
+/// "Expect rustls-platform-verifier to be initialized", which is exactly what a background peer
+/// repair did on a device: the tunnel had reconnected, the actor had named the dead peer, and the
+/// process died reaching for the server.
+///
+/// Bundled roots are the right answer here anyway. This client talks to one server, whose
+/// certificate chains to a public CA, and the alternative would have every platform disagree
+/// about what it trusts — including a corporate middlebox, which for a VPN client is not a
+/// feature.
+fn tls_config() -> rustls::ClientConfig {
+    static CONFIG: std::sync::OnceLock<rustls::ClientConfig> = std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            let roots = rustls::RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth()
+        })
+        .clone()
+}
+
 /// How long any one call may take before it counts as no answer.
 ///
 /// Generous next to a request that works, short next to a user waiting: everything here runs
@@ -196,6 +223,7 @@ impl ApiClient {
     pub fn new(base: &str, token: &str) -> Result<Self, ApiFailure> {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .use_preconfigured_tls(tls_config())
             .build()
             .map_err(|e| ApiFailure::Unreachable(format!("could not build an HTTP client: {e}")))?;
         Ok(Self {
@@ -240,6 +268,7 @@ impl ApiClient {
     pub async fn exchange_login_code(base: &str, code: &str) -> Result<AuthResponse, ApiFailure> {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .use_preconfigured_tls(tls_config())
             .build()
             .map_err(|e| ApiFailure::Unreachable(format!("could not build an HTTP client: {e}")))?;
         let url = format!("{}/auth/telegram/exchange-code", base.trim_end_matches('/'));

@@ -9,11 +9,13 @@ description = "The client side of the Floppa VPN server API: generated types, on
 async-trait = "0.1.92"
 chrono = { workspace = true, features = ["serde"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "charset"] }
+rustls = { version = "0.23.43", default-features = false, features = ["std", "aws-lc-rs"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid = { version = "1.25.0", features = ["serde"] }
+webpki-roots = "1.0.9"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

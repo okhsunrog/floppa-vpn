@@ -176,6 +176,25 @@ holds the actor, and the frontend neither repairs nor knows about repairs. The t
 kept because the second one — outcome identity — is a property of the actor and still load-bearing
 for whoever reads outcomes.)
 
+### The replay, with nobody looking
+
+Run on 2026-08-26 with the app closed for the whole of it — only `:vpn` in the process list:
+
+| | |
+|---|---|
+| 14:39:53 | the WireGuard peer deleted on the server, the app closed |
+| 14:41:32 | silence noticed, probing |
+| 14:41:52 | ruled `PeerSilent`, unwinding |
+| 14:42:10 | WireGuard: `no handshake / no connectivity through the tunnel` |
+| 14:42:23 | `Connected { AmneziaWg, failures: [WireGuard VerifyFailed] }` |
+| 14:42:23 | `a peer the ladder stepped over was replaced protocol=wireguard` |
+
+Two and a half minutes from deletion to a working tunnel and a replaced peer, with the phone in a
+pocket. The first attempt at this run died instead, and is why `floppa-api-client` configures its
+own TLS roots: `reqwest` on rustls defaults to the *platform* verifier, which on Android needs a
+JNI handshake with the system trust store that nothing had performed — so the repair panicked with
+"Expect rustls-platform-verifier to be initialized" the moment it reached for the server.
+
 First: `VpnCard`'s outcome watcher returned early unless the outcome "needed attention", and a
 cycle that connected does not — so the repair could never run for the reconnects it exists for.
 

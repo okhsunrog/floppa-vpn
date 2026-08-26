@@ -1440,12 +1440,14 @@ dependencies = [
  "async-trait",
  "chrono",
  "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]
