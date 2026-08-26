@@ -648,9 +648,14 @@ class FloppaVpnService : VpnService() {
         // it as a definite no is exactly the mistake `Link` exists to prevent, and it shipped once:
         // a service the system itself started for always-on reported `Off` from `onCreate`.
         //
+        // The live descriptor is the test, and `generation` is not: a generation is set from the
+        // moment one is *requested*, which is before `establish()` and still true for a moment
+        // after a teardown. Gating on it produced a real `Off` on the device — 130 ms of it,
+        // between a disconnect and the reconnect that followed.
+        //
         // Below API 29 neither query exists, which is the same "cannot ask" and takes the same
         // path. So does a call that throws.
-        val canAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && generation != NO_GENERATION
+        val canAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && tunInterface != null
         val mode =
             if (canAsk) {
                 try {
