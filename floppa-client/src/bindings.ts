@@ -121,6 +121,16 @@ export const commands = {
 	 *  anything it could not provision with, so a half-written one is simply not used.
 	 */
 	setServerSession: (baseUrl: string, token: string | null, deviceId: string | null, deviceName: string | null) => typedError<null, string>(__TAURI_INVOKE("set_server_session", { baseUrl, token, deviceId, deviceName })),
+	/**
+	 *  Provision this device's peers, and store what the server hands back.
+	 * 
+	 *  The whole of it runs here, in the process the user is looking at: it talks to the server, and
+	 *  the configs it fetches go into the store through the actor — over the socket on Android, which
+	 *  is exactly what that boundary is for. The same logic replaces a deleted peer with nobody
+	 *  looking, from `:vpn`; both go through `floppa-api-client`, so there is one description of what
+	 *  a device is entitled to rather than one per process.
+	 */
+	syncPeers: () => typedError<SyncOutcome, string>(__TAURI_INVOKE("sync_peers")),
 };
 
 /** Events */
@@ -339,6 +349,27 @@ export type SafeAreaInsets = {
 export type SplitMode = "all" | "include" | "exclude";
 
 export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
+
+/**  Why a sync was refused. */
+export type SyncFailure = { kind: "no_subscription" } | { kind: "peer_limit_reached" } | 
+/**  Anything else. `detail` is the server's own words, for a card that has no better ones. */
+{ kind: "create_failed"; detail: string };
+
+/**
+ *  How a sync ended, in the words the connection card needs.
+ * 
+ *  A translation of [`SyncResult`] rather than the thing itself, and deliberately: what the card
+ *  wants is a tag it can look up in a locale file, in the user's language. `floppa-api-client`
+ *  describes the server, not this app's vocabulary for talking to a person — and it has no
+ *  `specta`, which is the practical half of the same point.
+ */
+export type SyncOutcome = 
+/**  Everything this device is entitled to is provisioned and stored. */
+{ outcome: "ok" } | 
+/**  The server answered, and refused. */
+{ outcome: "failed"; error: SyncFailure } | 
+/**  Nothing was learned and nothing was changed — no server, or nobody signed in. */
+{ outcome: "offline" };
 
 export type TrafficStats = {
 	tx_bytes: number,

@@ -30,16 +30,14 @@
 //! it is missing — something else is wrong — and asking again would have the actor and the server
 //! taking turns making peers until the plan's limit stopped them.
 
-use async_trait::async_trait;
-use floppa_api_client::{ApiClient, ConfigSink, PeerProtocol, RepairOutcome, repair_peer};
+use floppa_api_client::{PeerProtocol, RepairOutcome, repair_peer};
 use tracing::{debug, info, warn};
 
-use super::session;
+use super::server::{self, ActorSink};
 use super::{OutcomePlan, plan_outcome};
 use crate::vpn::actor::Spawn;
 use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
 use crate::vpn::actor::types::{IntentView, TunnelParams, TunnelState};
-use crate::vpn::config::config_dir;
 use crate::vpn::protocol::Protocol;
 
 /// Start watching. Returns at once; the work happens on `spawn`.
@@ -171,52 +169,11 @@ fn protocol_of(protocol: PeerProtocol) -> Protocol {
 
 /// Check the peer and replace it if it is gone. `None` when there was no way to even ask.
 async fn repair(handle: &TunnelHandle, protocol: PeerProtocol) -> Option<RepairOutcome> {
-    let dir = match config_dir() {
-        Ok(dir) => dir,
-        Err(e) => {
-            warn!("no config directory, so no session and no repair: {e}");
-            return None;
-        }
-    };
-    // Read per repair rather than held: the token is rewritten on every sliding refresh, and on
-    // Android the process that writes it is the other one.
-    let Some(session) = session::load(&dir) else {
+    let Some((api, identity)) = server::client() else {
         debug!("nobody is signed in on this device; the peer stays as it is");
         return None;
     };
-    let client = match ApiClient::new(&session.base_url, &session.token) {
-        Ok(client) => client,
-        Err(e) => {
-            warn!("could not build an API client: {e}");
-            return None;
-        }
-    };
-
-    let outcome = repair_peer(
-        &client,
-        &ActorSink(handle.clone()),
-        &session.identity(),
-        protocol,
-    )
-    .await;
+    let outcome = repair_peer(&api, &ActorSink(handle.clone()), &identity, protocol).await;
     debug!(%protocol, ?outcome, "the peer was looked at");
     Some(outcome)
-}
-
-/// The actor's config store, as somewhere for a fetched config to land.
-struct ActorSink(TunnelHandle);
-
-#[async_trait]
-impl ConfigSink for ActorSink {
-    async fn import(&self, raw: String) -> Result<(), String> {
-        self.0
-            .import_config(raw)
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
-    async fn has_any(&self) -> bool {
-        !self.0.snapshot().configs.available.is_empty()
-    }
 }
