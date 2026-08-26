@@ -80,7 +80,6 @@ impl VpnBackend for InProcessBackend {
                 // In-process, the actor is the only thing that ever starts a tunnel, and it
                 // keeps the params itself; a tunnel found here after a restart cannot exist.
                 params: None,
-                autonomous: false,
                 silent_secs: self
                     .tunnel_manager
                     .silence()

@@ -353,7 +353,6 @@ mod tests {
         fn set_intent_every_argument_and_result() {
             let requests = [
                 IntentRequest::Down,
-                IntentRequest::Forget,
                 IntentRequest::Up {
                     order: vec![],
                     params: TunnelParams::default(),

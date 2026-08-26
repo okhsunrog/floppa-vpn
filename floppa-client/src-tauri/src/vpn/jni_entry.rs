@@ -551,8 +551,9 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeVpnMod
 /// decision, not the app's, and an app that fights it produces a restart loop. So a start the
 /// system issued raises the intent to Up, from the order and rules the last connect recorded.
 ///
-/// A wipe is what beats it: `Forget` clears the configs, and an actor with nothing to build from
-/// stops rather than trying.
+/// A wipe is what beats it, and it does so by leaving nothing behind rather than by any flag on
+/// the intent: `clear_configs` empties the store and removes the autostart bundle, so this finds
+/// nothing to raise an intent from and stops the service instead.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSystemStart<'local>(
     mut env: EnvUnowned<'local>,

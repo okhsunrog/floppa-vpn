@@ -139,9 +139,6 @@ pub struct RunningTunnel {
     /// unknown for one found by an in-process backend after a restart. Knowing them is what
     /// lets a tunnel be adopted *with* its rules rather than as a black box.
     pub params: Option<TunnelParams>,
-    /// Started by the service on its own (always-on, boot, lockdown), from the bundle the last
-    /// successful connect wrote — not by any intent of this or any other UI process.
-    pub autonomous: bool,
     /// Seconds since the far side last gave any evidence of being there: a completed handshake for
     /// the WireGuard family, an inbound packet for VLESS.
     ///

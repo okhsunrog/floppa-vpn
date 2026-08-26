@@ -11,7 +11,6 @@ use crate::actor::types::TunnelParams;
 #[derive(Debug, Clone)]
 pub struct Started {
     pub params: TunnelParams,
-    pub autonomous: bool,
 }
 
 /// The descriptor's life in this service: not yet established, held, or already handed to a
@@ -51,9 +50,10 @@ pub enum GenerationPhase {
 /// "the TUN could not be established" and "the service failed" were all a socket that would not
 /// connect, and the caller could only wait and guess.
 pub struct ServiceState {
-    /// Identity of this service start, minted per start by whoever asked for it — the UI's
-    /// [`ServiceGenerations`](crate::autostart::ServiceGenerations), or the reserved
-    /// autonomous range for a start the system issued. Never an intent epoch.
+    /// Identity of this service start, minted per start by
+    /// [`ServiceGenerations`](crate::autostart::ServiceGenerations). Never an intent epoch — an
+    /// epoch is shared by every protocol and pass of one connect cycle, and restarts at 1 in each
+    /// process.
     pub generation: u64,
     /// The descriptor handed over by `VpnService.Builder.establish()`, once it has been.
     tun_fd: std::sync::Mutex<FdSlot>,

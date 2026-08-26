@@ -83,11 +83,7 @@ async fn bring_up(
 
     match result.map_err(|e| e.to_string()) {
         Ok(()) => {
-            info!(
-                protocol = %config.protocol(),
-                autonomous = started.autonomous,
-                "tunnel started"
-            );
+            info!(protocol = %config.protocol(), "tunnel started");
             service.set_started(started);
             service.advance_to(GenerationPhase::Started);
             Ok(())
@@ -152,7 +148,6 @@ impl VpnBackend for AndroidServiceBackend {
             endpoint,
             Started {
                 params: params.clone(),
-                autonomous: false,
             },
         )
         .await
@@ -204,7 +199,6 @@ impl VpnBackend for AndroidServiceBackend {
                 address: m.address,
                 connected_secs,
                 params: started.as_ref().map(|s| s.params.clone()),
-                autonomous: started.as_ref().is_some_and(|s| s.autonomous),
                 silent_secs,
             }
         });

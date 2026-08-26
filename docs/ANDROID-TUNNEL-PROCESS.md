@@ -17,9 +17,10 @@ reliable:
 - **The UI process is killed freely.** `:vpn` outlives it by design, so after a swipe-close the
   tunnel runs with nobody watching it at all.
 - **Two authorities.** `:vpn` can start a tunnel by itself (always-on, boot, lockdown) while the
-  UI's intent says Down. That is modelled today by *adoption* — a decision table row that promotes
-  the UI's intent to match what the system did. It works, but it exists only because the intent is
-  in the wrong process.
+  UI's intent says Down. That was modelled by *adoption* — a decision table row promoting the UI's
+  intent to match what the system did. It worked, but it existed only because the intent was in the
+  wrong process; once the actor moved, a system start raises the intent directly and the row was
+  never taken again. It is gone (stage 1c).
 
 The fix is to put the actor where the tunnel is. `:vpn` is a foreground service while a tunnel is
 up: it is never frozen, and it is the thing Android restarts.
@@ -149,13 +150,14 @@ modelled directly:
 | --- | --- | --- |
 | the user | RPC `set_intent` | exactly what was asked |
 | the system | `onStartCommand` with the VPN action, boot, or lockdown | raised to Up from the last-good order and rules |
-| a wipe | RPC `Forget` | Down, configs cleared — nothing can come back |
+| a wipe | RPC `clear_configs` | Down, configs and bundle cleared — nothing can come back |
 
 An ordinary Disconnect still stops the tunnel, and if always-on is on Android will start the
 service again and the tunnel with it. That is the current behaviour and it is the right one: whether
 an always-on tunnel comes back is the system toggle's decision, not the app's, and the app fighting
 it is what produced a restart loop once before. The persisted intent replaces `autostart.json`;
-`Forget` clearing it is what keeps a logged-out account's tunnel from coming back.
+a wipe clearing it is what keeps a logged-out account's tunnel from coming back — by leaving the
+system nothing to start from, not by any flag the table reads.
 
 ### Consent
 
@@ -275,15 +277,25 @@ becomes a state, so it costs one binder call and produces no publish.
 - **1b — run it in `:vpn`.** The RPC grows the actor's command surface plus a long-polled
   `state_since(seq)`; the UI gets the remote handle. Kotlin gains bind-for-lifetime and
   establish-on-demand: the start intent no longer carries a TUN spec, because the actor derives it.
-- **1c — retire what the move makes dead.** With one actor in the tunnel's own process, several
-  things exist only to describe a world that no longer occurs:
-  - `Started.autonomous` and `RunningTunnel.autonomous` are always false — every tunnel is started
+- **1c — retire what the move makes dead. (Landed.)** With one actor in the tunnel's own process,
+  a whole axis stopped occurring, and every deletion below was provably a no-op before it was made:
+  `autonomous` had exactly one construction value and `forget` exactly one reader.
+  - `Started.autonomous` and `RunningTunnel.autonomous` were always false — every tunnel is started
     by the actor, and a start the system issues reaches it as an intent like any other.
-  - Table row **2a** (adopt a tunnel the system started) is therefore unreachable, and so is the
-    `AdoptAutonomous` effect it emits. Row **2b** — a tunnel with no intent — can now only be
-    reached by a bug: the tunnel dies with the process that decides about it.
-  - Service *generations* still earn their keep (a descriptor arrives asynchronously and must name
-    what it answers), but they no longer need a reserved range or a persisted counter.
+  - Table row **2a** (adopt a tunnel the system started) was therefore unreachable, and so was the
+    `AdoptAutonomous` effect it emitted. Both gone; a tombstone comment holds 2a's place so the
+    surviving row numbers, which the tests and this document cite, stay stable.
+  - `Intent::Down { forget }`, `Intent::is_forget()` and `IntentRequest::Forget` went with it: the
+    flag existed only for 2a's guard. **What a wipe does is unchanged**, and it is worth saying
+    where that now lives — `clear_configs` goes Down, waits for quiescence, empties the store and
+    removes the autostart bundle, so a later system start finds nothing to raise an intent from and
+    stops the service. The empty store is the mechanism, not a flag on the intent.
+  - Row **2b** — a tunnel with no intent — stays, and is now unconditional. It should be
+    unreachable (the tunnel dies with the process that decides about it), which is exactly why it
+    is kept: it costs one match arm, and what it catches is a tunnel nothing accounts for.
+  - Service *generations* earn their keep (a descriptor arrives asynchronously and must name what
+    it answers). They never had a reserved range or a persisted counter — a comment in
+    `service_state.rs` claimed one; it was describing something that was never built.
   - `TunnelInfo`, `RunningInfo` and the `starting`/`tun_ready` fields the old RPC carried are gone
     already; what remains is the `ServiceRegistry` that replaced them.
 

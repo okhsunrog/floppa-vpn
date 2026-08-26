@@ -35,15 +35,6 @@ fn up_intent(epoch: u64, order: &[Protocol], params: Option<TunnelParams>) -> In
 fn down(epoch: u64) -> Intent {
     Intent::Down {
         epoch: IntentEpoch(epoch),
-        forget: false,
-    }
-}
-
-/// The Down a wipe issues: it must leave nothing running, whoever started it.
-fn forget(epoch: u64) -> Intent {
-    Intent::Down {
-        epoch: IntentEpoch(epoch),
-        forget: true,
     }
 }
 
@@ -59,7 +50,6 @@ fn running(protocol: Protocol) -> World {
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),
         params: None,
-        autonomous: false,
         // Answering. Silence is a separate axis, exercised by its own tests.
         silent_secs: Some(0),
     })
@@ -78,6 +68,10 @@ fn running_with(protocol: Protocol, params: TunnelParams) -> World {
 
 /// A tunnel the Android service brought up by itself from the autostart bundle: it reports the
 /// rules it was built with and a generation no UI process can have minted.
+///
+/// Nothing in the table distinguishes it from any other running tunnel any more — there used to be
+/// a flag, and row 2a read it — but it is still the world a system start produces, and the
+/// adoption rows below are what has to handle it.
 fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
     World::Running(RunningTunnel {
         protocol,
@@ -86,7 +80,6 @@ fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
         address: "10.0.0.2/32".into(),
         connected_secs: Some(30),
         params: Some(params),
-        autonomous: true,
         silent_secs: Some(0),
     })
 }
@@ -222,37 +215,18 @@ fn a_tunnel_nobody_wants_is_torn_down() {
 }
 
 #[test]
-fn a_tunnel_the_system_started_by_itself_is_adopted_rather_than_killed() {
-    // Whether always-on restarts the service is the system toggle's decision, not ours. Killing
-    // the tunnel it brought back put the app in a fight with the OS — restart, kill, restart —
-    // with the UI claiming Disconnected throughout. Adopting it shows what is true, and leaves
-    // stopping it as an explicit act of the user's.
-    let rules = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]);
+fn a_tunnel_the_system_started_is_torn_down_like_any_other_when_nobody_wants_one() {
+    // There used to be a row above this one that adopted it instead, on a flag saying the system
+    // had started it. Both are gone: a system start now raises the *intent* through
+    // `nativeSystemStart`, so by the time a tunnel exists it is one we asked for, and a running
+    // tunnel under a Down intent is unambiguous again.
     let d = go(
         &Status::Idle,
         &down(7),
-        &autonomous(AWG, rules.clone()),
-        t0(),
-    );
-    assert!(matches!(d.next, Status::Idle), "nothing is torn down");
-    assert!(!has_stop_foreign(&d));
-    match d.effects.as_slice() {
-        [Effect::AdoptAutonomous { protocol, params }] => {
-            assert_eq!(*protocol, AWG);
-            assert_eq!(params.as_ref(), Some(&rules), "with the rules it reports");
-        }
-        other => panic!("expected the intent to be promoted, got {other:?}"),
-    }
-}
-
-#[test]
-fn a_wipe_stops_even_a_tunnel_the_system_started() {
-    // Forgetting the account is the one Down that has to leave nothing running, whoever started
-    // it: an always-on tunnel surviving a logout is the previous account's tunnel.
-    let d = go(
-        &Status::Idle,
-        &forget(7),
-        &autonomous(AWG, TunnelParams::default()),
+        &autonomous(
+            AWG,
+            TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]),
+        ),
         t0(),
     );
     assert!(matches!(

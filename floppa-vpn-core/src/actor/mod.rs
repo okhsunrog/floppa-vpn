@@ -369,7 +369,14 @@ impl TunnelActor {
                 // whatever status the caller last observed — which is how a live adopted tunnel
                 // could survive being forgotten. The wipe itself happens in `settle_pending`,
                 // once the tick issued below has confirmed Idle.
-                let _ = self.accept_intent(IntentRequest::Forget);
+                //
+                // An ordinary Down, and it used to be a distinct `Forget` that the table read to
+                // decide whether an always-on tunnel could be adopted back. Nothing reads it now:
+                // what makes a wipe beat always-on is the empty store it leaves behind. The system
+                // is free to start the service again, `nativeSystemStart` raises the intent from
+                // the autostart bundle — and there is no bundle and no config, so the actor stops
+                // instead of connecting the account that was just forgotten.
+                let _ = self.accept_intent(IntentRequest::Down);
                 self.pending_clear
                     .push((reply, Instant::now() + self.policy.settle_timeout));
                 Reconcile::Yes
@@ -503,14 +510,7 @@ impl TunnelActor {
         let epoch = self.mint_epoch();
 
         let intent = match request {
-            IntentRequest::Down => Intent::Down {
-                epoch,
-                forget: false,
-            },
-            IntentRequest::Forget => Intent::Down {
-                epoch,
-                forget: true,
-            },
+            IntentRequest::Down => Intent::Down { epoch },
             IntentRequest::Up { order, params } => {
                 if order.is_empty() {
                     return Err(IntentError::EmptyOrder);
@@ -916,24 +916,7 @@ impl TunnelActor {
 
             Effect::DemoteIntent => {
                 let epoch = self.intent.epoch();
-                self.intent = Intent::Down {
-                    epoch,
-                    forget: false,
-                };
-            }
-
-            // The one effect that promotes an intent, and the reason it exists at all: a tunnel
-            // the system started on its own is not a foreign tunnel to be killed. The epoch is
-            // minted here because the table never invents one.
-            Effect::AdoptAutonomous { protocol, params } => {
-                let epoch = self.mint_epoch();
-                info!(%protocol, %epoch, "adopting the tunnel the system started on its own");
-                self.intent = Intent::Up(UpIntent {
-                    epoch,
-                    order: vec![protocol],
-                    params,
-                });
-                self.last_outcome = None;
+                self.intent = Intent::Down { epoch };
             }
 
             Effect::Resolve { epoch, outcome } => self.publish_outcome(epoch, outcome),
@@ -1050,8 +1033,9 @@ impl TunnelActor {
         if !self.pending_clear.is_empty() {
             let persisted = self.edit_configs(|c| c.clear());
             info!("configs cleared once the tunnel was down; answering once the store is wiped");
-            // The last-good intent goes too: an always-on start that found it after a Forget
-            // would ask for a tunnel the user has just asked to be rid of.
+            // The last-good intent goes too, and this is what makes a wipe beat always-on: a
+            // system start that found the bundle would ask for a tunnel the user has just asked
+            // to be rid of.
             #[cfg(target_os = "android")]
             if let Ok(dir) = crate::config::config_dir() {
                 tokio::task::spawn_blocking(move || crate::autostart::remove(&dir));

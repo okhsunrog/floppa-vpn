@@ -112,7 +112,6 @@ impl VpnBackend for FakeBackend {
             address: config.address(),
             connected_secs: Some(0),
             params: None,
-            autonomous: false,
             silent_secs: Some(0),
         });
         Ok(())
@@ -685,7 +684,6 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
         address: "10.0.0.2/32".into(),
         connected_secs: Some(1),
         params: None,
-        autonomous: false,
         silent_secs: Some(0),
     });
     // Let the observer see it.
@@ -842,7 +840,6 @@ async fn disconnecting_an_adopted_tunnel_stops_it_before_down_is_resolved() {
             address: "10.0.0.2/32".into(),
             connected_secs: Some(42),
             params: None,
-            autonomous: false,
             silent_secs: Some(0),
         },
     );
@@ -913,7 +910,6 @@ async fn rebuilding_an_adopted_tunnel_stops_it_before_building_the_new_one() {
             address: "10.0.0.2/32".into(),
             connected_secs: Some(9),
             params: None,
-            autonomous: false,
             silent_secs: Some(0),
         },
     );

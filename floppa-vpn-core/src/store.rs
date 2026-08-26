@@ -54,7 +54,7 @@ struct PersistOp {
 ///
 /// The actor answers "the configs are forgotten" through this rather than as soon as its in-memory
 /// copy is empty: the previous, synchronous `clear()` meant "deleted" when it returned, and the
-/// asynchronous one silently stopped meaning that — an app quit right after Forget left the keys
+/// asynchronous one silently stopped meaning that — an app quit right after a wipe left the keys
 /// on disk.
 #[derive(Debug)]
 pub struct Persisted(Option<oneshot::Receiver<()>>);

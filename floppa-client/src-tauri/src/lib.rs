@@ -303,7 +303,7 @@ pub fn run() {
                         Ok(()) => info!("VPN cleanup complete"),
                         Err(_) => warn!("timed out waiting for the tunnel to settle on exit"),
                     }
-                    // The store writes from a task of its own, so a Forget or an import issued
+                    // The store writes from a task of its own, so a wipe or an import issued
                     // just before quitting may still be in its queue. Bounded, because a keyring
                     // write can block on an unlock dialog nobody is left to answer.
                     match tokio::time::timeout(

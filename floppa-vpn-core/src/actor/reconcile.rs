@@ -50,21 +50,6 @@ pub enum Effect {
     ResetSpeed,
     /// Persist "this protocol actually worked". Emitted only on success.
     RememberWinner(Protocol),
-    /// Take over a tunnel the `:vpn` service started by itself — always-on, boot, a lockdown
-    /// restore — by promoting the intent to Up for exactly that tunnel.
-    ///
-    /// Whether the service restarts is the system toggle's decision, not ours (see
-    /// `vpn/autostart.rs`), so killing it as a foreign tunnel put the app in a fight with the OS:
-    /// the system brought the tunnel back, the UI stopped it, and around again — with a
-    /// notification on every turn and the UI showing Disconnected the whole time. Adopting it
-    /// instead means the UI shows what is true, and a Disconnect is once more an explicit act of
-    /// the user's. A wipe still stops it: see [`Intent::is_forget`].
-    ///
-    /// The actor mints the epoch; the table never invents one.
-    AdoptAutonomous {
-        protocol: Protocol,
-        params: Option<TunnelParams>,
-    },
     /// Demote the intent to Down at the same epoch, once a caller-issued Up has been given up
     /// on: an Up intent with params means the actor is working toward Up. The startup intent is
     /// the deliberate exception — it carries no params, so it rests in Idle without being
@@ -382,17 +367,14 @@ pub fn reconcile(
         Status::Idle => match (relate(status, intent), world) {
             // 1, 3: nothing of ours, nothing wanted.
             (Rel::Down, World::Clear | World::Dark) => Decision::stay(status),
-            // 2a: the system brought a tunnel back by itself (always-on, boot, a lockdown
-            // restore). Nobody here asked for it, and that is precisely why it is not ours to
-            // kill — so it is adopted, and stopping it stays a decision the user makes.
-            (Rel::Down, World::Running(rt)) if rt.autonomous && !intent.is_forget() => {
-                Decision::stay(status).with(Effect::AdoptAutonomous {
-                    protocol: rt.protocol,
-                    params: rt.params.clone(),
-                })
-            }
-            // 2b: a tunnel exists but nobody wants one — including a system-started one when the
-            // Down is a wipe, which has to leave nothing running whoever started it.
+            // 2a is gone, and its absence is a design decision landing rather than a gap. It
+            // adopted a tunnel the system had started that no intent of ours covered — and since
+            // the actor moved into `:vpn`, no such tunnel exists: a system start reaches
+            // `nativeSystemStart`, which raises the *intent*, so whatever comes up is ours from
+            // before it exists. The flag it turned on was never set again.
+            //
+            // 2b: a tunnel exists and nobody wants one. Unconditional now, which is what it had
+            // already become in fact.
             (Rel::Down, World::Running(_)) => {
                 Decision::to(unwinding(None, UnwindReason::ForeignTunnel)).with(Effect::Unwind {
                     extra: Some(ExtraUndo::StopBackend),
