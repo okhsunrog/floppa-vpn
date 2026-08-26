@@ -12,7 +12,7 @@ There are three log sources, each producing tracing events with a specific targe
 
 | Source | Target | Example |
 |--------|--------|---------|
-| Our Rust code (`tracing::info!()` etc.) | `floppa_client_lib::module::path` | `INFO floppa_client_lib::vpn::config: WG config loaded` |
+| Our Rust code (`tracing::info!()` etc.) | the module path it is written in — `floppa_vpn_core::…` for the tunnel, `floppa_client_lib::…` for the app shell | `INFO floppa_vpn_core::store: stored config` |
 | Frontend JS (`console.*`) | `webview` | `INFO webview: [web] Frontend initialized` |
 | Rust `log` crate (keyring, etc.) | `log` | `DEBUG log: creating entry with service floppa-vpn` |
 
@@ -71,7 +71,9 @@ Both profiles start from `EnvFilter::from_default_env()` with a `warn` base leve
 
 | Target | `Normal` | `Verbose` |
 |--------|----------|-----------|
-| `floppa_client_lib` (our Rust code) | `info` | `trace` |
+| `floppa_vpn_core` (the tunnel: actor, backends, platform, rollback, store) | `info` | `trace` |
+| `floppa_client_lib` (the app's own shell) | `info` | `trace` |
+| `floppa_cli` | `info` | `trace` |
 | `gotatun` (WireGuard/AmneziaWG tunnel) | `info` | `trace` |
 | `shoes_lite` (VLESS tunnel) | `info` | `trace` |
 | `webview` (frontend `console.*`) | `info` | `trace` |
