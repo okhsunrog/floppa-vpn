@@ -253,6 +253,14 @@ tunnel generation all stayed exactly as they were. No start, no callback, no rev
 on warning about a lockdown that was already off, and would equally have stayed silent about one
 just switched on, which is the direction that costs someone their connection.
 
+The two directions are not symmetric, which is worth knowing before testing this: switching
+lockdown **on** re-establishes the tunnel (the TUN interface index moved 393 → 397), so that
+direction is picked up by the ordinary post-`establish()` read and proves nothing about the poll.
+Switching it **off** leaves the tunnel entirely alone — same index, same pid — and is the direction
+that was broken. Verified there: `mode=Lockdown` at 21:12:28.576 and `mode=AlwaysOn` at
+21:16:28.576, four minutes and sixteen poll intervals apart, with the interface index unchanged at
+397 across both.
+
 So while a tunnel is up the query is repeated every `VPN_MODE_POLL_MS` (15 s), and only while one
 is up — the query cannot be answered otherwise, which bounds the polling to exactly the window the
 answer is meaningful in. A poll that finds nothing changed is dropped by the actor before it
