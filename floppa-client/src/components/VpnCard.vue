@@ -17,15 +17,8 @@ const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
-const {
-  setupPhase,
-  setupError,
-  reprovisioning,
-  meQueryError,
-  noteServerReachable,
-  setupAutoPeer,
-  handleOutcome,
-} = usePeerProvisioning()
+const { setupPhase, setupError, meQueryError, noteServerReachable, setupAutoPeer, handleOutcome } =
+  usePeerProvisioning()
 
 /** The store's typed error, worded. */
 const vpnErrorText = computed<string | null>(() =>
@@ -44,12 +37,13 @@ watch(
 /**
  * The one thing the button reads.
  *
- * `reprovisioning` used to reach only the label, so the button read "Connecting" with no spinner
- * and stayed clickable — the same split between label and spinner this whole design exists to
- * remove, just the other way round. Anything that should make the button look busy has to arrive
- * through here.
+ * It used to also carry "we are talking to the server about a peer", from a flag that reached
+ * only the label — so the button read "Connecting" with no spinner and stayed clickable. That
+ * work is in Rust now and the tunnel's own phase covers it: a repair that leads anywhere ends in
+ * a reconnect, which is busy for the ordinary reason. Anything that should make the button look
+ * busy still has to arrive through here.
  */
-const busy = computed(() => vpn.isBusy || reprovisioning.value)
+const busy = computed(() => vpn.isBusy)
 
 // Clear offline banner when server becomes reachable again
 watch(meQueryError, (err) => {
@@ -120,12 +114,11 @@ watch(
 )
 
 /**
- * The label. Its spinner comes from `busy`, which is derived from the same two values this reads,
- * so the two cannot describe different situations — which is what used to produce a spinner
- * sitting next to the word "Connect".
+ * The label. Its spinner comes from `busy`, which is derived from the same value this reads, so
+ * the two cannot describe different situations — which is what used to produce a spinner sitting
+ * next to the word "Connect".
  */
 const buttonLabel = computed(() => {
-  if (reprovisioning.value) return t('vpn.connecting')
   switch (vpn.phase) {
     // Before anything has been observed we have no answer to give, so the button says so rather
     // than inviting an action whose effect we cannot predict.
@@ -369,7 +362,7 @@ const healthDotClass = computed(() => {
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
         :loading="busy"
-        :disabled="!vpn.hasConfig || vpn.phase === 'unknown' || reprovisioning"
+        :disabled="!vpn.hasConfig || vpn.phase === 'unknown'"
         size="lg"
         class="w-full max-w-[200px] mt-2"
         @click="handleConnect"

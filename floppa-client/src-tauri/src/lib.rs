@@ -241,6 +241,12 @@ pub fn run() {
                 )
             };
 
+            // Repairing a peer the server deleted. Started only where the actor actually is —
+            // on Android that is `:vpn`, and a second watcher here would race the first for the
+            // same dead peer.
+            #[cfg(not(target_os = "android"))]
+            provision::watcher::watch(handle.clone(), spawn.clone());
+
             // The bridge from the actor's state to the UI. It is here rather than inside the actor
             // because emitting a Tauri event is something only this process can do — the actor
             // publishes, and whoever hosts it decides who hears.

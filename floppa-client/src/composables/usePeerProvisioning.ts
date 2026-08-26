@@ -1,4 +1,4 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery } from 'floppa-web-shared/client/@pinia/colada.gen'
@@ -317,19 +317,16 @@ export function createSyncSequencer(state: SetupState, timeoutMs = SYNC_TIMEOUT_
   return { run }
 }
 
-/** What a cycle that ended without a tunnel asks of the card. */
-export type OutcomeAction =
-  | { action: 'ignore' }
-  | { action: 'show_error'; error: VpnError }
-  /** The peer for `protocol` may have been deleted server-side: check, and recreate it if so. */
-  | { action: 'reprovision'; protocol: WgFamilyProtocol }
-  /**
-   * Same check, on a cycle that *did* connect: some other protocol carried it.
-   *
-   * Quiet by design — the tunnel is up, so there is nothing to reconnect and nothing to complain
-   * about. All that is owed is a working peer for next time.
-   */
-  | { action: 'repair'; protocol: WgFamilyProtocol }
+/**
+ * What a cycle that ended without a tunnel asks of the card.
+ *
+ * Repairing a deleted peer is deliberately not here any more. It moved into Rust, into the
+ * process that holds the tunnel — which on Android is the one Android does *not* freeze — so a
+ * peer deleted while the phone is in a pocket is replaced without anyone opening the app. Two
+ * implementations would both notice the same dead peer and both ask the server for a
+ * replacement, so this one is gone rather than merely idle.
+ */
+export type OutcomeAction = { action: 'ignore' } | { action: 'show_error'; error: VpnError }
 
 /**
  * Decide what a finished cycle means.
@@ -344,14 +341,10 @@ export function planOutcomeResponse(outcome: CycleOutcome): OutcomeAction {
   // through the generated union, and the `never` below is what makes forgetting to plan for it a
   // compile error instead of a silent `ignore`.
   switch (outcome.outcome) {
-    case 'connected': {
-      // Connected does not mean nothing went wrong: the ladder tries protocols in order, so
-      // AmneziaWG can fail to verify — its peer deleted server-side — and WireGuard carry the
-      // connection a second later. That dead peer is worth repairing while the tunnel is up,
-      // quietly, instead of leaving it to be discovered on some later connect.
-      const dead = outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
-      return dead && dead !== 'vless' ? { action: 'repair', protocol: dead } : { action: 'ignore' }
-    }
+    // Connected is connected. A protocol the ladder stepped over may have lost its peer, and
+    // that is worth fixing — but it is fixed in Rust now, quietly, and there is nothing here to
+    // say about a tunnel that is up.
+    case 'connected':
     case 'cancelled':
     case 'down':
       return { action: 'ignore' }
@@ -360,97 +353,24 @@ export function planOutcomeResponse(outcome: CycleOutcome): OutcomeAction {
       return { action: 'show_error', error: { kind: 'unwind_failed' } }
 
     case 'exhausted': {
-      const verifyFailed = outcome.failures.find((f) => f.error.kind === 'verify_failed')?.protocol
-      if (!verifyFailed) {
-        // Nothing to re-provision: the probes failed for reasons a new peer would not fix. Show
-        // the last probe's typed error — it is the one for the protocol the user most likely
-        // cares about, and every kind it can carry has words in the locale.
-        const failure = outcome.failures.at(-1)
-        if (failure && failure.error.kind !== 'cancelled') {
-          return { action: 'show_error', error: { kind: 'attempt_failed', failure } }
-        }
-        return { action: 'ignore' }
+      // The last probe's typed error: it is the one for the protocol the user most likely cares
+      // about, and every kind it can carry has words in the locale. A verification failure is
+      // shown like any other — Rust may be replacing the peer behind it, and if that works the
+      // reconnect it asks for replaces this with a connected state.
+      const failure = outcome.failures.at(-1)
+      if (failure && failure.error.kind !== 'cancelled') {
+        return { action: 'show_error', error: { kind: 'attempt_failed', failure } }
       }
-      return planForVerifyFailure(verifyFailed)
+      return { action: 'ignore' }
     }
 
     case 'lost_gave_up':
-      return planForVerifyFailure(outcome.protocol)
+      return { action: 'show_error', error: { kind: 'connection_failed' } }
 
     default: {
       const unplanned: never = outcome
       return unplanned
     }
-  }
-}
-
-/** VLESS has no per-device peer to look up: its config is per-user and never deleted by a peer
- * removal, so a failed VLESS verification is not a "peer gone" signal. */
-function planForVerifyFailure(protocol: Protocol): OutcomeAction {
-  return protocol === 'vless'
-    ? { action: 'show_error', error: { kind: 'connection_failed' } }
-    : { action: 'reprovision', protocol }
-}
-
-/**
- * The same plan with re-provisioning ruled out.
- *
- * For the connect that follows a re-provisioning: the peer has just been recreated, so another
- * verification failure is not evidence that it is missing, and looking it up again would loop.
- * The failure is still shown — which it was not: that connect's outcome was discarded entirely,
- * so a new peer that also failed to verify left the user at "Disconnected" with no reason given.
- */
-export function planWithoutReprovision(outcome: CycleOutcome): OutcomeAction {
-  const plan = planOutcomeResponse(outcome)
-  return plan.action === 'reprovision'
-    ? { action: 'show_error', error: { kind: 'connection_failed' } }
-    : plan
-}
-
-/** After a repair: recreate the peer if it is gone, and say nothing either way. */
-export async function repairPeer(deps: Omit<ReprovisionDeps, 'reconnect'>): Promise<void> {
-  const lookup = await deps.lookup()
-  if (lookup.found !== 'no') return
-  console.info('[provisioning] a protocol we stepped over has lost its peer; recreating it')
-  await deps.resync()
-}
-
-export type ReprovisionOutcome =
-  /** The peer was gone; a new one was provisioned and a connect was requested. */
-  | 'reconnected'
-  /** The peer was gone and re-provisioning left us without any config. */
-  | 'no_config'
-  /** The peer still exists — the failure is elsewhere. */
-  | 'peer_exists'
-  /** The server could not be asked. */
-  | 'unreachable'
-
-export interface ReprovisionDeps {
-  lookup(): Promise<PeerLookup>
-  /** A full sync (`syncPeers` through the sequencer). */
-  resync(): Promise<void>
-  hasConfig(): boolean
-  reconnect(): Promise<void>
-}
-
-/** After a verification failure: find out whether the peer is gone, and if so replace it once. */
-export async function reprovisionPeer(deps: ReprovisionDeps): Promise<ReprovisionOutcome> {
-  console.info('[provisioning] checking whether the peer still exists on the server...')
-  const lookup = await deps.lookup()
-  switch (lookup.found) {
-    case 'no':
-      console.info('[provisioning] peer is gone, recreating it')
-      await deps.resync()
-      if (!deps.hasConfig()) return 'no_config'
-      console.info('[provisioning] got a new config, reconnecting')
-      await deps.reconnect()
-      return 'reconnected'
-    case 'yes':
-      console.info('[provisioning] the peer exists, so the problem is elsewhere')
-      return 'peer_exists'
-    case 'unknown':
-      console.warn('[provisioning] could not reach the server to check the peer')
-      return 'unreachable'
   }
 }
 
@@ -468,12 +388,6 @@ export function usePeerProvisioning() {
 
   const setup = reactive(emptySetupState())
   const sequencer = createSyncSequencer(setup)
-
-  /**
-   * True while we are talking to the server about re-provisioning a peer. Not a tunnel state:
-   * the tunnel is genuinely idle during it, which is why the store does not know about it.
-   */
-  const reprovisioning = ref(false)
 
   const setupPhase = computed(() => setup.phase)
   const setupError = computed<string | null>(() =>
@@ -509,70 +423,16 @@ export function usePeerProvisioning() {
     await sequencer.run(syncPeers(deps(deviceId)))
   }
 
-  /** Carry out everything a plan can ask for except re-provisioning, which needs the sequencer. */
-  function apply(plan: OutcomeAction): void {
-    if (plan.action === 'show_error') vpn.setError(plan.error)
-  }
-
-  /** React to a cycle that ended without connecting. */
-  async function handleOutcome(outcome: CycleOutcome | null): Promise<void> {
+  /** React to a finished cycle: say what went wrong, or say nothing. */
+  function handleOutcome(outcome: CycleOutcome | null): void {
     if (!outcome) return
     const plan = planOutcomeResponse(outcome)
-    if (plan.action === 'repair') {
-      // The tunnel is up. Nothing about this is the user's business, so no spinner and no error:
-      // a repair that cannot be done costs nothing that has not already been lost.
-      const deviceId = vpn.deviceId
-      if (!deviceId) return
-      try {
-        await repairPeer({
-          lookup: () => lookupPeer(api, deviceId, plan.protocol),
-          resync: setupAutoPeer,
-          hasConfig: () => vpn.hasConfig,
-        })
-      } catch (e) {
-        console.warn('[provisioning] could not repair the peer that failed to verify:', e)
-      }
-      return
-    }
-    if (plan.action !== 'reprovision') {
-      apply(plan)
-      return
-    }
-
-    const deviceId = vpn.deviceId
-    if (!deviceId) {
-      // No device identity means no peer to look up. Say so rather than returning in silence and
-      // leaving the card with a disabled button and no explanation.
-      vpn.setError({ kind: 'unexpected', detail: 'this device has no identity yet' })
-      return
-    }
-
-    reprovisioning.value = true
-    try {
-      const result = await reprovisionPeer({
-        lookup: () => lookupPeer(api, deviceId, plan.protocol),
-        resync: setupAutoPeer,
-        hasConfig: () => vpn.hasConfig,
-        reconnect: async () => {
-          const again = await vpn.connect()
-          if (again) apply(planWithoutReprovision(again))
-        },
-      })
-      if (result === 'peer_exists' || result === 'unreachable') {
-        vpn.setError({ kind: 'connection_failed' })
-      }
-    } catch (e) {
-      console.error('[provisioning] peer check failed:', e)
-      vpn.setError({ kind: 'connection_failed' })
-    } finally {
-      reprovisioning.value = false
-    }
+    if (plan.action === 'show_error') vpn.setError(plan.error)
   }
 
   return {
     setupPhase,
     setupError,
-    reprovisioning,
     meQueryError,
     noteServerReachable,
     setupAutoPeer,

@@ -6,8 +6,6 @@ import {
   emptySetupState,
   lookupPeer,
   planOutcomeResponse,
-  planWithoutReprovision,
-  reprovisionPeer,
   syncPeers,
   syncWgFamilyPeer,
   type ProvisioningApi,
@@ -405,27 +403,16 @@ describe('planOutcomeResponse', () => {
     expect(planOutcomeResponse({ outcome: 'down' }).action).toBe('ignore')
   })
 
-  it('repairs the peer of a protocol the ladder stepped over, without disturbing the tunnel', () => {
-    // The device case: AmneziaWG failed to verify because its peer had been deleted, WireGuard
-    // connected, and nothing repaired the dead peer until the next app start.
+  it('says nothing about a cycle that connected, whatever it stepped over on the way', () => {
+    // AmneziaWG failed to verify because its peer had been deleted, WireGuard connected. The
+    // dead peer is worth replacing and Rust does it, in the process the app being closed does
+    // not freeze. There is nothing for the card to show about a tunnel that is up.
     expect(
       planOutcomeResponse({
         outcome: 'connected',
         protocol: 'wireguard',
         adopted: false,
         failures: [verifyFailed('amneziawg')],
-      }),
-    ).toEqual({ action: 'repair', protocol: 'amneziawg' })
-  })
-
-  it('has nothing to repair when the protocol that failed was VLESS', () => {
-    // VLESS has no per-device peer: its config is per-user and a peer removal never touches it.
-    expect(
-      planOutcomeResponse({
-        outcome: 'connected',
-        protocol: 'wireguard',
-        adopted: false,
-        failures: [verifyFailed('vless')],
       }).action,
     ).toBe('ignore')
   })
@@ -437,21 +424,20 @@ describe('planOutcomeResponse', () => {
     })
   })
 
-  it('re-provisions the wg-family protocol whose verification failed, whatever was tried last', () => {
+  it('shows the last probe error on an exhausted cycle, verification failure or not', () => {
+    // A verification failure is shown like any other. Rust may be replacing the peer behind it,
+    // and if that works the reconnect it asks for replaces this with a connected state.
     expect(
       planOutcomeResponse({
         outcome: 'exhausted',
         failures: [verifyFailed('amneziawg'), timedOut],
       }),
-    ).toEqual({ action: 'reprovision', protocol: 'amneziawg' })
-    expect(
-      planOutcomeResponse({ outcome: 'lost_gave_up', protocol: 'wireguard', passes: 3 }),
-    ).toEqual({ action: 'reprovision', protocol: 'wireguard' })
+    ).toEqual({ action: 'show_error', error: { kind: 'attempt_failed', failure: timedOut } })
   })
 
-  it('treats a VLESS verification failure as a plain connection failure', () => {
+  it('reports a tunnel it could not keep up', () => {
     expect(
-      planOutcomeResponse({ outcome: 'exhausted', failures: [verifyFailed('vless')] }),
+      planOutcomeResponse({ outcome: 'lost_gave_up', protocol: 'wireguard', passes: 3 }),
     ).toEqual({ action: 'show_error', error: { kind: 'connection_failed' } })
     expect(planOutcomeResponse({ outcome: 'lost_gave_up', protocol: 'vless', passes: 1 })).toEqual({
       action: 'show_error',
@@ -476,69 +462,5 @@ describe('planOutcomeResponse', () => {
       planOutcomeResponse({ outcome: 'exhausted', failures: [timedOut, cancelled] }).action,
     ).toBe('ignore')
     expect(planOutcomeResponse({ outcome: 'exhausted', failures: [] }).action).toBe('ignore')
-  })
-})
-
-describe('planWithoutReprovision', () => {
-  it('shows a failure instead of looking the peer up again', () => {
-    // The connect that follows a re-provisioning: the peer was just recreated, so a second
-    // verification failure is not evidence that it is missing — and checking again would loop.
-    expect(
-      planWithoutReprovision({ outcome: 'lost_gave_up', protocol: 'wireguard', passes: 3 }),
-    ).toEqual({ action: 'show_error', error: { kind: 'connection_failed' } })
-    expect(
-      planWithoutReprovision({
-        outcome: 'exhausted',
-        failures: [{ protocol: 'amneziawg', error: { kind: 'verify_failed' as const }, pass: 1 }],
-      }),
-    ).toEqual({ action: 'show_error', error: { kind: 'connection_failed' } })
-  })
-
-  it('leaves every other plan alone', () => {
-    expect(planWithoutReprovision({ outcome: 'unwind_failed' })).toEqual({
-      action: 'show_error',
-      error: { kind: 'unwind_failed' },
-    })
-    expect(planWithoutReprovision({ outcome: 'cancelled' }).action).toBe('ignore')
-  })
-})
-
-describe('reprovisionPeer', () => {
-  function harness(found: 'yes' | 'no' | 'unknown', hasConfigAfter = true) {
-    const calls: string[] = []
-    const outcome = reprovisionPeer({
-      lookup: async () => {
-        calls.push('lookup')
-        return found === 'yes' ? { found, id: 1 } : { found }
-      },
-      resync: async () => void calls.push('resync'),
-      hasConfig: () => hasConfigAfter,
-      reconnect: async () => void calls.push('reconnect'),
-    })
-    return { calls, outcome }
-  }
-
-  it('re-provisions exactly once and reconnects when the peer is gone', async () => {
-    const { calls, outcome } = harness('no')
-    expect(await outcome).toBe('reconnected')
-    expect(calls).toEqual(['lookup', 'resync', 'reconnect'])
-  })
-
-  it('does not reconnect when re-provisioning produced no config', async () => {
-    const { calls, outcome } = harness('no', false)
-    expect(await outcome).toBe('no_config')
-    expect(calls).toEqual(['lookup', 'resync'])
-  })
-
-  it('leaves an existing peer alone', async () => {
-    const { calls, outcome } = harness('yes')
-    expect(await outcome).toBe('peer_exists')
-    expect(calls).toEqual(['lookup'])
-  })
-
-  it('reports an unreachable server without touching the peer', async () => {
-    const { calls, outcome } = harness('unknown')
-    expect(await outcome).toBe('unreachable')
-    expect(calls).toEqual(['lookup'])
   })
 })

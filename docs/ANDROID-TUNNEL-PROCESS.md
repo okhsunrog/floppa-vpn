@@ -48,7 +48,8 @@ Independent of where the actor lives, and useful on desktop too.
    what makes traffic accounting and connectivity checks correct for the apps inside the tunnel.
 4. **A connected cycle reports what it stepped over.** The ladder can fail AmneziaWG's verification
    — its peer deleted server-side — and connect WireGuard a second later. The dead peer is now
-   repaired quietly while the tunnel stays up.
+   repaired quietly while the tunnel stays up, by `provision/watcher.rs` in the process that holds
+   the actor.
 
 Stage 0 leaves one hole, and it is the reason for stage 1: *detection* runs in the actor, and the
 actor is still in the frozen process.
@@ -169,6 +170,11 @@ Replaying the incident that started all this — a peer deleted on the server wh
 up — took three runs, because the actor half worked immediately and the frontend half was broken
 in two separate ways. Both were invisible until a *background reconnect that succeeds* became a
 thing that happens, which is exactly what this branch introduced.
+
+(The frontend half is gone now: the repair lives in `provision/watcher.rs`, in the process that
+holds the actor, and the frontend neither repairs nor knows about repairs. The two bugs below are
+kept because the second one — outcome identity — is a property of the actor and still load-bearing
+for whoever reads outcomes.)
 
 First: `VpnCard`'s outcome watcher returned early unless the outcome "needed attention", and a
 cycle that connected does not — so the repair could never run for the reconnects it exists for.

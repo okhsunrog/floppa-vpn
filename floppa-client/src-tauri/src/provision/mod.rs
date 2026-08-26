@@ -5,6 +5,7 @@
 //! processes read, and the reading of a finished connect cycle as "a peer may have been deleted".
 
 pub mod session;
+pub mod watcher;
 
 use floppa_api_client::PeerProtocol;
 
