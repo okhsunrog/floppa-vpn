@@ -267,8 +267,14 @@ class FloppaVpnService : VpnService() {
             // changes no phase, so nothing would ever stand this service back down. It gets a
             // deadline instead, cancelled the moment the actor is visibly working.
             ACTION_KEEP_ALIVE -> {
-                startVpnForeground(connected = false)
-                awaitWork()
+                val phase = VpnPhaseHolder.current()
+                startVpnForeground(connected = phase == VpnPhase.Connected)
+                // Only wait for work when none is under way. The UI starts this service and asks
+                // for a tunnel over the socket, and the two race: a request that lands first can
+                // leave the actor with nothing further to say, and a deadline armed against that
+                // would stand a live tunnel down ten seconds later. The phase this process last
+                // heard is the cheapest honest answer to "is anything happening".
+                if (phase == VpnPhase.Off) awaitWork()
             }
 
             // A start the system issued — always-on, boot, a lockdown restore — or the tile, which
@@ -553,13 +559,21 @@ class FloppaVpnService : VpnService() {
      * Two things follow from it. The notification is the only UI a tunnel has while the app is
      * closed, so what it says is written from the one place that knows what is true — not by
      * whatever last touched the tunnel, which is how it used to claim "connected" for the whole of
-     * a start that went on to fail. And `busy` — the actor is working on something — is what
-     * cancels the deadline a bare start armed: from here on the service stands down when the actor
-     * says so, not when a timer runs out.
+     * a start that went on to fail. And any phase that is not "we have not looked yet" cancels the
+     * deadline a bare start armed: from here on the service stands down when the actor says so, not
+     * when a timer runs out.
+     *
+     * `busy || connected` rather than `busy`, and the difference is a tunnel torn down ten seconds
+     * after it came up. The UI starts this service and asks for a tunnel over the socket, and the
+     * two race: the request can be accepted and the tunnel *connected* before the start intent is
+     * delivered here. The deadline is then armed against an actor that has already finished its
+     * work, and the only state left to arrive is Connected — which is not busy. `(false, false)` is
+     * the one thing that does not count, because it means the actor has not observed anything yet
+     * and so has not been given anything to do.
      */
     fun setState(busy: Boolean, connected: Boolean) {
         mainHandler.post {
-            if (busy) cancelAwaitWork()
+            if (busy || connected) cancelAwaitWork()
             // Published before the foreground check: the tile follows the tunnel, not the
             // notification, and the actor can be working in a service the UI has only bound.
             VpnPhaseHolder.publish(if (connected) VpnPhase.Connected else VpnPhase.Busy)
