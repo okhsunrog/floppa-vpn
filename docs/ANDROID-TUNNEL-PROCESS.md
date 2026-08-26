@@ -121,6 +121,30 @@ fulfil until the user next opens the app — and the app opening is exactly when
 Revocation is the same story from the other side: the user has said no, and an app that keeps a
 pending request alive across it is arguing.
 
+### Always-on, and what it does not mean
+
+Always-on VPN does not mean "the system re-establishes the tunnel whenever it drops". `isAlwaysOn`
+says what it does mean: *"the system ensures that the service is always running by restarting it
+when necessary, e.g. after reboot"* — boot, an app update, a process that died. A deliberate stop
+is respected, and Android's own guide says so: *"A person using the device can stop your service by
+using your app's UI. Stop the service instead of just closing the connection."* Which is why
+`shutdownService()` calls `stopSelf` rather than only closing the descriptor.
+
+Verified on a device with always-on enabled: disconnect from the tile, and two minutes later the
+tunnel is still down and the service still gone.
+
+So the pieces line up like this. Every start says who asked — `ACTION_KEEP_ALIVE` from the UI,
+`ACTION_TILE_START` from the tile, and an unflagged `android.net.VpnService` from the system. That
+flagging is the trick the VPN guide recommends for telling them apart, and it predates
+`VpnService.isAlwaysOn()` (API 29), which would answer the same question directly and which we do
+not yet use. `autostart.json` is written on every successful connect and removed only by a wipe, so
+the one non-obvious consequence is that **a manual disconnect does not survive a reboot** while
+always-on is on — which is precisely what the user asked Android for.
+
+What we are blind to is lockdown. With "Block connections without VPN" enabled, a manual disconnect
+leaves the device with no network at all, and nothing here warns before it or tries harder to come
+back under it. `isLockdownEnabled()` is the input that is missing.
+
 ### Staging
 
 - **1a — make the actor host-agnostic.** No `tauri::AppHandle` in the actor core: spawning is
