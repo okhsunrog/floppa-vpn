@@ -227,6 +227,24 @@ before it is pressed. Nothing in the decision table reads the mode: what the sys
 tunnel that stops is the system's business, and the change here is that a person is told what
 stopping will cost.
 
+**Lockdown cancels split tunneling outright, and the system does not mention it.**
+`Vpn.setVpnForcedLocked` builds the blocked UID ranges from `mLockdownAllowlist + mPackage` and
+passes `allowedApplications: null` — the VPN's own app lists are not consulted at all. So an app
+excluded from the tunnel does not fall back to the plain network the way this app's split-tunnelling
+card promises; it gets nothing. Confirmed on the device, with 46 apps excluded and lockdown on:
+
+```
+Lockdown filtering rules:
+    UIDs: 1-10320        our app is 10321, and 10321 is the only gap
+    UIDs: 10322-20320    (20321 is the same app in the second profile)
+    UIDs: 20322-99999
+```
+
+An excluded app — Ozon, uid 10338 — sits inside the second range. The only way out is Android's own
+`always_on_vpn_lockdown_whitelist`, which is set in Settings and not by us. The split-tunnelling card
+says so when the mode is `Lockdown`: it is not a caveat about those settings, it is the reason they
+are currently doing nothing.
+
 The residual window is a Settings toggle that somehow does not reconfigure the VPN — changing
 always-on or lockdown normally restarts the service, which is a push. A stale value costs a wrong
 caption, never a wrong decision. A read taken inside the disconnect flow itself is where a

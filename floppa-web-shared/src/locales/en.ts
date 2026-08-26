@@ -392,6 +392,9 @@ export default {
     autoSelectHelp:
       'With auto-select on, the app tries protocols in the order above and stays on the first that connects. Your last working protocol is tried first; Reset forgets it so probing starts from the top again. Turn auto-select off to pick a protocol manually.',
     splitTunneling: 'Split Tunneling',
+    lockdownOverridesSplit: 'Android is ignoring these rules',
+    lockdownOverridesSplitHint:
+      '"Block connections without VPN" is on, and the system then allows only this app onto the network. Apps excluded here get no connection at all rather than a direct one. Turn that setting off, or add them to Android\u2019s own bypass list.',
     splitTunnelingDescription: 'Control which apps use the VPN tunnel',
     modeAll: 'All apps',
     modeAllDescription: 'All apps use VPN',

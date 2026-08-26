@@ -12,6 +12,17 @@ const vpn = useVpnStore()
 const settings = useSettingsStore()
 const { handleOutcome } = usePeerProvisioning()
 
+/**
+ * Whether the system is overriding these rules entirely.
+ *
+ * Under lockdown Android computes its filter as "everything except the VPN app itself, plus the
+ * system's own allowlist" — `setVpnForcedLocked` builds the blocked ranges from
+ * `mLockdownAllowlist + mPackage` and never looks at `allowedApplications` or
+ * `disallowedApplications`. So an app excluded here does not fall back to the plain network as
+ * this card promises: it gets no network at all. Worth saying where the promise is made.
+ */
+const overriddenByLockdown = computed(() => vpn.state.vpn_mode === 'lockdown')
+
 const searchQuery = ref('')
 const showSystemApps = ref(false)
 
@@ -92,6 +103,20 @@ function selectMode(mode: SplitMode) {
     <p class="text-sm text-[var(--ui-text-muted)] mb-4">
       {{ t('settings.splitTunnelingDescription') }}
     </p>
+
+    <!--
+      Above the controls, not below them: it is not a caveat about the settings, it is the reason
+      they currently do nothing.
+    -->
+    <UAlert
+      v-if="overriddenByLockdown"
+      color="warning"
+      variant="soft"
+      icon="i-lucide-shield-alert"
+      :title="t('settings.lockdownOverridesSplit')"
+      :description="t('settings.lockdownOverridesSplitHint')"
+      class="mb-4"
+    />
 
     <!-- Mode selector -->
     <div class="grid grid-cols-3 gap-2 mb-4">
