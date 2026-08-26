@@ -130,6 +130,21 @@ class FloppaVpnService : VpnService() {
          */
         private const val WORK_DEADLINE_MS = 10_000L
 
+        /**
+         * How often the system is re-asked whether it is running us always-on, and under lockdown.
+         *
+         * Polled because Android offers no signal: turning "Block connections without VPN" on or
+         * off rewrites the kernel's filtering rules and does not touch this service at all — no
+         * start, no callback, no revoke. Reading only at the events we do get meant the card kept
+         * warning about a lockdown the user had just switched off, and — the direction that matters
+         * — stayed silent about one they had just switched on.
+         *
+         * Bounded by the tunnel: the query is only answerable while our VPN is established, so this
+         * runs only then and stops with it. One binder call at this interval is nothing next to a
+         * tunnel that rekeys every two minutes.
+         */
+        private const val VPN_MODE_POLL_MS = 15_000L
+
         init {
             System.loadLibrary("floppa_client_lib")
         }
@@ -390,6 +405,7 @@ class FloppaVpnService : VpnService() {
                 // Now, and not before: establish() is what makes us the VPN's owner, which is what
                 // the always-on queries require before they will answer at all.
                 reportVpnMode()
+                pollVpnMode()
             } catch (e: Exception) {
                 // Every reason `establish()` fails is outside this app — consent revoked, another
                 // VPN holding lockdown, every selected app uninstalled — so the reason is worth
@@ -441,8 +457,10 @@ class FloppaVpnService : VpnService() {
         // The network watch deliberately outlives the tunnel: a parked cycle is waiting on exactly
         // the report it produces. It goes with the service instance, in onDestroy.
         closeTun()
-        // The VPN mode does not outlive it, because it cannot be asked without one. Retracted to
-        // "unknown" rather than left standing, for the same reason the network watch retracts.
+        // The VPN mode does not outlive it, because it cannot be asked without one. The poll stops
+        // and the answer is retracted to "unknown" rather than left standing, for the same reason
+        // the network watch retracts.
+        mainHandler.removeCallbacks(vpnModePoll)
         reportVpnMode()
         if (target != NO_GENERATION) {
             nativeServiceGone(target)
@@ -672,6 +690,24 @@ class FloppaVpnService : VpnService() {
         } catch (e: Exception) {
             Log.w(TAG, "Could not report the system's VPN mode", e)
         }
+    }
+
+    /**
+     * Keep asking, for as long as there is a tunnel to ask about.
+     *
+     * The actor drops a report identical to the last one, so a poll that finds nothing changed
+     * costs one binder call and produces no state, no publish and no log line.
+     */
+    private fun pollVpnMode() {
+        mainHandler.removeCallbacks(vpnModePoll)
+        mainHandler.postDelayed(vpnModePoll, VPN_MODE_POLL_MS)
+    }
+
+    private val vpnModePoll = Runnable {
+        reportVpnMode()
+        // Rescheduled from here rather than on a repeating timer, so it stops by simply not being
+        // scheduled again once the descriptor is gone.
+        if (tunInterface != null) pollVpnMode()
     }
 
     /** Tell the actor to stop believing the last report. Never fatal. */

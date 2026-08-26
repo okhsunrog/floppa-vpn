@@ -245,10 +245,18 @@ An excluded app — Ozon, uid 10338 — sits inside the second range. The only w
 says so when the mode is `Lockdown`: it is not a caveat about those settings, it is the reason they
 are currently doing nothing.
 
-The residual window is a Settings toggle that somehow does not reconfigure the VPN — changing
-always-on or lockdown normally restarts the service, which is a push. A stale value costs a wrong
-caption, never a wrong decision. A read taken inside the disconnect flow itself is where a
-genuinely fresh check would go, if evidence ever shows the window matters.
+**Android gives no signal when either setting changes, so the mode is polled.** An earlier version
+of this section claimed a toggle "normally restarts the service, which is a push"; the device says
+otherwise. Turning "Block connections without VPN" off rewrote the kernel's filtering rules — the
+`Lockdown filtering rules` block emptied — while the `:vpn` process, the service instance and the
+tunnel generation all stayed exactly as they were. No start, no callback, no revoke. The card went
+on warning about a lockdown that was already off, and would equally have stayed silent about one
+just switched on, which is the direction that costs someone their connection.
+
+So while a tunnel is up the query is repeated every `VPN_MODE_POLL_MS` (15 s), and only while one
+is up — the query cannot be answered otherwise, which bounds the polling to exactly the window the
+answer is meaningful in. A poll that finds nothing changed is dropped by the actor before it
+becomes a state, so it costs one binder call and produces no publish.
 
 ### Staging
 
