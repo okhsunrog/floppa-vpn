@@ -187,14 +187,15 @@ class FloppaVpnService : VpnService() {
      * How the system is running this VPN: whether we are its always-on VPN, and whether lockdown is
      * on with it.
      *
-     * Both in one call because they are one nested answer — `isLockdownEnabled` is documented as
-     * *"running in always-on VPN lockdown mode"*, a mode of always-on — and two calls could be seen
-     * half-applied. Rust normalises the nesting.
+     * All three in one call because they are one answer — `isLockdownEnabled` is documented as
+     * *"running in always-on VPN lockdown mode"*, a mode of always-on — and separate calls could be
+     * seen half-applied. `known` is what keeps "we could not ask" from arriving as a definite "no";
+     * Rust turns the triple into one value.
      *
      * Not "who started this tunnel". Both queries ask the system whether *this app* is configured
      * as the always-on VPN, which is true just as much when a person presses Connect in the app.
      */
-    private external fun nativeVpnModeChanged(alwaysOn: Boolean, lockdown: Boolean)
+    private external fun nativeVpnModeChanged(known: Boolean, alwaysOn: Boolean, lockdown: Boolean)
 
     /**
      * The system asked for a tunnel with nobody watching — always-on, boot, lockdown. Raises the
@@ -269,9 +270,8 @@ class FloppaVpnService : VpnService() {
             // Boots the actor on the first instance; refreshes the callback reference on every one.
             nativeInit(logDir.absolutePath, applicationInfo.dataDir)
             Log.i(TAG, "the VPN process is up")
-            // After the actor exists, so its first reports have somewhere to land.
+            // After the actor exists, so its first report has somewhere to land.
             watchNetwork()
-            reportVpnMode()
         } catch (e: Exception) {
             // Caught rather than thrown on: an exception out of onCreate takes the process with it,
             // and the UI binds on every launch — so a boot that cannot succeed would be a crash
@@ -294,10 +294,9 @@ class FloppaVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand: action=${intent?.action}, startId=$startId")
         lastStartId = startId
-        // Every start, because this is the only moment the mode can be known to have changed:
-        // changing always-on or lockdown in Settings reconfigures the VPN, which reaches us as a
-        // start. A toggle that somehow does not is the one stale window, and it costs a wrong
-        // caption rather than a wrong decision — nothing but the UI reads this.
+        // Cheap, and the one moment a Settings change can reach us: toggling always-on or lockdown
+        // reconfigures the VPN, which arrives as a start. It answers "unknown" when no tunnel is
+        // established yet, which is the truth at that point.
         reportVpnMode()
 
         when (intent?.action) {
@@ -388,6 +387,9 @@ class FloppaVpnService : VpnService() {
                 nativeSetTunFd(generation, tun.fd)
                 // The watch is already running; what is new is a tunnel to attribute to it.
                 underlyingNetwork?.let { setUnderlyingNetworks(arrayOf(it)) }
+                // Now, and not before: establish() is what makes us the VPN's owner, which is what
+                // the always-on queries require before they will answer at all.
+                reportVpnMode()
             } catch (e: Exception) {
                 // Every reason `establish()` fails is outside this app — consent revoked, another
                 // VPN holding lockdown, every selected app uninstalled — so the reason is worth
@@ -439,6 +441,9 @@ class FloppaVpnService : VpnService() {
         // The network watch deliberately outlives the tunnel: a parked cycle is waiting on exactly
         // the report it produces. It goes with the service instance, in onDestroy.
         closeTun()
+        // The VPN mode does not outlive it, because it cannot be asked without one. Retracted to
+        // "unknown" rather than left standing, for the same reason the network watch retracts.
+        reportVpnMode()
         if (target != NO_GENERATION) {
             nativeServiceGone(target)
         }
@@ -635,11 +640,32 @@ class FloppaVpnService : VpnService() {
      * "no" would be a lie rather than a default. A call that throws is left the same way.
      */
     private fun reportVpnMode() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        // Only answerable while our VPN is actually established. `isAlwaysOn()` reaches
+        // `isCallerCurrentAlwaysOnVpnApp()`, which is `getVpnIfOwner() != null &&
+        // vpn.getAlwaysOn()`
+        // — and there is no owner until `establish()` has run. Asking before that gets `false` from
+        // both, and that `false` means "you are not the owner", not "always-on is off". Publishing
+        // it as a definite no is exactly the mistake `Link` exists to prevent, and it shipped once:
+        // a service the system itself started for always-on reported `Off` from `onCreate`.
+        //
+        // Below API 29 neither query exists, which is the same "cannot ask" and takes the same
+        // path. So does a call that throws.
+        val canAsk = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && generation != NO_GENERATION
+        val mode =
+            if (canAsk) {
+                try {
+                    Triple(true, isAlwaysOn, isLockdownEnabled)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not ask the system how it is running us", e)
+                    Triple(false, false, false)
+                }
+            } else {
+                Triple(false, false, false)
+            }
         try {
-            nativeVpnModeChanged(isAlwaysOn, isLockdownEnabled)
+            nativeVpnModeChanged(mode.first, mode.second, mode.third)
         } catch (e: Exception) {
-            Log.w(TAG, "Could not ask the system how it is running us", e)
+            Log.w(TAG, "Could not report the system's VPN mode", e)
         }
     }
 

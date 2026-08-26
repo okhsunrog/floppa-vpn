@@ -208,8 +208,18 @@ Both queries are now read, together, and published as `SystemVpnMode`:
 
 Nested rather than two booleans because AOSP nests them — `isLockdownEnabled` is documented as
 *"running in always-on VPN **lockdown** mode"* — so "lockdown without always-on" is unrepresentable,
-as it should be. Kotlin pushes both in one call (`nativeVpnModeChanged`) from `onCreate` and every
-`onStartCommand`; two pushes could tear the pair.
+as it should be. Kotlin pushes the whole answer in one call (`nativeVpnModeChanged`); separate
+pushes could tear it.
+
+**The queries only answer for the VPN's owner, and that is not obvious from their names.**
+`isCallerCurrentAlwaysOnVpnApp()` is `getVpnIfOwner() != null && vpn.getAlwaysOn()`, and there is no
+owner until `establish()` has run. Asked any earlier, both return `false` — meaning *"you are not
+the owner"*, not *"always-on is off"*. The first build of this asked from `onCreate` and published
+`Off` from a service the system had itself started for always-on. So the read happens **after
+`establish()`**, is retracted to `Unknown` when the tunnel goes, and Kotlin sends a `known` flag so
+"could not ask" can never arrive as a definite no — the same discipline as `Link::Unknown`, learned
+the same way. It costs nothing: the two things the mode is shown for are both only visible while a
+tunnel is up.
 
 **Lockdown is no longer invisible.** With "Block connections without VPN" on, a manual disconnect
 leaves the device with no network at all, and the card now says so above the disconnect button

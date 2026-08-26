@@ -517,15 +517,26 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLinkUn
 /// still read from the start intent, and `nativeSystemStart` still trusts that reading: an
 /// unflagged start with always-on switched off is a `START_STICKY` restart after the process died,
 /// and raising the intent there is crash recovery worth keeping.
+///
+/// `known` is the whole reason this takes three booleans. `isCallerCurrentAlwaysOnVpnApp` is
+/// `getVpnIfOwner() != null && vpn.getAlwaysOn()`, and there is no owner until `establish()` has
+/// run — so before a tunnel exists both queries answer `false`, meaning "you are not the owner"
+/// rather than "always-on is off". Kotlin says which of the two it is; collapsing them is how the
+/// first build of this reported `Off` from a service the system had started for always-on.
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeVpnModeChanged<'local>(
     mut env: EnvUnowned<'local>,
     _class: JClass<'local>,
+    known: jboolean,
     always_on: jboolean,
     lockdown: jboolean,
 ) {
     let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let mode = SystemVpnMode::new(always_on, lockdown);
+        let mode = if known {
+            SystemVpnMode::new(always_on, lockdown)
+        } else {
+            SystemVpnMode::Unknown
+        };
         let actor = booted()?.actor.clone();
         runtime().spawn(async move { actor.report_vpn_mode(mode).await });
         Ok(())
