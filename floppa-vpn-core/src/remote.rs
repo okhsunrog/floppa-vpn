@@ -223,14 +223,36 @@ impl TunnelControl for RemoteActor {
         .map_err(|_| IntentError::ActorGone)?
     }
 
+    /// The one call whose deadline is not a failure.
+    ///
+    /// It does not go through [`call`](Self::call), and the reason is that call's error path: it
+    /// drops the client, on the assumption that a call which did not come back means a transport
+    /// worth rebuilding. That is right for every other method and wrong for this one — a cycle
+    /// parked on a device with no network simply has not ended, the socket underneath is perfectly
+    /// healthy, and bouncing it every five minutes for the length of an outage would be busywork
+    /// on top of a misdiagnosis.
+    ///
+    /// This is also the only place the distinction *can* be drawn. The tarpc error exists here and
+    /// nowhere above, so a `DeadlineExceeded` collapsed into `ActorGone` here is indistinguishable
+    /// from a genuinely dead actor for every caller — and making that one visible was a deliberate
+    /// fix, so it must not be swallowed on the way out either.
     async fn await_cycle(&self, epoch: IntentEpoch) -> Result<CycleOutcome, IntentError> {
-        self.call("await_cycle", |client| async move {
-            client
-                .await_cycle(RemoteActor::deadline(CYCLE_DEADLINE), epoch)
-                .await
-        })
-        .await
-        .map_err(|_| IntentError::ActorGone)?
+        let client = self.client().await.map_err(|_| IntentError::ActorGone)?;
+        match client
+            .await_cycle(RemoteActor::deadline(CYCLE_DEADLINE), epoch)
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(tarpc::client::RpcError::DeadlineExceeded) => {
+                debug!("the cycle outlasted the wait for it; it is still running");
+                Err(IntentError::CycleStillRunning)
+            }
+            Err(e) => {
+                self.drop_client().await;
+                warn!("await_cycle could not be delivered to the tunnel process: {e}");
+                Err(IntentError::ActorGone)
+            }
+        }
     }
 
     async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {

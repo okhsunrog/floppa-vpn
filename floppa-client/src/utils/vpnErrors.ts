@@ -16,7 +16,12 @@ import type {
  * fails to compile here until it has been given words.
  */
 export type VpnError =
-  | IntentError
+  // `cycle_still_running` is deliberately excluded, and the exclusion is the point: it is not a
+  // failure but the absence of a verdict — the wait for a parked cycle gave up before the cycle
+  // did, which happens whenever a device is offline for longer than the wait. There is no honest
+  // sentence to show a user about it, so the type refuses to let anyone try, and whoever receives
+  // one has to say what they do with it instead.
+  | Exclude<IntentError, { kind: 'cycle_still_running' }>
   | ConfigError
   /** A cycle ended without a tunnel; `failure` is the probe whose error is worth showing. */
   | { kind: 'attempt_failed'; failure: AttemptFailure }

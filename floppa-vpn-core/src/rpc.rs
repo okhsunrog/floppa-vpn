@@ -93,8 +93,12 @@ pub trait VpnRpc {
 
     async fn set_intent(intent: IntentRequest) -> Result<IntentAccepted, IntentError>;
 
-    /// Wait for an epoch's cycle to finish. Held open for as long as the cycle takes, which is
-    /// bounded by the actor's own budgets rather than by anything here.
+    /// Wait for an epoch's cycle to finish.
+    ///
+    /// Held open for as long as the cycle takes — and a cycle is **not** bounded by the actor's
+    /// budgets any more. One parked on a device with no network waits, spending nothing, for as
+    /// long as the outage lasts. So the caller's deadline expiring says nothing about the actor:
+    /// it comes back as [`IntentError::CycleStillRunning`], which is not a failure of anything.
     async fn await_cycle(epoch: IntentEpoch) -> Result<CycleOutcome, IntentError>;
 
     async fn import_config(raw: String) -> Result<Protocol, ConfigError>;
@@ -365,6 +369,7 @@ mod tests {
                 IntentError::NoUsableConfig,
                 IntentError::ActorGone,
                 IntentError::SettleTimeout,
+                IntentError::CycleStillRunning,
             ] {
                 let refused: Result<IntentAccepted, IntentError> = Err(error.clone());
                 assert_eq!(survives("IntentError", &refused), refused);

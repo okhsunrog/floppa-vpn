@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import {
   commands,
   events,
@@ -13,6 +13,7 @@ import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { describeUnknown } from '../utils/errors'
 import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
+import type { IntentError } from '../bindings'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
 
@@ -67,6 +68,23 @@ export const useVpnStore = defineStore(
       error.value = next
     }
 
+    /**
+     * Show what the actor refused a request with — unless it refused nothing.
+     *
+     * `cycle_still_running` is the wait for a cycle giving up before the cycle did, which is what
+     * a parked cycle does to any wait shorter than the outage. Nothing is wrong and nothing is
+     * over, so there is nothing to say: the published state is already showing "waiting for a
+     * network", and the ending, whenever it comes, arrives through `unhandledOutcome` because
+     * nobody marked this one handled.
+     *
+     * It shipped as `actor_gone` for one build, which put "the VPN engine is not running, restart
+     * the app" over a connected tunnel with traffic flowing through it.
+     */
+    function report(next: IntentError) {
+      if (next.kind === 'cycle_still_running') return
+      error.value = next
+    }
+
     const isAndroid = ref(false)
     const deviceId = ref<string | null>(null)
     const deviceName = ref<string | null>(null)
@@ -76,6 +94,20 @@ export const useVpnStore = defineStore(
 
     const phase = computed(() => state.value.phase)
     const isConnected = computed(() => phase.value === 'connected')
+
+    /*
+     * A tunnel that came up answers whatever the last complaint was.
+     *
+     * `error` is otherwise cleared only by the *next* request, so one raised by a connect that did
+     * not finish outlived the connect that did — a red "the VPN engine is not running, restart the
+     * app" sitting above a card that said Connected, with traffic flowing through it. On the
+     * transition rather than while connected: an error raised *about* a live tunnel, like a
+     * teardown that could not be confirmed, still has to be readable.
+     */
+    watch(isConnected, (connected) => {
+      if (connected) error.value = null
+    })
+
     /**
      * Busy as the actor reports it, or because a command of ours is still in flight.
      *
@@ -282,7 +314,7 @@ export const useVpnStore = defineStore(
      */
     async function request(
       send: () => Promise<
-        { status: 'ok'; data: { epoch: number } } | { status: 'error'; error: VpnError }
+        { status: 'ok'; data: { epoch: number } } | { status: 'error'; error: IntentError }
       >,
     ): Promise<CycleOutcome | null> {
       error.value = null
@@ -290,7 +322,7 @@ export const useVpnStore = defineStore(
       try {
         const accepted = await send()
         if (accepted.status === 'error') {
-          error.value = accepted.error
+          report(accepted.error)
           return null
         }
         await refresh()
@@ -298,7 +330,7 @@ export const useVpnStore = defineStore(
         const outcome = await commands.tunnelAwaitCycle(accepted.data.epoch)
         await refresh()
         if (outcome.status === 'error') {
-          error.value = outcome.error
+          report(outcome.error)
           return null
         }
         // Whoever called this is about to deal with it, so the unsolicited-outcome watcher must
@@ -331,7 +363,7 @@ export const useVpnStore = defineStore(
       try {
         const result = await commands.clearConfigs()
         if (result.status === 'error') {
-          error.value = result.error
+          report(result.error)
           return false
         }
         handled.value = null
@@ -371,7 +403,7 @@ export const useVpnStore = defineStore(
         if (result.status === 'error') {
           // Typed now: the command used to be declared infallible, so a dead actor came back as
           // a refusal with no reason and the settings modal showed a success toast over it.
-          error.value = result.error
+          report(result.error)
           return false
         }
         await refresh()

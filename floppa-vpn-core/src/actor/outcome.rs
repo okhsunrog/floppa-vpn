@@ -124,6 +124,19 @@ pub enum IntentError {
     ActorGone,
     #[error("timed out waiting for the tunnel to settle")]
     SettleTimeout,
+    /// The wait for a cycle's ending gave up before the cycle did. **Not a failure of anything.**
+    ///
+    /// A cycle used to be bounded by the actor's own budgets, so a wait that outlasted them could
+    /// only mean the actor had stopped answering — and that is what it was reported as. Parking
+    /// broke that premise deliberately: a cycle with no network to run on waits, spending nothing,
+    /// for as long as the outage lasts. Hours is a normal answer.
+    ///
+    /// So the wait needs a way to say "no verdict yet" that is not "the actor is gone", because
+    /// telling a user to restart the app while their tunnel is patiently waiting is both alarming
+    /// and wrong. What the caller should do with it is nothing: the published state already says
+    /// what is happening, and the ending — whenever it comes — arrives as an unhandled outcome.
+    #[error("the cycle has not finished yet")]
+    CycleStillRunning,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
