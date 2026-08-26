@@ -8,6 +8,10 @@
 //!   ([`status`](super::status))
 //! - [`World`] — what is actually true, as last observed. ([`world`](super::world))
 //!
+//! [`Link`] sits beside them rather than among them: it is not an axis of the table but a gate on
+//! two of its cells, and it says something about the network under the tunnel rather than about
+//! the tunnel.
+//!
 //! Beside them: how things end ([`outcome`](super::outcome)), what the UI is shown
 //! ([`snapshot`](super::snapshot)) and the knobs ([`policy`](super::policy)). Each lives in its
 //! own module; this one re-exports them all, so a caller names one path for the vocabulary and
@@ -28,5 +32,6 @@ pub use super::snapshot::{
 };
 pub use super::status::{AttemptPhase, Cycle, Status, UnwindReason, UpStatus};
 pub use super::world::{
-    Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, World, WorldView,
+    Link, Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, World,
+    WorldView,
 };

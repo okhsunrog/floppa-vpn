@@ -502,6 +502,10 @@ export default {
     peerCreateFailed: 'The server refused to create a config: {detail}',
     reconnecting: 'Connection lost. Reconnecting ({current}/{max})...',
     retryingIn: 'Next attempt in {seconds}s',
+    waitingForNetwork: 'Waiting for a network',
+    resumesWhenOnline: 'Reconnects on its own once this device is back online.',
+    noNetwork: 'This device has no network',
+    noNetworkHint: 'The tunnel is still up and will carry traffic as soon as there is a signal.',
 
     offlineMode: 'Offline mode',
     offlineModeHint: 'Server unreachable. Using saved configuration.',

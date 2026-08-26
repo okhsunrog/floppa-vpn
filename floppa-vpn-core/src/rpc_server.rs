@@ -207,6 +207,7 @@ mod tests {
         }
         async fn await_quiescent(&self) {}
         async fn flush_configs(&self) {}
+        async fn report_link(&self, _: crate::actor::types::Link) {}
     }
 
     /// A process that is always already there. Starting one is a platform's business, not this

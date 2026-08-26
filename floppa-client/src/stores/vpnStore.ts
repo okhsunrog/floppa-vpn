@@ -454,6 +454,9 @@ function emptyState(): TunnelState {
     outcome_serial: 0,
     configs: { available: [], preferred: null, summaries: [] },
     backend_reachable: false,
+    // Nobody has reported on the network, which is not the same as reporting there is none — and
+    // is where the desktop stays forever.
+    link: 'unknown',
   }
 }
 

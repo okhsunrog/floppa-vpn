@@ -15,6 +15,7 @@
 //!           →  nativeSetTunFd        establish() succeeded, here is the descriptor
 //!           →  nativeReportStartError establish() failed, here is why
 //!           →  nativeNetworkChanged  the default network moved under a running tunnel
+//!           →  nativeLinkChanged     the device gained or lost a network altogether
 //!           →  nativeSystemStart     the system wants a tunnel (always-on, boot, lockdown)
 //!           →  nativeServiceGone     this service instance is being destroyed
 //!   Rust    →  hasConsent()          may we run a VPN at all?
@@ -27,10 +28,10 @@
 use super::service_state::ServiceRegistry;
 use super::tunnel::{self, TunnelManager};
 use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
-use crate::vpn::actor::types::Phase;
+use crate::vpn::actor::types::{Link, Phase};
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jboolean, jint, jlong};
 use jni::{Env, EnvUnowned, JavaVM};
 use std::os::fd::RawFd;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -451,6 +452,35 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetwor
         Ok(())
     });
     log_outcome("nativeNetworkChanged", outcome.into_outcome());
+}
+
+/// The device gained or lost its network entirely.
+///
+/// The sibling of the rebind above, and the difference between them is the difference between a
+/// roam and an outage. A roam leaves a network to move onto, and is fixed in a round trip without
+/// telling the actor anything. An outage leaves nothing, and is the actor's business precisely
+/// because there is nothing to do but wait: it parks whatever cycle it is running rather than
+/// spending its reconnect budget proving, three protocols at a time, that a phone in a lift has no
+/// internet.
+///
+/// No generation. It is a fact about the phone, and it matters most when no tunnel exists at all —
+/// which is exactly when a generation would have nothing to name.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLinkChanged<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    online: jboolean,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let link = if online { Link::Online } else { Link::Offline };
+        let actor = booted()?.actor.clone();
+        // Spawned rather than tried: a report dropped because the actor's queue was momentarily
+        // full is not a lost notification, it is a cycle left parked on a network that has come
+        // back. This one has to arrive.
+        runtime().spawn(async move { actor.report_link(link).await });
+        Ok(())
+    });
+    log_outcome("nativeLinkChanged", outcome.into_outcome());
 }
 
 /// The system asked for a tunnel with nobody watching: always-on, boot, or a lockdown restore.

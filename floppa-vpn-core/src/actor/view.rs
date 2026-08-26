@@ -5,8 +5,8 @@
 //! status, so a spinner cannot disagree with its own label.
 
 use super::types::{
-    AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Phase, RetryProgress, Status,
-    Traffic, TrafficStats, TunnelState, World,
+    AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Link, Phase, RetryProgress,
+    Status, Traffic, TrafficStats, TunnelState, World,
 };
 use std::time::Instant;
 
@@ -21,6 +21,7 @@ pub fn render(
     status: &Status,
     intent: &Intent,
     world: &World,
+    link: Link,
     traffic: Traffic,
     configs: &ConfigsView,
     last_outcome: Option<CycleOutcome>,
@@ -102,6 +103,7 @@ pub fn render(
         outcome_serial,
         configs: configs.clone(),
         backend_reachable: !world.is_dark(),
+        link,
     }
 }
 
@@ -157,6 +159,7 @@ mod tests {
             status,
             intent,
             &World::Clear,
+            Link::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,
@@ -245,6 +248,7 @@ mod tests {
             &Status::Idle,
             &Intent::default(),
             &World::Dark,
+            Link::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,
@@ -345,6 +349,7 @@ mod tests {
             }),
             &Intent::default(),
             &World::Dark,
+            Link::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,

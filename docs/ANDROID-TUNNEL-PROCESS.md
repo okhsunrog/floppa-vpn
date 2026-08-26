@@ -46,7 +46,42 @@ Independent of where the actor lives, and useful on desktop too.
    The reflex never changes *what* is running, so it cannot fight the actor's recovery, which
    starts a whole cycle and is minutes away. `setUnderlyingNetworks` is finally set too, which is
    what makes traffic accounting and connectivity checks correct for the apps inside the tunnel.
-4. **A connected cycle reports what it stepped over.** The ladder can fail AmneziaWG's verification
+4. **An outage is waited out, not spent.** The reflex above handles a *roam* — there is another
+   network to move onto. An **outage** leaves none, and it used to cost the tunnel permanently: the
+   peer went quiet, row 17c called it dead, and the reconnect cycle spent its whole budget on
+   attempts that could not have worked before demoting the intent. When the signal came back
+   nothing was left to notice. `Link::{Online, Offline, Unknown}` closes it with two gates and one
+   asymmetry:
+
+   - `connecting()` — the single choke point every attempt passes through — **parks** the cycle
+     while the link is `Offline`. No pass burnt, no protocol stepped over, no effect fired. It
+     waits in `Retrying` with `resume_at` already past, so the link report itself is what resumes
+     it: the report arrives as a command on the actor's one channel, and delivering a command *is*
+     a table pass. No timer, no deadline to guess.
+   - Row 17 does not judge silence at all while `Offline`, and treats it as *answering* rather than
+     merely skipping — which clears `probing_since`. Pausing the clock instead would leave it
+     long-expired when the network returned, and 17c would fire one second before the rebind
+     reflex fixed the socket.
+   - `Unknown` **gates nothing.** It is the state every platform without a watcher stays in
+     forever, so the desktop and the CLI behave exactly as they did; the whole existing reconcile
+     suite runs at `Unknown` and is the proof. `Offline` is only ever a positive, live report —
+     never inferred from a failure, a timeout, or a missing API.
+
+   A cold connect is parked on the same terms as a reconnect. Failing fast would be defensible for
+   a person pressing Connect in airplane mode, but the same path serves the system start at boot,
+   where the service routinely runs before Wi-Fi has associated — and failing fast there demotes
+   the intent under an always-on lockdown.
+
+   The watch had to move with it: Kotlin registers the callback in `onCreate`, for the life of the
+   service instance, not per generation. A watch that lived and died with the tunnel could never
+   report the one thing that matters here — that the network is back when no tunnel exists.
+   `setUnderlyingNetworks` and the rebind keep their generation guard; only the link report is
+   unconditional.
+
+   **Not covered:** desktop and the CLI. They stay at `Unknown`, so the budget burn on a
+   disconnected machine remains until something watches netlink or the routing table there.
+
+5. **A connected cycle reports what it stepped over.** The ladder can fail AmneziaWG's verification
    — its peer deleted server-side — and connect WireGuard a second later. The dead peer is now
    repaired quietly while the tunnel stays up, by `provision/watcher.rs` in the process that holds
    the actor.

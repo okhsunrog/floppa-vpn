@@ -7,6 +7,8 @@
 use super::intent::TunnelParams;
 use super::policy::Policy;
 use crate::protocol::Protocol;
+use serde::{Deserialize, Serialize};
+use specta::Type;
 use std::time::Instant;
 
 /// One look at the world.
@@ -148,6 +150,42 @@ pub struct RunningTunnel {
     /// sleeping phone and a config without a keepalive are both silent with nothing wrong, so what
     /// silence buys is a probe, not a verdict.
     pub silent_secs: Option<i64>,
+}
+
+/// Whether this device has any network to carry a tunnel over.
+///
+/// Not part of [`World`], and the difference is the whole point of having it: `World` is what is
+/// true about the *tunnel*, reported by the process that owns it. This is what is true about the
+/// link underneath, reported by the platform — and the two fail independently. A phone in a lift
+/// has a perfectly healthy tunnel object over no network at all.
+///
+/// The asymmetry between the variants is deliberate and load-bearing:
+///
+/// - [`Offline`](Self::Offline) is only ever a **positive, live report** that there is no network.
+///   Nothing infers it from a failure, a timeout or a missing API.
+/// - [`Unknown`](Self::Unknown) is every other case — before the first report, on a platform that
+///   has no watcher, when registering one failed. It **gates nothing**: a device we know nothing
+///   about is treated exactly as it was before this type existed.
+///
+/// That is what keeps the desktop and the CLI byte-identical in behaviour while Android gets the
+/// benefit, and it is the same discipline as [`World::Dark`] — not knowing is never evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum Link {
+    /// The platform reported a usable non-VPN network.
+    Online,
+    /// The platform reported that there is none.
+    Offline,
+    /// Nobody has said. The state every platform without a watcher stays in forever.
+    #[default]
+    Unknown,
+}
+
+impl Link {
+    /// Is it known that there is no network? False for [`Unknown`](Self::Unknown), always.
+    pub const fn is_offline(self) -> bool {
+        matches!(self, Self::Offline)
+    }
 }
 
 /// The third axis of the decision table, derived purely from an [`Observation`], the clock and the

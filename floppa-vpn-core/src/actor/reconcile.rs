@@ -18,8 +18,8 @@
 
 use super::types::{
     AttemptError, AttemptFailure, AttemptPhase, AttemptResult, Cycle, CycleOutcome, Intent,
-    IntentEpoch, Policy, RunningTunnel, Status, TunnelParams, UnwindReason, UpIntent, UpStatus,
-    World,
+    IntentEpoch, Link, Policy, RunningTunnel, Status, TunnelParams, UnwindReason, UpIntent,
+    UpStatus, World,
 };
 use crate::protocol::Protocol;
 use crate::rollback::{ExtraUndo, RollbackStack, UnwindReport};
@@ -134,7 +134,32 @@ fn relate<'a>(status: &Status, intent: &'a Intent) -> Rel<'a> {
     }
 }
 
-fn connecting(cycle: Cycle, now: Instant, policy: &Policy) -> Decision {
+/// Begin an attempt — or park the cycle, if it is known there is no network to make one over.
+///
+/// Every path that would start an attempt comes through here, which is why the gate is one `if`
+/// rather than a condition repeated across the table. Parking costs the cycle **nothing**: the
+/// pass is not burnt, the index does not advance, no effect fires. It waits in `Retrying` with a
+/// `resume_at` already in the past, so the moment the link is reported back rows 28/29 walk
+/// straight into a real attempt — and while it is still gone they walk back into this parking
+/// spot. No timer has to be cancelled and no far-future deadline has to be guessed at.
+///
+/// What this is for: a phone that loses signal for five minutes used to spend its entire reconnect
+/// budget on attempts that could not have worked, give up, demote the intent, and leave the user
+/// disconnected with the network back and nothing to notice it. A pass is only worth spending on a
+/// network that exists.
+///
+/// A cold connect is parked on the same terms as a reconnect, deliberately. It is tempting to let
+/// a user who presses Connect in airplane mode fail fast, but the same code path serves the system
+/// start on boot — where the service routinely runs before Wi-Fi has associated, and failing fast
+/// demotes the intent under an always-on lockdown. "Waiting for a network" is both the honest
+/// thing to show a person and the correct thing to do for the system.
+fn connecting(cycle: Cycle, now: Instant, policy: &Policy, link: Link) -> Decision {
+    if link.is_offline() {
+        return Decision::to(Status::Retrying {
+            cycle,
+            resume_at: now,
+        });
+    }
     let effect = Effect::Begin {
         protocol: cycle.protocol(),
         epoch: cycle.epoch,
@@ -147,6 +172,38 @@ fn connecting(cycle: Cycle, now: Instant, policy: &Policy) -> Decision {
         deadline: now + policy.attempt_budget,
     })
     .with(effect)
+}
+
+/// The cycle has nothing left to spend — unless there was nothing to spend it on.
+///
+/// The three budget-exhaustion paths (a failed probe, an expired deadline, a teardown that ends
+/// with no budget left) were three copies of the same four lines; they are this instead, so the
+/// rule below is stated once.
+///
+/// **A cycle does not run out of budget on a device with no network.** The choke point in
+/// [`connecting`] stops passes being spent while the link is known gone, but it cannot help a
+/// cycle whose budget ran out *across* an outage — a phone on a train, in and out of coverage,
+/// gets an online window just long enough to fail an attempt in, and enough of those drain the
+/// budget without a single one of them having had a fair chance. Giving up then demotes the intent
+/// and leaves the user disconnected once the signal is properly back, which is the whole defect
+/// this file's link gate exists to remove.
+///
+/// Parking instead is not free budget: the cycle resumes with none, so the first attempt after the
+/// network returns is also its last. What it buys is that the attempt happens at all.
+fn give_up_or_park(cycle: Cycle, now: Instant, link: Link) -> Decision {
+    if link.is_offline() {
+        return Decision::to(Status::Retrying {
+            cycle,
+            resume_at: now,
+        });
+    }
+    let epoch = cycle.epoch;
+    Decision::to(Status::Idle)
+        .with(Effect::DemoteIntent)
+        .with(Effect::Resolve {
+            epoch,
+            outcome: cycle.gave_up(),
+        })
 }
 
 fn unwinding(cycle: Option<Cycle>, reason: UnwindReason) -> Status {
@@ -193,9 +250,9 @@ fn undo_for(u: &UpStatus) -> Option<ExtraUndo> {
 ///
 /// This is what the startup intent uses. Treating it as an ordinary Up made the app connect by
 /// itself on every launch.
-fn start_or_idle(up: &UpIntent, now: Instant, policy: &Policy) -> Decision {
+fn start_or_idle(up: &UpIntent, now: Instant, policy: &Policy, link: Link) -> Decision {
     match Cycle::start(up, policy) {
-        Some(cycle) => connecting(cycle, now, policy),
+        Some(cycle) => connecting(cycle, now, policy, link),
         None => Decision::to(Status::Idle),
     }
 }
@@ -315,6 +372,7 @@ pub fn reconcile(
     status: &Status,
     intent: &Intent,
     world: &World,
+    link: Link,
     now: Instant,
     now_unix: i64,
     policy: &Policy,
@@ -341,7 +399,7 @@ pub fn reconcile(
                 })
             }
             // 4: the normal start — but only for an intent that knows what to build.
-            (Rel::Same(up) | Rel::Newer(up), World::Clear) => start_or_idle(up, now, policy),
+            (Rel::Same(up) | Rel::Newer(up), World::Clear) => start_or_idle(up, now, policy, link),
             (Rel::Same(up) | Rel::Newer(up), World::Running(rt)) => {
                 // 5a: the bootstrap intent adopts. It is the one that carries no params, because
                 // it is not asking for any particular tunnel — just for whatever is there. When
@@ -372,7 +430,7 @@ pub fn reconcile(
             }
             // 7: from Idle there is nothing to protect, so a non-authoritative observation must
             // not block a connect.
-            (Rel::Same(up) | Rel::Newer(up), World::Dark) => start_or_idle(up, now, policy),
+            (Rel::Same(up) | Rel::Newer(up), World::Dark) => start_or_idle(up, now, policy, link),
         },
 
         // ---------------------------------------------------------------------- Connecting
@@ -455,7 +513,23 @@ pub fn reconcile(
             // row keeps saying Up, and no traffic passes. So the peer's silence is judged here
             // too, in the order silence → probe → verdict (rows 17a–17c below).
             (Rel::Same(up), World::Running(rt)) if rt.protocol == u.protocol => {
-                let silence = judge_silence(u, up, rt, now, policy);
+                // With no network at all, silence says nothing about the peer — of course it is
+                // quiet, nothing can reach it. Judging it anyway is what tore the tunnel down
+                // every time the phone spent three minutes in a lift: PeerSilent, unwind, and a
+                // ladder that came back up on whichever protocol was first in the order rather
+                // than the one that had been working.
+                //
+                // Treated as `Answering`, not merely skipped, and that distinction is the bug it
+                // would otherwise reintroduce: `Answering` clears `probing_since`. A link that
+                // dies midway through the probe grace would otherwise leave the clock running
+                // while nothing could possibly answer it, and 17c would fire the instant the
+                // network came back — tearing down the tunnel one second before the rebind reflex
+                // fixed it.
+                let silence = if link.is_offline() {
+                    Silence::Answering
+                } else {
+                    judge_silence(u, up, rt, now, policy)
+                };
                 if let Silence::Decided(decision) = silence {
                     return decision;
                 }
@@ -551,12 +625,11 @@ pub fn reconcile(
                 epoch: cycle.epoch,
                 outcome: CycleOutcome::Cancelled,
             }),
-            (Rel::Newer(up), World::Clear | World::Dark) => {
-                start_or_idle(up, now, policy).with(Effect::Resolve {
+            (Rel::Newer(up), World::Clear | World::Dark) => start_or_idle(up, now, policy, link)
+                .with(Effect::Resolve {
                     epoch: cycle.epoch,
                     outcome: CycleOutcome::Cancelled,
-                })
-            }
+                }),
             // 26: a tunnel appeared while we were waiting to retry. Its params are what its
             // owner reports, and nothing else: a service generation is not an intent epoch, so
             // there is no way to recognise a late tunnel of our own by its identity alone.
@@ -583,7 +656,7 @@ pub fn reconcile(
                 if now < *resume_at {
                     Decision::stay(status)
                 } else {
-                    connecting(cycle.clone(), now, policy)
+                    connecting(cycle.clone(), now, policy, link)
                 }
             }
         },
@@ -599,6 +672,7 @@ pub fn on_attempt_done(
     status: &Status,
     intent: &Intent,
     result: AttemptResult,
+    link: Link,
     now: Instant,
     policy: &Policy,
 ) -> Decision {
@@ -701,7 +775,7 @@ pub fn on_attempt_done(
                     if !cycle.is_last_probe() {
                         // A7: next protocol in the order.
                         cycle.advance();
-                        connecting(cycle, now, policy)
+                        connecting(cycle, now, policy, link)
                     } else if cycle.has_budget() {
                         // A8: another pass, after a backoff.
                         let backoff = policy.backoff(cycle.pass);
@@ -714,13 +788,7 @@ pub fn on_attempt_done(
                         // A9: out of budget. How that reads depends on where the cycle came
                         // from — a cold connect that never worked is exhausted, a tunnel that
                         // was up and could not be brought back gave up.
-                        let epoch = cycle.epoch;
-                        Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::Resolve {
-                                epoch,
-                                outcome: cycle.gave_up(),
-                            },
-                        )
+                        give_up_or_park(cycle, now, link)
                     }
                 }
             }
@@ -743,6 +811,7 @@ pub fn on_unwind_done(
     intent: &Intent,
     report: &UnwindReport,
     world: &World,
+    link: Link,
     now: Instant,
     policy: &Policy,
 ) -> Decision {
@@ -810,7 +879,7 @@ pub fn on_unwind_done(
         }
         // U2
         Rel::Newer(up) => {
-            let decision = start_or_idle(up, now, policy);
+            let decision = start_or_idle(up, now, policy, link);
             match cycle {
                 Some(c) => decision.with(Effect::Resolve {
                     epoch: c.epoch,
@@ -830,14 +899,14 @@ pub fn on_unwind_done(
                 UnwindReason::IntentDown | UnwindReason::IntentChanged => {
                     let mut cycle = cycle;
                     cycle.index = 0;
-                    connecting(cycle, now, policy)
+                    connecting(cycle, now, policy, link)
                 }
                 // U4, U5, U6
                 UnwindReason::AttemptTimedOut => {
                     let mut cycle = cycle;
                     if !cycle.is_last_probe() {
                         cycle.advance();
-                        connecting(cycle, now, policy)
+                        connecting(cycle, now, policy, link)
                     } else if cycle.has_budget() {
                         let backoff = policy.backoff(cycle.pass);
                         cycle.advance();
@@ -846,13 +915,7 @@ pub fn on_unwind_done(
                             resume_at: now + backoff,
                         })
                     } else {
-                        let epoch = cycle.epoch;
-                        Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::Resolve {
-                                epoch,
-                                outcome: cycle.gave_up(),
-                            },
-                        )
+                        give_up_or_park(cycle, now, link)
                     }
                 }
                 // U6a: the machine is clean again after a crash; the cycle is over, and the
@@ -884,22 +947,16 @@ pub fn on_unwind_done(
                             resume_at: now + backoff,
                         })
                     } else {
-                        let epoch = cycle.epoch;
-                        Decision::to(Status::Idle).with(Effect::DemoteIntent).with(
-                            Effect::Resolve {
-                                epoch,
-                                outcome: cycle.gave_up(),
-                            },
-                        )
+                        give_up_or_park(cycle, now, link)
                     }
                 }
                 // U9: the obstruction is gone, so proceed with what we wanted all along.
-                UnwindReason::WrongProtocol => connecting(cycle, now, policy),
+                UnwindReason::WrongProtocol => connecting(cycle, now, policy, link),
                 // Both are only ever entered with no cycle (rows 2 and bootstrap), and a status
                 // without a cycle has no epoch for an intent to be `Same` as.
                 UnwindReason::ForeignTunnel | UnwindReason::CrashRecovery => {
                     debug_assert!(false, "{reason:?} never carries a cycle");
-                    connecting(cycle, now, policy)
+                    connecting(cycle, now, policy, link)
                 }
             }
         }

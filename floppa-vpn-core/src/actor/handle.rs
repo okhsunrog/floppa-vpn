@@ -17,7 +17,7 @@
 //! priority is expressed: there is no second channel that could quietly overtake the first.
 
 use super::types::{
-    AttemptPhase, AttemptResult, CycleOutcome, IntentAccepted, IntentEpoch, IntentError,
+    AttemptPhase, AttemptResult, CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link,
     Observation, TunnelParams, TunnelState,
 };
 use crate::protocol::Protocol;
@@ -92,6 +92,13 @@ pub enum Command {
     AttemptDone(Box<AttemptReport>),
     UnwindDone(Box<UnwindReport>),
     Observed(Box<Observation>),
+    /// The platform noticed the device gain or lose its network.
+    ///
+    /// It arrives on the same channel as everything else, and that is the whole of "wake up when
+    /// the network comes back": a parked cycle is waiting in `Retrying` for a table pass, and
+    /// delivering this command *is* a table pass. There is no timer to cancel and no separate
+    /// notification path that could quietly overtake the queue.
+    LinkChanged(Link),
 }
 
 /// The actor's boundary, as everything that is not the actor sees it.
@@ -133,6 +140,14 @@ pub trait TunnelControl: Send + Sync {
     /// Resolves once every config write queued so far has landed. Used on exit, after
     /// [`await_quiescent`](Self::await_quiescent).
     async fn flush_configs(&self);
+
+    /// Tell the actor the device gained or lost its network.
+    ///
+    /// Reported by whoever holds the platform's watcher, which is always the process the actor
+    /// lives in — the `:vpn` service on Android, nobody at all on desktop. It is a sibling of the
+    /// rebind reflex rather than of the commands above: a statement of fact about the machine, not
+    /// a request, and so it has no reply and nothing to refuse.
+    async fn report_link(&self, link: Link);
 }
 
 /// A cloneable handle to the actor, held in Tauri state.
@@ -187,6 +202,10 @@ impl TunnelHandle {
 
     pub async fn flush_configs(&self) {
         self.0.flush_configs().await
+    }
+
+    pub async fn report_link(&self, link: Link) {
+        self.0.report_link(link).await
     }
 }
 
@@ -269,5 +288,12 @@ impl TunnelControl for LocalActor {
         if self.tx.send(Command::FlushConfigs { reply }).await.is_ok() {
             let _ = rx.await;
         }
+    }
+
+    /// Sent, never tried: a dropped report is not a dropped notification but a cycle left parked
+    /// on a network that has come back. The queue is the actor's own and drains at its loop's
+    /// speed, so waiting on it costs the caller a task, not a thread.
+    async fn report_link(&self, link: Link) {
+        let _ = self.tx.send(Command::LinkChanged(link)).await;
     }
 }

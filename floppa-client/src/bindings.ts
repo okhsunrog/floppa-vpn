@@ -294,6 +294,33 @@ export type IntentError = { kind: "empty_order" } | { kind: "no_usable_config" }
 
 export type IntentView = "down" | "up";
 
+/**
+ *  Whether this device has any network to carry a tunnel over.
+ * 
+ *  Not part of [`World`], and the difference is the whole point of having it: `World` is what is
+ *  true about the *tunnel*, reported by the process that owns it. This is what is true about the
+ *  link underneath, reported by the platform — and the two fail independently. A phone in a lift
+ *  has a perfectly healthy tunnel object over no network at all.
+ * 
+ *  The asymmetry between the variants is deliberate and load-bearing:
+ * 
+ *  - [`Offline`](Self::Offline) is only ever a **positive, live report** that there is no network.
+ *    Nothing infers it from a failure, a timeout or a missing API.
+ *  - [`Unknown`](Self::Unknown) is every other case — before the first report, on a platform that
+ *    has no watcher, when registering one failed. It **gates nothing**: a device we know nothing
+ *    about is treated exactly as it was before this type existed.
+ * 
+ *  That is what keeps the desktop and the CLI byte-identical in behaviour while Android gets the
+ *  benefit, and it is the same discipline as [`World::Dark`] — not knowing is never evidence.
+ */
+export type Link = 
+/**  The platform reported a usable non-VPN network. */
+"online" | 
+/**  The platform reported that there is none. */
+"offline" | 
+/**  Nobody has said. The state every platform without a watcher stays in forever. */
+"unknown";
+
 export type LogCaptureStatus = {
 	active: boolean,
 	capture_id: string | null,
@@ -440,6 +467,19 @@ export type TunnelState = {
 	configs: ConfigsView,
 	/**  False while the world is dark. This never by itself means the tunnel is down. */
 	backend_reachable: boolean,
+	/**
+	 *  Whether the device has a network under the tunnel, where the platform says so.
+	 * 
+	 *  A field rather than a [`Phase`], because it is orthogonal to every one of them: a tunnel
+	 *  can be Connected with the network gone (the phone is in a lift and the tunnel is intact),
+	 *  and a cycle can be Retrying with the network gone (it is parked, waiting, spending
+	 *  nothing). A phase cannot say either of those, and inventing one for each combination is how
+	 *  a state machine acquires a state per adjective.
+	 * 
+	 *  [`Link::Unknown`] on every platform without a watcher, which is every platform but Android
+	 *  — so a consumer must treat it as "do not mention the network", never as bad news.
+	 */
+	link: Link,
 };
 
 /**

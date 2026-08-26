@@ -45,6 +45,15 @@ watch(
  */
 const busy = computed(() => vpn.isBusy)
 
+/**
+ * Whether the device is known to have no network.
+ *
+ * Strictly `'offline'`: `'unknown'` is what every platform without a watcher publishes — the
+ * desktop always, and Android until its first callback — and treating "nobody said" as bad news
+ * would put a permanent warning on a machine with a perfectly good connection.
+ */
+const isOffline = computed(() => vpn.state.link === 'offline')
+
 // Clear offline banner when server becomes reachable again
 watch(meQueryError, (err) => {
   if (!err) noteServerReachable()
@@ -255,12 +264,23 @@ const healthDotClass = computed(() => {
         on screen to say so: without it a reconnect looks identical to a hung app.
       -->
       <div v-else-if="vpn.retry" class="flex flex-col items-center gap-1">
-        <span class="text-sm text-[var(--ui-text-muted)]">
-          {{ t('vpn.reconnecting', { current: vpn.retry.pass, max: vpn.retry.max }) }}
-        </span>
-        <span class="text-xs text-[var(--ui-text-muted)]">
-          {{ t('vpn.retryingIn', { seconds: Math.ceil(vpn.retry.resume_in_ms / 1000) }) }}
-        </span>
+        <!--
+          Waiting on a network rather than on a clock. The actor parks the cycle while the device
+          is offline and spends none of its budget there, so a countdown and a pass number would
+          both be lies: nothing is counting down and nothing is being used up.
+        -->
+        <template v-if="isOffline">
+          <span class="text-sm text-[var(--ui-text-muted)]">{{ t('vpn.waitingForNetwork') }}</span>
+          <span class="text-xs text-[var(--ui-text-muted)]">{{ t('vpn.resumesWhenOnline') }}</span>
+        </template>
+        <template v-else>
+          <span class="text-sm text-[var(--ui-text-muted)]">
+            {{ t('vpn.reconnecting', { current: vpn.retry.pass, max: vpn.retry.max }) }}
+          </span>
+          <span class="text-xs text-[var(--ui-text-muted)]">
+            {{ t('vpn.retryingIn', { seconds: Math.ceil(vpn.retry.resume_in_ms / 1000) }) }}
+          </span>
+        </template>
       </div>
 
       <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
@@ -285,6 +305,21 @@ const healthDotClass = computed(() => {
         variant="soft"
         icon="i-lucide-plug-zap"
         :title="t('vpn.serviceNotAnswering')"
+        class="mt-2 w-full max-w-sm"
+      />
+
+      <!--
+        Connected over nothing. The tunnel is intact and will carry traffic the moment the phone
+        has a signal again — the actor deliberately does not tear it down — so this explains why
+        nothing works without suggesting anything is broken.
+      -->
+      <UAlert
+        v-if="vpn.isConnected && isOffline"
+        color="neutral"
+        variant="soft"
+        icon="i-lucide-wifi-off"
+        :title="t('vpn.noNetwork')"
+        :description="t('vpn.noNetworkHint')"
         class="mt-2 w-full max-w-sm"
       />
 

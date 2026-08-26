@@ -164,6 +164,15 @@ class FloppaVpnService : VpnService() {
     private external fun nativeNetworkChanged(generation: Long)
 
     /**
+     * The device gained or lost its network entirely — not a roam, the presence or absence of one.
+     *
+     * Process-wide and generation-free, because it is a fact about the phone rather than about any
+     * tunnel: it is reported when there is no tunnel at all, which is when the actor most needs it.
+     * A parked cycle resumes on the `true`, and stops burning its budget on the `false`.
+     */
+    private external fun nativeLinkChanged(online: Boolean)
+
+    /**
      * The system asked for a tunnel with nobody watching — always-on, boot, lockdown. Raises the
      * intent from what the last successful connect recorded, or stops the service when there is
      * nothing to raise.
@@ -196,21 +205,21 @@ class FloppaVpnService : VpnService() {
     /** Whether the foreground notification is up, so a stop with nothing running is a no-op. */
     private var foreground = false
 
-    /**
-     * Watches which network the tunnel is riding on, for as long as one is up.
-     *
-     * Two things depend on it. `setUnderlyingNetworks` tells the system what the VPN is actually
-     * carried by, which is what makes traffic accounting and "is there a network" correct for every
-     * app inside the tunnel. And a *change* of that network is the single most common way a mobile
-     * tunnel breaks: the socket underneath stays bound to a network that no longer exists, so every
-     * packet falls into a hole while the tunnel still looks perfectly up. Rebinding it here takes a
-     * round trip, needs no UI process, and never changes what is running — so it can never fight
-     * the actor's own recovery, which starts a whole cycle and takes minutes to reach.
-     */
+    /** Watches the network under the tunnel — and, just as importantly, under no tunnel at all. */
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     /** The network the tunnel is currently riding, so only a real change bounces the socket. */
     private var underlyingNetwork: Network? = null
+
+    /**
+     * Every non-VPN network the system currently offers.
+     *
+     * A set rather than a flag because "lost a network" and "lost the network" are different events
+     * below API 31, where the registration reports every match: a phone dropping Wi-Fi with mobile
+     * data already up has lost nothing worth telling the actor about. On API 31+ the best-matching
+     * registration keeps this to at most one entry, and the same code reads it correctly.
+     */
+    private val availableNetworks = mutableSetOf<Network>()
 
     /**
      * Every field above is touched on the main thread only. Rust calls [shutdownService] and
@@ -227,6 +236,8 @@ class FloppaVpnService : VpnService() {
             // Boots the actor on the first instance; refreshes the callback reference on every one.
             nativeInit(logDir.absolutePath, applicationInfo.dataDir)
             Log.i(TAG, "the VPN process is up")
+            // After the actor exists, so its first link report has somewhere to land.
+            watchNetwork()
         } catch (e: Exception) {
             // Caught rather than thrown on: an exception out of onCreate takes the process with it,
             // and the UI binds on every launch — so a boot that cannot succeed would be a crash
@@ -336,7 +347,8 @@ class FloppaVpnService : VpnService() {
                 tunInterface = tun
                 Log.i(TAG, "TUN established with fd ${tun.fd} for generation $generation")
                 nativeSetTunFd(generation, tun.fd)
-                watchNetwork(generation)
+                // The watch is already running; what is new is a tunnel to attribute to it.
+                underlyingNetwork?.let { setUnderlyingNetworks(arrayOf(it)) }
             } catch (e: Exception) {
                 // Every reason `establish()` fails is outside this app — consent revoked, another
                 // VPN holding lockdown, every selected app uninstalled — so the reason is worth
@@ -359,6 +371,7 @@ class FloppaVpnService : VpnService() {
     override fun onDestroy() {
         Log.i(TAG, "the VPN service is being destroyed")
         VpnPhaseHolder.publish(VpnPhase.Off)
+        stopWatchingNetwork()
         endGeneration()
         // The reference Rust calls back on is deliberately *not* cleared here. Instances share this
         // process and their teardown is asynchronous: a new instance's onCreate routinely runs
@@ -384,7 +397,8 @@ class FloppaVpnService : VpnService() {
     private fun endGeneration() {
         val target = generation
         generation = NO_GENERATION
-        stopWatchingNetwork()
+        // The network watch deliberately outlives the tunnel: a parked cycle is waiting on exactly
+        // the report it produces. It goes with the service instance, in onDestroy.
         closeTun()
         if (target != NO_GENERATION) {
             nativeServiceGone(target)
@@ -405,7 +419,6 @@ class FloppaVpnService : VpnService() {
             VpnPhaseHolder.publish(VpnPhase.Off)
             if (!foreground) return@post
             Log.i(TAG, "nothing is running; the service is standing down")
-            stopWatchingNetwork()
             closeTun()
             stopForeground(STOP_FOREGROUND_REMOVE)
             foreground = false
@@ -427,14 +440,29 @@ class FloppaVpnService : VpnService() {
     }
 
     /**
-     * Follow the default network for as long as [generation] owns the tunnel.
+     * Follow the network under the tunnel, for as long as this service instance exists.
      *
-     * The first `onAvailable` after registering describes the network the tunnel was just built on,
-     * so it is recorded and not acted on; only a *different* network from then on is a roam. The
-     * callback is registered once per generation and removed with the rest of the Android-side
-     * teardown.
+     * Registered once, in `onCreate`, rather than once per tunnel — and that is the change that
+     * makes the actor able to wait out a network outage. It has to answer "is there a network" when
+     * there is *no* tunnel, because that is precisely the state a phone in a tunnel is in: the
+     * tunnel died, the cycle is parked, and the only thing that can restart it is the network
+     * coming back. A watch that lived and died with the tunnel could never report that.
+     *
+     * One callback, three jobs, and only the first of them is unconditional:
+     *
+     * - **The link.** Report to the actor whether this device has any usable network at all. It
+     *   parks its cycles on `Offline` and resumes them on `Online`, spending no budget in between.
+     * - **`setUnderlyingNetworks`.** Tell the system what the VPN is carried by, so accounting and
+     *   "is there a network" are right for every app inside the tunnel.
+     * - **The rebind.** A *change* of that network is the most common way a mobile tunnel breaks:
+     *   the socket underneath stays bound to a network that no longer exists, so every packet falls
+     *   into a hole while the tunnel still looks perfectly up. A round trip fixes it, with no UI
+     *   process and no change to what is running — so it can never fight the actor's own recovery,
+     *   which starts a whole cycle and takes minutes to reach.
+     *
+     * The last two only mean anything while a generation owns a tunnel, and keep their guard.
      */
-    private fun watchNetwork(generation: Long) {
+    private fun watchNetwork() {
         stopWatchingNetwork()
         val manager = getSystemService(ConnectivityManager::class.java)
         if (manager == null) {
@@ -444,13 +472,11 @@ class FloppaVpnService : VpnService() {
         val callback =
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    mainHandler.post { onUnderlyingNetwork(generation, network) }
+                    mainHandler.post { onNetworkAvailable(network) }
                 }
 
                 override fun onLost(network: Network) {
-                    // Not acted on: there is nothing to rebind onto until another network
-                    // arrives, and that arrival is an onAvailable.
-                    Log.i(TAG, "Lost network $network")
+                    mainHandler.post { onNetworkLost(network) }
                 }
             }
         // Explicitly *not* the default network. Once this service is up, the default network is
@@ -477,16 +503,37 @@ class FloppaVpnService : VpnService() {
             networkCallback = callback
         } catch (e: Exception) {
             Log.w(TAG, "Could not watch the underlying network", e)
+            return
+        }
+        // Registering does not, by itself, tell us there is nothing: with no matching network the
+        // callback simply never fires, and staying silent would leave the actor at `Unknown` —
+        // which gates nothing, so a boot in airplane mode would spend its budget before the first
+        // report arrived. A device with no default network at all has no network at all, VPN or
+        // otherwise, and that is a fact worth reporting immediately. Anything else is left to the
+        // callback, which is the only thing that can tell a real network from our own tunnel.
+        if (manager.activeNetwork == null) {
+            reportLink(online = false)
         }
     }
 
-    private fun onUnderlyingNetwork(generation: Long, network: Network) {
-        // A callback outliving its generation belongs to a tunnel that is already gone.
-        if (this.generation != generation) return
+    private fun onNetworkAvailable(network: Network) {
+        val wasEmpty = availableNetworks.isEmpty()
+        availableNetworks.add(network)
+        if (wasEmpty) reportLink(online = true)
 
-        setUnderlyingNetworks(arrayOf(network))
+        // Recorded whether or not a tunnel exists, and that ordering is load-bearing now that the
+        // watch outlives the tunnel. The first onAvailable arrives at registration, long before
+        // anyone connects; skipping the write then would leave this null for the tunnel that
+        // follows — so `startGeneration` would never call `setUnderlyingNetworks`, and the first
+        // roam after it would look like a first sighting and skip the rebind, leaving the socket
+        // pinned to a network that no longer exists. The per-generation registration used to hide
+        // this by re-firing onAvailable after every establish.
         val previous = underlyingNetwork
         underlyingNetwork = network
+
+        // Below this line is about the tunnel, and there may not be one.
+        if (generation == NO_GENERATION) return
+        setUnderlyingNetworks(arrayOf(network))
         if (previous == null) {
             Log.i(TAG, "Tunnel is riding $network")
             return
@@ -501,10 +548,40 @@ class FloppaVpnService : VpnService() {
         }
     }
 
+    /**
+     * A network went away.
+     *
+     * Only the *last* one is news: on API 31+ the best-matching registration means there is only
+     * ever one, and below it a phone dropping Wi-Fi while mobile data carries on has lost nothing
+     * that matters.
+     *
+     * [underlyingNetwork] is deliberately not cleared. It is the memory of what the tunnel's socket
+     * is bound to, and it is still bound to it — a dead network. Forgetting it here would make the
+     * next `onAvailable` look like the first one and skip the rebind, leaving the socket pinned to
+     * a network that no longer exists: the exact failure the rebind exists for.
+     */
+    private fun onNetworkLost(network: Network) {
+        availableNetworks.remove(network)
+        if (availableNetworks.isEmpty()) {
+            Log.i(TAG, "there is no network under the tunnel any more")
+            reportLink(online = false)
+        }
+    }
+
+    /** Tell the actor what the device's network situation is. Never fatal. */
+    private fun reportLink(online: Boolean) {
+        try {
+            nativeLinkChanged(online)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not report the network's state", e)
+        }
+    }
+
     private fun stopWatchingNetwork() {
         val callback = networkCallback ?: return
         networkCallback = null
         underlyingNetwork = null
+        availableNetworks.clear()
         try {
             getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
         } catch (e: Exception) {

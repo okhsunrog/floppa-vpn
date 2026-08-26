@@ -9,6 +9,7 @@ use super::intent::{IntentEpoch, TunnelParams};
 #[cfg(doc)]
 use super::intent::UpIntent;
 use super::outcome::CycleOutcome;
+use super::world::Link;
 use crate::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -169,6 +170,17 @@ pub struct TunnelState {
     pub configs: ConfigsView,
     /// False while the world is dark. This never by itself means the tunnel is down.
     pub backend_reachable: bool,
+    /// Whether the device has a network under the tunnel, where the platform says so.
+    ///
+    /// A field rather than a [`Phase`], because it is orthogonal to every one of them: a tunnel
+    /// can be Connected with the network gone (the phone is in a lift and the tunnel is intact),
+    /// and a cycle can be Retrying with the network gone (it is parked, waiting, spending
+    /// nothing). A phase cannot say either of those, and inventing one for each combination is how
+    /// a state machine acquires a state per adjective.
+    ///
+    /// [`Link::Unknown`] on every platform without a watcher, which is every platform but Android
+    /// — so a consumer must treat it as "do not mention the network", never as bad news.
+    pub link: Link,
 }
 
 impl TunnelState {
@@ -196,6 +208,7 @@ impl TunnelState {
             outcome_serial,
             configs,
             backend_reachable,
+            link,
         } = self;
         *phase == other.phase
             && *busy == other.busy
@@ -217,6 +230,7 @@ impl TunnelState {
             && *outcome_serial == other.outcome_serial
             && *configs == other.configs
             && *backend_reachable == other.backend_reachable
+            && *link == other.link
     }
 
     pub fn initial() -> Self {
@@ -244,6 +258,7 @@ impl TunnelState {
             outcome_serial: 0,
             configs: ConfigsView::default(),
             backend_reachable: false,
+            link: Link::Unknown,
         }
     }
 }

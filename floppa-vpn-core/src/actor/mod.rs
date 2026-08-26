@@ -37,8 +37,8 @@ use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
     AttemptError, AttemptPhase, AttemptResult, ConfigsView, CycleOutcome, Intent, IntentAccepted,
-    IntentEpoch, IntentError, Observation, Policy, Status, Traffic, TrafficStats, TunnelState,
-    UpIntent, World, WorldView,
+    IntentEpoch, IntentError, Link, Observation, Policy, Status, Traffic, TrafficStats,
+    TunnelState, UpIntent, World, WorldView,
 };
 use crate::backend::VpnBackend;
 use crate::platform::{Platform, PlatformImpl};
@@ -94,6 +94,13 @@ pub struct TunnelActor {
     /// sample exactly once and rendering stays pure.
     traffic: Traffic,
     last_obs: Observation,
+    /// What the platform last said about the network under the tunnel.
+    ///
+    /// Beside `last_obs` rather than inside it, because the two are reported by different people:
+    /// an observation comes from whoever owns the tunnel, and this comes from the OS. It stays
+    /// [`Link::Unknown`] forever on a platform with no watcher, which is what makes this field
+    /// invisible to the desktop and the CLI.
+    link: Link,
     /// Whether the world has ever answered us. Until it has, "there is no tunnel" is a claim we
     /// are not entitled to make, and the published phase says so.
     observed_once: bool,
@@ -219,6 +226,7 @@ impl TunnelActor {
             speed: SpeedTracker::new(),
             traffic: Traffic::default(),
             last_obs: Observation::unknown(Instant::now()),
+            link: Link::default(),
             observed_once: false,
             backend,
             platform,
@@ -427,6 +435,15 @@ impl TunnelActor {
                 self.last_obs = *obs;
                 Reconcile::Yes
             }
+
+            Command::LinkChanged(link) => {
+                if self.link == link {
+                    return Reconcile::No;
+                }
+                info!(?link, "the network under the tunnel changed");
+                self.link = link;
+                Reconcile::Yes
+            }
         }
     }
 
@@ -594,6 +611,7 @@ impl TunnelActor {
                         &self.intent,
                         &finished,
                         &world,
+                        self.link,
                         now,
                         &self.policy,
                     );
@@ -607,6 +625,7 @@ impl TunnelActor {
             &self.status,
             &self.intent,
             report.result,
+            self.link,
             now,
             &self.policy,
         );
@@ -622,6 +641,7 @@ impl TunnelActor {
             &self.intent,
             &report,
             &world,
+            self.link,
             now,
             &self.policy,
         );
@@ -683,6 +703,7 @@ impl TunnelActor {
             &self.status,
             &self.intent,
             &world,
+            self.link,
             now,
             now_unix,
             &self.policy,
@@ -1051,6 +1072,7 @@ impl TunnelActor {
             &self.status,
             &self.intent,
             &world,
+            self.link,
             self.traffic,
             &self.configs_view,
             self.last_outcome.clone(),

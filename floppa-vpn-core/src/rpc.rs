@@ -124,7 +124,7 @@ mod tests {
     use super::*;
     use crate::actor::types::{
         AttemptError, AttemptFailure, AttemptProgress, ConfigSummary, ConfigsView, IntentView,
-        Phase, RetryProgress, SplitMode, TrafficStats, TunnelParams,
+        Link, Phase, RetryProgress, SplitMode, TrafficStats, TunnelParams,
     };
     use crate::logging::{LogConfig, LogProfile};
     use crate::state::SpeedTracker;
@@ -267,6 +267,10 @@ mod tests {
                 }],
             };
             connected.backend_reachable = true;
+            // Connected with the network gone: the tunnel is intact and the phone is in a lift.
+            // One of the two combinations the link exists to express, and unrepresentable as a
+            // phase — which is why it has to survive the wire as its own field.
+            connected.link = Link::Offline;
 
             let mut connecting = TunnelState::initial();
             connecting.phase = Phase::Connecting;
@@ -285,7 +289,27 @@ mod tests {
             });
             retrying.last_outcome = Some(outcomes()[3].clone());
 
-            vec![TunnelState::initial(), connected, connecting, retrying]
+            // The other one: a cycle parked because there is no network to spend a pass on.
+            let mut parked = TunnelState::initial();
+            parked.phase = Phase::Retrying;
+            parked.link = Link::Offline;
+            parked.retry = Some(RetryProgress {
+                pass: 1,
+                max: 3,
+                resume_in_ms: 0,
+            });
+
+            let mut online = TunnelState::initial();
+            online.link = Link::Online;
+
+            vec![
+                TunnelState::initial(),
+                connected,
+                connecting,
+                retrying,
+                parked,
+                online,
+            ]
         }
 
         #[test]

@@ -128,8 +128,18 @@ fn cycle(epoch: u64, order: &[Protocol], passes_allowed: u32) -> Cycle {
     }
 }
 
+/// The three table entry points, on a device whose network nobody has reported on.
+///
+/// Every test below this line runs at [`Link::Unknown`], which is the point: it is the state the
+/// desktop and the CLI never leave, so the whole existing suite passing unchanged is the proof
+/// that the link gate changes nothing for them. The offline behaviour is tested through
+/// [`go_offline`] and its siblings.
 fn go(status: &Status, intent: &Intent, world: &World, now: Instant) -> Decision {
-    reconcile(status, intent, world, now, 1_000, &policy())
+    reconcile(status, intent, world, Link::Unknown, now, 1_000, &policy())
+}
+
+fn go_link(status: &Status, intent: &Intent, world: &World, link: Link, now: Instant) -> Decision {
+    reconcile(status, intent, world, link, now, 1_000, &policy())
 }
 
 /// Effects are matched by shape, since some carry non-comparable payloads.
@@ -1139,7 +1149,17 @@ fn going_down_during_a_retry_is_immediate() {
 // ------------------------------------------------------------------------------ attempt outcomes
 
 fn attempt_done(status: &Status, intent: &Intent, result: AttemptResult, now: Instant) -> Decision {
-    on_attempt_done(status, intent, result, now, &policy())
+    on_attempt_done(status, intent, result, Link::Unknown, now, &policy())
+}
+
+fn attempt_done_link(
+    status: &Status,
+    intent: &Intent,
+    result: AttemptResult,
+    link: Link,
+    now: Instant,
+) -> Decision {
+    on_attempt_done(status, intent, result, link, now, &policy())
 }
 
 fn established(protocol: Protocol) -> AttemptResult {
@@ -1343,7 +1363,25 @@ fn clean() -> UnwindReport {
 }
 
 fn unwind_done(status: &Status, intent: &Intent, world: &World, now: Instant) -> Decision {
-    on_unwind_done(status, intent, &clean(), world, now, &policy())
+    on_unwind_done(
+        status,
+        intent,
+        &clean(),
+        world,
+        Link::Unknown,
+        now,
+        &policy(),
+    )
+}
+
+fn unwind_done_link(
+    status: &Status,
+    intent: &Intent,
+    world: &World,
+    link: Link,
+    now: Instant,
+) -> Decision {
+    on_unwind_done(status, intent, &clean(), world, link, now, &policy())
 }
 
 fn unwinding_status(reason: UnwindReason, cycle: Option<Cycle>, tries: u32) -> Status {
@@ -1801,4 +1839,280 @@ fn a_newer_intent_the_running_tunnel_already_satisfies_is_a_hand_over_not_a_rebu
         }
         other => panic!("expected a reconnect teardown, got {other:?}"),
     }
+}
+
+// ------------------------------------------------------------------- no network under the tunnel
+
+/*
+ * What these are for.
+ *
+ * A phone that loses signal for five minutes used to lose its tunnel permanently. The peer went
+ * quiet, 17c called it dead, the reconnect cycle spent its whole budget on attempts that could not
+ * have worked, the intent was demoted — and when the network came back nothing was left to notice.
+ * The user found the app disconnected and had to press Connect.
+ *
+ * Two gates fix it, and both are about the same thing: with no network, neither silence nor a
+ * failed attempt is evidence about anything.
+ */
+
+#[test]
+fn a_cycle_with_no_network_waits_instead_of_spending_a_pass() {
+    let now = t0();
+    let intent = up_intent(1, &[AWG, WG], params());
+
+    let d = go_link(&Status::Idle, &intent, &World::Clear, Link::Offline, now);
+    match &d.next {
+        Status::Retrying { cycle, resume_at } => {
+            assert_eq!(cycle.pass, 0, "nothing was spent");
+            assert_eq!(cycle.index, 0, "and nothing was stepped over");
+            assert!(
+                *resume_at <= now,
+                "it is waiting on the network, not the clock"
+            );
+        }
+        other => panic!("expected the cycle to park, got {other:?}"),
+    }
+    assert!(
+        !has_begin(&d, AWG) && !has_begin(&d, WG),
+        "an attempt over no network is one that cannot succeed"
+    );
+}
+
+#[test]
+fn a_parked_cycle_stays_exactly_where_it_is_however_long_the_network_is_gone() {
+    // The property that matters: parking is not a slow way of running out of budget. Ticking the
+    // table for an hour with no network leaves the cycle byte-identical to the one that entered.
+    let intent = up_intent(1, &[AWG, WG], params());
+    let mut status = Status::Retrying {
+        cycle: reconnect_cycle(1, &[AWG, WG], &policy()),
+        resume_at: t0(),
+    };
+
+    for minute in 0..60 {
+        let now = t0() + Duration::from_secs(60 * minute);
+        status = go_link(&status, &intent, &World::Clear, Link::Offline, now).next;
+    }
+
+    match &status {
+        Status::Retrying { cycle, .. } => {
+            assert_eq!(cycle.pass, 0);
+            assert_eq!(cycle.index, 0);
+            assert!(
+                cycle.failures.is_empty(),
+                "nothing failed, because nothing ran"
+            );
+        }
+        other => panic!("expected it to still be parked, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_network_coming_back_resumes_the_same_pass_it_parked_on() {
+    // Not a fresh cycle and not the next protocol: the one that was waiting, where it was waiting.
+    let now = t0();
+    let intent = up_intent(1, &[AWG, WG], params());
+    let mut cycle = reconnect_cycle(1, &[AWG, WG], &policy());
+    cycle.index = 1;
+    cycle.pass = 1;
+
+    let d = go_link(
+        &Status::Retrying {
+            cycle,
+            resume_at: now,
+        },
+        &intent,
+        &World::Clear,
+        Link::Online,
+        now,
+    );
+    match &d.next {
+        Status::Connecting { cycle, .. } => {
+            assert_eq!(cycle.protocol(), WG, "the protocol it was on");
+            assert_eq!(cycle.pass, 1, "the pass it was on");
+        }
+        other => panic!("expected it to resume, got {other:?}"),
+    }
+    assert!(has_begin(&d, WG));
+}
+
+#[test]
+fn a_running_tunnel_is_not_judged_by_the_silence_of_a_peer_nothing_can_reach() {
+    // Without this the tunnel died every time the phone spent three minutes underground, and came
+    // back — if it came back — on whichever protocol was first in the order rather than the one
+    // that had been working.
+    let now = t0();
+    let long_gone = policy().silent_after.as_secs() as i64 * 10;
+    let d = go_link(
+        &Status::Up(up_status(1, AWG, params())),
+        &up_intent(1, &[AWG, WG], params()),
+        &quiet(AWG, long_gone),
+        Link::Offline,
+        now,
+    );
+    assert!(matches!(d.next, Status::Up(_)), "the tunnel is still ours");
+    assert!(
+        !has_probe(&d),
+        "there is nobody to ask and nothing to ask over"
+    );
+    assert!(!has_unwind(&d), "and certainly nothing to tear down");
+}
+
+#[test]
+fn losing_the_network_mid_probe_clears_the_clock_rather_than_leaving_it_to_expire() {
+    // The subtle one. Merely *skipping* the judgement while offline would leave `probing_since`
+    // running against a grace nothing could answer within — so the first table pass after the
+    // network returned would find it long expired and fire 17c, tearing the tunnel down one second
+    // before the rebind reflex fixed it. Offline resets the clock; the probe starts again, once
+    // there is something for it to travel over.
+    let now = t0();
+    let mut status = up_status(1, AWG, params());
+    status.probing_since = Some(now);
+    let intent = up_intent(1, &[AWG], params());
+    let quiet_awg = quiet(AWG, 600);
+
+    let offline = go_link(&Status::Up(status), &intent, &quiet_awg, Link::Offline, now);
+    match &offline.next {
+        Status::Up(u) => assert_eq!(u.probing_since, None, "the clock is cleared, not paused"),
+        other => panic!("expected to stay Up, got {other:?}"),
+    }
+
+    // Long after the grace would have run out, the network returns: the peer is asked again
+    // rather than pronounced dead.
+    let later = now + policy().probe_grace * 10;
+    let d = go_link(&offline.next, &intent, &quiet_awg, Link::Online, later);
+    assert!(has_probe(&d), "a fresh question, not a verdict");
+    assert!(!has_unwind(&d));
+}
+
+#[test]
+fn a_disconnect_is_obeyed_while_the_cycle_is_parked() {
+    // Parking absorbs the network, not the user. Row 24 still applies.
+    let now = t0();
+    let d = go_link(
+        &Status::Retrying {
+            cycle: reconnect_cycle(1, &[AWG], &policy()),
+            resume_at: now,
+        },
+        &down(2),
+        &World::Clear,
+        Link::Offline,
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(matches!(
+        resolved(&d),
+        Some((IntentEpoch(1), CycleOutcome::Cancelled))
+    ));
+}
+
+#[test]
+fn a_failure_that_lands_after_the_network_dies_parks_the_cycle_rather_than_walking_the_ladder() {
+    // The network can die during an attempt. Its failure is real and is recorded — one pass may be
+    // burnt that way, and refunding it would mean guessing when the link actually went — but the
+    // ladder does not then march through the remaining protocols proving the same thing twice.
+    let now = t0();
+    let status = Status::Connecting {
+        cycle: reconnect_cycle(1, &[AWG, WG], &policy()),
+        phase: AttemptPhase::Preparing,
+        deadline: now + Duration::from_secs(25),
+    };
+    let d = attempt_done_link(
+        &status,
+        &up_intent(1, &[AWG, WG], params()),
+        AttemptResult::Failed(AttemptError::ResolveFailed {
+            host: "vpn.example".into(),
+            detail: "no DNS".into(),
+        }),
+        Link::Offline,
+        now,
+    );
+    match &d.next {
+        Status::Retrying { cycle, .. } => {
+            assert_eq!(cycle.protocol(), WG, "it advanced, as it always does");
+            assert_eq!(
+                cycle.failures.len(),
+                1,
+                "and recorded what actually happened"
+            );
+        }
+        other => panic!("expected the cycle to park, got {other:?}"),
+    }
+    assert!(
+        !has_begin(&d, WG),
+        "but it did not try over a network that is gone"
+    );
+}
+
+#[test]
+fn a_teardown_that_finishes_with_the_network_gone_parks_instead_of_reconnecting() {
+    let now = t0();
+    let d = unwind_done_link(
+        &unwinding_status(
+            UnwindReason::TunnelDied,
+            Some(reconnect_cycle(1, &[AWG], &policy())),
+            0,
+        ),
+        &up_intent(1, &[AWG], params()),
+        &World::Clear,
+        Link::Offline,
+        now,
+    );
+    assert!(
+        matches!(d.next, Status::Retrying { .. }),
+        "it waits for a network, and the reconnect budget is still whole"
+    );
+    assert!(!has_begin(&d, AWG));
+}
+
+#[test]
+fn a_budget_that_ran_out_across_an_outage_waits_rather_than_giving_up() {
+    // Coverage that flaps — a train, a lift, a basement — gives a cycle online windows just long
+    // enough to fail an attempt in. Enough of those drain the budget without any single attempt
+    // having had a fair chance, and giving up then demotes the intent and leaves the user
+    // disconnected once the signal is properly back. That is the same defect as the one the park
+    // gate removes, reached by a different road.
+    let now = t0();
+    let mut spent = reconnect_cycle(1, &[AWG], &policy());
+    spent.pass = policy().reconnect_passes - 1;
+    assert!(!spent.has_budget(), "the premise: there is nothing left");
+
+    let d = attempt_done_link(
+        &Status::Connecting {
+            cycle: spent.clone(),
+            phase: AttemptPhase::Preparing,
+            deadline: now + Duration::from_secs(25),
+        },
+        &up_intent(1, &[AWG], params()),
+        AttemptResult::Failed(AttemptError::TimedOut),
+        Link::Offline,
+        now,
+    );
+    assert!(matches!(d.next, Status::Retrying { .. }));
+    assert!(
+        resolved(&d).is_none(),
+        "nobody is told it failed, because it has not finished failing"
+    );
+    assert!(
+        !d.effects.iter().any(|e| matches!(e, Effect::DemoteIntent)),
+        "and the intent still wants a tunnel"
+    );
+
+    // Online, the very same cycle gives up as it always did: parking bought it an attempt, not a
+    // budget.
+    let d = attempt_done_link(
+        &Status::Connecting {
+            cycle: spent,
+            phase: AttemptPhase::Preparing,
+            deadline: now + Duration::from_secs(25),
+        },
+        &up_intent(1, &[AWG], params()),
+        AttemptResult::Failed(AttemptError::TimedOut),
+        Link::Online,
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(matches!(
+        resolved(&d),
+        Some((IntentEpoch(1), CycleOutcome::LostGaveUp { .. }))
+    ));
 }

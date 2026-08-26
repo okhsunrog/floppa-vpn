@@ -20,7 +20,9 @@
 
 use super::rpc::{SOCKET_NAME, STATE_POLL_DEADLINE, VpnRpcClient};
 use crate::actor::handle::{IntentRequest, TunnelControl};
-use crate::actor::types::{CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelState};
+use crate::actor::types::{
+    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link, TunnelState,
+};
 use crate::protocol::Protocol;
 use crate::store::ConfigError;
 use std::path::PathBuf;
@@ -280,6 +282,15 @@ impl TunnelControl for RemoteActor {
             })
             .await;
     }
+
+    /// Deliberately nothing, and it needs no method on the wire.
+    ///
+    /// Whoever watches the network is in the process that holds the actor — on Android the `:vpn`
+    /// service, which registers the callback and reports through its own local handle. This side
+    /// is the UI, which is frozen by the cached-app freezer at exactly the moments a link report
+    /// would matter, so a watcher here would be the one that could not do the job. Sending its
+    /// verdict across the socket would be one process telling another about a device they share.
+    async fn report_link(&self, _link: Link) {}
 }
 
 /// The three log calls, which are about the process rather than about the tunnel.
