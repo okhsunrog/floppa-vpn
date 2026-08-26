@@ -412,6 +412,46 @@ export type SyncOutcome =
 /**  Nothing was learned and nothing was changed — no server, or nobody signed in. */
 { outcome: "offline" };
 
+/**
+ *  How the system itself is running this VPN, as the platform reports it.
+ * 
+ *  Nested rather than two booleans, because AOSP nests them: `isLockdownEnabled` is documented as
+ *  *"running in always-on VPN **lockdown** mode"* — a mode of always-on, not a second axis. Two
+ *  flags would make "lockdown without always-on" representable, and it does not exist.
+ * 
+ *  **This is not "who started this tunnel".** Both come from
+ *  `isCallerCurrentAlwaysOnVpnApp`/`…LockdownApp`, which ask the system whether *this app* is
+ *  configured as the always-on VPN — a live question with the same answer whoever asked for the
+ *  start in front of it. A user pressing Connect while always-on is configured produces a start we
+ *  flagged ourselves and an `AlwaysOn` here. Which principal issued a given start is still read
+ *  from the start intent, and has to be.
+ * 
+ *  Display only. Nothing in [`reconcile`](super::reconcile) reads it: what the system would do
+ *  about a tunnel that stops is the system's business, and the one thing that changes here is
+ *  whether a person is told what disconnecting will cost them.
+ */
+export type SystemVpnMode = 
+/**
+ *  Nobody has said — and on this app that is not rare. Both queries are API 29 and the minimum
+ *  is 24, so an older device can perfectly well *be* the always-on VPN while being unable to
+ *  answer; reporting [`Off`](Self::Off) there would be a lie rather than a default. A question
+ *  that could not be asked lands here too, never on a definite answer.
+ */
+"unknown" | 
+/**  The system is not running this app as its always-on VPN. */
+"off" | 
+/**
+ *  The system restarts this service when it needs to — after a reboot, an app update, a
+ *  process that died. It does **not** mean the system re-establishes a tunnel that drops, and
+ *  a deliberate stop is still respected.
+ */
+"always_on" | 
+/**
+ *  Always-on, and other apps may not bypass the VPN. The one that matters to a person:
+ *  disconnecting under it leaves the device with no network at all.
+ */
+"lockdown";
+
 export type TrafficStats = {
 	tx_bytes: number,
 	rx_bytes: number,
@@ -494,6 +534,18 @@ export type TunnelState = {
 	 *  — so a consumer must treat it as "do not mention the network", never as bad news.
 	 */
 	link: Link,
+	/**
+	 *  How the system is running this VPN — always-on, lockdown, neither, or not knowable.
+	 * 
+	 *  Published because one of its values costs a person their whole connection: disconnecting
+	 *  under lockdown leaves the device with no network at all, and nothing used to say so. The
+	 *  actor never reads it — what the system does about a tunnel that stops is the system's
+	 *  business.
+	 * 
+	 *  [`SystemVpnMode::Unknown`] on every non-Android platform, and on Android below API 29
+	 *  where the question cannot be asked. Render it as silence, never as "no".
+	 */
+	vpn_mode: SystemVpnMode,
 };
 
 /**

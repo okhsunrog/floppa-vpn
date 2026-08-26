@@ -32,6 +32,6 @@ pub use super::snapshot::{
 };
 pub use super::status::{AttemptPhase, Cycle, Status, UnwindReason, UpStatus};
 pub use super::world::{
-    Link, Observation, RawStats, RunningTunnel, TunnelObservation, UnreachableCause, World,
-    WorldView,
+    Link, Observation, RawStats, RunningTunnel, SystemVpnMode, TunnelObservation, UnreachableCause,
+    World, WorldView,
 };

@@ -37,8 +37,8 @@ use self::handle::{AttemptReport, Command, IntentRequest, TunnelHandle};
 use self::reconcile::{Decision, Effect};
 use self::types::{
     AttemptError, AttemptPhase, AttemptResult, ConfigsView, CycleOutcome, Intent, IntentAccepted,
-    IntentEpoch, IntentError, Link, Observation, Policy, Status, Traffic, TrafficStats,
-    TunnelState, UpIntent, World, WorldView,
+    IntentEpoch, IntentError, Link, Observation, Policy, Status, SystemVpnMode, Traffic,
+    TrafficStats, TunnelState, UpIntent, World, WorldView,
 };
 use crate::backend::VpnBackend;
 use crate::platform::{Platform, PlatformImpl};
@@ -101,6 +101,12 @@ pub struct TunnelActor {
     /// [`Link::Unknown`] forever on a platform with no watcher, which is what makes this field
     /// invisible to the desktop and the CLI.
     link: Link,
+    /// How the system is running this VPN, as the platform last reported it.
+    ///
+    /// Display only — nothing in the table reads it. It sits here rather than being asked for on
+    /// demand because the card renders from one snapshot: a mode fetched separately could be shown
+    /// beside a phase it does not belong to, which is the tearing this design exists to prevent.
+    vpn_mode: SystemVpnMode,
     /// Whether the world has ever answered us. Until it has, "there is no tunnel" is a claim we
     /// are not entitled to make, and the published phase says so.
     observed_once: bool,
@@ -227,6 +233,7 @@ impl TunnelActor {
             traffic: Traffic::default(),
             last_obs: Observation::unknown(Instant::now()),
             link: Link::default(),
+            vpn_mode: SystemVpnMode::default(),
             observed_once: false,
             backend,
             platform,
@@ -442,6 +449,17 @@ impl TunnelActor {
                 }
                 info!(?link, "the network under the tunnel changed");
                 self.link = link;
+                Reconcile::Yes
+            }
+
+            Command::VpnModeChanged(mode) => {
+                if self.vpn_mode == mode {
+                    return Reconcile::No;
+                }
+                info!(?mode, "the system's VPN mode changed");
+                self.vpn_mode = mode;
+                // Nothing in the table reads it, but the snapshot does — and a snapshot is only
+                // published off the back of a pass.
                 Reconcile::Yes
             }
         }
@@ -1073,6 +1091,7 @@ impl TunnelActor {
             &self.intent,
             &world,
             self.link,
+            self.vpn_mode,
             self.traffic,
             &self.configs_view,
             self.last_outcome.clone(),

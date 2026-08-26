@@ -54,6 +54,15 @@ const busy = computed(() => vpn.isBusy)
  */
 const isOffline = computed(() => vpn.state.link === 'offline')
 
+/**
+ * Whether the system is blocking connections that do not go through this VPN.
+ *
+ * The one mode worth interrupting someone over: under lockdown a disconnect does not fall back to
+ * the plain network, it leaves the device with none. Strictly `'lockdown'` — `'unknown'` is what
+ * every device below API 29 reports, and warning there would be inventing a fact.
+ */
+const isLockdown = computed(() => vpn.state.vpn_mode === 'lockdown')
+
 // Clear offline banner when server becomes reachable again
 watch(meQueryError, (err) => {
   if (!err) noteServerReachable()
@@ -323,8 +332,32 @@ const healthDotClass = computed(() => {
         class="mt-2 w-full max-w-sm"
       />
 
+      <!--
+        What disconnecting will actually cost. Under lockdown the system blocks everything that is
+        not this tunnel, so the button below does not return the phone to its ordinary network — it
+        leaves it with none. Said before the press rather than discovered after it.
+      -->
+      <UAlert
+        v-if="vpn.isConnected && isLockdown"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-shield-alert"
+        :title="t('vpn.lockdownOn')"
+        :description="t('vpn.lockdownHint')"
+        class="mt-2 w-full max-w-sm"
+      />
+
       <div v-if="vpn.isConnected" class="flex flex-col gap-1 text-sm text-[var(--ui-text-muted)]">
         <span v-if="vpn.state.adopted" class="text-xs">{{ t('vpn.adoptedTunnel') }}</span>
+        <!--
+          Not the same claim as `adopted`, which is about *this* tunnel. This is about the app's
+          configuration: the system will start the service again after a reboot or an update. It
+          does not promise to re-establish a tunnel that drops, and a deliberate disconnect is
+          still respected — so the wording says restart, not reconnect.
+        -->
+        <span v-if="vpn.state.vpn_mode === 'always_on'" class="text-xs">
+          {{ t('vpn.alwaysOnConfigured') }}
+        </span>
         <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
         <span v-if="vpn.state.server_endpoint">
           {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}

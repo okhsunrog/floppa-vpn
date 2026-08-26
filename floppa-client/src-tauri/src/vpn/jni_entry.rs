@@ -17,6 +17,7 @@
 //!           →  nativeNetworkChanged  the default network moved under a running tunnel
 //!           →  nativeLinkChanged     the device gained or lost a network altogether
 //!           →  nativeLinkUnwatched   nobody is watching the network any more
+//!           →  nativeVpnModeChanged  whether the system runs us always-on, and under lockdown
 //!           →  nativeSystemStart     the system wants a tunnel (always-on, boot, lockdown)
 //!           →  nativeServiceGone     this service instance is being destroyed
 //!   Rust    →  hasConsent()          may we run a VPN at all?
@@ -29,7 +30,7 @@
 use super::service_state::ServiceRegistry;
 use super::tunnel::{self, TunnelManager};
 use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
-use crate::vpn::actor::types::{Link, Phase};
+use crate::vpn::actor::types::{Link, Phase, SystemVpnMode};
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong};
@@ -502,6 +503,34 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLinkUn
         Ok(())
     });
     log_outcome("nativeLinkUnwatched", outcome.into_outcome());
+}
+
+/// How the system is running this VPN: always-on, lockdown with it, or neither.
+///
+/// Display only — nothing in the decision table reads it. What it buys is the one thing a person
+/// cannot find out from the app otherwise: under lockdown, disconnecting leaves the device with no
+/// network at all, and until now nothing said so before they pressed the button.
+///
+/// Note what this is *not*. Both facts come from `isCallerCurrentAlwaysOnVpnApp` and its lockdown
+/// twin, which ask the system whether *this app is configured* as the always-on VPN — the same
+/// answer whoever asked for the start in front of it. Which principal issued a given start is
+/// still read from the start intent, and `nativeSystemStart` still trusts that reading: an
+/// unflagged start with always-on switched off is a `START_STICKY` restart after the process died,
+/// and raising the intent there is crash recovery worth keeping.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeVpnModeChanged<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    always_on: jboolean,
+    lockdown: jboolean,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let mode = SystemVpnMode::new(always_on, lockdown);
+        let actor = booted()?.actor.clone();
+        runtime().spawn(async move { actor.report_vpn_mode(mode).await });
+        Ok(())
+    });
+    log_outcome("nativeVpnModeChanged", outcome.into_outcome());
 }
 
 /// The system asked for a tunnel with nobody watching: always-on, boot, or a lockdown restore.

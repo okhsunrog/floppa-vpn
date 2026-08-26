@@ -18,7 +18,7 @@
 
 use super::types::{
     AttemptPhase, AttemptResult, CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link,
-    Observation, TunnelParams, TunnelState,
+    Observation, SystemVpnMode, TunnelParams, TunnelState,
 };
 use crate::protocol::Protocol;
 use crate::rollback::UnwindReport;
@@ -99,6 +99,12 @@ pub enum Command {
     /// delivering this command *is* a table pass. There is no timer to cancel and no separate
     /// notification path that could quietly overtake the queue.
     LinkChanged(Link),
+    /// The platform reported how the system is running this VPN.
+    ///
+    /// Both facts arrive together and are normalised into one value before they get here, so the
+    /// pair cannot be seen half-updated — always-on and lockdown are one nested answer, and two
+    /// commands could tear it.
+    VpnModeChanged(SystemVpnMode),
 }
 
 /// The actor's boundary, as everything that is not the actor sees it.
@@ -148,6 +154,10 @@ pub trait TunnelControl: Send + Sync {
     /// rebind reflex rather than of the commands above: a statement of fact about the machine, not
     /// a request, and so it has no reply and nothing to refuse.
     async fn report_link(&self, link: Link);
+
+    /// Tell the actor how the system is running this VPN. Same shape and same reasoning as
+    /// [`report_link`](Self::report_link): a statement of fact from the process that can see it.
+    async fn report_vpn_mode(&self, mode: SystemVpnMode);
 }
 
 /// A cloneable handle to the actor, held in Tauri state.
@@ -206,6 +216,10 @@ impl TunnelHandle {
 
     pub async fn report_link(&self, link: Link) {
         self.0.report_link(link).await
+    }
+
+    pub async fn report_vpn_mode(&self, mode: SystemVpnMode) {
+        self.0.report_vpn_mode(mode).await
     }
 }
 
@@ -295,5 +309,9 @@ impl TunnelControl for LocalActor {
     /// speed, so waiting on it costs the caller a task, not a thread.
     async fn report_link(&self, link: Link) {
         let _ = self.tx.send(Command::LinkChanged(link)).await;
+    }
+
+    async fn report_vpn_mode(&self, mode: SystemVpnMode) {
+        let _ = self.tx.send(Command::VpnModeChanged(mode)).await;
     }
 }

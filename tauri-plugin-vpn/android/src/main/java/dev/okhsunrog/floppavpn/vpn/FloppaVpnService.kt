@@ -184,6 +184,19 @@ class FloppaVpnService : VpnService() {
     private external fun nativeLinkUnwatched()
 
     /**
+     * How the system is running this VPN: whether we are its always-on VPN, and whether lockdown is
+     * on with it.
+     *
+     * Both in one call because they are one nested answer — `isLockdownEnabled` is documented as
+     * *"running in always-on VPN lockdown mode"*, a mode of always-on — and two calls could be seen
+     * half-applied. Rust normalises the nesting.
+     *
+     * Not "who started this tunnel". Both queries ask the system whether *this app* is configured
+     * as the always-on VPN, which is true just as much when a person presses Connect in the app.
+     */
+    private external fun nativeVpnModeChanged(alwaysOn: Boolean, lockdown: Boolean)
+
+    /**
      * The system asked for a tunnel with nobody watching — always-on, boot, lockdown. Raises the
      * intent from what the last successful connect recorded, or stops the service when there is
      * nothing to raise.
@@ -256,8 +269,9 @@ class FloppaVpnService : VpnService() {
             // Boots the actor on the first instance; refreshes the callback reference on every one.
             nativeInit(logDir.absolutePath, applicationInfo.dataDir)
             Log.i(TAG, "the VPN process is up")
-            // After the actor exists, so its first link report has somewhere to land.
+            // After the actor exists, so its first reports have somewhere to land.
             watchNetwork()
+            reportVpnMode()
         } catch (e: Exception) {
             // Caught rather than thrown on: an exception out of onCreate takes the process with it,
             // and the UI binds on every launch — so a boot that cannot succeed would be a crash
@@ -280,6 +294,11 @@ class FloppaVpnService : VpnService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "onStartCommand: action=${intent?.action}, startId=$startId")
         lastStartId = startId
+        // Every start, because this is the only moment the mode can be known to have changed:
+        // changing always-on or lockdown in Settings reconfigures the VPN, which reaches us as a
+        // start. A toggle that somehow does not is the one stale window, and it costs a wrong
+        // caption rather than a wrong decision — nothing but the UI reads this.
+        reportVpnMode()
 
         when (intent?.action) {
             // The user asked to stop, from the app or from the notification. The actor decides
@@ -605,6 +624,22 @@ class FloppaVpnService : VpnService() {
             nativeLinkChanged(online)
         } catch (e: Exception) {
             Log.w(TAG, "Could not report the network's state", e)
+        }
+    }
+
+    /**
+     * Ask the system how it is running this VPN, and tell the actor.
+     *
+     * Silent below API 29, where neither query exists: the actor's `Unknown` then stands, which is
+     * the honest answer — an older device can perfectly well *be* the always-on VPN, so reporting
+     * "no" would be a lie rather than a default. A call that throws is left the same way.
+     */
+    private fun reportVpnMode() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        try {
+            nativeVpnModeChanged(isAlwaysOn, isLockdownEnabled)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not ask the system how it is running us", e)
         }
     }
 

@@ -515,6 +515,10 @@ export default {
     serviceNotAnswering:
       'The VPN service is not answering. The tunnel may still be up — reconnect if traffic stops.',
     adoptedTunnel: 'This tunnel was started outside the app (always-on VPN).',
+    alwaysOnConfigured: 'Always-on VPN: the system restarts this after a reboot or an update.',
+    lockdownOn: 'Blocking connections without VPN is on',
+    lockdownHint:
+      'Disconnecting will leave this device with no internet at all until you connect again or turn the setting off.',
     retry: 'Retry',
     connectionFailed: 'Connection failed. Please try again later.',
     tryingProtocol: 'Trying {protocol}… ({current}/{total})',

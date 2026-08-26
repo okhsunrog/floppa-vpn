@@ -128,7 +128,7 @@ mod tests {
     use super::*;
     use crate::actor::types::{
         AttemptError, AttemptFailure, AttemptProgress, ConfigSummary, ConfigsView, IntentView,
-        Link, Phase, RetryProgress, SplitMode, TrafficStats, TunnelParams,
+        Link, Phase, RetryProgress, SplitMode, SystemVpnMode, TrafficStats, TunnelParams,
     };
     use crate::logging::{LogConfig, LogProfile};
     use crate::state::SpeedTracker;
@@ -275,6 +275,8 @@ mod tests {
             // One of the two combinations the link exists to express, and unrepresentable as a
             // phase — which is why it has to survive the wire as its own field.
             connected.link = Link::Offline;
+            // The mode a person most needs told, on the state that most needs telling them.
+            connected.vpn_mode = SystemVpnMode::Lockdown;
 
             let mut connecting = TunnelState::initial();
             connecting.phase = Phase::Connecting;
@@ -305,6 +307,12 @@ mod tests {
 
             let mut online = TunnelState::initial();
             online.link = Link::Online;
+            online.vpn_mode = SystemVpnMode::AlwaysOn;
+
+            // The fourth mode, so every variant crosses: `Off` is a definite answer and must not
+            // be confused with `Unknown`, which `TunnelState::initial` already carries.
+            let mut plain = TunnelState::initial();
+            plain.vpn_mode = SystemVpnMode::Off;
 
             vec![
                 TunnelState::initial(),
@@ -313,6 +321,7 @@ mod tests {
                 retrying,
                 parked,
                 online,
+                plain,
             ]
         }
 

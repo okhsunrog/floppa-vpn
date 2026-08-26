@@ -9,7 +9,7 @@ use super::intent::{IntentEpoch, TunnelParams};
 #[cfg(doc)]
 use super::intent::UpIntent;
 use super::outcome::CycleOutcome;
-use super::world::Link;
+use super::world::{Link, SystemVpnMode};
 use crate::protocol::Protocol;
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -181,6 +181,16 @@ pub struct TunnelState {
     /// [`Link::Unknown`] on every platform without a watcher, which is every platform but Android
     /// — so a consumer must treat it as "do not mention the network", never as bad news.
     pub link: Link,
+    /// How the system is running this VPN — always-on, lockdown, neither, or not knowable.
+    ///
+    /// Published because one of its values costs a person their whole connection: disconnecting
+    /// under lockdown leaves the device with no network at all, and nothing used to say so. The
+    /// actor never reads it — what the system does about a tunnel that stops is the system's
+    /// business.
+    ///
+    /// [`SystemVpnMode::Unknown`] on every non-Android platform, and on Android below API 29
+    /// where the question cannot be asked. Render it as silence, never as "no".
+    pub vpn_mode: SystemVpnMode,
 }
 
 impl TunnelState {
@@ -209,6 +219,7 @@ impl TunnelState {
             configs,
             backend_reachable,
             link,
+            vpn_mode,
         } = self;
         *phase == other.phase
             && *busy == other.busy
@@ -231,6 +242,7 @@ impl TunnelState {
             && *configs == other.configs
             && *backend_reachable == other.backend_reachable
             && *link == other.link
+            && *vpn_mode == other.vpn_mode
     }
 
     pub fn initial() -> Self {
@@ -259,6 +271,7 @@ impl TunnelState {
             configs: ConfigsView::default(),
             backend_reachable: false,
             link: Link::Unknown,
+            vpn_mode: SystemVpnMode::Unknown,
         }
     }
 }

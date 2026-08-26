@@ -6,7 +6,7 @@
 
 use super::types::{
     AttemptProgress, ConfigsView, CycleOutcome, Intent, IntentView, Link, Phase, RetryProgress,
-    Status, Traffic, TrafficStats, TunnelState, World,
+    Status, SystemVpnMode, Traffic, TrafficStats, TunnelState, World,
 };
 use std::time::Instant;
 
@@ -22,6 +22,7 @@ pub fn render(
     intent: &Intent,
     world: &World,
     link: Link,
+    vpn_mode: SystemVpnMode,
     traffic: Traffic,
     configs: &ConfigsView,
     last_outcome: Option<CycleOutcome>,
@@ -104,6 +105,7 @@ pub fn render(
         configs: configs.clone(),
         backend_reachable: !world.is_dark(),
         link,
+        vpn_mode,
     }
 }
 
@@ -160,6 +162,7 @@ mod tests {
             intent,
             &World::Clear,
             Link::Unknown,
+            SystemVpnMode::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,
@@ -249,6 +252,7 @@ mod tests {
             &Intent::default(),
             &World::Dark,
             Link::Unknown,
+            SystemVpnMode::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,
@@ -350,6 +354,7 @@ mod tests {
             &Intent::default(),
             &World::Dark,
             Link::Unknown,
+            SystemVpnMode::Unknown,
             Traffic::default(),
             &ConfigsView::default(),
             None,

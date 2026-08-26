@@ -21,7 +21,7 @@
 use super::rpc::{SOCKET_NAME, STATE_POLL_DEADLINE, VpnRpcClient};
 use crate::actor::handle::{IntentRequest, TunnelControl};
 use crate::actor::types::{
-    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link, TunnelState,
+    CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link, SystemVpnMode, TunnelState,
 };
 use crate::protocol::Protocol;
 use crate::store::ConfigError;
@@ -42,8 +42,13 @@ const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 /// that a wedged peer does not hold a UI action forever.
 const CALL_DEADLINE: Duration = Duration::from_secs(20);
 
-/// Bound on `await_cycle`, which is held open for as long as a connect cycle takes. The actor's
-/// own budgets end a cycle; this only has to outlast them.
+/// Bound on `await_cycle`, which is held open for as long as a connect cycle takes.
+///
+/// It used to be justified as "the actor's own budgets end a cycle; this only has to outlast
+/// them", and that stopped being true when a cycle with no network to run on started parking
+/// instead of spending its budget. So this is no longer an upper bound on anything — it is just
+/// how long a caller is willing to hold a socket open, and outliving it is reported as
+/// [`IntentError::CycleStillRunning`] rather than as a failure.
 const CYCLE_DEADLINE: Duration = Duration::from_secs(300);
 
 /// Whatever is needed to make the process holding the actor exist, and to be allowed to talk to it.
@@ -313,6 +318,10 @@ impl TunnelControl for RemoteActor {
     /// would matter, so a watcher here would be the one that could not do the job. Sending its
     /// verdict across the socket would be one process telling another about a device they share.
     async fn report_link(&self, _link: Link) {}
+
+    /// Nothing, for the same reason: only the process holding a `VpnService` instance can ask the
+    /// system how it is running us, and that is the one the actor lives in.
+    async fn report_vpn_mode(&self, _mode: SystemVpnMode) {}
 }
 
 /// The three log calls, which are about the process rather than about the tunnel.

@@ -489,6 +489,8 @@ function emptyState(): TunnelState {
     // Nobody has reported on the network, which is not the same as reporting there is none — and
     // is where the desktop stays forever.
     link: 'unknown',
+    // Same discipline: not knowing whether the system runs us always-on is not "it does not".
+    vpn_mode: 'unknown',
   }
 }
 

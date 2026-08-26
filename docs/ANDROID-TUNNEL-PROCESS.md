@@ -184,15 +184,43 @@ tunnel is still down and the service still gone.
 
 So the pieces line up like this. Every start says who asked — `ACTION_KEEP_ALIVE` from the UI,
 `ACTION_TILE_START` from the tile, and an unflagged `android.net.VpnService` from the system. That
-flagging is the trick the VPN guide recommends for telling them apart, and it predates
-`VpnService.isAlwaysOn()` (API 29), which would answer the same question directly and which we do
-not yet use. `autostart.json` is written on every successful connect and removed only by a wipe, so
-the one non-obvious consequence is that **a manual disconnect does not survive a reboot** while
-always-on is on — which is precisely what the user asked Android for.
+flagging is the trick the VPN guide recommends for telling them apart, and it stays: it is the only
+thing that answers *who issued this start*. `autostart.json` is written on every successful connect
+and removed only by a wipe, so the one non-obvious consequence is that **a manual disconnect does
+not survive a reboot** while always-on is on — which is precisely what the user asked Android for.
 
-What we are blind to is lockdown. With "Block connections without VPN" enabled, a manual disconnect
-leaves the device with no network at all, and nothing here warns before it or tries harder to come
-back under it. `isLockdownEnabled()` is the input that is missing.
+**`isAlwaysOn()` does not answer that question, and an earlier version of this document said it
+did.** Its implementation is `isCallerCurrentAlwaysOnVpnApp()` — the system is asked whether *this
+app is configured* as the always-on VPN, which is equally true when a person presses Connect in the
+app. The two facts coexist: the intent flag says who asked for a start, `isAlwaysOn` says how the
+system is configured. Nothing gates the unflagged-start raise on it, deliberately — a `START_STICKY`
+restart after the process died also arrives unflagged, with always-on switched off, and raising the
+intent there is crash recovery.
+
+Both queries are now read, together, and published as `SystemVpnMode`:
+
+| | what it means |
+| --- | --- |
+| `Unknown` | nobody could say. Both queries are API 29 and `minSdk` is 24, so an older device can *be* the always-on VPN and be unable to answer; a failed call lands here too. Rendered as silence, never as "no". |
+| `Off` | the system does not run this app as its always-on VPN. |
+| `AlwaysOn` | the system restarts the *service* when it needs to. Not "re-establishes a tunnel that drops". |
+| `Lockdown` | as above, and apps may not bypass the VPN. |
+
+Nested rather than two booleans because AOSP nests them — `isLockdownEnabled` is documented as
+*"running in always-on VPN **lockdown** mode"* — so "lockdown without always-on" is unrepresentable,
+as it should be. Kotlin pushes both in one call (`nativeVpnModeChanged`) from `onCreate` and every
+`onStartCommand`; two pushes could tear the pair.
+
+**Lockdown is no longer invisible.** With "Block connections without VPN" on, a manual disconnect
+leaves the device with no network at all, and the card now says so above the disconnect button
+before it is pressed. Nothing in the decision table reads the mode: what the system does about a
+tunnel that stops is the system's business, and the change here is that a person is told what
+stopping will cost.
+
+The residual window is a Settings toggle that somehow does not reconfigure the VPN — changing
+always-on or lockdown normally restarts the service, which is a push. A stale value costs a wrong
+caption, never a wrong decision. A read taken inside the disconnect flow itself is where a
+genuinely fresh check would go, if evidence ever shows the window matters.
 
 ### Staging
 
