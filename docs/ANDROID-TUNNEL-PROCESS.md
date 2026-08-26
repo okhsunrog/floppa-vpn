@@ -76,7 +76,21 @@ Independent of where the actor lives, and useful on desktop too.
    service instance, not per generation. A watch that lived and died with the tunnel could never
    report the one thing that matters here — that the network is back when no tunnel exists.
    `setUnderlyingNetworks` and the rebind keep their generation guard; only the link report is
-   unconditional.
+   unconditional. Stopping the watch reports `Unknown`, because `Offline` is a live report and one
+   with nobody left to update it would park the next connect for ever.
+
+   **`registerBestMatchingNetworkCallback` does not tell you what it stopped tracking.** It reports
+   one network — the best — and sends `onLost` only for a network that was the best *and went
+   away*, never for one that merely lost to a better one. So its `onAvailable` has to be read as a
+   *replacement*, not an addition. Below API 31 the plain registration is the opposite: every match
+   is reported and every loss is too, so there a set is the right shape. Treating the two alike is
+   not a tidy simplification, it is a silent failure — Wi-Fi returning alongside mobile left the
+   set holding both, and when every network then went away the set still held the mobile one it had
+   never been told about. Nothing reported the outage and the gate above was dead on the device
+   while every host test passed.
+
+   The tell, on a device, was an *absent* log line: no `link=Online` where one was due, which is
+   what says `wasEmpty` was false when it should have been true.
 
    **Not covered:** desktop and the CLI. They stay at `Unknown`, so the budget burn on a
    disconnected machine remains until something watches netlink or the routing table there.

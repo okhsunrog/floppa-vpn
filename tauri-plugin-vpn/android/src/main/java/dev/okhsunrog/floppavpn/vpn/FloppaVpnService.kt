@@ -173,6 +173,17 @@ class FloppaVpnService : VpnService() {
     private external fun nativeLinkChanged(online: Boolean)
 
     /**
+     * Nobody is watching the network any more, so the last thing this class said about it should no
+     * longer be believed.
+     *
+     * Its own entry point rather than a third value on [nativeLinkChanged], because it is a
+     * different kind of statement: that one reports what is observed, this one says observation has
+     * stopped. The actor's `Link::Unknown` gates nothing, which is exactly right for a fact that
+     * has no one left to keep it true.
+     */
+    private external fun nativeLinkUnwatched()
+
+    /**
      * The system asked for a tunnel with nobody watching — always-on, boot, lockdown. Raises the
      * intent from what the last successful connect recorded, or stops the service when there is
      * nothing to raise.
@@ -212,14 +223,23 @@ class FloppaVpnService : VpnService() {
     private var underlyingNetwork: Network? = null
 
     /**
-     * Every non-VPN network the system currently offers.
+     * Every non-VPN network this callback has been told about and not told to forget.
      *
-     * A set rather than a flag because "lost a network" and "lost the network" are different events
-     * below API 31, where the registration reports every match: a phone dropping Wi-Fi with mobile
-     * data already up has lost nothing worth telling the actor about. On API 31+ the best-matching
-     * registration keeps this to at most one entry, and the same code reads it correctly.
+     * A set rather than a flag because below API 31 "lost a network" and "lost the network" are
+     * different events: the plain registration reports every match, and a phone dropping Wi-Fi with
+     * mobile data already up has lost nothing worth telling the actor about. On API 31+ the
+     * best-matching registration reports one network at a time and is maintained by replacement —
+     * see [onNetworkAvailable], where treating the two modes alike was a real bug.
      */
     private val availableNetworks = mutableSetOf<Network>()
+
+    /**
+     * Whether the watch reports only the single best network, rather than every matching one.
+     *
+     * The difference decides how [availableNetworks] is maintained, so it is named once here
+     * instead of being re-derived from the SDK level at each of the places that care.
+     */
+    private val bestMatchOnly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     /**
      * Every field above is touched on the main thread only. Rust calls [shutdownService] and
@@ -490,7 +510,7 @@ class FloppaVpnService : VpnService() {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                 .build()
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (bestMatchOnly) {
                 // "The one network that would be the default if we were not here" — exactly the
                 // question, answered by the system rather than guessed at from a list.
                 manager.registerBestMatchingNetworkCallback(request, callback, mainHandler)
@@ -518,6 +538,17 @@ class FloppaVpnService : VpnService() {
 
     private fun onNetworkAvailable(network: Network) {
         val wasEmpty = availableNetworks.isEmpty()
+        // On the best-matching registration an `onAvailable` *replaces* what was there. It reports
+        // one network — the best — and sends no `onLost` for one that has merely stopped being
+        // best, so a network that loses to a better one is never taken back out. Accumulating
+        // them is not a leak, it is a wrong answer: Wi-Fi returning alongside mobile left the set
+        // holding both, and when every network then went away the set still held the mobile one
+        // it had never been told about. Nothing reported the outage, the actor judged the peer's
+        // silence as it always had, and the tunnel died exactly as before this gate existed.
+        //
+        // Below API 31 the plain registration does report every matching network, and every loss
+        // of one, so there the set is the right shape and is kept.
+        if (bestMatchOnly) availableNetworks.clear()
         availableNetworks.add(network)
         if (wasEmpty) reportLink(online = true)
 
@@ -577,11 +608,25 @@ class FloppaVpnService : VpnService() {
         }
     }
 
+    /** Tell the actor to stop believing the last report. Never fatal. */
+    private fun reportUnwatched() {
+        try {
+            nativeLinkUnwatched()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not withdraw the network report", e)
+        }
+    }
+
     private fun stopWatchingNetwork() {
         val callback = networkCallback ?: return
         networkCallback = null
         underlyingNetwork = null
         availableNetworks.clear()
+        // Retract the verdict along with the watch. `Offline` is a live report, and a live report
+        // with nobody left to update it is the worst of both: the actor would park the next
+        // connect for ever on the last thing a watcher said before it stopped watching. `Unknown`
+        // is what "nobody is looking" means, and it gates nothing.
+        reportUnwatched()
         try {
             getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
         } catch (e: Exception) {

@@ -16,6 +16,7 @@
 //!           →  nativeReportStartError establish() failed, here is why
 //!           →  nativeNetworkChanged  the default network moved under a running tunnel
 //!           →  nativeLinkChanged     the device gained or lost a network altogether
+//!           →  nativeLinkUnwatched   nobody is watching the network any more
 //!           →  nativeSystemStart     the system wants a tunnel (always-on, boot, lockdown)
 //!           →  nativeServiceGone     this service instance is being destroyed
 //!   Rust    →  hasConsent()          may we run a VPN at all?
@@ -481,6 +482,26 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLinkCh
         Ok(())
     });
     log_outcome("nativeLinkChanged", outcome.into_outcome());
+}
+
+/// The watch has stopped, so the last report should no longer be believed.
+///
+/// `Offline` is a live report and only useful while somebody is keeping it true. A service
+/// instance that goes away takes its callback with it, and leaving the actor holding that
+/// verdict would park the next connect for ever on the last thing a watcher said before it
+/// stopped watching. `Unknown` gates nothing, which is precisely what "nobody is looking" should
+/// do.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeLinkUnwatched<'local>(
+    mut env: EnvUnowned<'local>,
+    _class: JClass<'local>,
+) {
+    let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+        let actor = booted()?.actor.clone();
+        runtime().spawn(async move { actor.report_link(Link::Unknown).await });
+        Ok(())
+    });
+    log_outcome("nativeLinkUnwatched", outcome.into_outcome());
 }
 
 /// The system asked for a tunnel with nobody watching: always-on, boot, or a lockdown restore.
