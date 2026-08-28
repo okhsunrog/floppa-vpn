@@ -369,6 +369,16 @@ pub enum ProtocolConfig {
     Vless(VlessVpnConfig),
 }
 
+/// Whether a WireGuard-family interface names an IPv6 address of its own.
+///
+/// `Address` is a list — the first entry plus any extras — and an IPv6 twin can be anywhere in
+/// it, so every entry is checked rather than just the first.
+fn interface_has_ipv6(interface: &floppa_tunnel_config::conf::InterfaceConfig) -> bool {
+    std::iter::once(&interface.address)
+        .chain(&interface.extra_addresses)
+        .any(|net| net.is_ipv6())
+}
+
 impl ProtocolConfig {
     /// Read a config in whichever of the three forms it comes: a `vless://` URI, an AmneziaWG
     /// `.conf` (an `[Interface]` carrying obfuscation keys), or a plain WireGuard `.conf`.
@@ -411,6 +421,30 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => Ok(wg.0.interface.address),
             Self::AmneziaWg(awg) => Ok(awg.wg.0.interface.address),
             Self::Vless(vless) => vless.address_network(),
+        }
+    }
+
+    /// Whether the tunnel gets an IPv6 address of its own.
+    ///
+    /// The question a route decision has to ask, and it is not the same as "does this host have
+    /// IPv6". A tunnel with only an IPv4 address that nevertheless installs `::/1` and `8000::/1`
+    /// captures the machine's whole IPv6 traffic into an interface that cannot carry it: packets
+    /// leave with a link-local source and are never answered. What makes that a total outage
+    /// rather than a slow path is Happy Eyeballs — `curl`, Android and every browser *prefer*
+    /// IPv6 when a route says it is available, so they choose the black hole first.
+    ///
+    /// Observed exactly that way: VLESS connected, verified, and carried nothing, because
+    /// `curl https://ifconfig.me` went to `[2600:1901:…]:443` from `fe80::…` and hung. Forcing
+    /// `-4` on the same tunnel returned the exit node's address immediately.
+    ///
+    /// WireGuard and AmneziaWG answer honestly from their config: `Address` may list an IPv6
+    /// twin, and when it does the tunnel really can route IPv6. VLESS gets a fixed IPv4 address
+    /// and no v6 at all.
+    pub fn has_ipv6_address(&self) -> bool {
+        match self {
+            Self::WireGuard(wg) => interface_has_ipv6(&wg.0.interface),
+            Self::AmneziaWg(awg) => interface_has_ipv6(&awg.wg.0.interface),
+            Self::Vless(_) => false,
         }
     }
 

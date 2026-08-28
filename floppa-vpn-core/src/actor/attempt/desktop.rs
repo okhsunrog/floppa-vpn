@@ -148,10 +148,12 @@ pub(super) async fn ladder(
     // 5. Routes ---------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     let if_index = ctx.platform.interface_index(&iface).await;
-    let routes = split_default(
-        &ctx.config.allowed_ips_networks(),
-        ctx.platform.ipv6_enabled().await,
-    );
+    // Both must hold: the host has to be able to carry IPv6 at all, and *this tunnel* has to
+    // have an IPv6 address to carry it over. The second half was missing, and a tunnel with only
+    // an IPv4 address still claimed `::/1` and `8000::/1` — which every IPv6-preferring client
+    // then chose, and hung. See `ProtocolConfig::has_ipv6_address`.
+    let ipv6 = ctx.config.has_ipv6_address() && ctx.platform.ipv6_enabled().await;
+    let routes = split_default(&ctx.config.allowed_ips_networks(), ipv6);
     stack.push(Step::Routes {
         iface: iface.clone(),
         routes: routes.clone(),

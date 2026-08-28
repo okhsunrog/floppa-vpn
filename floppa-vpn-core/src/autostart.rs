@@ -67,13 +67,22 @@ impl TunSpec {
         let dns =
             (!dns_servers.is_empty()).then(|| floppa_tunnel_config::conf::comma_list(dns_servers));
 
+        // Only the families this tunnel can actually carry. `ipv6_addr` is `None` here for every
+        // protocol, so asking for `::/0` handed Android's whole IPv6 traffic to an interface with
+        // no IPv6 address: packets left with a link-local source and were never answered. And
+        // because Android prefers IPv6 wherever a route offers it, that was not a slow path but
+        // no connectivity at all — a tunnel that reported Connected and carried nothing.
+        // See `ProtocolConfig::has_ipv6_address`.
+        let routes = floppa_tunnel_config::route::CATCH_ALL
+            .iter()
+            .filter(|net| net.is_ipv4() || config.has_ipv6_address())
+            .map(ToString::to_string)
+            .collect();
+
         let mut spec = Self {
             ipv4_addr: config.address(),
             ipv6_addr: None,
-            routes: floppa_tunnel_config::route::CATCH_ALL
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
+            routes,
             dns,
             mtu: config.get_mtu() as u32,
             disallowed_apps: Vec::new(),
@@ -344,6 +353,44 @@ AllowedIPs = 0.0.0.0/0
 
     fn config() -> ProtocolConfig {
         ProtocolConfig::WireGuard(WgConfig::from_config_str(WG_CONFIG).expect("fixture parses"))
+    }
+
+    /// The same fixture with an IPv6 twin on the `Address` line, as wg-quick allows.
+    const WG_DUAL_STACK: &str = "\
+[Interface]
+PrivateKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
+Address = 10.0.0.2/32, fd00::2/128
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = aGVsbG93b3JsZGhlbGxvd29ybGRoZWxsb3dvcmxkMTI=
+Endpoint = vpn.example.com:51820
+AllowedIPs = 0.0.0.0/0
+";
+
+    #[test]
+    fn a_tunnel_with_no_ipv6_address_asks_for_no_ipv6_routes() {
+        // The defect this pins: `ipv6_addr` is None for every protocol, so claiming `::/0`
+        // handed the device's IPv6 traffic to an interface that could not carry it. Clients
+        // prefer IPv6 when a route offers it, so the result was not a slow path but a tunnel
+        // that reported Connected and carried nothing.
+        let spec = TunSpec::derive(&config(), &TunnelParams::new(SplitMode::All, vec![]));
+        assert_eq!(spec.routes, vec!["0.0.0.0/0".to_string()]);
+        assert!(spec.ipv6_addr.is_none(), "the premise of the filter");
+    }
+
+    #[test]
+    fn a_dual_stack_config_keeps_its_ipv6_route() {
+        // The gate is about what the tunnel can carry, not a blanket ban: a config whose
+        // `Address` names an IPv6 twin really can route IPv6, and must still be asked to.
+        let dual = ProtocolConfig::WireGuard(
+            WgConfig::from_config_str(WG_DUAL_STACK).expect("fixture parses"),
+        );
+        let spec = TunSpec::derive(&dual, &TunnelParams::new(SplitMode::All, vec![]));
+        assert_eq!(
+            spec.routes,
+            vec!["0.0.0.0/0".to_string(), "::/0".to_string()]
+        );
     }
 
     fn intent(params: TunnelParams) -> LastIntent {
