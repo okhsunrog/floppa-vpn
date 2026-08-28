@@ -2,7 +2,8 @@
 
 This directory contains Arch Linux packaging files for `floppa-vpn`:
 
-- `PKGBUILD` — release build from tagged GitHub source tarball
+- `PKGBUILD` — release build from tagged GitHub source tarball. **This is the one CI builds
+  for a release**, so a change here reaches the package on the release page.
 - `PKGBUILD-git` — builds from latest git HEAD
 - `PKGBUILD-local` — builds from local working tree (fastest for dev)
 - `floppa-vpn.install` — pacman install hooks (sets `CAP_NET_ADMIN`)

@@ -210,6 +210,14 @@ jobs:
           export BUN_INSTALL=/usr/local
           curl -fsSL https://bun.sh/install | bash
 
+      # The release PKGBUILD, not PKGBUILD-local: it names the package `floppa-vpn` and
+      # builds from the tag's own source tarball, which is what someone downloading from a
+      # release page expects. `PKGBUILD-local` builds the working tree and calls itself
+      # `floppa-vpn-local` — right for development, wrong to publish.
+      #
+      # The tag exists by the time this runs (the workflow is triggered by pushing it), so
+      # the tarball URL resolves. `-d` skips the dependency check makepkg would otherwise
+      # run against packages installed above by name.
       - name: Build package
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
@@ -217,7 +225,7 @@ jobs:
           useradd -m builder
           chown -R builder:builder .
           cd scripts/arch
-          su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -p PKGBUILD-local -d --noconfirm"
+          su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -d --noconfirm"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7

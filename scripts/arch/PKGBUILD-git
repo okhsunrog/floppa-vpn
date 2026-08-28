@@ -8,7 +8,8 @@ arch=('x86_64')
 url='https://github.com/okhsunrog/floppa-vpn'
 license=('GPL-3.0-or-later')
 install='floppa-vpn.install'
-options=(!lto)
+# No debug package: it splits out a few KB of symbols nobody downloading a release wants.
+options=(!lto !debug)
 provides=('floppa-vpn')
 conflicts=('floppa-vpn')
 
