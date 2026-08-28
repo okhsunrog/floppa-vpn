@@ -11,6 +11,7 @@ import {
   registerAccount,
   loginAccount,
 } from '../client/sdk.gen'
+import PasswordInput from '../components/PasswordInput.vue'
 import type { TelegramAuthData } from '../client/types.gen'
 import { useAuthStore } from '../stores'
 import { describeError, isApiError } from '../utils/apiError'
@@ -63,7 +64,9 @@ watch(
   },
   { immediate: true },
 )
-const accountMode = ref<'register' | 'login'>('register')
+// Sign in, not register: all but one visit to this screen is a returning user, and the one
+// exception is the visit where a person is most willing to look for the other tab.
+const accountMode = ref<'register' | 'login'>('login')
 const accountLogin = ref('')
 const accountPassword = ref('')
 const accountLoading = ref(false)
@@ -214,27 +217,27 @@ async function handleManualCode() {
             <div class="flex text-sm rounded-md overflow-hidden border border-[var(--ui-border)]">
               <button
                 type="button"
-                class="flex-1 py-1.5"
-                :class="
-                  accountMode === 'register'
-                    ? 'bg-[var(--ui-bg-elevated)] font-medium'
-                    : 'text-[var(--ui-text-muted)]'
-                "
-                @click="() => void (accountMode = 'register')"
-              >
-                {{ t('login.createAccount') }}
-              </button>
-              <button
-                type="button"
-                class="flex-1 py-1.5"
+                class="flex-1 py-1.5 transition-colors"
                 :class="
                   accountMode === 'login'
-                    ? 'bg-[var(--ui-bg-elevated)] font-medium'
-                    : 'text-[var(--ui-text-muted)]'
+                    ? 'bg-[var(--ui-primary)] text-[var(--ui-bg)] font-medium'
+                    : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
                 "
                 @click="() => void (accountMode = 'login')"
               >
                 {{ t('login.signIn') }}
+              </button>
+              <button
+                type="button"
+                class="flex-1 py-1.5 transition-colors"
+                :class="
+                  accountMode === 'register'
+                    ? 'bg-[var(--ui-primary)] text-[var(--ui-bg)] font-medium'
+                    : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+                "
+                @click="() => void (accountMode = 'register')"
+              >
+                {{ t('login.createAccount') }}
               </button>
             </div>
 
@@ -244,12 +247,10 @@ async function handleManualCode() {
               autocomplete="username"
               icon="i-lucide-user"
             />
-            <UInput
+            <PasswordInput
               v-model="accountPassword"
-              type="password"
               :placeholder="t('login.passwordPlaceholder')"
               autocomplete="current-password"
-              icon="i-lucide-lock"
               @keydown.enter="handleAccount"
             />
             <UButton

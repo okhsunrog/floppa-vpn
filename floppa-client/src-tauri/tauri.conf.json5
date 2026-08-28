@@ -1,6 +1,12 @@
 {
   // JSON5 config for Tauri (comments allowed)
   productName: "Floppa VPN",
+  // Which binary is the app. Without it Tauri bundles whichever `target/release` binary it finds
+  // first, and `src/bin/export_bindings.rs` — a build-time tool that writes bindings.ts — sorts
+  // ahead of `floppa-client` alphabetically. Every Linux package from 0.6.0 shipped that tool
+  // instead of the app: the deb, the AppImage and the Arch package each contained a single
+  // `usr/bin/export_bindings` and no client at all.
+  mainBinaryName: "floppa-client",
   version: "0.6.0",
   identifier: "dev.okhsunrog.floppa-vpn",
 

@@ -19,6 +19,8 @@ export default {
   },
   common: {
     cancel: 'Cancel',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
     save: 'Save',
     delete: 'Delete',
     remove: 'Remove',

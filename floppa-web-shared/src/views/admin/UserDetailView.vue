@@ -27,6 +27,7 @@ import {
 } from '../../utils'
 import StatusBadge from '../../components/StatusBadge.vue'
 import SessionList from '../../components/SessionList.vue'
+import PasswordInput from '../../components/PasswordInput.vue'
 import type { BadgeProps } from '@nuxt/ui'
 import type { SubscriptionSource } from '../../client/types.gen'
 import { useInvalidateQueries } from '../../composables/invalidate'
@@ -806,11 +807,10 @@ async function doRemovePeer() {
             :placeholder="t('login.loginPlaceholder')"
             icon="i-lucide-user"
           />
-          <UInput
+          <PasswordInput
             v-model="credPassword"
-            type="password"
             :placeholder="t('login.passwordPlaceholder')"
-            icon="i-lucide-lock"
+            autocomplete="new-password"
           />
         </div>
       </template>

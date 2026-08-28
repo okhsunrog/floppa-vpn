@@ -10,6 +10,7 @@ import {
   revokeAllMySessionsMutation,
 } from '../../client/@pinia/colada.gen'
 import { setMyCredential, startTelegramLink, pollTelegramLink } from '../../client/sdk.gen'
+import PasswordInput from '../../components/PasswordInput.vue'
 import { openExternal } from '../../utils/openExternal'
 import { isApiError, describeError } from '../../utils/apiError'
 import { useAuthStore } from '../../stores/auth'
@@ -216,11 +217,9 @@ async function linkTelegram() {
           icon="i-lucide-user"
           autocomplete="username"
         />
-        <UInput
+        <PasswordInput
           v-model="password"
-          type="password"
           :placeholder="t('account.passwordPlaceholder')"
-          icon="i-lucide-lock"
           autocomplete="new-password"
           @keydown.enter="saveCredential"
         />

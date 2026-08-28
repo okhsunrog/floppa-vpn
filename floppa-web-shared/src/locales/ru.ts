@@ -19,6 +19,8 @@ export default {
   },
   common: {
     cancel: 'Отмена',
+    showPassword: 'Показать пароль',
+    hidePassword: 'Скрыть пароль',
     save: 'Сохранить',
     delete: 'Удалить',
     remove: 'Удалить',
