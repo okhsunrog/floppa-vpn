@@ -293,10 +293,31 @@ enum CallbackError {
     MissingCode,
 }
 
+/// Undo HTML entity escaping of the query separator.
+///
+/// The redirect back to this listener arrives with `&amp;` where it should have `&`, and the
+/// login then fails every time: `url::query_pairs` reads `&amp;code=…` as a parameter *named*
+/// `amp;code`, so the code is simply not there. The URL is built correctly server-side and put
+/// into the page both as an `href` attribute and as a JS string literal, each escaped for its own
+/// context — a browser decodes either back to `&`. Something between those two and this socket
+/// does not, and rather than guess which, this repairs the damage wherever it happened.
+///
+/// Safe to do unconditionally: a literal `&amp;` is not a thing a real callback can contain. The
+/// state nonce is hex and the login code is a base64url token, so neither carries `&` at all, let
+/// alone the escaped form of it.
+fn unescape_query_separators(path: &str) -> std::borrow::Cow<'_, str> {
+    if path.contains("&amp;") {
+        std::borrow::Cow::Owned(path.replace("&amp;", "&"))
+    } else {
+        std::borrow::Cow::Borrowed(path)
+    }
+}
+
 /// Extract the login code from a request path, requiring the state nonce to match.
 fn parse_callback(path: &str, expected_state: &str) -> Result<String, CallbackError> {
+    let path = unescape_query_separators(path);
     let url = Url::parse("http://127.0.0.1")
-        .and_then(|base| base.join(path))
+        .and_then(|base| base.join(&path))
         .map_err(|_| CallbackError::NotCallback)?;
     if url.path() != "/callback" {
         return Err(CallbackError::NotCallback);
@@ -386,6 +407,27 @@ mod tests {
             parse_callback("/callback?state=abc", "abc"),
             Err(CallbackError::MissingCode)
         ));
+    }
+
+    #[test]
+    fn a_callback_whose_separator_arrived_html_escaped_still_yields_its_code() {
+        // Observed on every real login: the browser delivered
+        // `/callback?state=…&amp;code=…`, and `query_pairs` then read the second parameter as one
+        // *named* `amp;code` — so the code was missing and the login failed, every time, with no
+        // hint as to why. The escaping is correct in both places the server writes the URL into
+        // its page; what is not correct is what reaches this socket.
+        let ok = parse_callback("/callback?state=abc&amp;code=x%2Fy", "abc");
+        assert_eq!(ok.ok().as_deref(), Some("x/y"));
+
+        // The repair is not a licence to accept a mismatched state.
+        assert!(matches!(
+            parse_callback("/callback?state=other&amp;code=x", "abc"),
+            Err(CallbackError::BadState)
+        ));
+
+        // An ordinary callback is untouched — including a code whose own bytes are percent-encoded.
+        let plain = parse_callback("/callback?state=abc&code=a%2Bb", "abc");
+        assert_eq!(plain.ok().as_deref(), Some("a+b"));
     }
 
     #[test]
