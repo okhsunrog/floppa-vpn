@@ -131,11 +131,30 @@ export const commands = {
 	 *  a device is entitled to rather than one per process.
 	 */
 	syncPeers: () => typedError<SyncOutcome, string>(__TAURI_INVOKE("sync_peers")),
+	/**
+	 *  Tell the tray what to say.
+	 * 
+	 *  Called by the UI on mount, on a locale change, and whenever what the toggle would do changes —
+	 *  never on every state tick: the words are what travels, and they change far less often than the
+	 *  state they are derived from.
+	 */
+	updateTray: (view: TrayView) => typedError<null, string>(__TAURI_INVOKE("update_tray", { view })),
+	/**  Put the window away. The tunnel, the actor and the tray all carry on. */
+	hideToTray: () => __TAURI_INVOKE<void>("hide_to_tray"),
+	/**
+	 *  Quit for real.
+	 * 
+	 *  The exit handler in `lib.rs` takes the tunnel down and flushes the config store on the way out,
+	 *  which is why this asks the app to exit rather than doing either of those itself.
+	 */
+	quitApp: () => __TAURI_INVOKE<void>("quit_app"),
 };
 
 /** Events */
 export const events = {
+	trayToggleRequested: makeEvent<TrayToggleRequested>("tray-toggle-requested"),
 	tunnelStateChanged: makeEvent<TunnelStateChanged>("tunnel-state-changed"),
+	windowCloseRequested: makeEvent<WindowCloseRequested>("window-close-requested"),
 };
 
 /* Types */
@@ -459,6 +478,43 @@ export type TrafficStats = {
 	rx_bytes_per_sec: number | null,
 };
 
+/**  One tray row the UI can change: its words, and whether it can be clicked. */
+export type TrayAction = {
+	label: string,
+	enabled: boolean,
+};
+
+/**
+ *  The tray's one action was clicked.
+ * 
+ *  Carries nothing on purpose: connect and disconnect are the same row, and which of the two it
+ *  means is decided where the button's own label is decided. Rust would have to keep a second copy
+ *  of that rule to put an answer in here, and a second copy is how the label and the action come
+ *  to disagree.
+ */
+export type TrayToggleRequested = null;
+
+/**
+ *  What the tray says, in the language the app is running in.
+ * 
+ *  Labels, never a menu. On Linux a tray menu's *content* can be changed but the menu itself can
+ *  never be replaced once set — `TrayIcon::set_menu` is documented as having no effect there — so
+ *  the rows are built once, here, and only their text and enabled state ever travel. That also
+ *  settles where the words come from: the locale files, through the UI, rather than a second copy
+ *  of the translations kept in Rust and left to drift.
+ */
+export type TrayView = {
+	/**  Windows only. Linux tray implementations have no tooltip and ignore it. */
+	tooltip: string,
+	show: string,
+	/**
+	 *  Connect, Cancel or Disconnect — which one is the UI's call, because it is the side that
+	 *  knows what its own button would do.
+	 */
+	toggle: TrayAction,
+	quit: string,
+};
+
 /**
  *  Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to
  *  supply it. `apps` is sorted and deduped on construction, so `PartialEq` means "the same tunnel"
@@ -559,6 +615,14 @@ export type TunnelStateChanged = TunnelState;
 
 /**  Where a line the webview wrote sits against the rest of the log. */
 export type WebviewLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+/**
+ *  The window's close button was pressed, and nothing has closed.
+ * 
+ *  Desktop only. What closing means is a setting — quit, or carry on in the tray — so the close is
+ *  prevented and the question asked here. See `crate::tray`.
+ */
+export type WindowCloseRequested = null;
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

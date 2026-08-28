@@ -3,6 +3,22 @@ import { ref } from 'vue'
 import { commands, type AppInfo, type Protocol, type SplitMode } from '../bindings'
 import { DEFAULT_PROTOCOL_ORDER, isProtocol, sanitizeProtocolOrder } from '../utils/protocolOrder'
 
+/**
+ * What pressing the window's close button does on desktop.
+ *
+ * `'ask'` until the user has answered once, whatever the tunnel is doing at the time — a rule
+ * that skipped the question while disconnected hid the tray from anyone who closed the app before
+ * first connecting. Persisted here rather than in Rust because it is a setting, and this is where
+ * the settings are; Rust prevents every close and lets this decide (see `src-tauri/src/tray.rs`).
+ */
+export type CloseBehavior = 'ask' | 'tray' | 'quit'
+
+const CLOSE_BEHAVIORS: CloseBehavior[] = ['ask', 'tray', 'quit']
+
+function isCloseBehavior(value: unknown): value is CloseBehavior {
+  return CLOSE_BEHAVIORS.includes(value as CloseBehavior)
+}
+
 export const useSettingsStore = defineStore(
   'vpn-settings',
   () => {
@@ -22,6 +38,10 @@ export const useSettingsStore = defineStore(
     // from `protocolOrder`: a manual pick is a choice for the next connect, not a reordering of
     // the auto-select priority. `null` until the user has picked one.
     const manualProtocol = ref<Protocol | null>(null)
+
+    // Desktop only: Android's back gesture does not close anything, and the tunnel there lives
+    // in a process of its own.
+    const closeBehavior = ref<CloseBehavior>('ask')
 
     // One-time guard for the upgrade to auto-select; applied in `afterHydrate` below.
     const protocolDefaultsApplied = ref(false)
@@ -75,6 +95,7 @@ export const useSettingsStore = defineStore(
       protocolOrder,
       manualProtocol,
       protocolDefaultsApplied,
+      closeBehavior,
       cachedApps,
       appsLoading,
       toggleApp,
@@ -92,12 +113,14 @@ export const useSettingsStore = defineStore(
         'protocolOrder',
         'manualProtocol',
         'protocolDefaultsApplied',
+        'closeBehavior',
       ],
       // localStorage holds whatever an older build wrote. Narrow it back to Protocol[] on load,
       // so an unknown string can never reach `t(\`vpn.${proto}\`)` or a probe order.
       afterHydrate: (ctx) => {
         ctx.store.protocolOrder = sanitizeProtocolOrder(ctx.store.protocolOrder)
         if (!isProtocol(ctx.store.manualProtocol)) ctx.store.manualProtocol = null
+        if (!isCloseBehavior(ctx.store.closeBehavior)) ctx.store.closeBehavior = 'ask'
 
         // One-time on upgrade to auto-select: enable it and forget the previously-used protocol,
         // so the first cycle probes from the configured priority instead of inheriting an old

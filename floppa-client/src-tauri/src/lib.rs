@@ -4,6 +4,7 @@ pub mod logging {
     pub use floppa_vpn_core::logging::*;
 }
 pub mod provision;
+pub mod tray;
 pub mod vpn;
 
 use std::sync::Arc;
@@ -56,9 +57,14 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::webview_log,
             vpn::commands::set_server_session,
             vpn::commands::sync_peers,
+            vpn::commands::update_tray,
+            vpn::commands::hide_to_tray,
+            vpn::commands::quit_app,
         ])
         .events(tauri_specta::collect_events![
-            vpn::events::TunnelStateChanged
+            vpn::events::TunnelStateChanged,
+            vpn::events::TrayToggleRequested,
+            vpn::events::WindowCloseRequested
         ])
         // specta rc.25 forbids exporting BigInt-style types (i64/u64/usize/…) by default.
         // We export them as TS `number` (as before the upgrade) — IDs/byte counters stay numbers.
@@ -108,6 +114,10 @@ pub fn run() {
         use tauri::Emitter;
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             info!("Single-instance callback received: argv={argv:?}, cwd={cwd}");
+            // Launching the app again is how someone who put it in the tray asks for it back —
+            // the second process finds the first and exits, and without this nothing visible
+            // happens at all.
+            crate::tray::show_window(app);
             let payload = SingleInstancePayload { args: argv, cwd };
             if let Err(err) = app.emit("single-instance", payload) {
                 warn!("Failed to emit single-instance event: {err}");
@@ -188,10 +198,20 @@ pub fn run() {
                 }
             }
 
-            app.deep_link().on_open_url(|event| {
-                let urls = event.urls();
-                info!("Deep-link event received in Rust runtime: {urls:?}");
-            });
+            {
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    let urls = event.urls();
+                    info!("Deep-link event received in Rust runtime: {urls:?}");
+                    // A login link is an instruction to come back; the window may be in the tray.
+                    tray::show_window(&handle);
+                });
+            }
+
+            // The tray, and with it what the window's close button means. Desktop only, and
+            // built before anything that can take time: it is what keeps the app reachable, so
+            // a slow start should not be a stretch with no icon and no way to quit.
+            tray::setup(app.handle());
 
             // `setup` runs outside a Tokio runtime, so everything started here has to go through
             // Tauri's handle. It is passed in rather than assumed, because the same code also runs

@@ -9,6 +9,8 @@ import { useUpdateStore } from './stores/updateStore'
 import { useVpnStore } from './stores/vpnStore'
 import { commands } from './bindings'
 import ChangelogModal from './components/ChangelogModal.vue'
+import WindowClosePrompt from './components/WindowClosePrompt.vue'
+import { useTray } from './composables/useTray'
 import { accountChange } from './utils/account'
 
 const { t } = useI18n()
@@ -17,6 +19,10 @@ const updateStore = useUpdateStore()
 const vpn = useVpnStore()
 const isDark = useDark()
 const invalidate = useInvalidateQueries()
+
+// The tray, and with it the desktop's answer to "closing the window should not end the VPN".
+// At app scope because a tray click has to work with no window on screen at all.
+useTray()
 
 // Sync status bar icon color with app theme on Android
 watch(
@@ -120,6 +126,7 @@ async function openDownload(url: string) {
     </UModal>
 
     <ChangelogModal />
+    <WindowClosePrompt />
     <RouterView />
   </AppLayout>
 </template>

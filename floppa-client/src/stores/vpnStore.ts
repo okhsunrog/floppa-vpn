@@ -12,7 +12,7 @@ import {
 import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { describeUnknown } from '../utils/errors'
-import { isUnhandledOutcome, type HandledOutcome } from '../utils/outcomes'
+import { isUnhandledOutcome, planOutcomeResponse, type HandledOutcome } from '../utils/outcomes'
 import type { IntentError } from '../bindings'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
@@ -305,6 +305,22 @@ export const useVpnStore = defineStore(
     }
 
     /**
+     * What the tray's one row does: the same thing the card's button does.
+     *
+     * Here rather than in the component, because the tray is clickable while no component that
+     * knows about connecting is mounted — the window may be closed altogether. It reports for
+     * itself for the same reason: `handleOutcome` belongs to the card, and a connect started from
+     * the tray that ran out of protocols would otherwise end in silence.
+     */
+    async function toggle(): Promise<void> {
+      const outcome =
+        isConnected.value || isCancellable.value ? await disconnect() : await connect()
+      if (!outcome) return
+      const plan = planOutcomeResponse(outcome)
+      if (plan.action === 'show_error') setError(plan.error)
+    }
+
+    /**
      * Send an intent and wait for the cycle it starts.
      *
      * One body for both directions, because they differ only in the intent: accept it, mirror the
@@ -443,6 +459,7 @@ export const useVpnStore = defineStore(
       refresh,
       connect,
       disconnect,
+      toggle,
       forgetConfigs,
       importConfig,
       forgetPreferred,

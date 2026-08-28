@@ -17,6 +17,20 @@ export default {
     upload: 'Загружено',
     unavailable: 'Статистика трафика временно недоступна',
   },
+  tray: {
+    show: 'Открыть Floppa VPN',
+    quit: 'Выход',
+  },
+  close: {
+    title: 'Закрыть окно?',
+    descriptionConnected:
+      'VPN включён. Floppa VPN может остаться в трее и держать туннель — или отключиться и закрыться.',
+    descriptionIdle: 'Floppa VPN может остаться в трее под рукой — или закрыться совсем.',
+    remember: 'Запомнить выбор',
+    minimize: 'Свернуть в трей',
+    quitConnected: 'Отключить и выйти',
+    quitIdle: 'Выйти',
+  },
   common: {
     cancel: 'Отмена',
     showPassword: 'Показать пароль',
@@ -425,6 +439,11 @@ export default {
     notificationsOff: 'Уведомления отключены',
     enableNotifications: 'Включить',
     notificationPrompt: 'Включить уведомления для отображения статуса VPN?',
+    windowClose: 'Закрытие окна',
+    windowCloseDescription: 'Что делает крестик, пока VPN подключён.',
+    closeAsk: 'Спрашивать каждый раз',
+    closeTray: 'Оставлять работать в трее',
+    closeQuit: 'Отключать VPN и выходить',
     about: 'О приложении',
     version: 'Версия {version}',
     diagnostics: 'Диагностика',

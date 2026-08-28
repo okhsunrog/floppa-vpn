@@ -8,6 +8,7 @@ import AndroidPermissionsCard from '../components/settings/AndroidPermissionsCar
 import SplitTunnelingCard from '../components/settings/SplitTunnelingCard.vue'
 import DiagnosticsCard from '../components/settings/DiagnosticsCard.vue'
 import AboutCard from '../components/settings/AboutCard.vue'
+import WindowCloseCard from '../components/settings/WindowCloseCard.vue'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
@@ -59,13 +60,17 @@ function openProtocolModal() {
       <SplitTunnelingCard />
     </template>
 
-    <!-- Non-Android notice -->
-    <UCard v-else>
-      <div class="flex flex-col items-center gap-2 py-4 text-center text-[var(--ui-text-muted)]">
-        <UIcon name="i-lucide-split" class="text-3xl" />
-        <p>{{ t('settings.androidOnly') }}</p>
-      </div>
-    </UCard>
+    <template v-else>
+      <WindowCloseCard />
+
+      <!-- Non-Android notice -->
+      <UCard class="mb-4">
+        <div class="flex flex-col items-center gap-2 py-4 text-center text-[var(--ui-text-muted)]">
+          <UIcon name="i-lucide-split" class="text-3xl" />
+          <p>{{ t('settings.androidOnly') }}</p>
+        </div>
+      </UCard>
+    </template>
 
     <DiagnosticsCard />
     <AboutCard />

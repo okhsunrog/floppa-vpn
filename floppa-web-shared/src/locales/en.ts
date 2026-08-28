@@ -17,6 +17,20 @@ export default {
     upload: 'Upload',
     unavailable: 'Traffic statistics are temporarily unavailable',
   },
+  tray: {
+    show: 'Open Floppa VPN',
+    quit: 'Quit',
+  },
+  close: {
+    title: 'Close the window?',
+    descriptionConnected:
+      'The VPN is on. Floppa VPN can stay in the tray and hold the tunnel up, or disconnect and quit.',
+    descriptionIdle: 'Floppa VPN can stay in the tray, a click away, or quit for good.',
+    remember: 'Remember my choice',
+    minimize: 'Minimize to tray',
+    quitConnected: 'Disconnect and quit',
+    quitIdle: 'Quit',
+  },
   common: {
     cancel: 'Cancel',
     showPassword: 'Show password',
@@ -424,6 +438,11 @@ export default {
     notificationsOff: 'Notifications are disabled',
     enableNotifications: 'Enable',
     notificationPrompt: 'Enable notifications to see the VPN status indicator?',
+    windowClose: 'Closing the window',
+    windowCloseDescription: "What the window's close button does while the VPN is connected.",
+    closeAsk: 'Ask each time',
+    closeTray: 'Keep running in the tray',
+    closeQuit: 'Disconnect and quit',
     about: 'About',
     version: 'Version {version}',
     diagnostics: 'Diagnostics',

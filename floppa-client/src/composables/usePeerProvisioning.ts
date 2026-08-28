@@ -4,7 +4,7 @@ import { useQuery } from '@pinia/colada'
 import { getMeQuery } from 'floppa-web-shared/client/@pinia/colada.gen'
 import { commands, type CycleOutcome, type SyncOutcome } from '../bindings'
 import { useVpnStore } from '../stores/vpnStore'
-import type { VpnError } from '../utils/vpnErrors'
+import { planOutcomeResponse } from '../utils/outcomes'
 
 /*
  * The connection card's view of provisioning.
@@ -118,58 +118,6 @@ export function createSyncSequencer(state: SetupState, timeoutMs = SYNC_TIMEOUT_
   }
 
   return { run }
-}
-
-/**
- * What a cycle that ended without a tunnel asks of the card.
- *
- * Repairing a deleted peer is deliberately not here. It lives in Rust, in the process that holds
- * the tunnel — which on Android is the one Android does *not* freeze — so a peer deleted while
- * the phone is in a pocket is replaced without anyone opening the app.
- */
-export type OutcomeAction = { action: 'ignore' } | { action: 'show_error'; error: VpnError }
-
-/**
- * Decide what a finished cycle means.
- *
- * The one thing this cannot do is decide *why* it failed — that comes typed from the actor.
- */
-export function planOutcomeResponse(outcome: CycleOutcome): OutcomeAction {
-  // A `switch` over the tag, not a chain of `if`s: a variant added in Rust reaches TypeScript
-  // through the generated union, and the `never` below is what makes forgetting to plan for it a
-  // compile error instead of a silent `ignore`.
-  switch (outcome.outcome) {
-    // Connected is connected. A protocol the ladder stepped over may have lost its peer, and
-    // that is worth fixing — but it is fixed in Rust now, quietly, and there is nothing here to
-    // say about a tunnel that is up.
-    case 'connected':
-    case 'cancelled':
-    case 'down':
-      return { action: 'ignore' }
-
-    case 'unwind_failed':
-      return { action: 'show_error', error: { kind: 'unwind_failed' } }
-
-    case 'exhausted': {
-      // The last probe's typed error: it is the one for the protocol the user most likely cares
-      // about, and every kind it can carry has words in the locale. A verification failure is
-      // shown like any other — Rust may be replacing the peer behind it, and if that works the
-      // reconnect it asks for replaces this with a connected state.
-      const failure = outcome.failures.at(-1)
-      if (failure && failure.error.kind !== 'cancelled') {
-        return { action: 'show_error', error: { kind: 'attempt_failed', failure } }
-      }
-      return { action: 'ignore' }
-    }
-
-    case 'lost_gave_up':
-      return { action: 'show_error', error: { kind: 'connection_failed' } }
-
-    default: {
-      const unplanned: never = outcome
-      return unplanned
-    }
-  }
 }
 
 /**
