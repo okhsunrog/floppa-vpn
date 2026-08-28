@@ -1,7 +1,7 @@
 # Maintainer: Floppa VPN Team <maintainers@floppa.okhsunrog.dev>
 
 pkgname=floppa-vpn
-pkgver=0.5.1
+pkgver=0.6.0
 pkgrel=1
 pkgdesc='Floppa VPN desktop client (AmneziaWG, WireGuard, VLESS+REALITY) built with Tauri'
 arch=('x86_64')
