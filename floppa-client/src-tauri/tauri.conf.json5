@@ -7,7 +7,7 @@
   // instead of the app: the deb, the AppImage and the Arch package each contained a single
   // `usr/bin/export_bindings` and no client at all.
   mainBinaryName: "floppa-client",
-  version: "0.6.0",
+  version: "0.6.1",
   identifier: "dev.okhsunrog.floppa-vpn",
 
   build: {

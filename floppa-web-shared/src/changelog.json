@@ -1,61 +1,12 @@
 {
-  "version": "0.6.0",
+  "version": "0.6.1",
   "sections": [
     {
       "type": "added",
       "items": [
         {
-          "en": "The VPN now reconnects, repairs itself and starts on boot with the app closed. On Android everything that decides about the tunnel moved into the VPN process, which the system does not freeze — so a connection dropped in your pocket comes back on its own.",
-          "ru": "VPN теперь переподключается, чинится и запускается после перезагрузки с закрытым приложением. На Android всё, что решает про туннель, переехало в отдельный процесс, который система не замораживает, — поэтому связь, пропавшая в кармане, восстанавливается сама."
-        },
-        {
-          "en": "A Quick Settings tile: connect and disconnect from the notification shade without opening the app.",
-          "ru": "Плитка в шторке: подключение и отключение без открытия приложения."
-        },
-        {
-          "en": "Protocol priority is yours to set. Drag AmneziaWG, WireGuard and VLESS into the order you want, or turn auto-select off and pick one by hand.",
-          "ru": "Порядок протоколов теперь ваш. Перетащите AmneziaWG, WireGuard и VLESS в нужном порядке или выключите автовыбор и выберите протокол вручную."
-        },
-        {
-          "en": "Sessions and devices: see where you are signed in and sign out of any device — or all of them at once.",
-          "ru": "Сессии и устройства: видно, где вы вошли, и можно выйти на любом устройстве — или сразу на всех."
-        },
-        {
-          "en": "The app now says when Android's \"Block connections without VPN\" is on, because disconnecting under it leaves the device with no internet at all — and that it then ignores your split-tunnelling rules.",
-          "ru": "Приложение предупреждает, когда включена системная «Блокировка соединений без VPN»: отключение оставит устройство совсем без интернета, а правила раздельного туннелирования Android при этом игнорирует."
-        }
-      ]
-    },
-    {
-      "type": "fixed",
-      "items": [
-        {
-          "en": "VLESS carried no traffic at all. The tunnel asked to route IPv6 without having an IPv6 address, and phones and browsers prefer IPv6 wherever it looks available — so they chose a path that went nowhere while the app said Connected.",
-          "ru": "VLESS не пропускал трафик. Туннель забирал на себя IPv6, не имея адреса IPv6, а телефоны и браузеры предпочитают IPv6 везде, где он выглядит доступным, — и уходили в никуда, пока приложение показывало «Подключено»."
-        },
-        {
-          "en": "Losing signal no longer costs you the tunnel. The app now waits out an outage instead of spending its reconnect attempts on a network that is not there, and reconnects the moment it is back.",
-          "ru": "Пропажа сети больше не рвёт туннель. Приложение пережидает обрыв, не тратя попытки переподключения на отсутствующую сеть, и подключается сразу, как связь появится."
-        },
-        {
-          "en": "Switching between Wi-Fi and mobile keeps the tunnel up: the connection is re-bound to the new network in place instead of dying and rebuilding.",
-          "ru": "Переключение между Wi-Fi и мобильной сетью больше не разрывает туннель: соединение переносится на новую сеть на месте, без пересоздания."
-        },
-        {
-          "en": "A config deleted on the server is replaced automatically, with no need to open the app.",
-          "ru": "Конфиг, удалённый на сервере, заменяется автоматически — открывать приложение не нужно."
-        },
-        {
-          "en": "Weekly forced logouts are gone: your session now renews itself while you use the app.",
-          "ru": "Еженедельные принудительные выходы из аккаунта закончились: сессия продлевается сама, пока вы пользуетесь приложением."
-        },
-        {
-          "en": "Signing out of one account no longer leaves its keys on the device for the next one.",
-          "ru": "Выход из аккаунта больше не оставляет его ключи на устройстве для следующего."
-        },
-        {
-          "en": "A tunnel that quietly stopped passing traffic is now noticed and rebuilt, instead of being shown as connected forever.",
-          "ru": "Туннель, который перестал пропускать трафик, теперь замечается и пересоздаётся, а не показывается подключённым бесконечно."
+          "en": "A tray icon on the desktop. Closing the window now leaves the VPN running — connect, disconnect and quit from the tray, and the app asks once what closing should mean.",
+          "ru": "Значок в трее на десктопе. Закрытие окна больше не выключает VPN: подключение, отключение и выход — из трея, а что должен делать крестик, приложение спросит один раз."
         }
       ]
     },
@@ -63,17 +14,102 @@
       "type": "changed",
       "items": [
         {
-          "en": "The connection card tells you more: which protocol is carrying the tunnel, whether the system started it, when a reconnect is under way and which attempt it is on.",
-          "ru": "Карточка подключения рассказывает больше: какой протокол несёт туннель, запущен ли он системой, идёт ли переподключение и какая это попытка."
+          "en": "On the password sign-in page, signing in comes first and the selected tab is obvious.",
+          "ru": "На странице входа по паролю вход стоит первым, а выбранная вкладка теперь заметна."
+        }
+      ]
+    },
+    {
+      "type": "fixed",
+      "items": [
+        {
+          "en": "Every Linux package in 0.6.0 — the deb, the AppImage and the Arch package — contained a build tool instead of the app. They contain the app.",
+          "ru": "Все Linux-пакеты 0.6.0 — deb, AppImage и пакет для Arch — содержали служебную утилиту вместо приложения. Теперь в них приложение."
         },
         {
-          "en": "Interface icons are now bundled with the app instead of being fetched, so the UI renders correctly before the tunnel is up.",
-          "ru": "Иконки интерфейса теперь встроены в приложение, а не загружаются из сети, — интерфейс отображается правильно ещё до подъёма туннеля."
+          "en": "Password fields have an eye to show what you typed.",
+          "ru": "В полях ввода пароля появился «глазок»."
         }
       ]
     }
   ],
   "history": [
+    {
+      "version": "0.6.0",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "The VPN now reconnects, repairs itself and starts on boot with the app closed. On Android everything that decides about the tunnel moved into the VPN process, which the system does not freeze — so a connection dropped in your pocket comes back on its own.",
+              "ru": "VPN теперь переподключается, чинится и запускается после перезагрузки с закрытым приложением. На Android всё, что решает про туннель, переехало в отдельный процесс, который система не замораживает, — поэтому связь, пропавшая в кармане, восстанавливается сама."
+            },
+            {
+              "en": "A Quick Settings tile: connect and disconnect from the notification shade without opening the app.",
+              "ru": "Плитка в шторке: подключение и отключение без открытия приложения."
+            },
+            {
+              "en": "Protocol priority is yours to set. Drag AmneziaWG, WireGuard and VLESS into the order you want, or turn auto-select off and pick one by hand.",
+              "ru": "Порядок протоколов теперь ваш. Перетащите AmneziaWG, WireGuard и VLESS в нужном порядке или выключите автовыбор и выберите протокол вручную."
+            },
+            {
+              "en": "Sessions and devices: see where you are signed in and sign out of any device — or all of them at once.",
+              "ru": "Сессии и устройства: видно, где вы вошли, и можно выйти на любом устройстве — или сразу на всех."
+            },
+            {
+              "en": "The app now says when Android's \"Block connections without VPN\" is on, because disconnecting under it leaves the device with no internet at all — and that it then ignores your split-tunnelling rules.",
+              "ru": "Приложение предупреждает, когда включена системная «Блокировка соединений без VPN»: отключение оставит устройство совсем без интернета, а правила раздельного туннелирования Android при этом игнорирует."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "VLESS carried no traffic at all. The tunnel asked to route IPv6 without having an IPv6 address, and phones and browsers prefer IPv6 wherever it looks available — so they chose a path that went nowhere while the app said Connected.",
+              "ru": "VLESS не пропускал трафик. Туннель забирал на себя IPv6, не имея адреса IPv6, а телефоны и браузеры предпочитают IPv6 везде, где он выглядит доступным, — и уходили в никуда, пока приложение показывало «Подключено»."
+            },
+            {
+              "en": "Losing signal no longer costs you the tunnel. The app now waits out an outage instead of spending its reconnect attempts on a network that is not there, and reconnects the moment it is back.",
+              "ru": "Пропажа сети больше не рвёт туннель. Приложение пережидает обрыв, не тратя попытки переподключения на отсутствующую сеть, и подключается сразу, как связь появится."
+            },
+            {
+              "en": "Switching between Wi-Fi and mobile keeps the tunnel up: the connection is re-bound to the new network in place instead of dying and rebuilding.",
+              "ru": "Переключение между Wi-Fi и мобильной сетью больше не разрывает туннель: соединение переносится на новую сеть на месте, без пересоздания."
+            },
+            {
+              "en": "A config deleted on the server is replaced automatically, with no need to open the app.",
+              "ru": "Конфиг, удалённый на сервере, заменяется автоматически — открывать приложение не нужно."
+            },
+            {
+              "en": "Weekly forced logouts are gone: your session now renews itself while you use the app.",
+              "ru": "Еженедельные принудительные выходы из аккаунта закончились: сессия продлевается сама, пока вы пользуетесь приложением."
+            },
+            {
+              "en": "Signing out of one account no longer leaves its keys on the device for the next one.",
+              "ru": "Выход из аккаунта больше не оставляет его ключи на устройстве для следующего."
+            },
+            {
+              "en": "A tunnel that quietly stopped passing traffic is now noticed and rebuilt, instead of being shown as connected forever.",
+              "ru": "Туннель, который перестал пропускать трафик, теперь замечается и пересоздаётся, а не показывается подключённым бесконечно."
+            }
+          ]
+        },
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "The connection card tells you more: which protocol is carrying the tunnel, whether the system started it, when a reconnect is under way and which attempt it is on.",
+              "ru": "Карточка подключения рассказывает больше: какой протокол несёт туннель, запущен ли он системой, идёт ли переподключение и какая это попытка."
+            },
+            {
+              "en": "Interface icons are now bundled with the app instead of being fetched, so the UI renders correctly before the tunnel is up.",
+              "ru": "Иконки интерфейса теперь встроены в приложение, а не загружаются из сети, — интерфейс отображается правильно ещё до подъёма туннеля."
+            }
+          ]
+        }
+      ]
+    },
     {
       "version": "0.5.1",
       "sections": [
