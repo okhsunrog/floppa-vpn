@@ -66,3 +66,33 @@ html::after {
   border-radius: 4px;
   background-color: rgba(0, 0, 0, 0.2);
 }
+
+/*
+ * No accidental text selection — this is an app shell, not a page.
+ *
+ * The complaint that prompted it: dragging a row in the protocol priority list started selecting
+ * its label instead of moving it. That is the general shape of the problem — a press-and-move on
+ * anything that is not text is a gesture here, and selecting the words under it is never what was
+ * meant.
+ *
+ * Three exceptions, because they are where selecting *is* the point: fields you type into, and the
+ * blocks that show a tunnel config or a VLESS link — those have a Copy button, but copying one
+ * line out of a config is a fair thing to want. `.selectable` is the opt-in for anything else that
+ * turns out to need it.
+ *
+ * Only the client: `floppa-face` is a web page in a browser, where selection is expected.
+ */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+pre,
+code,
+[contenteditable='true'],
+.selectable {
+  -webkit-user-select: text;
+  user-select: text;
+}
