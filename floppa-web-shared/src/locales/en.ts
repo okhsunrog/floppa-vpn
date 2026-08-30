@@ -422,7 +422,6 @@ export default {
     searchApps: 'Search apps...',
     noApps: 'No apps found',
     showSystemApps: 'Show system apps',
-    androidOnly: 'Split tunneling is only available on Android',
     changesApplyOnReconnect: 'Settings changed — reconnect to apply',
     reconnect: 'Reconnect',
     batteryOptimization: 'Battery Optimization',

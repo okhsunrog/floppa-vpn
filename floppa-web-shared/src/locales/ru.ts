@@ -423,7 +423,6 @@ export default {
     searchApps: 'Поиск приложений...',
     noApps: 'Приложения не найдены',
     showSystemApps: 'Показать системные приложения',
-    androidOnly: 'Раздельное туннелирование доступно только на Android',
     changesApplyOnReconnect: 'Настройки изменены — переподключитесь для применения',
     reconnect: 'Переподключиться',
     batteryOptimization: 'Оптимизация батареи',

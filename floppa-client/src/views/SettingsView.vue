@@ -60,17 +60,9 @@ function openProtocolModal() {
       <SplitTunnelingCard />
     </template>
 
-    <template v-else>
-      <WindowCloseCard />
-
-      <!-- Non-Android notice -->
-      <UCard class="mb-4">
-        <div class="flex flex-col items-center gap-2 py-4 text-center text-[var(--ui-text-muted)]">
-          <UIcon name="i-lucide-split" class="text-3xl" />
-          <p>{{ t('settings.androidOnly') }}</p>
-        </div>
-      </UCard>
-    </template>
+    <!-- Nothing here says "split tunnelling is Android-only": a card whose whole content is the
+         absence of a feature is an empty shelf with a label. Android gets the real card above. -->
+    <WindowCloseCard v-else />
 
     <DiagnosticsCard />
     <AboutCard />
