@@ -4,19 +4,18 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.logging.LogLevel
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.TaskAction
-import org.gradle.process.ExecOperations
 import javax.inject.Inject
+import org.gradle.process.ExecOperations
 
-abstract class BuildTask @Inject constructor(
-    private val execOperations: ExecOperations,
-) : DefaultTask() {
-    @get:Internal
-    lateinit var androidProjectDir: File
+abstract class BuildTask : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
 
     @Input
     var rootDirRel: String? = null
+    @Input
+    var projectDir: String? = null
     @Input
     var target: String? = null
     @Input
@@ -35,7 +34,7 @@ abstract class BuildTask @Inject constructor(
                     "$executable.cmd",
                     "$executable.bat",
                 )
-                
+
                 var lastException: Exception = e
                 for (fallback in fallbacks) {
                     try {
@@ -59,7 +58,7 @@ abstract class BuildTask @Inject constructor(
         val args = listOf("tauri", "android", "android-studio-script");
 
         execOperations.exec {
-            workingDir(File(androidProjectDir, rootDirRel))
+            workingDir(File(projectDir, rootDirRel))
             executable(executable)
             args(args)
             if (logger.isEnabled(LogLevel.DEBUG)) {
