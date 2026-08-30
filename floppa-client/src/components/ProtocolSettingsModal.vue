@@ -1,30 +1,13 @@
 <script setup lang="ts">
-import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useDragAndDrop } from '@formkit/drag-and-drop/vue'
-import { useSettingsStore } from '../stores/settingsStore'
 import { useVpnStore } from '../stores/vpnStore'
-import type { Protocol } from '../bindings'
+import ProtocolPriorityList from './ProtocolPriorityList.vue'
 
 const open = defineModel<boolean>('open', { required: true })
 
 const { t } = useI18n()
-const settings = useSettingsStore()
 const vpn = useVpnStore()
 const toast = useToast()
-
-// Local draggable list seeded from the persisted priority; synced back on reorder.
-const [listRef, order] = useDragAndDrop<Protocol>([...settings.protocolOrder], {
-  dragHandle: '.drag-handle',
-})
-
-watch(
-  order,
-  (value) => {
-    settings.protocolOrder = [...value]
-  },
-  { deep: true },
-)
 
 async function onReset() {
   if (await vpn.forgetPreferred()) {
@@ -49,28 +32,7 @@ function closeModal() {
           <p class="text-xs text-[var(--ui-text-muted)] mb-3">
             {{ t('settings.protocolPriorityHint') }}
           </p>
-          <ul ref="listRef" class="flex flex-col gap-2">
-            <li
-              v-for="proto in order"
-              :key="proto"
-              class="flex items-center gap-3 rounded-lg bg-[var(--ui-bg-elevated)] px-3 py-2.5"
-            >
-              <UIcon
-                name="i-lucide-grip-vertical"
-                class="drag-handle size-4 shrink-0 cursor-grab text-[var(--ui-text-muted)]"
-              />
-              <span class="text-sm font-medium">{{ t(`vpn.${proto}`) }}</span>
-              <UBadge
-                v-if="!vpn.availableProtocols.includes(proto)"
-                color="neutral"
-                variant="subtle"
-                size="xs"
-                class="ml-auto"
-              >
-                {{ t('settings.protocolUnavailable') }}
-              </UBadge>
-            </li>
-          </ul>
+          <ProtocolPriorityList />
         </div>
 
         <USeparator />
