@@ -13,9 +13,10 @@ description = "Floppa VPN Client"
 authors = ["you"]
 edition = "2024"
 license = "GPL-3.0-or-later"
-# The app, not `src/bin/export_bindings.rs`. Without it a plain `cargo run` — which is what
-# `tauri dev` shells out to — refuses to pick between the two, and `tauri build` picks the wrong
-# one: every Linux package in 0.6.0 shipped the bindings generator and no client.
+# There is one binary and this names it, so a second one can never quietly become the default
+# again. `examples/export_bindings.rs` is an example rather than a `[[bin]]` for the same reason
+# from the other side: the bundler packages every binary a crate declares, and 0.6.0 shipped the
+# bindings generator instead of the app while 0.6.1's first build shipped both.
 default-run = "floppa-client"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

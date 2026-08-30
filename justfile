@@ -258,7 +258,7 @@ dev-mcp:
 
 # Regenerate tauri-specta bindings (no running app needed)
 bindings:
-    cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --bin export_bindings
+    cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --example export_bindings
 
 android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
 android_pkg := "dev.okhsunrog.floppa_vpn"
