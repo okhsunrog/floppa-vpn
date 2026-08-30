@@ -16,6 +16,10 @@
         {
           "en": "On the password sign-in page, signing in comes first and the selected tab is obvious.",
           "ru": "На странице входа по паролю вход стоит первым, а выбранная вкладка теперь заметна."
+        },
+        {
+          "en": "Desktop settings no longer carry a card whose only content was that split tunnelling is Android-only.",
+          "ru": "Из настроек на десктопе убрана карточка, всё содержание которой сводилось к тому, что раздельное туннелирование есть только на Android."
         }
       ]
     },
@@ -29,6 +33,22 @@
         {
           "en": "Password fields have an eye to show what you typed.",
           "ru": "В полях ввода пароля появился «глазок»."
+        },
+        {
+          "en": "The protocol priority list could not be reordered. The drag was only set up the first time the window opened, and a row had to be grabbed by a 16-pixel icon and held for a second. Any part of a row picks it up now, and the rows slide into place.",
+          "ru": "Приоритет протоколов не перетаскивался: перетаскивание настраивалось только при первом открытии окна, а строку нужно было брать за иконку в 16 пикселей и держать секунду. Теперь строка берётся за любое место и переставляется с анимацией."
+        },
+        {
+          "en": "On Android, installing an update while the app was open crashed it.",
+          "ru": "На Android обновление приложения при открытом окне роняло его."
+        },
+        {
+          "en": "On Linux the window shows the app's own icon in the title bar, not a generic placeholder.",
+          "ru": "В заголовке окна на Linux теперь иконка приложения, а не системная заглушка."
+        },
+        {
+          "en": "Text is no longer selected by accident when dragging something.",
+          "ru": "Текст больше не выделяется случайно, когда что-то перетаскиваешь."
         }
       ]
     }
