@@ -115,6 +115,20 @@
         // runs without one — but then closing the window quits, which is the behaviour the tray
         // exists to replace.
         depends: ["libcap2-bin", "libayatana-appindicator3-1"],
+        // A second desktop entry, named after the GTK app id rather than the product.
+        //
+        // The bundler writes "Floppa VPN.desktop", which is what belongs in an application menu,
+        // and it carries `StartupWMClass=floppa-client` so the task bar finds the icon. The
+        // window decoration does not use that: KWin resolves a window's icon from the desktop
+        // file whose *file name* equals the app id, and ours is `floppa-client` (the binary name,
+        // which is what GTK reports when `enableGtkAppId` is off). With no such file the title bar
+        // falls back to a generic icon while the task bar shows the right one — measured, and
+        // fixed by this entry appearing.
+        //
+        // `NoDisplay=true` keeps the menu to one entry: this one exists to be found by name.
+        files: {
+          "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
+        },
         postInstallScript: "./scripts/linux-postinstall.sh",
         postRemoveScript: "./scripts/linux-postremove.sh",
       },

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Floppa VPN
+Comment=Floppa VPN Client
+Exec=floppa-client %u
+Icon=floppa-client
+StartupWMClass=floppa-client
+Terminal=false
+NoDisplay=true
+MimeType=x-scheme-handler/floppa

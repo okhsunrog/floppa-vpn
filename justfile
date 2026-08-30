@@ -218,6 +218,40 @@ openapi:
 # `withGlobalTauri`, which the bridge needs to reach the webview. `withGlobalTauri` lives in an
 # overlay rather than the real config because it exposes `window.__TAURI__` to the page, and a
 # release build has no reason to.
+# Give the dev build the real icon in the task bar and window decoration.
+#
+# A packaged install gets this from the package. A dev run has no desktop entry at all, so both
+# fall back to a generic icon; this writes the mapping by hand, pointing at the icon in the repo.
+#
+# The file name is not cosmetic. A window's icon is resolved two different ways on KDE/Wayland:
+# the task bar matches `StartupWMClass` against the app id, while the window decoration looks for
+# the desktop file whose *name* is the app id. Ours is `floppa-client` — the binary name, which is
+# what GTK reports while `enableGtkAppId` is off — so the file has to be `floppa-client.desktop`
+# or the title bar keeps the generic icon while the task bar shows the right one.
+#
+# `NoDisplay=true` keeps it out of the application menu: it is an icon mapping, not an install.
+# Undo with `rm ~/.local/share/applications/floppa-client.desktop`.
+[doc("Install a desktop entry so the dev build shows its own icon")]
+dev-icon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$HOME/.local/share/applications"
+    mkdir -p "$dir"
+    cat > "$dir/floppa-client.desktop" <<EOF
+    [Desktop Entry]
+    Type=Application
+    Name=Floppa VPN (dev)
+    Comment=Development build of the Floppa VPN client
+    Exec={{justfile_directory()}}/floppa-client/src-tauri/target/debug/floppa-client
+    Icon={{justfile_directory()}}/floppa-client/src-tauri/icons/128x128.png
+    StartupWMClass=floppa-client
+    NoDisplay=true
+    Terminal=false
+    EOF
+    sed -i 's/^    //' "$dir/floppa-client.desktop"
+    update-desktop-database "$dir" 2>/dev/null || true
+    echo "wrote $dir/floppa-client.desktop"
+
 [doc("Client dev run with the MCP bridge (agent-drivable UI)")]
 dev-mcp:
     cd floppa-client && vp exec tauri dev --features mcp-bridge --config src-tauri/tauri.mcp.conf.json
