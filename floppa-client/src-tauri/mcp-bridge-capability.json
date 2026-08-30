@@ -1,0 +1,6 @@
+{
+  "identifier": "mcp-bridge",
+  "description": "Lets the MCP bridge plugin's injected script reach its own commands. Added at runtime by lib.rs, and deliberately not a file in capabilities/: everything in that directory is read by tauri-build on every build, so a permission naming a plugin that the default feature set does not compile would fail the build for everyone.",
+  "windows": ["main"],
+  "permissions": ["mcp-bridge:default"]
+}

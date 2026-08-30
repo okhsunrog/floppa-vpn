@@ -211,6 +211,17 @@ openapi:
     cd floppa-web-shared && vp exec openapi-ts
     cargo run -p xtask -- api-types
 
+# Client dev run with the MCP bridge, so an agent can drive the UI instead of aiming at pixels.
+#
+# Two things the ordinary dev run does not have, both off by default and both needed together:
+# the `mcp-bridge` feature compiles the plugin in, and the config overlay turns on
+# `withGlobalTauri`, which the bridge needs to reach the webview. `withGlobalTauri` lives in an
+# overlay rather than the real config because it exposes `window.__TAURI__` to the page, and a
+# release build has no reason to.
+[doc("Client dev run with the MCP bridge (agent-drivable UI)")]
+dev-mcp:
+    cd floppa-client && vp exec tauri dev --features mcp-bridge --config src-tauri/tauri.mcp.conf.json
+
 # Regenerate tauri-specta bindings (no running app needed)
 bindings:
     cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --bin export_bindings

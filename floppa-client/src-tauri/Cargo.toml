@@ -44,6 +44,11 @@ tauri-plugin-android-fs = "29"
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
 floppa-api-client = { version = "0.1.0", path = "../../floppa-api-client" }
 floppa-vpn-core = { version = "0.1.0", path = "../../floppa-vpn-core" }
+# The bridge an MCP server drives this app through, so an agent can read the DOM and click
+# things instead of aiming at pixels. Optional and off by default: a release build must not carry
+# a websocket server, and this one listens for commands. Turn it on with
+# `--features mcp-bridge`, which `just dev-mcp` does.
+tauri-plugin-mcp-bridge = { version = "0.13.0", optional = true }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 
@@ -86,3 +91,6 @@ tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "dd6befda9258
 tauri-macros = { git = "https://github.com/tauri-apps/tauri", rev = "dd6befda925845fc74ca595d6d42de6c49580dd8" }
 tauri-codegen = { git = "https://github.com/tauri-apps/tauri", rev = "dd6befda925845fc74ca595d6d42de6c49580dd8" }
 tauri-plugin = { git = "https://github.com/tauri-apps/tauri", rev = "dd6befda925845fc74ca595d6d42de6c49580dd8" }
+
+[features]
+mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]

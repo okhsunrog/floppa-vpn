@@ -158,6 +158,24 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_vpn::init());
     }
 
+    // The bridge an MCP server drives this app through — reading the DOM and clicking things —
+    // so that checking a UI change is a measurement rather than a screenshot and a guess.
+    //
+    // Two gates, not one. The feature is off by default, so a release build does not contain the
+    // plugin at all; `debug_assertions` is the belt to that pair of braces, because what this
+    // starts is a websocket server that takes commands, and no argument to a release build should
+    // be able to turn one on.
+    #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
+    {
+        // Loopback rather than the plugin's default of every interface: this app is a VPN client,
+        // and a port that drives its UI is not one to offer the network it is attached to.
+        builder = builder.plugin(
+            tauri_plugin_mcp_bridge::Builder::new()
+                .bind_address("127.0.0.1")
+                .build(),
+        );
+    }
+
     let app = builder
         .setup(move |#[allow(unused_variables)] app| {
             // Register the event registry. Not optional: emitting without it panics with
@@ -207,6 +225,14 @@ pub fn run() {
                     tray::show_window(&handle);
                 });
             }
+
+            // What lets the bridge's injected script call the plugin's own commands. Added here
+            // rather than dropped into `capabilities/`, because tauri-build reads every file in
+            // that directory on every build, and a permission naming a plugin the default
+            // feature set does not compile would fail the build for everyone.
+            #[cfg(all(debug_assertions, feature = "mcp-bridge"))]
+            app.handle()
+                .add_capability(include_str!("../mcp-bridge-capability.json"))?;
 
             // The tray, and with it what the window's close button means. Desktop only, and
             // built before anything that can take time: it is what keeps the app reachable, so
