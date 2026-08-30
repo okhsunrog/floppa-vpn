@@ -242,8 +242,8 @@ dev-icon:
     Type=Application
     Name=Floppa VPN (dev)
     Comment=Development build of the Floppa VPN client
-    Exec={{justfile_directory()}}/floppa-client/src-tauri/target/debug/floppa-client
-    Icon={{justfile_directory()}}/floppa-client/src-tauri/icons/128x128.png
+    Exec={{ justfile_directory() }}/floppa-client/src-tauri/target/debug/floppa-client
+    Icon={{ justfile_directory() }}/floppa-client/src-tauri/icons/128x128.png
     StartupWMClass=floppa-client
     NoDisplay=true
     Terminal=false
