@@ -86,10 +86,10 @@ tokio = { version = "1", features = ["test-util"] }
 # button in the app, stopped responding after the first trip to the tray. Nothing released carries
 # the fix: 2.11.5 is the newest on crates.io and it pins tao 0.35.
 #
-# The fork is `dev` plus one commit, okhsunrog/tauri@13789f5e: on Android the plugin manager
-# crashed the app whenever an activity was destroyed while another was running, which is what
-# installing an APK over the running app does. Reported as tauri-apps/tauri#15948 and submitted as
-# #15949; when that lands, this goes back to tauri-apps/tauri and this paragraph with it.
+# The pin is also what carries tauri-apps/tauri#15949, merged into `dev` as cb2ecac5: on Android
+# the plugin manager crashed the app whenever an activity was destroyed while another was running,
+# which is what installing an APK over the running app does (#15948). It rode a fork until it
+# landed upstream.
 #
 # A `rev`, not a branch: the lock file would hold the commit either way, but a branch invites a
 # `cargo update` to move it, and this is not a dependency to drift on. The dev branch still calls
@@ -97,14 +97,14 @@ tokio = { version = "1", features = ["test-util"] }
 #
 # Drop this whole block when Tauri 2.12 is out — nothing else in the tree depends on it.
 [patch.crates-io]
-tauri = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-build = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-runtime = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-runtime-wry = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-utils = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-macros = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-codegen = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
-tauri-plugin = { git = "https://github.com/okhsunrog/tauri", rev = "13789f5e62c91c34dfb6a9cfc5aafd795ad5184c" }
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-runtime = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-macros = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-codegen = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
+tauri-plugin = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
 
 [features]
 mcp-bridge = ["dep:tauri-plugin-mcp-bridge"]
