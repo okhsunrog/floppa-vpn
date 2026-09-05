@@ -150,6 +150,7 @@ modelled directly:
 | --- | --- | --- |
 | the user | RPC `set_intent` | exactly what was asked |
 | the system | `onStartCommand` with the VPN action, boot, or lockdown | raised to Up from the last-good order and rules |
+| the app, on the system's behalf | `ACTION_BOOT_RETRY`, twenty seconds after boot, only if the system's own start was killed — see [Boot on an Onyx Boox](#boot-on-an-onyx-boox) | the same raise, made again |
 | a wipe | RPC `clear_configs` | Down, configs and bundle cleared — nothing can come back |
 
 An ordinary Disconnect still stops the tunnel, and if always-on is on Android will start the
@@ -364,3 +365,75 @@ actor now stamps every outcome with a serial, and that is the whole key.
 One gap it also found: an outage longer than the reconnect budget ends in `LostGaveUp` and the
 intent is demoted, so only always-on brings the tunnel back afterwards. "There is no network at
 all" is arguably not a failure worth spending a pass on.
+
+## Boot on an Onyx Boox
+
+Diagnosed on a NoteAir4C (Android 13, firmware `2026-04-28_17-50_4.2`) on 3 September 2026: with
+always-on on, the tunnel did not survive a reboot. The app's side was blameless — three boots in a
+row Android started `FloppaVpnService` 0.8 s after `BOOT_COMPLETED`, the actor had AmneziaWG `Up`
+1.3 s later, and half a second after that:
+
+```
+Killing 2848:dev.okhsunrog.floppa_vpn:vpn/u0a72 (adj 100): eac_enable_status_changed
+Scheduling restart of crashed service ...FloppaVpnService in 1000ms for connection
+```
+
+The restart never came. `Vpn.java` issues the always-on start once, on user unlock, and does not
+retry; the restart `ActivityManager` schedules is "for connection" — the system's own binding to
+the service — and is cancelled when that binding goes with the process.
+
+### What kills it
+
+`android.onyx.optimization.OECService` (in `framework.jar`, running in system_server). The
+launcher `com.onyx` sends `onyx.android.EAC_CONFIG_ACTION` with `args_enable=true` as it comes up,
+about 2.5 s after `BOOT_COMPLETED`; that flips the global EAC switch, and the flip runs
+`eacEnableStatusChangedImpl()`, which calls `ActivityManager.killUid()` on the uid of **every
+running process** whose `EACAppConfig` has `supportEAC && enable`. The only exceptions are
+hard-coded: the current IME and SystemUI. No manifest meta-data, permission, or opt-in exists;
+Onyx's own apps are spared by `supportEAC=false`, set from `isOnyxApp()`.
+
+The same framework also sets appop `RUN_ANY_IN_BACKGROUND` per uid (`EACPMImpl`): at boot from
+`extraConfig.fullPMAccess` (the "Stay Active in the Background" *checkbox*), and when the app comes
+to the foreground from `fullPMAccessTimeout != 0` (the duration next to it). With the checkbox off
+the app is background-restricted after every boot until it is opened — `startForeground() not
+allowed due to bg restriction` in the log, and cached `:vpn` processes killed as
+"background restricted". A manual `cmd appops set` is reverted at the next boot.
+
+### What does not fix it
+
+The per-app switch. The "App Optimization – Floppa VPN" panel (EinkWise; "Master Switch" is the
+per-app enable, Others → "Stay Active in the Background" is `fullPMAccess`) writes through KSync
+into the *theme* store — `EACAppThemeManager.getActiveTheme(pkg)`, which is also what
+`getAppConfigFromService` answers from — while the boot cull and `initAppForceStandBy` read
+`appConfigMap`. On this firmware, with `com.onyx.android.ksync` failing against
+`https://index3.boox.com`, three presses changed nothing in `appConfigMap`. The two stores are
+visible side by side: `adb shell dumpsys oec_service | grep <pkg>` prints `appConfigMap`.
+
+### What does
+
+Two things, and both are in the repository.
+
+**On the device, once:** `just boox-eac set enable=false fullPMAccess=true`. `scripts/boox/OecTool.java`
+runs under `app_process` as the shell user (which may `find` the `oec_service` binder — `dumpsys
+oec_service` works from a shell, `dumpsys vpn` does not) and calls
+`IOECService.applyAppConfigToService` on the app's own config, the method the launcher is supposed
+to reach. Verified: the next boot had no kill, the tunnel was `Up` 2 s after `BOOT_COMPLETED`, the
+appop stayed `allow`, and the config survived the reboot. The panel will still show the app as
+optimised — it reads the other store — which is cosmetic.
+
+**In the app, for everyone:** `BootRetry.kt`. A `BOOT_COMPLETED` receiver in `:vpn` schedules a
+`JobScheduler` job twenty seconds out — held by the system, so it does not matter what happens to
+the process in between — and the job starts the service with `ACTION_BOOT_RETRY`, handled exactly
+as a system start, if this process's phase says nothing is running. It is gated on what the system
+itself did: a genuine system start (the `android.net.VpnService` action, or the null intent some
+OEMs deliver) leaves a marker stamped with `Settings.Global.BOOT_COUNT`, and the receiver retries
+only for a marker from the current boot — consent must be held too, and something must have
+connected before. That is the always-on question asked the only way an app may ask it:
+`Settings.Secure.always_on_vpn_app` is `@hide` and throws from Android 12 (the first build of the
+receiver died of exactly that, in the tunnel's process), and `VpnService.isAlwaysOn()` answers
+only once a tunnel is established. With always-on off there is no retry, because there was no
+start. A background-restricted app never has its jobs run, so for that
+case the receiver starts the service immediately instead — it helps whenever the receiver runs after
+the cull, which is most of the ten seconds `BOOT_COMPLETED` takes to deliver — and it never sleeps
+in the receiver: `BOOT_COMPLETED` is delivered serially, and a receiver that waits holds every app
+behind it.

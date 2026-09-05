@@ -119,6 +119,16 @@ class FloppaVpnService : VpnService() {
         const val ACTION_TILE_START = "dev.okhsunrog.floppavpn.TILE_START"
 
         /**
+         * The boot retry found nothing running, see [BootRetry].
+         *
+         * The always-on start the system issued at boot was killed under it — an OEM culling
+         * processes as its launcher comes up — and this is the same start made again, twenty
+         * seconds later, by the app itself. Handled exactly as a system start; named so the log
+         * says which of the two it was.
+         */
+        const val ACTION_BOOT_RETRY = "dev.okhsunrog.floppavpn.BOOT_RETRY"
+
+        /**
          * "This instance is serving nothing". No generation is ever minted as this, so a teardown
          * that arrives after the one it belonged to has gone matches nothing.
          */
@@ -341,15 +351,20 @@ class FloppaVpnService : VpnService() {
                 if (phase == VpnPhase.Off) awaitWork()
             }
 
-            // A start the system issued — always-on, boot, a lockdown restore — or the tile, which
-            // has no more context than the system does. Same requirement, foreground at once, and
-            // then the actor is told to want a tunnel.
+            // A start the system issued — always-on, boot, a lockdown restore — or the tile or the
+            // boot retry, which have no more context than the system does. Same requirement,
+            // foreground at once, and then the actor is told to want a tunnel.
             else -> {
                 if (intent == null) {
                     // START_NOT_STICKY means we should never be redelivered a null intent; some
                     // OEM builds do it anyway. Treated as a system start, but said out loud, so
                     // that a device doing it does not read as always-on in the log.
                     Log.w(TAG, "started with a null intent; treating it as a system start")
+                }
+                // Only the system's own starts leave the marker the boot retry reads: a tile tap
+                // or the retry itself says nothing about whether Android wanted a tunnel at boot.
+                if (intent == null || intent.action == SERVICE_INTERFACE) {
+                    BootRetry.recordSystemStart(this)
                 }
                 startVpnForeground(connected = false)
                 nativeSystemStart()

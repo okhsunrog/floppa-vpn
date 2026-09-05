@@ -87,7 +87,13 @@ that died while the phone was in a pocket, and a swipe-close left the tunnel run
   `nativeSystemStart`, which raises the intent from `autostart.json` — now just
   `LastIntent { order, params }`, written after every successful connect, cleared by a wipe. The
   address each host last resolved to is cached beside it (`last-endpoints.json`), because a start
-  under lockdown cannot resolve anything until the tunnel is up
+  under lockdown cannot resolve anything until the tunnel is up. Android issues that start **once**
+  and never retries it, and an Onyx Boox kills every EAC-enabled process ~2.5 s after boot — so
+  `BootRetry.kt` (a `BOOT_COMPLETED` receiver + a 20 s `JobScheduler` job, both in `:vpn`) makes
+  the same start again as `ACTION_BOOT_RETRY`, only if a genuine system start left its
+  `BOOT_COUNT` marker this boot (`always_on_vpn_app` is `@hide` and throws from Android 12) and
+  nothing is running. The device-side fix for the Boox itself is `just boox-eac set enable=false fullPMAccess=true`
+  (`scripts/boox/OecTool.java`; see `docs/ANDROID-TUNNEL-PROCESS.md`, "Boot on an Onyx Boox")
 - **Service generations** identify one request for a descriptor: `establish()` answers
   asynchronously and must name what it answers. Minted by `autostart::ServiceGenerations` (random
   per-process base, never zero); `ServiceRegistry` (`vpn/service_state.rs`, unix-gated so it is

@@ -29,15 +29,6 @@ class FloppaVpnTileService : TileService() {
 
     companion object {
         private const val TAG = "FloppaVpnTile"
-
-        /**
-         * The last-good intent, written by the actor.
-         *
-         * Named here because the tile has to know whether there is anything to start *before*
-         * starting anything, and the file is the only evidence available without booting the actor.
-         * Kept in step with `BUNDLE_FILENAME` in `vpn/autostart.rs`, which says so too.
-         */
-        private const val AUTOSTART_FILENAME = "autostart.json"
     }
 
     /** Wakes the tile when the service publishes a new phase. Held so it can be unregistered. */

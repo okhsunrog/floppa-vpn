@@ -315,6 +315,23 @@ deploy-android-test device="": (deploy-android device) (app-restart device)
     echo "App PID: $pid"
     $ADB logcat -d --pid="$pid" | grep "FloppaVPN" | tail -50
 
+# Onyx Boox only: read (`just boox-eac`) or change (`just boox-eac set enable=false fullPMAccess=true`)
+# this app's Onyx "App Optimization" config through the oec_service binder — the EinkWise panel
+# does not reach the store the boot-time cull reads. Why and what the fields mean:
+# scripts/boox/OecTool.java and docs/ANDROID-TUNNEL-PROCESS.md, "Boot on an Onyx Boox".
+boox-eac mode="get" *flags="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
+    platform=$(ls -d "$sdk"/platforms/android-* | sort -V | tail -1)
+    d8=$(ls "$sdk"/build-tools/*/d8 | sort -V | tail -1)
+    out=$(mktemp -d)
+    trap 'rm -rf "$out"' EXIT
+    javac --release 11 -Xlint:-options -cp "$platform/android.jar" -d "$out" scripts/boox/OecTool.java
+    "$d8" --release --lib "$platform/android.jar" --output "$out" "$out/OecTool.class" 2>/dev/null
+    {{ adb_cmd }} push "$out/classes.dex" /data/local/tmp/oectool.dex >/dev/null 2>&1
+    {{ adb_cmd }} shell CLASSPATH=/data/local/tmp/oectool.dex app_process /system/bin OecTool {{ mode }} {{ android_pkg }} {{ flags }}
+
 # Run VPN integration tests (requires Docker + tests/integration/.env)
 test-integration: build-cli
     cd tests/integration && uv run pytest -v

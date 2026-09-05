@@ -10,8 +10,30 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application>
+        <!--
+          The second chance for the always-on start, see BootRetry.kt. Both live in `:vpn` with
+          the service, so the phase they read is the one the tunnel writes. The receiver is not
+          exported: BOOT_COMPLETED is a protected broadcast, and the system's own sends reach an
+          unexported receiver. The job service is exported the way every JobService is — the
+          scheduler binds it, and the BIND_JOB_SERVICE permission keeps that to the system.
+        -->
+        <receiver
+            android:name="dev.okhsunrog.floppavpn.vpn.BootReceiver"
+            android:process=":vpn"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="dev.okhsunrog.floppavpn.vpn.BootRetryJobService"
+            android:process=":vpn"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" />
+
         <service
             android:name="dev.okhsunrog.floppavpn.vpn.FloppaVpnService"
             android:process=":vpn"
