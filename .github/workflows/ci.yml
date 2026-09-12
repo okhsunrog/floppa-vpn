@@ -216,7 +216,7 @@ jobs:
       # the same reason the OpenAPI client is.
       - name: Check tauri-specta bindings are up to date
         run: |
-          cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --bin export_bindings
+          cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --example export_bindings
           git diff --exit-code -- floppa-client/src/bindings.ts \
             || (echo "::error::bindings.ts is stale. Run 'just bindings' and commit the changes." && exit 1)
 
