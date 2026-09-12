@@ -160,9 +160,17 @@ impl GotatunTunnel {
     ) -> Result<Self, BackendError> {
         info!("Creating gotatun tunnel on interface {}", interface_name);
 
-        // Create TUN device configuration
+        // Create TUN device configuration.
+        //
+        // The MTU has to be set here, on the device itself: the config's value is what the peer
+        // sized the tunnel for, and it is what the local TCP stack derives its MSS from. Leaving
+        // the `tun` crate's 1500 default in place makes the stack advertise an MSS of 1460, so the
+        // far end sends full-size segments that only fit inside the tunnel once encapsulated on a
+        // 1500-byte path — anything shorter (PPPoE, LTE, another tunnel underneath) black-holes
+        // them, and AmneziaWG's obfuscation makes the overhead larger still.
         let mut tun_config = tun::Configuration::default();
         tun_config.tun_name(interface_name);
+        tun_config.mtu(config.mtu());
 
         #[cfg(target_os = "windows")]
         {
