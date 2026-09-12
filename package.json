@@ -29,7 +29,7 @@
     "defu": "6.1.7",
     "esbuild": "0.27.2",
     "h3": "1.15.11",
-    "js-yaml": "4.3.1",
+    "js-yaml": "4.3.2",
     "nanoid": "3.3.18",
     "postcss": "8.5.26",
     "vite": "catalog:"
