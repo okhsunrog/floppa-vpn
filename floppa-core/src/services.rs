@@ -1798,9 +1798,15 @@ mod tests {
         assert!(cfg.contains("PrivateKey = PRIV"));
         assert!(cfg.contains("Address = 10.101.0.5/32"));
         assert!(cfg.contains("MTU = 1280"));
-        // No MTU line without one: plain WireGuard configs never carry it.
-        let wg = generate_tunnel_config("PRIV", "10.200.0.5", &test_config().wireguard, "PUB");
+        // No MTU line without one, whichever section the interface came from.
+        let mut wireguard = test_config().wireguard;
+        let wg = generate_tunnel_config("PRIV", "10.200.0.5", &wireguard, "PUB");
         assert!(!wg.contains("MTU ="));
+        assert!(!wg.contains("Jc ="));
+        // ...and the line, but still no obfuscation, when `[wireguard]` sets one.
+        wireguard.mtu = Some(1380);
+        let wg = generate_tunnel_config("PRIV", "10.200.0.5", &wireguard, "PUB");
+        assert!(wg.contains("MTU = 1380"));
         assert!(!wg.contains("Jc ="));
         // AmneziaWG 2.0 obfuscation params present.
         assert!(cfg.contains("Jc = 6"));

@@ -20,6 +20,10 @@ client_subnet = "10.100.0.0/24"
 # server_ip = "10.100.0.1"  # Optional, derived from subnet if not set
 dns = ["1.1.1.1", "8.8.8.8"]
 allowed_ips = "0.0.0.0/0, ::/0"
+# Tunnel MTU (optional). Set on this interface and handed to clients; without it they use
+# WireGuard's own 1420. Lower it when the last mile is shorter than 1500 (PPPoE, LTE, another
+# tunnel underneath) and large transfers stall while small requests keep working.
+# mtu = 1380
 
 # Rate limiting (optional, requires daemon to run as root)
 [wireguard.rate_limit]
@@ -39,7 +43,7 @@ total_bandwidth_mbps = 1000  # Total available bandwidth for all peers
 # # server_ip = "10.101.0.1"  # Optional, derived from subnet if not set
 # dns = ["1.1.1.1", "8.8.8.8"]
 # allowed_ips = "0.0.0.0/0, ::/0"
-# mtu = 1280  # Optional, lower than WG to absorb obfuscation overhead
+# mtu = 1280  # Optional, defaults to 1280: below WG's 1420 to absorb obfuscation overhead
 #
 # [amneziawg.rate_limit]
 # enabled = true
