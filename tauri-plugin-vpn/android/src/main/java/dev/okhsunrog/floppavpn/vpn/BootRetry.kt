@@ -9,18 +9,10 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.net.VpnService
 import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import java.io.File
-
-/**
- * The file `vpn/autostart.rs` writes after every successful connect and removes on a wipe. Its
- * existence is the cheapest possible answer to "has anything ever connected on this device", which
- * is all the tile and the boot retry need from it.
- */
-internal const val AUTOSTART_FILENAME = "autostart.json"
 
 /**
  * A second chance for the always-on start, on devices that kill it.
@@ -118,12 +110,9 @@ internal object BootRetry {
             )
             return false
         }
-        if (VpnService.prepare(context) != null) {
-            Log.i(TAG, "no VPN consent; a background start cannot ask for it")
-            return false
-        }
-        if (!File(context.applicationInfo.dataDir, AUTOSTART_FILENAME).exists()) {
-            Log.i(TAG, "nothing has ever connected on this device; nothing to raise")
+        val blocker = startBlocker(context)
+        if (blocker != null) {
+            Log.i(TAG, "a start made with no UI cannot succeed here: $blocker")
             return false
         }
         return true

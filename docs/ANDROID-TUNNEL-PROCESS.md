@@ -186,7 +186,8 @@ Verified on a device with always-on enabled: disconnect from the tile, and two m
 tunnel is still down and the service still gone.
 
 So the pieces line up like this. Every start says who asked — `ACTION_KEEP_ALIVE` from the UI,
-`ACTION_TILE_START` from the tile, and an unflagged `android.net.VpnService` from the system. That
+`ACTION_TILE_START` from the tile, `ACTION_ADB_START` from a shell, and an unflagged
+`android.net.VpnService` from the system. That
 flagging is the trick the VPN guide recommends for telling them apart, and it stays: it is the only
 thing that answers *who issued this start*. `autostart.json` is written on every successful connect
 and removed only by a wipe, so the one non-obvious consequence is that **a manual disconnect does
@@ -437,3 +438,51 @@ case the receiver starts the service immediately instead — it helps whenever t
 the cull, which is most of the ten seconds `BOOT_COMPLETED` takes to deliver — and it never sleeps
 in the receiver: `BOOT_COMPLETED` is delivered serially, and a receiver that waits holds every app
 behind it.
+
+## Driving it from a shell
+
+For scripts, for CI, and for the times a device is on the desk with a cable in it rather than in a
+hand.
+
+**What does not work, and why.** `FloppaVpnService` is `exported="false"` behind
+`BIND_VPN_SERVICE`, so `am start-service` gets *"Requires permission not exported from uid …"* —
+the shell is another app, not this one. Only uid 0 would pass, so on a rooted device
+`su -c 'am start-service -n … -a dev.okhsunrog.floppavpn.STOP_VPN'` does work, and that is the
+whole of the root story. Writing `Settings.Secure.always_on_vpn_app` is a third thing that looks
+like it would work: the shell holds `WRITE_SECURE_SETTINGS`, but nothing re-reads that key when it
+changes, so all it buys is a disagreement between the setting and the running system.
+
+**The tile, remotely.** `cmd statusbar click-tile <component>` delivers a real tap to
+`FloppaVpnTileService`, with the panel closed, and needs no root. It is genuinely useful — it
+exercises the same path a person's thumb does — but it is a *toggle*, it only works once the tile
+has been added to Quick Settings (`cmd statusbar add-tile`), and its refusals are "open the app",
+which a script cannot read.
+
+**The control surface.** `AdbControlReceiver`, in `:vpn` beside the service and the tile:
+
+```
+just vpn-status        # off | busy | connected
+just vpn-connect       # waits for it to settle, exits non-zero if it did not connect
+just vpn-disconnect
+```
+
+Each is one ordered broadcast — `am broadcast -n …/AdbControlReceiver -a
+dev.okhsunrog.floppavpn.adb.{STATUS,CONNECT,DISCONNECT}` — whose reply `am` prints as
+`result=0, data="connected"`. `result` is 0 when the tunnel is in the state that was asked for and
+1 when it is not; `data` is the phase, or the one word that says why not: `no-consent`,
+`nothing-to-raise` (nothing has ever connected here, so there is no intent to raise),
+`start-refused`, `timeout`. `CONNECT` and `DISCONNECT` answer once the request has settled or
+fifteen seconds have passed, so the next line of a script can use the tunnel; `--async` sends it
+unordered and nothing waits.
+
+It is exported, because the sender is another app, and guarded by `android.permission.DUMP` —
+which `com.android.shell` holds and an ordinary app cannot obtain, being
+`signature|privileged|development`. The guard keeps *other apps* out; it was never going to keep
+out someone with a cable, who can tap the tile with `input` anyway.
+
+Two things it inherits from living where it does. `CONNECT` is `ACTION_ADB_START`, handled exactly
+as a system start — the actor raises the intent from `autostart.json`, so a device that has never
+connected answers `nothing-to-raise` rather than starting a service for nothing. And from Android
+12 a background start of a foreground service is refused unless the app is exempt; being off the
+battery optimisations is one such exemption, which is what the app asks for on its first run, so
+`start-refused` in reply to a `CONNECT` means that exemption is missing on that device.

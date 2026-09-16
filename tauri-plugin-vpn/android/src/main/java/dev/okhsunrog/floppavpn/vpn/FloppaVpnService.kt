@@ -129,6 +129,14 @@ class FloppaVpnService : VpnService() {
         const val ACTION_BOOT_RETRY = "dev.okhsunrog.floppavpn.BOOT_RETRY"
 
         /**
+         * A shell asked for a tunnel, see [AdbControlReceiver].
+         *
+         * Handled exactly as a system start, for the same reason the tile's is: the request carries
+         * no more context than the system's own does. Named so the log says who asked.
+         */
+        const val ACTION_ADB_START = "dev.okhsunrog.floppavpn.ADB_START"
+
+        /**
          * "This instance is serving nothing". No generation is ever minted as this, so a teardown
          * that arrives after the one it belonged to has gone matches nothing.
          */
@@ -351,9 +359,9 @@ class FloppaVpnService : VpnService() {
                 if (phase == VpnPhase.Off) awaitWork()
             }
 
-            // A start the system issued — always-on, boot, a lockdown restore — or the tile or the
-            // boot retry, which have no more context than the system does. Same requirement,
-            // foreground at once, and then the actor is told to want a tunnel.
+            // A start the system issued — always-on, boot, a lockdown restore — or the tile, the
+            // boot retry or a shell, which have no more context than the system does. Same
+            // requirement, foreground at once, and then the actor is told to want a tunnel.
             else -> {
                 if (intent == null) {
                     // START_NOT_STICKY means we should never be redelivered a null intent; some
@@ -361,8 +369,9 @@ class FloppaVpnService : VpnService() {
                     // that a device doing it does not read as always-on in the log.
                     Log.w(TAG, "started with a null intent; treating it as a system start")
                 }
-                // Only the system's own starts leave the marker the boot retry reads: a tile tap
-                // or the retry itself says nothing about whether Android wanted a tunnel at boot.
+                // Only the system's own starts leave the marker the boot retry reads: a tile tap,
+                // a shell, or the retry itself says nothing about whether Android wanted a tunnel
+                // at boot.
                 if (intent == null || intent.action == SERVICE_INTERFACE) {
                     BootRetry.recordSystemStart(this)
                 }
