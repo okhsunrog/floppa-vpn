@@ -1,17 +1,39 @@
 {
-  "version": "0.6.2",
+  "version": "0.6.3",
   "sections": [
     {
       "type": "fixed",
       "items": [
         {
-          "en": "On Linux and Windows the app set up its tunnel with the wrong packet size, ignoring the smaller one the server asks for. Downloads and anything else that moves real data could stall or crawl — git clone was a common victim — while opening a page still worked. Whether it hit you depended on your connection: some links tolerate the mistake, many do not.",
-          "ru": "На Linux и Windows приложение поднимало туннель с неверным размером пакета, игнорируя меньший, который задаёт сервер. Загрузки и всё, что передаёт заметный объём данных, могли вставать или ползти — чаще всего страдал git clone, — хотя страницы при этом открывались. Проявлялось не у всех: часть каналов ошибку переживала, многие — нет."
+          "en": "Changing the split tunnelling rules took about twelve seconds longer than it should have, on Android. The app was asking for the server address through the tunnel it had just taken down, and waiting out the timeout before it could start the new one. It asks the network underneath instead, and the tunnel comes back as quickly as on a plain reconnect.",
+          "ru": "Смена правил раздельного туннелирования на Android занимала секунд на двенадцать больше, чем должна была: приложение спрашивало адрес сервера через туннель, который само же только что выключило, и ждало истечения таймаута, прежде чем поднять новый. Теперь адрес спрашивается у сети под туннелем, и туннель возвращается так же быстро, как при обычном переподключении."
+        },
+        {
+          "en": "While the tunnel was being rebuilt with new split tunnelling rules, the settings page showed nothing at all — no sign the reconnect was running, and no way to tell that a rule changed since it started would need another one. It now says the rules are being applied, and offers the button again the moment they go out of date.",
+          "ru": "Пока туннель перестраивался под новые правила раздельного туннелирования, страница настроек не показывала ничего: ни что переподключение идёт, ни что изменённое по ходу правило потребует ещё одного. Теперь она сообщает, что правила применяются, и снова предлагает кнопку, как только они устаревают."
+        },
+        {
+          "en": "Plain WireGuard now uses the same smaller packet size AmneziaWG does. It is the protocol the app falls back to when AmneziaWG cannot connect — that is, on exactly the kind of connection where the larger size stalls downloads while pages still open. Existing devices pick this up the next time the app is opened with a network.",
+          "ru": "Обычный WireGuard теперь использует тот же уменьшенный размер пакета, что и AmneziaWG. Именно на него приложение переключается, когда AmneziaWG не подключается, — то есть ровно на тех каналах, где больший размер подвешивает загрузки, хотя страницы открываются. На уже настроенных устройствах это подхватится при следующем запуске приложения с сетью."
         }
       ]
     }
   ],
   "history": [
+    {
+      "version": "0.6.2",
+      "sections": [
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "On Linux and Windows the app set up its tunnel with the wrong packet size, ignoring the smaller one the server asks for. Downloads and anything else that moves real data could stall or crawl — git clone was a common victim — while opening a page still worked. Whether it hit you depended on your connection: some links tolerate the mistake, many do not.",
+              "ru": "На Linux и Windows приложение поднимало туннель с неверным размером пакета, игнорируя меньший, который задаёт сервер. Загрузки и всё, что передаёт заметный объём данных, могли вставать или ползти — чаще всего страдал git clone, — хотя страницы при этом открывались. Проявлялось не у всех: часть каналов ошибку переживала, многие — нет."
+            }
+          ]
+        }
+      ]
+    },
     {
       "version": "0.6.1",
       "sections": [

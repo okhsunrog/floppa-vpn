@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "floppa-client"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "async-trait",
  "floppa-api-client",
