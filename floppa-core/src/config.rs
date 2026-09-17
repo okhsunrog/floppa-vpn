@@ -100,6 +100,15 @@ pub struct TunnelInterfaceConfig {
 /// Default client MTU for AmneziaWG (`[amneziawg] mtu`).
 pub const DEFAULT_AWG_MTU: u16 = 1280;
 
+/// The narrowest tunnel that can carry IPv6: RFC 8200's minimum link MTU.
+const MIN_IPV6_MTU: u16 = 1280;
+/// The narrowest tunnel that can carry IPv4 without fragmenting every datagram a host may send
+/// unfragmented: RFC 791's minimum reassembly buffer.
+const MIN_IPV4_MTU: u16 = 576;
+/// A standard Ethernet payload. A tunnel is never wider than the path under it, so anything above
+/// this is a slipped digit rather than a request.
+const MAX_MTU: u16 = 1500;
+
 /// Listen port assumed when neither `listen_port` nor the endpoint names one.
 const DEFAULT_WG_PORT: u16 = 51820;
 const DEFAULT_AWG_PORT: u16 = 51821;
@@ -109,6 +118,16 @@ const DEFAULT_AWG_PORT: u16 = 51821;
 enum TunnelSection {
     WireGuard,
     AmneziaWg,
+}
+
+impl TunnelSection {
+    /// The section as it is written in the file, for an error a person has to act on.
+    fn name(self) -> &'static str {
+        match self {
+            Self::WireGuard => "wireguard",
+            Self::AmneziaWg => "amneziawg",
+        }
+    }
 }
 
 impl TunnelInterfaceConfig {
@@ -143,16 +162,55 @@ impl TunnelInterfaceConfig {
     /// given under either, and defaulted only under `[amneziawg]`.
     fn settle_section(&mut self, section: TunnelSection) -> Result<(), ConfigError> {
         match section {
-            TunnelSection::WireGuard => match self.obfuscation {
-                Some(_) => Err(ConfigError::AmneziaWgOnlyKey { key: "obfuscation" }),
-                None => Ok(()),
-            },
+            TunnelSection::WireGuard if self.obfuscation.is_some() => {
+                return Err(ConfigError::AmneziaWgOnlyKey { key: "obfuscation" });
+            }
+            TunnelSection::WireGuard => {}
             TunnelSection::AmneziaWg => {
                 self.mtu.get_or_insert(DEFAULT_AWG_MTU);
                 self.obfuscation.get_or_insert_default();
-                Ok(())
             }
         }
+        self.check_mtu(section)
+    }
+
+    /// Bound the MTU here, because the next thing that would object is the kernel.
+    ///
+    /// `u16` accepts `0`, `68` and `9000`, and a value the link cannot take now reaches
+    /// `ip link set … mtu` in the daemon — which fails, propagates out of `ensure_interface`, and
+    /// leaves floppa-daemon refusing to start. That is a deploy-time outage for a typo in a
+    /// hand-edited variables file, and this is the one place that reads the file with any judgment
+    /// at all.
+    ///
+    /// The floor depends on what the tunnel carries: RFC 8200 makes 1280 the minimum link MTU for
+    /// IPv6, so a tunnel routing `::/0` at 1200 is not slow, it is broken. `allowed_ips` is the
+    /// only statement of that in the config, and a v6 prefix is exactly the thing in it with a
+    /// colon in it. The ceiling is a standard Ethernet payload: a tunnel is never wider than the
+    /// path under it, and asking for jumbo here can only mean a slipped digit.
+    fn check_mtu(&self, section: TunnelSection) -> Result<(), ConfigError> {
+        let Some(mtu) = self.mtu else {
+            return Ok(());
+        };
+        let carries_ipv6 = self.allowed_ips.contains(':');
+        let min = if carries_ipv6 {
+            MIN_IPV6_MTU
+        } else {
+            MIN_IPV4_MTU
+        };
+        if (min..=MAX_MTU).contains(&mtu) {
+            return Ok(());
+        }
+        Err(ConfigError::InvalidMtu {
+            section: section.name(),
+            mtu,
+            min,
+            max: MAX_MTU,
+            why: if carries_ipv6 {
+                " (this tunnel routes IPv6, whose minimum link MTU is 1280)"
+            } else {
+                ""
+            },
+        })
     }
 }
 
@@ -450,6 +508,16 @@ pub enum ConfigError {
     /// An AmneziaWG-only key (`obfuscation`) under the `[wireguard]` section.
     #[error("`{key}` under [wireguard] is an [amneziawg]-only setting")]
     AmneziaWgOnlyKey { key: &'static str },
+    /// An `mtu` the interface cannot be brought up with, caught here rather than by the kernel
+    /// on a deploy. See [`TunnelInterfaceConfig::check_mtu`].
+    #[error("`mtu = {mtu}` under [{section}] is outside {min}..={max}{why}")]
+    InvalidMtu {
+        section: &'static str,
+        mtu: u16,
+        min: u16,
+        max: u16,
+        why: &'static str,
+    },
 }
 
 #[cfg(test)]
@@ -641,6 +709,72 @@ mod tests {
         // the kernel keeps whatever the interface came up with.
         let config = Config::parse(MINIMAL_CONFIG).unwrap();
         assert_eq!(config.wireguard.mtu, None);
+    }
+
+    /// `MINIMAL_CONFIG` routes IPv4 only; this one routes both, as every real deployment does.
+    const DUAL_STACK_CONFIG: &str = r#"
+        [wireguard]
+        interface = "wg0"
+        endpoint = "vpn.example.com:51820"
+        client_subnet = "10.100.0.0/24"
+        dns = ["1.1.1.1"]
+        allowed_ips = "0.0.0.0/0, ::/0"
+    "#;
+
+    #[test]
+    fn an_mtu_the_link_cannot_take_is_refused_here() {
+        // The kernel is the next thing that would object, and by then the daemon is failing to
+        // start on a deployed machine.
+        for mtu in [0, 68, 575, 1501, 9000] {
+            let err = Config::parse(&format!("{MINIMAL_CONFIG}mtu = {mtu}\n")).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InvalidMtu { mtu: got, .. } if got == mtu),
+                "mtu = {mtu} should have been refused, got {err:?}"
+            );
+        }
+        for mtu in [576, 1280, 1380, 1500] {
+            let config = Config::parse(&format!("{MINIMAL_CONFIG}mtu = {mtu}\n")).unwrap();
+            assert_eq!(config.wireguard.mtu, Some(mtu));
+        }
+    }
+
+    #[test]
+    fn a_tunnel_that_routes_ipv6_may_not_go_below_1280() {
+        // RFC 8200's minimum link MTU: below it the tunnel does not carry IPv6 at all, which is a
+        // different thing from carrying it slowly.
+        let err = Config::parse(&format!("{DUAL_STACK_CONFIG}mtu = 1200\n")).unwrap_err();
+        let ConfigError::InvalidMtu { min, why, .. } = err else {
+            panic!("expected InvalidMtu, got {err:?}");
+        };
+        assert_eq!(min, MIN_IPV6_MTU);
+        assert!(why.contains("IPv6"), "the error must say why: {why:?}");
+
+        // The same value is fine on a tunnel that routes only IPv4.
+        let config = Config::parse(&format!("{MINIMAL_CONFIG}mtu = 1200\n")).unwrap();
+        assert_eq!(config.wireguard.mtu, Some(1200));
+
+        // And the AmneziaWG default sits exactly on the floor rather than under it.
+        assert_eq!(DEFAULT_AWG_MTU, MIN_IPV6_MTU);
+    }
+
+    #[test]
+    fn the_amneziawg_section_is_bounded_too() {
+        let toml = format!(
+            "{DUAL_STACK_CONFIG}\n[amneziawg]\ninterface = \"awg0\"\n\
+             endpoint = \"vpn.example.com:51821\"\nclient_subnet = \"10.101.0.0/24\"\n\
+             dns = [\"1.1.1.1\"]\nallowed_ips = \"0.0.0.0/0, ::/0\"\nmtu = 1200\n"
+        );
+        let err = Config::parse(&toml).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ConfigError::InvalidMtu {
+                    section: "amneziawg",
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -23,6 +23,7 @@ allowed_ips = "0.0.0.0/0, ::/0"
 # Tunnel MTU (optional). Set on this interface and handed to clients; without it they use
 # WireGuard's own 1420. Lower it when the last mile is shorter than 1500 (PPPoE, LTE, another
 # tunnel underneath) and large transfers stall while small requests keep working.
+# Bounded at startup: 576..=1500, and never below 1280 while allowed_ips carries IPv6.
 # mtu = 1380
 
 # Rate limiting (optional, requires daemon to run as root)
