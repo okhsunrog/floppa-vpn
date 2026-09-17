@@ -84,7 +84,7 @@ fn ip(args: &[&str]) -> Result<()> {
 ///
 /// Idempotent and convergent: the live `[Interface]` (`wg/awg showconf`) is diffed
 /// against the spec and only the differing params go into a single `set`, then the
-/// address and link state are (re)applied unconditionally. That covers a config
+/// address, MTU and link state are (re)applied unconditionally. That covers a config
 /// change across a restart, an interface left half-configured by an earlier crash,
 /// and — for AmneziaWG — a steady state where no `awg set` is issued at all.
 ///
@@ -143,12 +143,25 @@ pub fn ensure_interface(
     // Only the client subnet's prefix length is used for the server address.
     let address = format!("{}/{}", iface.get_server_ip(), iface.client_subnet.prefix());
     ip(&["address", "replace", &address, "dev", interface])?;
-    ip(&["link", "set", interface, "up"])?;
+
+    // The MTU the clients are handed, applied to this side too. Without it the kernel keeps the
+    // 1420 it gives a fresh `wireguard`/`amneziawg` link, so an AmneziaWG interface handing out
+    // `MTU = 1280` would still emit packets up to 1420 towards peers whose tunnel is 1280 —
+    // harmless for TCP, which is clamped by the peer's own MSS, but an avoidable asymmetry for
+    // anything that is not. Reapplied unconditionally, like the address: `ip` is idempotent here.
+    let mtu = iface.mtu.map(|mtu| mtu.to_string());
+    let mut link = vec!["link", "set", interface];
+    if let Some(mtu) = &mtu {
+        link.extend(["mtu", mtu]);
+    }
+    link.push("up");
+    ip(&link)?;
 
     info!(
         interface,
         %tool,
         address,
+        mtu = iface.mtu,
         listen_port = iface.get_listen_port(),
         created,
         "Interface ready"
