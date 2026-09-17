@@ -61,4 +61,40 @@ impl ServiceHost for JniServiceHost {
         crate::vpn::jni_entry::stop_vpn_service();
         Ok(())
     }
+
+    /// Ask the `VpnService` to resolve on the network under the tunnel.
+    ///
+    /// `spawn_blocking` because the Kotlin side does DNS on the calling thread, and the caller is
+    /// an async ladder step: a lookup that takes a second would otherwise take a runtime worker
+    /// with it.
+    async fn resolve(&self, host: &str) -> Result<Vec<std::net::IpAddr>, HostError> {
+        let host = host.to_string();
+        let answer = tokio::task::spawn_blocking(move || {
+            crate::vpn::jni_entry::resolve_on_underlying(&host)
+        })
+        .await
+        .map_err(|e| HostError::Unavailable {
+            detail: format!("the resolver task failed: {e}"),
+        })?
+        .map_err(|detail| HostError::Unavailable { detail })?;
+
+        let Some(answer) = answer else {
+            return Err(HostError::Unavailable {
+                detail: "the service could not resolve it on the underlying network".into(),
+            });
+        };
+        // A literal list is what crossed the boundary, so anything unparseable is a bug on this
+        // side rather than a name that does not exist — and it must not be mistaken for one.
+        let addresses: Vec<std::net::IpAddr> = answer
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if addresses.is_empty() {
+            return Err(HostError::Unavailable {
+                detail: format!("the service answered with no usable address: {answer}"),
+            });
+        }
+        Ok(addresses)
+    }
 }

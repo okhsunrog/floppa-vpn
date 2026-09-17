@@ -26,6 +26,7 @@
 //!           →  setConnected()        what the notification should say
 //!           →  shutdownService()     drop the notification and stop
 //!           →  protectSocket()       keep the tunnel's own socket out of the tunnel
+//!           →  resolveOnUnderlyingNetwork()  DNS on the network under the tunnel, not through it
 //! ```
 
 use super::service_state::ServiceRegistry;
@@ -186,6 +187,31 @@ pub fn start_generation(plan: &str, generation: u64) -> Result<(), String> {
             &[(&plan).into(), (generation as jlong).into()],
         )?;
         Ok(())
+    })
+}
+
+/// Resolve `host` on the network under the tunnel, rather than through it.
+///
+/// `Ok(None)` is "the service cannot answer that" — no network recorded, or the name did not
+/// resolve on it — and the caller falls back to the system resolver. Blocking: the Kotlin side does
+/// DNS on the calling thread, so callers hand this to a blocking pool.
+pub fn resolve_on_underlying(host: &str) -> Result<Option<String>, String> {
+    let host = host.to_string();
+    with_service("resolveOnUnderlyingNetwork", |env, service| {
+        let host = env.new_string(&host)?;
+        let answer = env
+            .call_method(
+                service,
+                jni::jni_str!("resolveOnUnderlyingNetwork"),
+                jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[(&host).into()],
+            )?
+            .l()?;
+        if answer.is_null() {
+            return Ok(None);
+        }
+        let answer = env.cast_local::<JString>(answer)?;
+        Ok(Some(answer.mutf8_chars(env)?.to_string()))
     })
 }
 

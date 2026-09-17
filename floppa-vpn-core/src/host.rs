@@ -46,4 +46,21 @@ pub trait ServiceHost: Send + Sync {
 
     /// Stop the service out of band — the path that still works when its socket does not.
     async fn stop(&self) -> Result<(), HostError>;
+
+    /// Resolve `host` on the network *under* the tunnel, rather than through it.
+    ///
+    /// The same rule the tunnel's own socket follows: our control path must not depend on our own
+    /// tunnel. The system resolver does — establishing a TUN points the device's DNS at it — and
+    /// between a teardown and the next establish that TUN is still installed with nothing behind
+    /// it, so a lookup there is answered by the resolver's timeout rather than by a server.
+    ///
+    /// [`HostError::Unavailable`] means "ask the system instead", not "this name does not exist":
+    /// a host that cannot say (no network recorded, no such call on this platform) and a name that
+    /// does not resolve both leave the caller with the ordinary resolver to fall back to. The
+    /// default is exactly that, which is why a host has to opt in rather than remember to.
+    async fn resolve(&self, host: &str) -> Result<Vec<std::net::IpAddr>, HostError> {
+        Err(HostError::Unavailable {
+            detail: format!("this host cannot resolve {host}"),
+        })
+    }
 }

@@ -285,8 +285,13 @@ class FloppaVpnService : VpnService() {
     /** Watches the network under the tunnel — and, just as importantly, under no tunnel at all. */
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    /** The network the tunnel is currently riding, so only a real change bounces the socket. */
-    private var underlyingNetwork: Network? = null
+    /**
+     * The network the tunnel is currently riding, so only a real change bounces the socket.
+     *
+     * `@Volatile` because it is written from the connectivity callback's thread and read from the
+     * tunnel's own — [resolveOnUnderlyingNetwork] runs on whichever thread the actor asks from.
+     */
+    @Volatile private var underlyingNetwork: Network? = null
 
     /**
      * Every non-VPN network this callback has been told about and not told to forget.
@@ -986,5 +991,41 @@ class FloppaVpnService : VpnService() {
      */
     fun protectSocket(socket: Int): Boolean {
         return protect(socket)
+    }
+
+    /**
+     * Resolve [host] on the network *under* the tunnel, never through it. Called from Rust.
+     *
+     * The same rule as [protectSocket], applied to the one other thing the tunnel needs before it
+     * exists: our own control path must not depend on our own tunnel. The system resolver does —
+     * `Builder.establish()` points the device's DNS at the TUN — and that is fine while a tunnel is
+     * up and fatal a moment after it is not. Between a teardown and the next `establish()` the
+     * descriptor is still installed with nothing behind it, so every query goes into it and is
+     * answered by the resolver's own timeout, twelve seconds later, which is what a reconnect used
+     * to wait for before it could even start. Asking a [Network] directly skips all of that: it
+     * uses that network's DNS servers over that network.
+     *
+     * Returns the addresses as a comma-separated list of literals, or `null` when this cannot be
+     * answered — no network recorded yet, or the recorded one is gone. `null` is not a failure to
+     * resolve; it means "ask the system instead", which is exactly what the caller then does.
+     *
+     * Blocking, and deliberately called from a thread that may block: DNS is I/O.
+     */
+    fun resolveOnUnderlyingNetwork(host: String): String? {
+        val network = underlyingNetwork
+        if (network == null) {
+            Log.i(TAG, "no network recorded under the tunnel; the system resolver it is")
+            return null
+        }
+        return try {
+            val addresses = network.getAllByName(host)
+            if (addresses.isEmpty()) null
+            else addresses.mapNotNull { it.hostAddress }.joinToString(",").ifEmpty { null }
+        } catch (e: Exception) {
+            // Includes the ordinary "that name does not resolve" — the caller's fallback covers
+            // both that and a network that has gone away under us.
+            Log.i(TAG, "could not resolve $host on $network: $e")
+            null
+        }
     }
 }
