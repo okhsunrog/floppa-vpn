@@ -241,6 +241,13 @@ mod tests {
             connected.intent = IntentView::Up;
             connected.epoch = IntentEpoch(7);
             connected.intent_order = vec![Protocol::AmneziaWg, Protocol::WireGuard];
+            // Deliberately not the same rules as `params`: the two travel separately and a codec
+            // that confused them would round-trip a state that says the tunnel already routes what
+            // the settings ask for.
+            connected.intent_params = Some(TunnelParams::new(
+                SplitMode::Include,
+                vec!["org.example.other".into()],
+            ));
             connected.protocol = Some(Protocol::AmneziaWg);
             connected.params = Some(TunnelParams::new(
                 SplitMode::Exclude,

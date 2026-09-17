@@ -315,6 +315,48 @@ deploy-android-test device="": (deploy-android device) (app-restart device)
     echo "App PID: $pid"
     $ADB logcat -d --pid="$pid" | grep "FloppaVPN" | tail -50
 
+# Split rules are optional — `just vpn-connect exclude com.foo,com.bar`, `just vpn-connect all` —
+# and apply to the tunnel this starts, or to one already running. They are not the app's own
+# setting: the next connect made from the app applies the app's rules again.
+
+[doc("Connect the tunnel on the device, and wait for it to settle")]
+vpn-connect split="" apps="" device="": (_vpn-request "CONNECT" split apps device)
+
+# Disconnect the tunnel on the device, and wait for it to settle
+vpn-disconnect device="": (_vpn-request "DISCONNECT" "" "" device)
+
+# What the tunnel on the device is doing: off, busy or connected
+vpn-status device="": (_vpn-request "STATUS" "" "" device)
+
+# The split rules the last successful connect used: `all`, or `exclude:com.foo,com.bar`
+vpn-split device="": (_vpn-request "SPLIT" "" "" device)
+
+# The shared half of the three above. One ordered broadcast to AdbControlReceiver: `data=` is the
+# answer (the phase, or why not), `result=` is 0 when the tunnel is in the state that was asked
+# for, and this recipe exits with the same verdict. See AdbControl.kt for what the words mean.
+[private]
+_vpn-request what split="" apps="" device="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ADB="{{ if device != "" { "adb -s " + device } else { adb_cmd } }}"
+    extras=()
+    if [ -n "{{ split }}" ]; then extras+=(--es split "{{ split }}"); fi
+    if [ -n "{{ apps }}" ]; then extras+=(--es apps "{{ apps }}"); fi
+    # FLAG_INCLUDE_STOPPED_PACKAGES: a freshly installed or force-stopped app receives nothing
+    # without it, which is exactly the state a CI run starts from.
+    out=$($ADB shell am broadcast -f 0x01000000 \
+        -n {{ android_pkg }}/dev.okhsunrog.floppavpn.vpn.AdbControlReceiver \
+        -a dev.okhsunrog.floppavpn.adb.{{ what }} "${extras[@]+"${extras[@]}"}" 2>&1)
+    data=$(printf '%s' "$out" | sed -n 's/.*data="\([^"]*\)".*/\1/p')
+    code=$(printf '%s' "$out" | sed -n 's/.*result=\(-\?[0-9]*\).*/\1/p')
+    if [ -z "$data" ]; then
+        echo "no answer from the device:" >&2
+        printf '%s\n' "$out" >&2
+        exit 1
+    fi
+    echo "$data"
+    [ "$code" = "0" ]
+
 # Onyx Boox only: read (`just boox-eac`) or change (`just boox-eac set enable=false fullPMAccess=true`)
 # this app's Onyx "App Optimization" config through the oec_service binder — the EinkWise panel
 # does not reach the store the boot-time cull reads. Why and what the fields mean:

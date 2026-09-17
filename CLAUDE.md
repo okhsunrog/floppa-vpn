@@ -16,6 +16,7 @@ just fmt            # Format all (Rust + frontend + Kotlin)
 just openapi        # Regenerate OpenAPI TS client (no running backend needed)
 just bindings       # Regenerate tauri-specta bindings (no running app needed)
 just build-android  # Release APK (arm64 only, split per ABI) — release.yml runs the same recipe
+just vpn-status     # Tunnel on the device: off/busy/connected (`vpn-connect` / `vpn-disconnect` drive it)
 just package        # build-frontend → cargo build → deployment archive
 just test-integration  # E2E VPN tests (Docker + tests/integration/.env + .secrets/*.conf)
 
@@ -83,6 +84,17 @@ that died while the phone was in a pocket, and a swipe-close left the tunnel run
 - **Consent** is asked by the UI, which has an activity; the actor only ever *checks* it. Missing
   consent is a refusal, not a waiting state: a background reconnect cannot show a dialog whatever
   it does
+- **A shell is a third principal.** `AdbControlReceiver` (`:vpn`, exported behind
+  `android.permission.DUMP`, which only `com.android.shell` holds) answers an ordered broadcast
+  with the phase, so `just vpn-status` / `vpn-connect` / `vpn-disconnect` drive the tunnel from a
+  script. `CONNECT` is `ACTION_ADB_START`, handled exactly as a system start — the service itself
+  is unreachable from adb, being `exported="false"` behind `BIND_VPN_SERVICE`. The two checks a
+  start with no UI must make first (consent, and something in `autostart.json` to raise) are
+  `StartBlocker`, shared with the tile and the boot retry. It may also carry split rules
+  (`--es split all|include|exclude --es apps a,b`, validated in Kotlin, applied through
+  `nativeAdbStart` to the tunnel it starts or to one already running) — **a testing surface, not a
+  setting**: the app's own rules live in the UI process's storage, so the next connect from the app
+  applies those again. See `docs/ANDROID-TUNNEL-PROCESS.md`, "Driving it from a shell"
 - **The system is a second principal.** A start it issues (always-on, boot, lockdown) reaches
   `nativeSystemStart`, which raises the intent from `autostart.json` — now just
   `LastIntent { order, params }`, written after every successful connect, cleared by a wipe. The

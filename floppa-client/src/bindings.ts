@@ -543,6 +543,18 @@ export type TunnelState = {
 	intent: IntentView,
 	epoch: IntentEpoch,
 	intent_order: Protocol[],
+	/**
+	 *  The split rules the *intent* asks for — what a tunnel being built right now is being built
+	 *  with, and what the one that is up would be rebuilt with.
+	 * 
+	 *  [`Self::params`] answers "what is running"; this answers "what was asked for", and the two
+	 *  are only the same once a cycle has finished. Published because the difference is the whole
+	 *  of the split-tunnelling banner: with only the running rules, a settings page could say
+	 *  nothing at all while a rebuild was in flight — not that one was in flight, and not that a
+	 *  change made during it would need another. `None` only while the intent is Down, and for the
+	 *  bootstrap adoption intent, which names no rules.
+	 */
+	intent_params: TunnelParams | null,
 	/**  The protocol actually running — distinct from the preferred one. */
 	protocol: Protocol | null,
 	/**

@@ -74,7 +74,7 @@ pub(super) async fn ladder(
     // The resolved address is handed over with the config, so the service never needs DNS at all.
     bail_if_cancelled!(ctx);
     let host = ctx.config.endpoint_str();
-    let endpoint = resolve(&host).await?;
+    let endpoint = resolve(ctx, &host).await?;
     info!(%host, %endpoint, "resolved the endpoint before establishing the tunnel");
 
     // 3. Service --------------------------------------------------------------------------
@@ -183,14 +183,86 @@ async fn wait_for_service(ctx: &AttemptCtx) -> Result<(), AttemptError> {
     }
 }
 
-/// Resolve the endpoint, falling back to where it resolved last time.
+/// Resolve the endpoint: on the network under the tunnel, then through the system, then from where
+/// it resolved last time.
 ///
-/// The fallback exists for exactly one situation, and it is the situation where a VPN matters
-/// most: a start under lockdown. "Block connections without VPN" means nothing reaches the network
-/// until the tunnel is up, so the resolver has nothing to answer with — and without an address the
-/// tunnel cannot come up. A literal from the last successful connect breaks that circle. Outside
-/// lockdown the cache is simply never reached, because DNS answers.
-async fn resolve(host: &str) -> Result<std::net::SocketAddr, AttemptError> {
+/// **The service first, and this is what it costs to get wrong.** `Builder.establish()` points the
+/// device's DNS at the TUN, and a teardown does not take that TUN away — it is closed by the *next*
+/// `establish()`, which is the call this resolve stands in front of. So between two tunnels every
+/// system lookup goes into a descriptor with nothing behind it and is answered twelve seconds
+/// later by the resolver's own timeout. That was the whole of "changing the split rules takes
+/// twelve seconds and a plain reconnect does not": measured at 12.03 s twice over, against 7 ms
+/// for the same lookup on a cold start where no TUN was installed. Asking the network directly is
+/// the same rule the tunnel's own socket follows through `protect()` — our control path must not
+/// depend on our own tunnel.
+///
+/// **Then the system**, because the service can only answer while it knows a network, and the
+/// answer it cannot give is not evidence that the name does not resolve.
+///
+/// **Then the cache**, which exists for exactly one situation, and it is the situation where a VPN
+/// matters most: a start under lockdown. "Block connections without VPN" means nothing reaches the
+/// network until the tunnel is up, so neither resolver has anything to answer with — and without
+/// an address the tunnel cannot come up. A literal from the last successful connect breaks that
+/// circle.
+async fn resolve(ctx: &AttemptCtx, host: &str) -> Result<std::net::SocketAddr, AttemptError> {
+    // The port is ours, not DNS's: only the name is asked about, and the port is put back on
+    // whatever comes out. An address with no port cannot be an endpoint, so a host that has lost
+    // it is a bug in the config rather than something to guess at.
+    if let Some((name, port)) = split_port(host) {
+        match ctx.host.resolve(name).await {
+            Ok(addresses) => {
+                let addr = std::net::SocketAddr::new(addresses[0], port);
+                debug!(%host, %addr, "resolved on the network under the tunnel");
+                // Recorded the same way a system resolve is: this is the one that will be right
+                // most often, and the cache is what a lockdown start falls back to.
+                let (host, addr) = (host.to_string(), addr);
+                tokio::task::spawn_blocking(move || autostart::remember_endpoint(&host, addr));
+                return Ok(addr);
+            }
+            Err(e) => debug!(%host, "the service could not resolve it ({e}); asking the system"),
+        }
+    }
+    resolve_via_system(host).await
+}
+
+/// Split `name:port`, tolerating the bracketed form an IPv6 literal comes in.
+fn split_port(host: &str) -> Option<(&str, u16)> {
+    let (name, port) = host.rsplit_once(':')?;
+    let name = name.strip_prefix('[').unwrap_or(name);
+    let name = name.strip_suffix(']').unwrap_or(name);
+    Some((name, port.parse().ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_port;
+
+    #[test]
+    fn splits_a_name_from_its_port() {
+        assert_eq!(
+            split_port("floppa.example:51821"),
+            Some(("floppa.example", 51821))
+        );
+    }
+
+    #[test]
+    fn unwraps_the_brackets_an_ipv6_literal_comes_in() {
+        assert_eq!(
+            split_port("[2001:db8::1]:51821"),
+            Some(("2001:db8::1", 51821))
+        );
+    }
+
+    #[test]
+    fn refuses_what_is_not_an_endpoint() {
+        // No port, and a port that is not one: both fall through to the system resolver, which
+        // will fail with a message about the endpoint rather than about a number.
+        assert_eq!(split_port("floppa.example"), None);
+        assert_eq!(split_port("floppa.example:https"), None);
+    }
+}
+
+async fn resolve_via_system(host: &str) -> Result<std::net::SocketAddr, AttemptError> {
     let failed = |detail: String| {
         if let Some(known) = autostart::known_endpoint(host) {
             warn!(%host, %known, "could not resolve the endpoint ({detail}); using the last known address");

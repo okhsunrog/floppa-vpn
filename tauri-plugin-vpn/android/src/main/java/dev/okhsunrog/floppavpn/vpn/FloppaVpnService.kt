@@ -129,6 +129,26 @@ class FloppaVpnService : VpnService() {
         const val ACTION_BOOT_RETRY = "dev.okhsunrog.floppavpn.BOOT_RETRY"
 
         /**
+         * A shell asked for a tunnel, see [AdbControlReceiver].
+         *
+         * Handled exactly as a system start, for the same reason the tile's is: the request carries
+         * no more context than the system's own does. Named so the log says who asked.
+         */
+        const val ACTION_ADB_START = "dev.okhsunrog.floppavpn.ADB_START"
+
+        /**
+         * Split rules for *this* start, as a `TunnelParams` JSON — only ever on an
+         * [ACTION_ADB_START], and only when the shell named them.
+         *
+         * Absent means "the rules the last connect recorded", which is what every other autonomous
+         * start uses. Present, it replaces them for this tunnel and, because a successful connect
+         * records what it connected with, for the system starts that rebuild it afterwards. It is
+         * not a setting: the app keeps its own in the UI process, and the next connect made from
+         * the app applies those again.
+         */
+        const val EXTRA_TUNNEL_PARAMS = "dev.okhsunrog.floppavpn.extra.TUNNEL_PARAMS"
+
+        /**
          * "This instance is serving nothing". No generation is ever minted as this, so a teardown
          * that arrives after the one it belonged to has gone matches nothing.
          */
@@ -229,6 +249,13 @@ class FloppaVpnService : VpnService() {
      */
     private external fun nativeSystemStart()
 
+    /**
+     * The same, for a shell that asked with split rules of its own — a `TunnelParams` as JSON,
+     * validated by [AdbControlReceiver] before it ever reaches an intent. Everything else about the
+     * start is what the last successful connect recorded.
+     */
+    private external fun nativeAdbStart(paramsJson: String)
+
     /** Ask the actor to go down. The tunnel, the notification and this service go with it. */
     private external fun nativeRequestStop()
 
@@ -258,8 +285,13 @@ class FloppaVpnService : VpnService() {
     /** Watches the network under the tunnel — and, just as importantly, under no tunnel at all. */
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    /** The network the tunnel is currently riding, so only a real change bounces the socket. */
-    private var underlyingNetwork: Network? = null
+    /**
+     * The network the tunnel is currently riding, so only a real change bounces the socket.
+     *
+     * `@Volatile` because it is written from the connectivity callback's thread and read from the
+     * tunnel's own — [resolveOnUnderlyingNetwork] runs on whichever thread the actor asks from.
+     */
+    @Volatile private var underlyingNetwork: Network? = null
 
     /**
      * Every non-VPN network this callback has been told about and not told to forget.
@@ -351,9 +383,13 @@ class FloppaVpnService : VpnService() {
                 if (phase == VpnPhase.Off) awaitWork()
             }
 
-            // A start the system issued — always-on, boot, a lockdown restore — or the tile or the
-            // boot retry, which have no more context than the system does. Same requirement,
-            // foreground at once, and then the actor is told to want a tunnel.
+            // A start the system issued — always-on, boot, a lockdown restore — or the tile, the
+            // boot retry or a shell, which have no more context than the system does. Same
+            // requirement, foreground at once, and then the actor is told to want a tunnel.
+            //
+            // A shell may carry one thing the others cannot: split rules for the tunnel it is
+            // asking for, already validated by the receiver. Everything else about the start is
+            // identical, which is why it is this arm and not one of its own.
             else -> {
                 if (intent == null) {
                     // START_NOT_STICKY means we should never be redelivered a null intent; some
@@ -361,13 +397,15 @@ class FloppaVpnService : VpnService() {
                     // that a device doing it does not read as always-on in the log.
                     Log.w(TAG, "started with a null intent; treating it as a system start")
                 }
-                // Only the system's own starts leave the marker the boot retry reads: a tile tap
-                // or the retry itself says nothing about whether Android wanted a tunnel at boot.
+                // Only the system's own starts leave the marker the boot retry reads: a tile tap,
+                // a shell, or the retry itself says nothing about whether Android wanted a tunnel
+                // at boot.
                 if (intent == null || intent.action == SERVICE_INTERFACE) {
                     BootRetry.recordSystemStart(this)
                 }
                 startVpnForeground(connected = false)
-                nativeSystemStart()
+                val params = intent?.getStringExtra(EXTRA_TUNNEL_PARAMS)
+                if (params != null) nativeAdbStart(params) else nativeSystemStart()
             }
         }
 
@@ -953,5 +991,41 @@ class FloppaVpnService : VpnService() {
      */
     fun protectSocket(socket: Int): Boolean {
         return protect(socket)
+    }
+
+    /**
+     * Resolve [host] on the network *under* the tunnel, never through it. Called from Rust.
+     *
+     * The same rule as [protectSocket], applied to the one other thing the tunnel needs before it
+     * exists: our own control path must not depend on our own tunnel. The system resolver does —
+     * `Builder.establish()` points the device's DNS at the TUN — and that is fine while a tunnel is
+     * up and fatal a moment after it is not. Between a teardown and the next `establish()` the
+     * descriptor is still installed with nothing behind it, so every query goes into it and is
+     * answered by the resolver's own timeout, twelve seconds later, which is what a reconnect used
+     * to wait for before it could even start. Asking a [Network] directly skips all of that: it
+     * uses that network's DNS servers over that network.
+     *
+     * Returns the addresses as a comma-separated list of literals, or `null` when this cannot be
+     * answered — no network recorded yet, or the recorded one is gone. `null` is not a failure to
+     * resolve; it means "ask the system instead", which is exactly what the caller then does.
+     *
+     * Blocking, and deliberately called from a thread that may block: DNS is I/O.
+     */
+    fun resolveOnUnderlyingNetwork(host: String): String? {
+        val network = underlyingNetwork
+        if (network == null) {
+            Log.i(TAG, "no network recorded under the tunnel; the system resolver it is")
+            return null
+        }
+        return try {
+            val addresses = network.getAllByName(host)
+            if (addresses.isEmpty()) null
+            else addresses.mapNotNull { it.hostAddress }.joinToString(",").ifEmpty { null }
+        } catch (e: Exception) {
+            // Includes the ordinary "that name does not resolve" — the caller's fallback covers
+            // both that and a network that has gone away under us.
+            Log.i(TAG, "could not resolve $host on $network: $e")
+            null
+        }
     }
 }

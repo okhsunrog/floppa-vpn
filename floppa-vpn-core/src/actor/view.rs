@@ -90,6 +90,10 @@ pub fn render(
             Intent::Up(up) => up.order.clone(),
             Intent::Down { .. } => Vec::new(),
         },
+        intent_params: match intent {
+            Intent::Up(up) => up.params.clone(),
+            Intent::Down { .. } => None,
+        },
         protocol,
         params,
         adopted,

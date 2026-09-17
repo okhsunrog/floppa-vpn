@@ -3,12 +3,10 @@ package dev.okhsunrog.floppavpn.vpn
 import android.app.PendingIntent
 import android.content.Intent
 import android.graphics.drawable.Icon
-import android.net.VpnService
 import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
-import java.io.File
 
 /**
  * The Quick Settings tile: connect and disconnect without opening the app.
@@ -19,11 +17,9 @@ import java.io.File
  * freshly created process reads [VpnPhase.Off], which is exactly right.
  *
  * A tap is not a request to the UI: there may be no UI. It is the same start the system issues for
- * always-on, and the actor raises the intent from what the last successful connect recorded. Two
- * things that start cannot do for itself are checked here first, because both have an answer that
- * is "open the app" rather than "try and fail":
- * - **consent**, which only an activity can ask for;
- * - **something to raise**, because a device that has never connected has no intent to repeat.
+ * always-on, and the actor raises the intent from what the last successful connect recorded. The
+ * two things that start cannot do for itself — [StartBlocker] — are checked before it, because the
+ * tile has somewhere better to send the user than into a start that would fail.
  */
 class FloppaVpnTileService : TileService() {
 
@@ -73,13 +69,9 @@ class FloppaVpnTileService : TileService() {
     }
 
     private fun startTunnel() {
-        if (VpnService.prepare(this) != null) {
-            Log.i(TAG, "no VPN consent yet; sending the user to the app")
-            openApp()
-            return
-        }
-        if (!File(applicationInfo.dataDir, AUTOSTART_FILENAME).exists()) {
-            Log.i(TAG, "nothing has ever connected on this device; sending the user to the app")
+        val blocker = startBlocker(this)
+        if (blocker != null) {
+            Log.i(TAG, "a tap cannot start the tunnel ($blocker); sending the user to the app")
             openApp()
             return
         }

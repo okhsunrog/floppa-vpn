@@ -423,6 +423,7 @@ export default {
     noApps: 'No apps found',
     showSystemApps: 'Show system apps',
     changesApplyOnReconnect: 'Settings changed — reconnect to apply',
+    applyingChanges: 'Applying the new rules — the tunnel is being rebuilt',
     reconnect: 'Reconnect',
     batteryOptimization: 'Battery Optimization',
     batteryOptimizationDescription:
