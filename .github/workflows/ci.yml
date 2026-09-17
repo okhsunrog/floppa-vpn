@@ -237,7 +237,13 @@ jobs:
         with:
           workspaces: "floppa-client/src-tauri -> target"
 
+      # `packages` is named because the action's default is `tools platform-tools`, and `tools`
+      # is the obsolete SDK package that cmdline-tools 20 no longer offers — `Failed to find
+      # package 'tools'` fails the step and skips every job below it. Nothing here needs it: the
+      # NDK is installed by the next step.
       - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android NDK
         run: sdkmanager "ndk;27.0.12077973"
