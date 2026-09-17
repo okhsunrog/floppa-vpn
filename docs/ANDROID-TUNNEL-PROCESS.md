@@ -173,6 +173,54 @@ fulfil until the user next opens the app — and the app opening is exactly when
 Revocation is the same story from the other side: the user has said no, and an app that keeps a
 pending request alive across it is arguing.
 
+### DNS, and the twelve seconds it cost
+
+The tunnel's own socket bypasses the tunnel — that is what `protect()` is for, and without it the
+first packet loops. The endpoint's *name* is the same question one step earlier, and it was answered
+by the system resolver, which is not so lucky: `Builder.establish()` points the device's DNS at the
+TUN.
+
+While a tunnel is up that is correct and invisible. A moment after it is not, it is a trap, because
+a teardown does not take the TUN away. `AndroidServiceBackend::stop()` stops the tunnel and
+deliberately not the service, and the descriptor is closed by the *next* `establish()` — which is
+the call the ladder's resolve step stands in front of. So between two tunnels the device has a VPN
+interface installed with nothing behind it, and every lookup goes into it and is answered by the
+resolver's own timeout.
+
+Measured on a Pixel 8 Pro, changing the split rules on a live tunnel, twice in one run:
+
+| | cold connect | rebuild |
+| --- | --- | --- |
+| unwind | — | 4 ms |
+| **resolve the endpoint** | **7 ms** | **12.03 s** |
+| establish + handshake | 0.73 s | 0.72 s |
+
+The second rebuild ended in `could not resolve the endpoint (No address associated with hostname);
+using the last known address` — twelve seconds spent to arrive at the cached address the fallback
+would have supplied immediately. And this is exactly why *changing the rules* felt so much slower
+than disconnecting and connecting by hand: a manual Down settles the actor at Disconnected, the
+service stands down, and the TUN goes with it — so by the time a person presses Connect the resolver
+is back on a real network. Nothing was slow about the rebuild; it was queueing behind a dead
+interface that a manual reconnect had already removed.
+
+So the name is resolved where the socket is protected: on the network *under* the tunnel.
+`Network.getAllByName()` uses that network's DNS servers over that network and knows nothing about
+our TUN. The order is the service, then the system resolver, then the address the last connect used
+— each fallback for a different reason. The service can only answer while it knows a network, and
+"cannot say" is not evidence that a name does not resolve; the cache is for a start under lockdown,
+where no resolver can answer at all.
+
+The rule this leaves, and it is worth stating once: **nothing the tunnel needs in order to exist may
+travel through the tunnel.** The socket, the name, and anything added later.
+
+One consequence reaches the UI, through the snapshot rather than through the tunnel. `params` — what
+the running tunnel was built with — is published only in `Status::Up`, so during a rebuild the UI
+could see nothing at all, and a settings page whose banner is gated on it went blank exactly when it
+had the most to say. The snapshot carries `intent_params` beside it now: what was *asked for*, which
+during a rebuild is what the answer is going to be. "Applying these very settings" and "what is
+being built is already out of date" are different sentences, and both need that field to be
+sayable.
+
 ### Always-on, and what it does not mean
 
 Always-on VPN does not mean "the system re-establishes the tunnel whenever it drops". `isAlwaysOn`
