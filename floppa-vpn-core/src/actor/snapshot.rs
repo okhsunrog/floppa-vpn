@@ -140,6 +140,16 @@ pub struct TunnelState {
     pub intent: IntentView,
     pub epoch: IntentEpoch,
     pub intent_order: Vec<Protocol>,
+    /// The split rules the *intent* asks for — what a tunnel being built right now is being built
+    /// with, and what the one that is up would be rebuilt with.
+    ///
+    /// [`Self::params`] answers "what is running"; this answers "what was asked for", and the two
+    /// are only the same once a cycle has finished. Published because the difference is the whole
+    /// of the split-tunnelling banner: with only the running rules, a settings page could say
+    /// nothing at all while a rebuild was in flight — not that one was in flight, and not that a
+    /// change made during it would need another. `None` only while the intent is Down, and for the
+    /// bootstrap adoption intent, which names no rules.
+    pub intent_params: Option<TunnelParams>,
     /// The protocol actually running — distinct from the preferred one.
     pub protocol: Option<Protocol>,
     /// The split rules the running tunnel was actually built with, when they are known.
@@ -204,6 +214,7 @@ impl TunnelState {
             intent,
             epoch,
             intent_order,
+            intent_params,
             protocol,
             params,
             adopted,
@@ -227,6 +238,7 @@ impl TunnelState {
             && *intent == other.intent
             && *epoch == other.epoch
             && *intent_order == other.intent_order
+            && *intent_params == other.intent_params
             && *protocol == other.protocol
             && *params == other.params
             && *adopted == other.adopted
@@ -256,6 +268,7 @@ impl TunnelState {
             intent: IntentView::Down,
             epoch: IntentEpoch(0),
             intent_order: Vec::new(),
+            intent_params: None,
             protocol: None,
             params: None,
             adopted: false,

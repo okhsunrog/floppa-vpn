@@ -74,6 +74,9 @@ const reconnecting = ref(false)
  */
 const splitDirty = computed(() => vpn.splitDirty)
 
+/** "A tunnel is being built right now, and it is being built with exactly these settings." */
+const splitApplying = computed(() => vpn.splitApplying)
+
 async function reconnectVpn() {
   reconnecting.value = true
   try {
@@ -147,15 +150,28 @@ function selectMode(mode: SplitMode) {
       </button>
     </div>
 
+    <!--
+      One banner, two things it can say, and it must not vanish between them: while the tunnel is
+      being rebuilt this page has no other feedback at all, and an empty page is indistinguishable
+      from one whose button did nothing.
+    -->
     <UAlert
-      v-if="splitDirty"
-      color="warning"
+      v-if="splitDirty || splitApplying"
+      :color="splitApplying ? 'info' : 'warning'"
       variant="soft"
-      :title="t('settings.changesApplyOnReconnect')"
+      :icon="splitApplying ? 'i-lucide-loader-2' : undefined"
+      :ui="splitApplying ? { icon: 'animate-spin' } : undefined"
+      :title="splitApplying ? t('settings.applyingChanges') : t('settings.changesApplyOnReconnect')"
       class="mb-4"
     >
       <template #actions>
+        <!--
+          Offered while a rebuild is already in flight too: the rules changed again since it
+          started, and the actor takes a newer intent by cancelling the attempt it has — so the
+          honest button is one that supersedes it, not one that waits for a tunnel nobody wants.
+        -->
         <UButton
+          v-if="splitDirty"
           :label="t('settings.reconnect')"
           color="warning"
           variant="outline"

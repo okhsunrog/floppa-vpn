@@ -371,9 +371,11 @@ const healthDotClass = computed(() => {
       </div>
 
       <!--
-        The running tunnel does not route what the settings say. Derived from the rules the
-        tunnel publishes, so it survives a remount and a moment of retrying — the flag it
-        replaces was cleared by both, while the tunnel carried on with the old rules.
+        The tunnel that will be there does not route what the settings say. Derived from the
+        rules the tunnel publishes and the ones the actor was asked for, so it survives a remount
+        and a moment of retrying — the flag it replaces was cleared by both, while the tunnel
+        carried on with the old rules — and it holds while a rebuild is in flight, where what is
+        being built is what the settings have to be compared against.
       -->
       <UAlert
         v-if="vpn.splitDirty"

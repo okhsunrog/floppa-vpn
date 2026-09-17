@@ -424,6 +424,7 @@ export default {
     noApps: 'Приложения не найдены',
     showSystemApps: 'Показать системные приложения',
     changesApplyOnReconnect: 'Настройки изменены — переподключитесь для применения',
+    applyingChanges: 'Применяем новые правила — туннель перестраивается',
     reconnect: 'Переподключиться',
     batteryOptimization: 'Оптимизация батареи',
     batteryOptimizationDescription:

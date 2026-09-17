@@ -13,6 +13,7 @@ import type { ConnectionStatus } from 'floppa-web-shared'
 import { useSettingsStore } from './settingsStore'
 import { describeUnknown } from '../utils/errors'
 import { isUnhandledOutcome, planOutcomeResponse, type HandledOutcome } from '../utils/outcomes'
+import { splitBanner } from '../utils/splitRules'
 import type { IntentError } from '../bindings'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
@@ -260,20 +261,29 @@ export const useVpnStore = defineStore(
     }
 
     /**
-     * Do the settings ask for a different tunnel than the one that is running?
+     * What the split-tunnelling banner has to say — see `utils/splitRules`, where the decision
+     * lives as a pure function of the snapshot and the settings.
      *
-     * Derived from the snapshot rather than remembered: the running tunnel publishes the rules it
-     * was actually built with, so this survives a remount, a moment of `retrying` and a trip to
-     * another page — all of which used to clear the component flag that stood in for it while the
-     * tunnel carried on with the old rules. False when nothing is running and when the rules are
-     * unknown (an adopted tunnel whose owner does not report them): there is nothing to compare,
-     * and guessing would nag about a tunnel that may well be correct.
+     * Derived rather than remembered: the tunnel publishes the rules it was built with and the
+     * actor publishes the ones it was asked for, so this survives a remount, a moment of
+     * `retrying` and a trip to another page — all of which used to clear the component flag that
+     * stood in for it while the tunnel carried on with the old rules.
      */
-    const splitDirty = computed(() => {
-      const running = state.value.params
-      if (!isConnected.value || !running) return false
-      return !sameParams(running, params())
-    })
+    const splitState = computed(() =>
+      splitBanner({
+        settings: params(),
+        running: state.value.params,
+        intent: state.value.intent_params,
+        busy: isBusy.value,
+        connected: isConnected.value,
+      }),
+    )
+
+    /** What will be running does not route what the settings say: someone has to ask again. */
+    const splitDirty = computed(() => splitState.value === 'dirty')
+
+    /** A tunnel is being built right now, with exactly these settings. */
+    const splitApplying = computed(() => splitState.value === 'applying')
 
     /**
      * Ask for a tunnel, and wait for the request to reach a terminal outcome.
@@ -454,6 +464,7 @@ export const useVpnStore = defineStore(
       unhandledOutcome,
       markOutcomeHandled,
       splitDirty,
+      splitApplying,
       params,
       init,
       refresh,
@@ -468,15 +479,6 @@ export const useVpnStore = defineStore(
   { persist: false },
 )
 
-/** The actor's own "same tunnel" test, on the shape the snapshot publishes. */
-function sameParams(a: TunnelParams, b: TunnelParams): boolean {
-  return (
-    a.split_mode === b.split_mode &&
-    a.apps.length === b.apps.length &&
-    a.apps.every((app, i) => app === b.apps[i])
-  )
-}
-
 function emptyState(): TunnelState {
   return {
     seq: 0,
@@ -489,6 +491,7 @@ function emptyState(): TunnelState {
     intent: 'down',
     epoch: 0,
     intent_order: [],
+    intent_params: null,
     protocol: null,
     params: null,
     adopted: false,
