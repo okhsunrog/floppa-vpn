@@ -19,6 +19,7 @@
 //!           →  nativeLinkUnwatched   nobody is watching the network any more
 //!           →  nativeVpnModeChanged  whether the system runs us always-on, and under lockdown
 //!           →  nativeSystemStart     the system wants a tunnel (always-on, boot, lockdown)
+//!           →  nativeAdbStart        a shell wants a tunnel, with split rules of its own
 //!           →  nativeServiceGone     this service instance is being destroyed
 //!   Rust    →  hasConsent()          may we run a VPN at all?
 //!           →  startGeneration()     establish a TUN for this generation
@@ -30,7 +31,7 @@
 use super::service_state::ServiceRegistry;
 use super::tunnel::{self, TunnelManager};
 use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
-use crate::vpn::actor::types::{Link, Phase, SystemVpnMode};
+use crate::vpn::actor::types::{Link, Phase, SystemVpnMode, TunnelParams};
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong};
@@ -560,25 +561,83 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSystem
     _class: JClass<'local>,
 ) {
     let outcome = env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
-        let actor = booted()?.actor.clone();
-        let Some(request) = crate::vpn::autostart::last_intent() else {
-            info!("the system asked for a tunnel, but nothing has been connected yet");
-            stop_vpn_service();
-            return Ok(());
-        };
-        info!("the system asked for a tunnel; raising the intent");
-        runtime().spawn(async move {
-            match actor.set_intent(request).await {
-                Ok(accepted) => info!(epoch = %accepted.epoch, "the system's request was accepted"),
-                Err(e) => {
-                    error!("the system's request was refused: {e}");
-                    stop_vpn_service();
-                }
-            }
-        });
-        Ok(())
+        raise_last_intent("the system", None)
     });
     log_outcome("nativeSystemStart", outcome.into_outcome());
+}
+
+/// A shell asked for a tunnel, with split rules of its own.
+///
+/// The third principal, and the narrowest: it can only ask for what the last connect already
+/// proved — the protocols come from the same bundle a system start reads — with the split rules
+/// replaced. Those rules are not a *setting*: the app's own are in its WebView's storage, which
+/// this process cannot see and does not try to, so the next connect made from the app applies the
+/// app's again. What a shell sets holds for the tunnel it starts, and for the system starts that
+/// rebuild it afterwards, because a successful connect records what it connected with.
+///
+/// `params_json` is a `TunnelParams`, already validated by [`AdbControlReceiver`] on the Kotlin
+/// side; parsing it here is the second check, and a failure refuses the start rather than falling
+/// back to the recorded rules — a test that asked for one set of rules and silently got another is
+/// worse than one that did not start.
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeAdbStart<'local>(
+    mut env: EnvUnowned<'local>,
+    _this: JObject<'local>,
+    params_json: JString<'local>,
+) {
+    let outcome = env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
+        let json: String = params_json.mutf8_chars(env)?.to_string();
+        let params: TunnelParams = match serde_json::from_str(&json) {
+            Ok(params) => params,
+            Err(e) => {
+                error!("a shell asked for a tunnel with split rules that do not parse: {e}");
+                stop_vpn_service();
+                return Ok(());
+            }
+        };
+        // Normalised the way every other caller's are, so "the same tunnel" stays a comparison of
+        // rules rather than of the order they were typed in.
+        let params = TunnelParams::new(params.split_mode, params.apps);
+        raise_last_intent("a shell", Some(params))
+    });
+    log_outcome("nativeAdbStart", outcome.into_outcome());
+}
+
+/// Raise the intent the last successful connect recorded, optionally with other split rules.
+///
+/// Nothing recorded means nothing to raise: the service stops instead, which is what makes a wipe
+/// beat every autonomous start without any flag on the intent.
+fn raise_last_intent(who: &'static str, params: Option<TunnelParams>) -> Result<(), EntryError> {
+    let actor = booted()?.actor.clone();
+    let Some(mut request) = crate::vpn::autostart::last_intent() else {
+        info!("{who} asked for a tunnel, but nothing has been connected yet");
+        stop_vpn_service();
+        return Ok(());
+    };
+    if let (
+        Some(params),
+        IntentRequest::Up {
+            params: current, ..
+        },
+    ) = (params, &mut request)
+    {
+        info!(
+            ?params,
+            "{who} asked for a tunnel with split rules of its own"
+        );
+        *current = params;
+    }
+    info!("{who} asked for a tunnel; raising the intent");
+    runtime().spawn(async move {
+        match actor.set_intent(request).await {
+            Ok(accepted) => info!(epoch = %accepted.epoch, "{who}'s request was accepted"),
+            Err(e) => {
+                error!("{who}'s request was refused: {e}");
+                stop_vpn_service();
+            }
+        }
+    });
+    Ok(())
 }
 
 /// This service instance is being destroyed — `onDestroy` or `onRevoke`.

@@ -137,6 +137,18 @@ class FloppaVpnService : VpnService() {
         const val ACTION_ADB_START = "dev.okhsunrog.floppavpn.ADB_START"
 
         /**
+         * Split rules for *this* start, as a `TunnelParams` JSON — only ever on an
+         * [ACTION_ADB_START], and only when the shell named them.
+         *
+         * Absent means "the rules the last connect recorded", which is what every other autonomous
+         * start uses. Present, it replaces them for this tunnel and, because a successful connect
+         * records what it connected with, for the system starts that rebuild it afterwards. It is
+         * not a setting: the app keeps its own in the UI process, and the next connect made from
+         * the app applies those again.
+         */
+        const val EXTRA_TUNNEL_PARAMS = "dev.okhsunrog.floppavpn.extra.TUNNEL_PARAMS"
+
+        /**
          * "This instance is serving nothing". No generation is ever minted as this, so a teardown
          * that arrives after the one it belonged to has gone matches nothing.
          */
@@ -236,6 +248,13 @@ class FloppaVpnService : VpnService() {
      * nothing to raise.
      */
     private external fun nativeSystemStart()
+
+    /**
+     * The same, for a shell that asked with split rules of its own — a `TunnelParams` as JSON,
+     * validated by [AdbControlReceiver] before it ever reaches an intent. Everything else about the
+     * start is what the last successful connect recorded.
+     */
+    private external fun nativeAdbStart(paramsJson: String)
 
     /** Ask the actor to go down. The tunnel, the notification and this service go with it. */
     private external fun nativeRequestStop()
@@ -362,6 +381,10 @@ class FloppaVpnService : VpnService() {
             // A start the system issued — always-on, boot, a lockdown restore — or the tile, the
             // boot retry or a shell, which have no more context than the system does. Same
             // requirement, foreground at once, and then the actor is told to want a tunnel.
+            //
+            // A shell may carry one thing the others cannot: split rules for the tunnel it is
+            // asking for, already validated by the receiver. Everything else about the start is
+            // identical, which is why it is this arm and not one of its own.
             else -> {
                 if (intent == null) {
                     // START_NOT_STICKY means we should never be redelivered a null intent; some
@@ -376,7 +399,8 @@ class FloppaVpnService : VpnService() {
                     BootRetry.recordSystemStart(this)
                 }
                 startVpnForeground(connected = false)
-                nativeSystemStart()
+                val params = intent?.getStringExtra(EXTRA_TUNNEL_PARAMS)
+                if (params != null) nativeAdbStart(params) else nativeSystemStart()
             }
         }
 

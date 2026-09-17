@@ -90,8 +90,11 @@ that died while the phone was in a pocket, and a swipe-close left the tunnel run
   script. `CONNECT` is `ACTION_ADB_START`, handled exactly as a system start — the service itself
   is unreachable from adb, being `exported="false"` behind `BIND_VPN_SERVICE`. The two checks a
   start with no UI must make first (consent, and something in `autostart.json` to raise) are
-  `StartBlocker`, shared with the tile and the boot retry. See `docs/ANDROID-TUNNEL-PROCESS.md`,
-  "Driving it from a shell"
+  `StartBlocker`, shared with the tile and the boot retry. It may also carry split rules
+  (`--es split all|include|exclude --es apps a,b`, validated in Kotlin, applied through
+  `nativeAdbStart` to the tunnel it starts or to one already running) — **a testing surface, not a
+  setting**: the app's own rules live in the UI process's storage, so the next connect from the app
+  applies those again. See `docs/ANDROID-TUNNEL-PROCESS.md`, "Driving it from a shell"
 - **The system is a second principal.** A start it issues (always-on, boot, lockdown) reaches
   `nativeSystemStart`, which raises the intent from `autostart.json` — now just
   `LastIntent { order, params }`, written after every successful connect, cleared by a wipe. The

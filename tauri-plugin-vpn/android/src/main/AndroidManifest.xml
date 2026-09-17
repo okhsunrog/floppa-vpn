@@ -36,7 +36,7 @@
 
         <!--
           Connect and disconnect from a shell, for scripts and for CI — see AdbControl.kt and the
-          `vpn-connect` / `vpn-disconnect` / `vpn-status` recipes. Exported because the sender is
+          `vpn-connect` / `vpn-disconnect` / `vpn-status` / `vpn-split` recipes. Exported because the sender is
           another app (`com.android.shell`), and guarded by DUMP, which the shell holds and an
           ordinary app cannot obtain without adb being used on it first. In `:vpn`, so the phase it
           reports is the process-local truth the tile reads too.
@@ -50,6 +50,7 @@
                 <action android:name="dev.okhsunrog.floppavpn.adb.CONNECT" />
                 <action android:name="dev.okhsunrog.floppavpn.adb.DISCONNECT" />
                 <action android:name="dev.okhsunrog.floppavpn.adb.STATUS" />
+                <action android:name="dev.okhsunrog.floppavpn.adb.SPLIT" />
             </intent-filter>
         </receiver>
 

@@ -461,19 +461,45 @@ which a script cannot read.
 **The control surface.** `AdbControlReceiver`, in `:vpn` beside the service and the tile:
 
 ```
-just vpn-status        # off | busy | connected
-just vpn-connect       # waits for it to settle, exits non-zero if it did not connect
+just vpn-status                            # off | busy | connected
+just vpn-connect                           # waits for it to settle, non-zero if it did not connect
+just vpn-connect exclude com.foo,com.bar   # ...with split rules of its own
+just vpn-split                             # the rules the last connect used
 just vpn-disconnect
 ```
 
 Each is one ordered broadcast — `am broadcast -n …/AdbControlReceiver -a
-dev.okhsunrog.floppavpn.adb.{STATUS,CONNECT,DISCONNECT}` — whose reply `am` prints as
-`result=0, data="connected"`. `result` is 0 when the tunnel is in the state that was asked for and
-1 when it is not; `data` is the phase, or the one word that says why not: `no-consent`,
-`nothing-to-raise` (nothing has ever connected here, so there is no intent to raise),
-`start-refused`, `timeout`. `CONNECT` and `DISCONNECT` answer once the request has settled or
-fifteen seconds have passed, so the next line of a script can use the tunnel; `--async` sends it
-unordered and nothing waits.
+dev.okhsunrog.floppavpn.adb.{STATUS,SPLIT,CONNECT,DISCONNECT}` — whose reply `am` prints as
+`result=0, data="connected"`. `result` is 0 when the tunnel is in the state that was asked for and 1
+when it is not; `data` is the phase, or the one word that says why not: `no-consent`,
+`nothing-to-raise` (nothing has ever connected here, so there is no intent to raise), `bad-split`,
+`bad-apps`, `start-refused`, `timeout`. `CONNECT` and `DISCONNECT` answer once the request has
+settled or fifteen seconds have passed, so the next line of a script can use the tunnel; `--async`
+sends it unordered and nothing waits.
+
+Everything the caller reads is in `data`, deliberately: the broadcast's result *extras* would be the
+natural home for structured output, and `am broadcast` prints a `Bundle` without unparcelling it
+(`Bundle[mParcelledData.dataSize=1764]`), which is how the first build of `SPLIT` reported rules
+nobody could read.
+
+**Split rules, and what they are not.** `CONNECT` takes `--es split all|include|exclude` with
+`--es apps <comma-separated packages>`, required by the latter two and refused by the first — an
+empty `include` list is a tunnel nothing uses and an empty `exclude` list is `all` written the long
+way, so both are rejected by name rather than guessed at. They reach the actor as the intent's
+`TunnelParams`, through `nativeAdbStart` instead of `nativeSystemStart`; everything else about the
+start — which protocols, in which order — still comes from the recorded bundle. Given for a tunnel
+that is already up they are applied to it, because an intent whose params differ is not satisfied by
+what is running. That case is also why the wait has a second ending: rules that already match move
+no phase at all, so a live tunnel that does not start moving within two seconds is reported as the
+success it is instead of as a fifteen-second timeout.
+
+They are **not the app's setting**. Split rules live in the UI process's storage (`settingsStore`,
+in the WebView), which `:vpn` cannot read and does not try to; what a shell sets holds for the tunnel
+it starts, and — since every successful connect records what it connected with — for the system
+starts that rebuild it, until the next connect made from the app applies the app's own again. That
+asymmetry is deliberate: this is a testing surface, not a second settings screen. `SPLIT` reads the
+rules back — `all`, or `exclude:com.foo,com.bar` — straight from `autostart.json`, which is the same
+file an autonomous start would rebuild from, so while a tunnel is up it describes that tunnel.
 
 It is exported, because the sender is another app, and guarded by `android.permission.DUMP` —
 which `com.android.shell` holds and an ordinary app cannot obtain, being
