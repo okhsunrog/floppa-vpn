@@ -42,8 +42,14 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      # `packages` is named for the reason it is named in ci.yml: the action's default is
+      # `tools platform-tools`, and `tools` is gone from cmdline-tools 20, so the step fails with
+      # `Failed to find package 'tools'` and takes the APK — and the release — with it. The NDK is
+      # installed by the next step.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Install Android NDK
         run: sdkmanager "ndk;27.0.12077973"
