@@ -345,7 +345,7 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
         // This process is the one that can reach the server with the app closed, so it is the one
         // that repairs a peer the server has deleted. Started here and nowhere else: the UI holds
         // a handle to this same actor, and a watcher there would race this one for the same peer.
-        crate::provision::watcher::watch(actor.clone(), spawn);
+        crate::provision::watcher::watch(actor.clone(), spawn, env!("CARGO_PKG_VERSION"));
 
         // The service follows the actor's phase, and nothing else writes it.
         //

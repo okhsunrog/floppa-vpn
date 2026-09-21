@@ -72,14 +72,17 @@ impl ServerSession {
 
     /// How this device introduces itself when a peer is created.
     ///
-    /// The platform and the app version are read from the running binary rather than the file:
-    /// they describe whoever is asking, and after an update that is not who wrote the file.
-    pub fn identity(&self) -> DeviceIdentity {
+    /// The platform and the app version describe whoever is asking rather than whoever wrote the
+    /// file, which after an update is not the same program. The platform this binary can say
+    /// itself; the version it cannot, because this crate is not the binary — it is linked into the
+    /// app, into the command-line client and into the service, and `env!("CARGO_PKG_VERSION")`
+    /// here would report *its* version for all three. So the caller supplies it.
+    pub fn identity(&self, app_version: &str) -> DeviceIdentity {
         DeviceIdentity {
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
             platform: std::env::consts::OS.to_owned(),
-            app_version: env!("CARGO_PKG_VERSION").to_owned(),
+            app_version: app_version.to_owned(),
         }
     }
 }
@@ -210,11 +213,13 @@ mod tests {
         assert_eq!(load(dir.path()), None);
     }
 
+    /// The stored half comes from the file; the half that describes the running program comes
+    /// from the running program, and the version is the caller's to state.
     #[test]
     fn the_binary_says_what_the_binary_is() {
-        let identity = session().identity();
+        let identity = session().identity("0.6.3");
         assert_eq!(identity.device_id, "device-1");
         assert_eq!(identity.platform, std::env::consts::OS);
-        assert_eq!(identity.app_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(identity.app_version, "0.6.3");
     }
 }

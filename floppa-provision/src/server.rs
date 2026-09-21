@@ -21,7 +21,10 @@ use floppa_vpn_core::config::config_dir;
 ///
 /// Read per call rather than held: the token is rewritten on every sliding refresh, and on Android
 /// the process that writes it is not always the one reading it.
-pub fn client() -> Option<(ApiClient, DeviceIdentity)> {
+///
+/// `app_version` is the running binary's own, which only the binary can name — see
+/// [`ServerSession::identity`](crate::session::ServerSession::identity).
+pub fn client(app_version: &str) -> Option<(ApiClient, DeviceIdentity)> {
     let dir = match config_dir() {
         Ok(dir) => dir,
         Err(e) => {
@@ -31,7 +34,7 @@ pub fn client() -> Option<(ApiClient, DeviceIdentity)> {
     };
     let session = session::load(&dir)?;
     match ApiClient::new(&session.base_url, &session.token) {
-        Ok(client) => Some((client, session.identity())),
+        Ok(client) => Some((client, session.identity(app_version))),
         Err(e) => {
             warn!("could not build an API client: {e}");
             None

@@ -45,8 +45,12 @@ use floppa_vpn_core::protocol::Protocol;
 /// Call it where the actor actually lives — the `:vpn` process on Android, the app process on
 /// desktop — and nowhere else. Two watchers on one actor would both see the same dead peer and
 /// both ask the server to replace it.
-pub fn watch(handle: TunnelHandle, spawn: Spawn) {
-    spawn(Box::pin(async move { run(handle).await }));
+///
+/// `app_version` is the running binary's own; this crate is linked into several and cannot read it
+/// for itself. `&'static str` because it outlives the task, and because every caller has one to
+/// hand: `env!("CARGO_PKG_VERSION")`.
+pub fn watch(handle: TunnelHandle, spawn: Spawn, app_version: &'static str) {
+    spawn(Box::pin(async move { run(handle, app_version).await }));
 }
 
 /// What the last live Up intent asked for, so a tunnel can be asked for again after a repair.
@@ -61,7 +65,7 @@ struct LiveIntent {
     params: TunnelParams,
 }
 
-async fn run(handle: TunnelHandle) {
+async fn run(handle: TunnelHandle, app_version: &str) {
     let mut states = handle.states();
     // The serial of the last outcome acted on. Every published state repeats the outcome its
     // cycle ended on, and a reconnect runs under the *same* intent — so the epoch cannot tell two
@@ -103,13 +107,14 @@ async fn run(handle: TunnelHandle) {
             OutcomePlan::Repair { protocol } => {
                 // Quiet by design: the tunnel is up. A repair that cannot be done costs nothing
                 // that has not already been lost.
-                if let Some(RepairOutcome::Recreated) = repair(&handle, protocol).await {
+                if let Some(RepairOutcome::Recreated) = repair(&handle, protocol, app_version).await
+                {
                     info!(%protocol, "a peer the ladder stepped over was replaced");
                 }
             }
             OutcomePlan::Reprovision { protocol } => {
                 if !matches!(
-                    repair(&handle, protocol).await,
+                    repair(&handle, protocol, app_version).await,
                     Some(RepairOutcome::Recreated)
                 ) {
                     continue;
@@ -168,8 +173,12 @@ fn protocol_of(protocol: PeerProtocol) -> Protocol {
 }
 
 /// Check the peer and replace it if it is gone. `None` when there was no way to even ask.
-async fn repair(handle: &TunnelHandle, protocol: PeerProtocol) -> Option<RepairOutcome> {
-    let Some((api, identity)) = server::client() else {
+async fn repair(
+    handle: &TunnelHandle,
+    protocol: PeerProtocol,
+    app_version: &str,
+) -> Option<RepairOutcome> {
+    let Some((api, identity)) = server::client(app_version) else {
         debug!("nobody is signed in on this device; the peer stays as it is");
         return None;
     };

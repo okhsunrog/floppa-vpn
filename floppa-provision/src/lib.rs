@@ -12,6 +12,8 @@
 //! all. So the parts that follow the actor live here, and the parts that describe a sync to a
 //! person in their own language stay in the app.
 //!
+//! - [`identity`] — who this installation is: the device id the server tells machines apart by,
+//!   and the name and version that go with it.
 //! - [`session`] — who this device is to the server, in a file the process holding the actor can
 //!   read. The token lives in a webview's `localStorage`, and the process that needs it most has
 //!   no webview.
@@ -19,12 +21,20 @@
 //!   for a fetched config to land.
 //! - [`outcome`] — reading a finished connect cycle as "a peer may have been deleted".
 //! - [`watcher`] — acting on that, with nobody looking.
+//!
+//! # The app version is always passed in
+//!
+//! Nothing here reads `env!("CARGO_PKG_VERSION")`. This crate is linked into the app, into the
+//! command-line client and into the service, and each of those has its own version — so reading it
+//! here would tell the server this crate's version whichever program was actually asking.
 
+pub mod identity;
 pub mod outcome;
 pub mod server;
 pub mod session;
 pub mod watcher;
 
+pub use identity::{device_identity, device_name};
 pub use outcome::{OutcomePlan, peer_protocol, plan_outcome};
 pub use server::{ActorSink, client};
 pub use session::ServerSession;

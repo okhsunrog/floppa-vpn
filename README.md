@@ -95,8 +95,10 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
   (AmneziaWG by default, like the app), `peers`, `logout`
 - Login token: `<config dir>/floppa/token` (0600; under `sudo` the invoking user's config dir),
   or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`
-- Device identity generated once and persisted next to the token as `device_id`, so every run
-  finds its own peer instead of adopting another device's
+- Device identity generated once and persisted next to the token as `device.json`, so every run
+  finds its own peer instead of adopting another device's. The same code the app uses — one
+  generator, because the server tells installations apart by that id and a second one would be a
+  second device, with its own peers taken from the account's limit
 - DNS on Linux goes through `resolvectl` when systemd-resolved manages `/etc/resolv.conf`
   (`resolvectl revert` on exit), `/etc/resolv.conf` otherwise; `--no-dns` skips it
 - Exits cleanly on SIGINT, SIGTERM (systemd/docker stop) and SIGHUP, restoring routes and DNS

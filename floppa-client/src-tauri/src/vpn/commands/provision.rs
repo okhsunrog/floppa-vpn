@@ -56,7 +56,7 @@ pub fn set_server_session(
 #[tauri::command]
 #[specta::specta]
 pub async fn sync_peers(handle: State<'_, TunnelHandle>) -> Result<SyncOutcome, String> {
-    let Some((api, identity)) = client() else {
+    let Some((api, identity)) = client(env!("CARGO_PKG_VERSION")) else {
         // Signed out, or a session this build cannot read. Reported as offline because that is
         // what it means to the card — nothing was learned, nothing was changed — and because the
         // auth guard is what deals with being signed out.

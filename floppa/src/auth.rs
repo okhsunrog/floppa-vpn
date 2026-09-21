@@ -174,33 +174,17 @@ pub fn session_id(token: &str) -> Option<uuid::Uuid> {
     claims.get("jti")?.as_str()?.parse().ok()
 }
 
-/// The device identity of this CLI installation. The id is generated once and persisted in the
-/// config dir, so every run finds its own peer instead of adopting another device's.
+/// The device identity of this installation.
+///
+/// The id is generated once and persisted in the config dir, so every run finds its own peer
+/// instead of adopting another device's. Both of those — making the id and reading the hostname —
+/// are `floppa_provision::identity` rather than a second copy here: the app had its own, and the
+/// two disagreed about the file's shape and about where a hostname comes from, while the value's
+/// entire job is to be the same every time anyone asks. A `device_id` file written before that is
+/// adopted, not replaced.
 pub fn device_identity() -> Result<DeviceIdentity> {
-    let path = config_dir()?.join("device_id");
-    let id = match fs::read_to_string(&path) {
-        Ok(existing) if uuid::Uuid::parse_str(existing.trim()).is_ok() => {
-            existing.trim().to_string()
-        }
-        _ => {
-            let id = uuid::Uuid::new_v4().to_string();
-            write_private(&path, &format!("{id}\n"))
-                .with_context(|| format!("Failed to save device id to {}", path.display()))?;
-            id
-        }
-    };
-    Ok(DeviceIdentity {
-        device_id: id,
-        device_name: Some(hostname()),
-        platform: std::env::consts::OS.to_string(),
-        app_version: env!("CARGO_PKG_VERSION").to_string(),
-    })
-}
-
-fn hostname() -> String {
-    std::env::var("HOSTNAME")
-        .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_string()))
-        .unwrap_or_else(|_| "floppa".to_string())
+    floppa_provision::identity::device_identity(&config_dir()?, env!("CARGO_PKG_VERSION"))
+        .map_err(|e| anyhow!("{e}"))
 }
 
 /// Run the login flow: start local server, open browser, capture code, exchange for JWT.

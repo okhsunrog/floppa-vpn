@@ -54,56 +54,10 @@ fn get_config_dir() -> Result<PathBuf, String> {
     Ok(config_dir)
 }
 
-/// On-disk device identity (desktop only — Android uses ANDROID_ID).
-#[cfg(not(target_os = "android"))]
-#[derive(Serialize, Deserialize)]
-struct DeviceIdentity {
-    device_id: String,
-}
-
-/// Get or create a persistent device UUID (desktop only).
-/// Stored at `~/.config/floppa-vpn/device.json`.
-#[cfg(not(target_os = "android"))]
-pub fn get_or_create_device_id() -> Result<String, String> {
-    use uuid::Uuid;
-
-    let path = get_config_dir()?.join("device.json");
-
-    if path.exists() {
-        let json = std::fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read device identity: {e}"))?;
-        let identity: DeviceIdentity = serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse device identity: {e}"))?;
-        return Ok(identity.device_id);
-    }
-
-    let device_id = Uuid::new_v4().to_string();
-    let identity = DeviceIdentity {
-        device_id: device_id.clone(),
-    };
-
-    let json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| format!("Failed to serialize device identity: {e}"))?;
-
-    std::fs::write(&path, &json).map_err(|e| format!("Failed to write device identity: {e}"))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-
-    info!("Created new device identity: {device_id}");
-    Ok(device_id)
-}
-
-/// Get the device hostname.
-pub fn get_device_name() -> String {
-    hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_else(|| "unknown".to_string())
-}
+// The device id and the device name used to live here. They are not about the tunnel — they exist
+// so the *server* can tell one installation from another — and there were three copies of them
+// across this crate, the command-line client and the session file. They are now
+// `floppa_provision::identity`, which is the crate that talks to the server.
 
 /// Where the configs live.
 ///

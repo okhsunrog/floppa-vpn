@@ -3,7 +3,7 @@
 //! the side the bindings are generated from.
 
 use super::{AppInfo, SafeAreaInsets};
-use crate::vpn::config as vpn_config;
+use crate::provision::identity;
 use tauri::AppHandle;
 use tauri_plugin_vpn::VpnExt;
 use tracing::warn;
@@ -28,7 +28,7 @@ pub async fn get_device_name(app: AppHandle) -> String {
         Ok(name) => name,
         Err(e) => {
             warn!("Failed to get Android device name: {e}");
-            vpn_config::get_device_name()
+            identity::device_name()
         }
     }
 }

@@ -8,9 +8,11 @@ license.workspace = true
 async-trait = "0.1.92"
 floppa-api-client = { version = "0.1.0", path = "../floppa-api-client" }
 floppa-vpn-core = { version = "0.1.0", path = "../floppa-vpn-core" }
+hostname = "0.4.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tracing.workspace = true
+uuid = { version = "1.26.1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

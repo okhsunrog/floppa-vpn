@@ -5,7 +5,8 @@
 //! `android.rs`: this is the side the bindings are generated from.
 
 use super::{AppInfo, SafeAreaInsets};
-use crate::vpn::config as vpn_config;
+use crate::provision::identity;
+use crate::vpn::config::config_dir;
 use tauri::AppHandle;
 
 /// Get the persistent device ID.
@@ -14,14 +15,14 @@ use tauri::AppHandle;
 #[tauri::command]
 #[specta::specta]
 pub async fn get_device_id(#[allow(unused_variables)] app: AppHandle) -> Result<String, String> {
-    vpn_config::get_or_create_device_id()
+    identity::device_id(&config_dir()?)
 }
 
 /// Get the device name (Android: manufacturer+model, desktop: hostname)
 #[tauri::command]
 #[specta::specta]
 pub async fn get_device_name(#[allow(unused_variables)] app: AppHandle) -> String {
-    vpn_config::get_device_name()
+    identity::device_name()
 }
 
 /// Get list of installed apps for split tunneling (Android only)

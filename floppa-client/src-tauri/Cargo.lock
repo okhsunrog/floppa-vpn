@@ -1507,9 +1507,11 @@ dependencies = [
  "async-trait",
  "floppa-api-client",
  "floppa-vpn-core",
+ "hostname",
  "serde",
  "serde_json",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1534,7 +1536,6 @@ dependencies = [
  "floppa-tunnel-config",
  "futures",
  "gotatun",
- "hostname",
  "ipnetwork",
  "jni 0.22.4",
  "keyring",
@@ -1554,7 +1555,6 @@ dependencies = [
  "tracing-logcat",
  "tracing-subscriber",
  "tun",
- "uuid",
  "wintun-bindings",
 ]
 
@@ -6757,9 +6757,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.26.0"
+version = "1.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
+checksum = "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
