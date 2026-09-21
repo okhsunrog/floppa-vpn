@@ -128,12 +128,12 @@ def docker_image() -> str:
 
 @pytest.fixture(scope="session")
 def tunnel_binary() -> str:
-    """Return path to the pre-built floppa-cli binary."""
-    binary = PROJECT_ROOT / "target" / "release" / "floppa-cli"
+    """Return path to the pre-built floppa binary."""
+    binary = PROJECT_ROOT / "target" / "release" / "floppa"
     if not binary.exists():
         pytest.skip(
-            f"floppa-cli binary not found at {binary}. "
-            "Build it first: cargo build --release -p floppa-cli"
+            f"floppa binary not found at {binary}. "
+            "Build it first: cargo build --release -p floppa"
         )
     return str(binary)
 
@@ -248,19 +248,19 @@ def wg_go_container(docker_image, wg_config, wg_config_path, server_ip):
 
 @pytest.fixture(scope="module")
 def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
-    """Start a container with gotatun tunnel via floppa-cli."""
+    """Start a container with gotatun tunnel via floppa."""
     name = f"floppa-gotatun-{uuid.uuid4().hex[:8]}"
     _start_container(docker_image, name)
 
     try:
         # Copy binary and config into container
-        docker_cp(tunnel_binary, name, "/test/floppa-cli")
-        docker_exec(name, ["chmod", "+x", "/test/floppa-cli"])
+        docker_cp(tunnel_binary, name, "/test/floppa")
+        docker_exec(name, ["chmod", "+x", "/test/floppa"])
         docker_cp(wg_config_path, name, "/test/wg0.conf")
 
         # Start the tunnel binary in the background
         docker_exec_detach(name, [
-            "/test/floppa-cli", "connect",
+            "/test/floppa", "connect",
             "--config", "/test/wg0.conf",
             "--interface", "floppa9",
             "--no-dns",

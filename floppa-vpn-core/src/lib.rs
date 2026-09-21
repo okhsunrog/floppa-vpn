@@ -1,6 +1,6 @@
 //! The client-side VPN, independent of what is driving it.
 //!
-//! Everything here used to live inside the Tauri app, and `floppa-cli` had a smaller, separate
+//! Everything here used to live inside the Tauri app, and `floppa` had a smaller, separate
 //! version of the same things: its own route and DNS handling, its own rollback, its own tunnel
 //! setup — around a thousand lines describing the same job twice, with the two descriptions
 //! disagreeing in the details that matter (which peer counts as usable, whether an unreachable

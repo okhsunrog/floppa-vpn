@@ -10,13 +10,13 @@ use floppa_api_client::{ApiClient, ProvisionApi};
 const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
 
 #[derive(Parser)]
-#[command(name = "floppa-cli", about = "CLI client for Floppa VPN")]
+#[command(name = "floppa", about = "Command-line client for Floppa VPN")]
 struct Cli {
-    /// Write debug logs to a file (e.g. /tmp/floppa-cli.log)
+    /// Write debug logs to a file (e.g. /tmp/floppa.log)
     #[arg(long, global = true)]
     log_file: Option<String>,
 
-    /// Login token file (default: <config dir>/floppa-cli/token; under sudo, the invoking
+    /// Login token file (default: <config dir>/floppa/token; under sudo, the invoking
     /// user's config dir)
     #[arg(long, global = true, env = "FLOPPA_TOKEN_FILE")]
     token_file: Option<std::path::PathBuf>,

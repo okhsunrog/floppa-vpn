@@ -3,7 +3,7 @@ name = "floppa-tunnel-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Client-side tunnel configuration shared by floppa-cli and floppa-client: the WireGuard/AmneziaWG .conf parser, AmneziaWG obfuscation parameters, VLESS defaults and pure route helpers"
+description = "Client-side tunnel configuration shared by floppa and floppa-client: the WireGuard/AmneziaWG .conf parser, AmneziaWG obfuscation parameters, VLESS defaults and pure route helpers"
 
 [features]
 # gotatun device builders (`device` module) for the clients that run the tunnel in-process.

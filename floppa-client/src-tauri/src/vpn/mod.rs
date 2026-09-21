@@ -1,7 +1,7 @@
 //! The app's VPN surface: the shared core, plus the parts that only exist inside a Tauri app.
 //!
 //! Everything about *the tunnel* — the actor, the backends, the platform layer, the rollback
-//! journal, the config store — lives in `floppa-vpn-core`, where `floppa-cli` uses the same copy.
+//! journal, the config store — lives in `floppa-vpn-core`, where `floppa` uses the same copy.
 //! What is left here is what needs Tauri or the Android plugin to exist at all:
 //!
 //! - [`commands`] — the command surface that crosses into TypeScript.

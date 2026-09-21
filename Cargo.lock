@@ -1435,24 +1435,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "floppa-api-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "reqwest 0.13.4",
- "rustls",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tracing",
- "uuid",
- "webpki-roots",
-]
-
-[[package]]
-name = "floppa-cli"
+name = "floppa"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1468,6 +1451,23 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "floppa-api-client"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "reqwest 0.13.4",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
+ "uuid",
+ "webpki-roots",
 ]
 
 [[package]]

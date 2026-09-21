@@ -1,6 +1,6 @@
 # Local VPN Testing with Network Namespace
 
-Test floppa-cli (gotatun/VLESS) through the real VPN path using a Linux network namespace for isolation. This avoids conflicting with existing WireGuard tunnels on the host.
+Test floppa (gotatun/VLESS) through the real VPN path using a Linux network namespace for isolation. This avoids conflicting with existing WireGuard tunnels on the host.
 
 ## Architecture
 
@@ -8,7 +8,7 @@ Test floppa-cli (gotatun/VLESS) through the real VPN path using a Linux network 
 
 ```
 [namespace floppa-test]          [host]                   [Moscow VPS]
-  floppa-cli (gotatun)            veth-host (10.99.0.1)    wg-floppa
+  floppa (gotatun)            veth-host (10.99.0.1)    wg-floppa
   floppa0 (TUN, 10.100.0.x)      │                         │
   veth-ns (10.99.0.2) ───────── veth-host ── NAT ──────── internet ── wg-floppa
 ```
@@ -19,7 +19,7 @@ Traffic path: namespace → veth pair → host NAT → internet → wg-floppa (M
 
 ```
 [namespace floppa-test]          [host]             [Moscow VPS]                 [Europe VPS]
-  floppa-cli (shoes-lite)         veth-host           HAProxy → floppa-vless      NAT exit
+  floppa (shoes-lite)         veth-host           HAProxy → floppa-vless      NAT exit
   floppa0 (TUN, 10.0.0.2)        (10.99.0.1)         (:443 → 127.0.0.1:8444)     │
   veth-ns (10.99.0.2) ───────── veth-host ── internet ── REALITY ── wg1 tunnel ── internet
 ```
@@ -71,18 +71,18 @@ Find your gateway: `ip route show default` (the "via" address).
 ### 4. Copy auth token and connect
 
 ```bash
-# Under `sudo` the CLI reads the invoking user's ~/.config/floppa-cli/token itself; when that
+# Under `sudo` the CLI reads the invoking user's ~/.config/floppa/token itself; when that
 # does not apply (a plain root shell, `ip netns exec` without sudo), point it at the file:
-export FLOPPA_TOKEN_FILE=/home/<user>/.config/floppa-cli/token   # or --token-file / FLOPPA_TOKEN
+export FLOPPA_TOKEN_FILE=/home/<user>/.config/floppa/token   # or --token-file / FLOPPA_TOKEN
 
 # Connect (AmneziaWG — the default, as in the app)
-ip netns exec floppa-test /path/to/floppa-cli connect
+ip netns exec floppa-test /path/to/floppa connect
 
 # Connect (plain WireGuard)
-ip netns exec floppa-test /path/to/floppa-cli connect --protocol wireguard
+ip netns exec floppa-test /path/to/floppa connect --protocol wireguard
 
 # Connect (VLESS)
-ip netns exec floppa-test /path/to/floppa-cli connect --protocol vless --no-dns --interface floppa0
+ip netns exec floppa-test /path/to/floppa connect --protocol vless --no-dns --interface floppa0
 ```
 
 ### 5. Run tests from the namespace
@@ -110,11 +110,11 @@ iptables -D FORWARD -i enp4s0f3u1u5 -o veth-host -m state --state RELATED,ESTABL
 
 ### Client-side logging
 
-floppa-cli supports `--log-file` for writing debug logs to a file:
+floppa supports `--log-file` for writing debug logs to a file:
 
 ```bash
-RUST_LOG=debug ip netns exec floppa-test /path/to/floppa-cli \
-  --log-file /tmp/floppa-cli.log \
+RUST_LOG=debug ip netns exec floppa-test /path/to/floppa \
+  --log-file /tmp/floppa.log \
   connect --protocol vless --no-dns --interface floppa0
 ```
 
@@ -152,7 +152,7 @@ shoes-lite uses the `log` crate with `release_max_level_info` — debug/trace lo
 log = { version = "0.4", features = ["std", "release_max_level_debug"] }
 ```
 
-Rebuild both floppa-cli and floppa-vless after changing this. Revert to `release_max_level_info` before committing.
+Rebuild both floppa and floppa-vless after changing this. Revert to `release_max_level_info` before committing.
 
 ### Deploying floppa-vless manually (without Ansible)
 

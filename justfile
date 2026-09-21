@@ -382,9 +382,9 @@ test-integration: build-cli
 test-speed-limit:
     cd tests/integration && uv run pytest test_speed_limit.py -v -s
 
-# Build floppa-cli
+# Build the floppa command-line client
 build-cli:
-    cargo build --release -p floppa-cli
+    cargo build --release -p floppa
 
 # Build floppa-vless binary in release mode
 build-vless:

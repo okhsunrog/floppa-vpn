@@ -1,9 +1,9 @@
 [package]
-name = "floppa-cli"
+name = "floppa"
 version = "0.1.0"
 edition = "2024"
 license.workspace = true
-description = "CLI client for Floppa VPN"
+description = "Command-line client for Floppa VPN"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

@@ -90,10 +90,10 @@ graph TD
 Telegram profile photos are served from a CDN that's unreachable from clients in Russia (and sends no CORS headers), so the server downloads each user's photo — via the Bot API (`getUserProfilePhotos` → `getFile`), falling back to the stored `photo_url` — caches it as a blob in PostgreSQL, and serves it from our own origin. Populated on demand (first avatar request triggers a background fetch) with a periodic TTL refresh; the admin user list fetches avatars for the visible page in one batch.
 
 ### CLI Client
-- Standalone WireGuard / AmneziaWG / VLESS client (`floppa-cli`) for headless/server use:
+- Standalone WireGuard / AmneziaWG / VLESS client (`floppa`) for headless/server use:
   `login` (Telegram in the browser), `config`, `connect --protocol wireguard|amneziawg|vless`
   (AmneziaWG by default, like the app), `peers`, `logout`
-- Login token: `<config dir>/floppa-cli/token` (0600; under `sudo` the invoking user's config dir),
+- Login token: `<config dir>/floppa/token` (0600; under `sudo` the invoking user's config dir),
   or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`
 - Device identity generated once and persisted next to the token as `device_id`, so every run
   finds its own peer instead of adopting another device's
@@ -221,7 +221,7 @@ graph TD
 | Daemon | Rust, WireGuard (`wg`) + AmneziaWG (`awg`, kernel DKMS module), Linux tc HFSC, Prometheus metrics |
 | VLESS Proxy | Rust, [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS+REALITY+Vision), Prometheus metrics |
 | Frontend | Vue 3, Nuxt UI v4, Pinia Colada, Tailwind v4 |
-| Client | Tauri 2, [gotatun](https://github.com/okhsunrog/gotatun) (WireGuard + AmneziaWG obfuscation, fork of Mullvad's boringtun), [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS), tauri-specta, custom tauri-plugin-vpn; `floppa-tunnel-config` (config parser, AmneziaWG params, route helpers) shared with `floppa-cli` |
+| Client | Tauri 2, [gotatun](https://github.com/okhsunrog/gotatun) (WireGuard + AmneziaWG obfuscation, fork of Mullvad's boringtun), [shoes-lite](https://github.com/okhsunrog/shoes-lite) (VLESS), tauri-specta, custom tauri-plugin-vpn; `floppa-tunnel-config` (config parser, AmneziaWG params, route helpers) shared with `floppa` |
 | Database | PostgreSQL with LISTEN/NOTIFY |
 | Metrics | VictoriaMetrics (Prometheus-compatible TSDB) |
 | Crypto | x25519-dalek (WG keys), ChaCha20-Poly1305 (storage), XTLS REALITY, JWT |

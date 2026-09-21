@@ -3,7 +3,7 @@ name = "floppa-vpn-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "The client-side VPN: the connection actor, the tunnel backends, the platform layer and the rollback journal — shared by floppa-cli and the Tauri app"
+description = "The client-side VPN: the connection actor, the tunnel backends, the platform layer and the rollback journal — shared by floppa and the Tauri app"
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }

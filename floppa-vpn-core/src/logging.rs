@@ -124,8 +124,12 @@ fn build_filter_from_config(config: &LogConfig) -> EnvFilter {
             // its events are logged under the module path they are written in. Naming only the
             // app crate left the actor, the store and the rollback below the base level — which
             // is to say invisible — while everything still *looked* configured.
+            //
+            // `floppa` is a prefix of `floppa_vpn_core`, and `EnvFilter` matches targets by
+            // prefix — but it consults directives most-specific-first, so the two longer names
+            // below still decide for their own crates. Keep them listed.
             "floppa_vpn_core=info",
-            "floppa_cli=info",
+            "floppa=info",
             "floppa_client_lib=info",
             "shoes_lite=info",
             "gotatun=info",
@@ -139,7 +143,7 @@ fn build_filter_from_config(config: &LogConfig) -> EnvFilter {
         ],
         LogProfile::Verbose => &[
             "floppa_vpn_core=trace",
-            "floppa_cli=trace",
+            "floppa=trace",
             "floppa_client_lib=trace",
             "shoes_lite=trace",
             "gotatun=trace",

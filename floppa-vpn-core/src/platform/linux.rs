@@ -81,7 +81,7 @@ impl LinuxPlatform {
     /// Whether this process is already root.
     ///
     /// It decides whether polkit is involved at all. A desktop app runs as the user and asks
-    /// polkit to raise a helper; `sudo floppa-cli` is *already* the user polkit would have
+    /// polkit to raise a helper; `sudo floppa` is *already* the user polkit would have
     /// escalated to, and asking again means either a password prompt for a privilege we hold or —
     /// in a container, which is where the integration suite runs — a `pkexec` that is not
     /// installed and a connect that fails for no reason a user could act on.

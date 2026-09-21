@@ -35,14 +35,27 @@ fn sudo_user() -> Option<SudoUser> {
     Some(SudoUser { home, uid, gid })
 }
 
+/// The directory this installation keeps its token and device id in.
+///
+/// Renaming the binary renamed this too, so an existing `floppa-cli` directory is moved rather
+/// than left behind: what is in it is a login and an identity the server already knows about, and
+/// silently starting from an empty directory would sign the user out and make their device a
+/// second one.
 pub fn config_dir() -> Result<PathBuf> {
     let sudo = sudo_user();
     let base = match &sudo {
         Some(sudo) => sudo.home.join(".config"),
         None => dirs::config_dir().ok_or_else(|| anyhow!("Cannot determine config directory"))?,
     };
-    let dir = base.join("floppa-cli");
+    let dir = base.join("floppa");
     if !dir.is_dir() {
+        let legacy = base.join("floppa-cli");
+        if legacy.is_dir() {
+            fs::rename(&legacy, &dir).with_context(|| {
+                format!("Failed to move {} to {}", legacy.display(), dir.display())
+            })?;
+            return Ok(dir);
+        }
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -86,7 +99,7 @@ fn token_path() -> Result<PathBuf> {
 }
 
 /// Where the login token comes from: `FLOPPA_TOKEN` inline, or a file (`--token-file` /
-/// `FLOPPA_TOKEN_FILE`, default `<config dir>/floppa-cli/token`).
+/// `FLOPPA_TOKEN_FILE`, default `<config dir>/floppa/token`).
 pub struct TokenSource {
     inline: Option<String>,
     file: Option<PathBuf>,
@@ -124,7 +137,7 @@ impl TokenSource {
     /// The token, or the error the user needs to see.
     pub fn require(&self) -> Result<String> {
         self.load()?
-            .context("Not logged in. Run `floppa-cli login` first.")
+            .context("Not logged in. Run `floppa login` first.")
     }
 
     fn save(&self, token: &str) -> Result<()> {
@@ -187,7 +200,7 @@ pub fn device_identity() -> Result<DeviceIdentity> {
 fn hostname() -> String {
     std::env::var("HOSTNAME")
         .or_else(|_| std::fs::read_to_string("/etc/hostname").map(|s| s.trim().to_string()))
-        .unwrap_or_else(|_| "floppa-cli".to_string())
+        .unwrap_or_else(|_| "floppa".to_string())
 }
 
 /// Run the login flow: start local server, open browser, capture code, exchange for JWT.
@@ -432,7 +445,7 @@ mod tests {
 
     #[test]
     fn write_private_creates_0600_and_replaces_atomically() {
-        let dir = std::env::temp_dir().join(format!("floppa-cli-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("floppa-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("token");
 

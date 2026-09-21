@@ -5,7 +5,7 @@ members = [
     "floppa-daemon",
     "floppa-server",
     "floppa-vless",
-    "floppa-cli",
+    "floppa",
     "floppa-tunnel-config",
     "floppa-api-client",
     "floppa-vpn-core",
