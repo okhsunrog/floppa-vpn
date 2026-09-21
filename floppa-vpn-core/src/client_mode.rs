@@ -91,10 +91,30 @@ pub fn system_socket() -> std::path::PathBuf {
     Path::new(crate::rpc::SYSTEM_SOCKET_DIR).join(crate::rpc::SOCKET_NAME)
 }
 
+/// Whether the socket opens at all, without waiting to be spoken to.
+///
+/// Instant: a connect to a Unix socket either succeeds, finds nothing, or is refused, and none of
+/// those waits on the peer. [`ServiceAccess::WrongVersion`] is therefore never returned — nothing
+/// has been said yet.
+///
+/// For a caller that cannot afford [`probe`]'s wait. The wait is not the call's latency but the
+/// *service's cold start*: under socket activation the connection is accepted immediately, by
+/// systemd, and only then is the service executed. A program with a window on screen must not
+/// freeze for that, and does not have to: a mismatched version is already handled where it
+/// matters, by the mirror declining to adopt a state it cannot read, so the only thing lost here
+/// is learning about it a second earlier.
+pub async fn reach(socket_path: &Path) -> ServiceAccess {
+    match tokio::net::UnixStream::connect(socket_path).await {
+        Ok(_) => ServiceAccess::Available,
+        Err(e) => from_connect_error(socket_path, e),
+    }
+}
+
 /// Ask the socket what is behind it.
 ///
 /// Connects and makes one call, rather than stopping at the connection: a socket can be accepted
-/// by something that then cannot talk to us, and the version is on the first answer anyway.
+/// by something that then cannot talk to us, and the version is on the first answer anyway. Use
+/// [`reach`] instead where waiting for a cold start would be felt.
 pub async fn probe(socket_path: &Path) -> ServiceAccess {
     let stream = match tokio::net::UnixStream::connect(socket_path).await {
         Ok(stream) => stream,
@@ -231,6 +251,25 @@ mod tests {
             access.explain().is_some_and(|s| s.contains("floppa")),
             "and it must say what to do about it"
         );
+    }
+
+    /// `reach` answers from the connection alone, so a listener that never speaks is *available*
+    /// to it where `probe` calls it absent. That difference is the point of having both: one asks
+    /// "can I open this", the other "is there something I can talk to".
+    #[tokio::test]
+    async fn reaching_asks_only_whether_the_socket_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vpn.sock");
+
+        assert_eq!(reach(&path).await, ServiceAccess::Absent, "nothing bound yet");
+
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let held = tokio::spawn(async move {
+            let _accepted = listener.accept().await;
+            std::future::pending::<()>().await;
+        });
+        assert_eq!(reach(&path).await, ServiceAccess::Available);
+        held.abort();
     }
 
     #[test]

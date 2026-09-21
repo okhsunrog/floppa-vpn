@@ -60,6 +60,7 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::update_tray,
             vpn::commands::hide_to_tray,
             vpn::commands::quit_app,
+            vpn::commands::get_tunnel_owner,
         ])
         .events(tauri_specta::collect_events![
             vpn::events::TunnelStateChanged,
@@ -83,6 +84,35 @@ pub fn export_bindings(path: impl AsRef<std::path::Path>) -> Result<(), String> 
             path.as_ref(),
         )
         .map_err(|e| e.to_string())
+}
+
+/// The actor in this process: the backend, the platform layer and the journal, as the app has
+/// always assembled them.
+///
+/// One function rather than two branches of the same code, because this is now reached from two
+/// places — a platform with no service, and a platform that has one that is not there.
+#[cfg(not(target_os = "android"))]
+fn in_process_actor(
+    app: &tauri::App,
+    spawn: &vpn::actor::Spawn,
+    log_dir: &std::path::Path,
+) -> vpn::actor::handle::TunnelHandle {
+    let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
+    let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
+    let journal = vpn::config::config_dir()
+        .ok()
+        .map(|dir| vpn::rollback::Journal::new(vpn::rollback::Journal::default_path(&dir)));
+    app.manage(logging::capture::CaptureSession::new(
+        log_dir.to_path_buf(),
+        Arc::new(logging::capture::BackendRelay(backend.clone())),
+    ));
+    vpn::actor::TunnelActor::spawn(
+        backend,
+        platform,
+        journal,
+        spawn.clone(),
+        vpn::actor::deployment::Deployment::default(),
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -268,31 +298,43 @@ pub fn run() {
                 vpn::actor::handle::TunnelHandle::remote(remote)
             };
 
+            // On desktop the tunnel is either the system service's or this process's, and which
+            // one is settled here, once. Blocking is deliberate and cheap: the check is a connect
+            // to a Unix socket, which does not wait on the peer, and everything after this point
+            // needs the answer — including the command surface, which is registered before the
+            // webview can call into it.
             #[cfg(not(target_os = "android"))]
-            let handle = {
-                let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
-                let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
-                let journal = vpn::config::config_dir().ok().map(|dir| {
-                    vpn::rollback::Journal::new(vpn::rollback::Journal::default_path(&dir))
-                });
+            let owner = tauri::async_runtime::block_on(vpn::owner::decide());
+
+            #[cfg(target_os = "linux")]
+            let handle = if owner == vpn::owner::TunnelOwner::Service {
+                let dir = std::path::Path::new(vpn::rpc::SYSTEM_SOCKET_DIR).to_path_buf();
+                let remote = vpn::remote::RemoteActor::new(
+                    &dir,
+                    Arc::new(vpn::owner::StartedByConnecting),
+                    &spawn,
+                );
+                // The logs of the tunnel are written where the tunnel is, so a capture has to be
+                // started there too — the same reasoning as on Android, and the same relay.
                 app.manage(logging::capture::CaptureSession::new(
                     log_dir.clone(),
-                    Arc::new(logging::capture::BackendRelay(backend.clone())),
+                    remote.clone(),
                 ));
-                vpn::actor::TunnelActor::spawn(
-                    backend,
-                    platform,
-                    journal,
-                    spawn.clone(),
-                    vpn::actor::deployment::Deployment::default(),
-                )
+                vpn::actor::handle::TunnelHandle::remote(remote)
+            } else {
+                in_process_actor(app, &spawn, &log_dir)
             };
 
-            // Repairing a peer the server deleted. Started only where the actor actually is —
-            // on Android that is `:vpn`, and a second watcher here would race the first for the
-            // same dead peer.
+            #[cfg(all(not(target_os = "android"), not(target_os = "linux")))]
+            let handle = in_process_actor(app, &spawn, &log_dir);
+
+            // Repairing a peer the server deleted. Started only where the actor actually is — on
+            // Android that is `:vpn`, on Linux with a service that is the service, and a second
+            // watcher would race the first for the same dead peer.
             #[cfg(not(target_os = "android"))]
-            provision::watcher::watch(handle.clone(), spawn.clone(), env!("CARGO_PKG_VERSION"));
+            if owner.owns_the_tunnel() {
+                provision::watcher::watch(handle.clone(), spawn.clone(), env!("CARGO_PKG_VERSION"));
+            }
 
             // The bridge from the actor's state to the UI. It is here rather than inside the actor
             // because emitting a Tauri event is something only this process can do — the actor
@@ -315,6 +357,9 @@ pub fn run() {
                 });
             }
 
+            #[cfg(not(target_os = "android"))]
+            app.manage(owner);
+
             app.manage(handle);
 
             Ok(())
@@ -324,15 +369,23 @@ pub fn run() {
 
     app.run(
         |#[allow(unused_variables)] app_handle, #[allow(unused_variables)] event| {
-            // Graceful teardown on desktop exit.
+            // Graceful teardown on desktop exit — of a tunnel this process owns.
             //
             // Asking the actor to go down and waiting for it to actually be down, rather than
             // reaching past it into the tunnel: it holds the record of what was applied, so it is
             // the only thing that can undo exactly that. The previous version was gated on the
             // tunnel still reporting as running, which left routes and DNS behind whenever the
             // tunnel had already died.
+            //
+            // When the service holds it, none of this runs. Quitting is then just a client
+            // leaving, and taking the tunnel down on the way out would undo the entire reason the
+            // service exists — including for whoever else is using it.
             #[cfg(not(target_os = "android"))]
-            if let tauri::RunEvent::Exit = event {
+            if let tauri::RunEvent::Exit = event
+                && app_handle
+                    .state::<vpn::owner::TunnelOwner>()
+                    .owns_the_tunnel()
+            {
                 use vpn::actor::handle::TunnelHandle;
 
                 let handle = app_handle.state::<TunnelHandle>().inner().clone();

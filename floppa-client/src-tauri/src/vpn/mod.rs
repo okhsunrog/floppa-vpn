@@ -16,6 +16,12 @@ pub use floppa_vpn_core::*;
 
 pub mod commands;
 pub mod events;
+/// Where this app's tunnel lives — the system service or this process — and what still depends on
+/// knowing which.
+///
+/// Not gated, although only desktop has a choice to make: the type crosses into TypeScript, and
+/// the bindings are generated from one platform for all of them. What *is* gated is the deciding.
+pub mod owner;
 /// The JNI implementation of the core's `ServiceHost`. It lives beside [`jni_entry`] rather than
 /// in the core crate because everything it does is call into it, and the bridge has to stay in
 /// the binary that Kotlin loads.

@@ -9,6 +9,7 @@ import SplitTunnelingCard from '../components/settings/SplitTunnelingCard.vue'
 import DiagnosticsCard from '../components/settings/DiagnosticsCard.vue'
 import AboutCard from '../components/settings/AboutCard.vue'
 import WindowCloseCard from '../components/settings/WindowCloseCard.vue'
+import TunnelServiceCard from '../components/settings/TunnelServiceCard.vue'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
@@ -61,8 +62,14 @@ function openProtocolModal() {
     </template>
 
     <!-- Nothing here says "split tunnelling is Android-only": a card whose whole content is the
-         absence of a feature is an empty shelf with a label. Android gets the real card above. -->
-    <WindowCloseCard v-else />
+         absence of a feature is an empty shelf with a label. Android gets the real card above.
+
+         The service card comes first because it decides what the one below it means: with the
+         service holding the tunnel, closing the window and quitting both leave it up. -->
+    <template v-else>
+      <TunnelServiceCard />
+      <WindowCloseCard />
+    </template>
 
     <DiagnosticsCard />
     <AboutCard />

@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { commands, events, type Phase } from '../bindings'
+import { useTunnelOwner } from '../composables/useTunnelOwner'
 import { useSettingsStore } from '../stores/settingsStore'
 import { useVpnStore } from '../stores/vpnStore'
 
@@ -20,6 +21,7 @@ import { useVpnStore } from '../stores/vpnStore'
 const { t } = useI18n()
 const settings = useSettingsStore()
 const vpn = useVpnStore()
+const { quittingDisconnects } = useTunnelOwner()
 
 const open = ref(false)
 const remember = ref(false)
@@ -44,7 +46,15 @@ const TUNNEL_AT_STAKE: Record<Phase, boolean> = {
   unknown: false,
 }
 
-const vpnOn = computed(() => TUNNEL_AT_STAKE[vpn.state.phase])
+/**
+ * Whether quitting would cost the user a tunnel — which needs both halves.
+ *
+ * A tunnel has to be at stake, and quitting has to be what takes it. With the system service
+ * holding it, it is not: this app leaves and the tunnel stays, so warning about a disconnect would
+ * be describing something that does not happen. That is the whole point of the service, and the
+ * dialog is the first place a user would notice it was true.
+ */
+const vpnOn = computed(() => TUNNEL_AT_STAKE[vpn.state.phase] && quittingDisconnects())
 
 onMounted(() => {
   void events.windowCloseRequested.listen(() => {

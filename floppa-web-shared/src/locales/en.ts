@@ -443,6 +443,17 @@ export default {
     closeAsk: 'Ask each time',
     closeTray: 'Keep running in the tray',
     closeQuit: 'Disconnect and quit',
+    closeQuitServiceHolds: 'Quit the app (the VPN keeps running)',
+    tunnelService: 'Tunnel service',
+    serviceActive: 'The system service is holding the tunnel',
+    serviceActiveDetail:
+      'Closing the window or quitting leaves the VPN connected. It is stopped with the Disconnect button, or with `floppa disconnect`.',
+    serviceAbsent: 'This app is holding the tunnel',
+    serviceAbsentDetail:
+      'The VPN stops when the app quits. Installing and enabling the tunnel service lets it keep running: `sudo systemctl enable --now floppa-vpn.socket`.',
+    serviceLockedOut: 'The tunnel service is running, but this user may not use it',
+    serviceLockedOutDetail:
+      'You are not in the `floppa` group, so the app is running the tunnel itself and will ask for a password on every connect. Run `sudo usermod -aG floppa $USER`, then log in again.',
     about: 'About',
     version: 'Version {version}',
     diagnostics: 'Diagnostics',

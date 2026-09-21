@@ -444,6 +444,17 @@ export default {
     closeAsk: 'Спрашивать каждый раз',
     closeTray: 'Оставлять работать в трее',
     closeQuit: 'Отключать VPN и выходить',
+    closeQuitServiceHolds: 'Выходить из приложения (VPN продолжит работать)',
+    tunnelService: 'Служба туннеля',
+    serviceActive: 'Туннель держит системная служба',
+    serviceActiveDetail:
+      'Закрытие окна и выход из приложения оставляют VPN подключённым. Отключить можно кнопкой в приложении или командой `floppa disconnect`.',
+    serviceAbsent: 'Туннель держит приложение',
+    serviceAbsentDetail:
+      'VPN отключится вместе с приложением. Чтобы туннель продолжал работать, включите службу: `sudo systemctl enable --now floppa-vpn.socket`.',
+    serviceLockedOut: 'Служба туннеля работает, но этому пользователю она недоступна',
+    serviceLockedOutDetail:
+      'Вы не состоите в группе `floppa`, поэтому приложение держит туннель само и будет спрашивать пароль при каждом подключении. Выполните `sudo usermod -aG floppa $USER` и войдите в систему заново.',
     about: 'О приложении',
     version: 'Версия {version}',
     diagnostics: 'Диагностика',

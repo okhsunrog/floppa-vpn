@@ -144,10 +144,21 @@ export const commands = {
 	/**
 	 *  Quit for real.
 	 * 
-	 *  The exit handler in `lib.rs` takes the tunnel down and flushes the config store on the way out,
-	 *  which is why this asks the app to exit rather than doing either of those itself.
+	 *  The exit handler in `lib.rs` takes the tunnel down and flushes the config store on the way out
+	 *  — when the tunnel is this process's — which is why this asks the app to exit rather than doing
+	 *  either of those itself.
 	 */
 	quitApp: () => __TAURI_INVOKE<void>("quit_app"),
+	/**
+	 *  Who holds the tunnel this app is showing.
+	 * 
+	 *  The UI needs it because the promises differ. "Quitting will disconnect you" is true when the
+	 *  tunnel is in this process and false when the service has it, and a close dialog that says it
+	 *  either way is wrong half the time. It is also the only place a user can be told that a service
+	 *  *is* installed and they are not allowed to use it — a state where nothing looks broken and
+	 *  everything is quietly worse.
+	 */
+	getTunnelOwner: () => __TAURI_INVOKE<TunnelOwner>("get_tunnel_owner"),
 };
 
 /** Events */
@@ -295,6 +306,19 @@ failures: AttemptFailure[] } |
 { outcome: "cancelled" } | 
 /**  An explicit Down reached terminal Down. */
 { outcome: "down" };
+
+/**  Why the tunnel ended up in this process on a platform that has a service. */
+export type InProcessReason = 
+/**  No service is installed or its socket is not enabled. */
+{ kind: "not_installed" } | 
+/**
+ *  A service is running and this user may not talk to it — they are not in the `floppa` group.
+ * 
+ *  Kept apart from [`NotInstalled`](Self::NotInstalled) all the way to the screen. Falling
+ *  back works, so nothing looks broken; it just quietly works worse forever, and the reason
+ *  has to be visible or nobody will ever find it.
+ */
+{ kind: "not_permitted" };
 
 export type IntentAccepted = {
 	epoch: IntentEpoch,
@@ -514,6 +538,18 @@ export type TrayView = {
 	toggle: TrayAction,
 	quit: string,
 };
+
+/**  Who holds the tunnel this app is showing. */
+export type TunnelOwner = 
+/**  The system service. The tunnel outlives this app. */
+{ kind: "service" } | 
+/**  This process. The tunnel goes when the app does. */
+{ kind: "in_process"; 
+/**
+ *  Why it is not the service, when that is worth saying. `None` on the platforms where
+ *  there is no service to be had and nothing has gone wrong.
+ */
+reason: InProcessReason | null };
 
 /**
  *  Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useTunnelOwner } from '../../composables/useTunnelOwner'
 import { useSettingsStore } from '../../stores/settingsStore'
 
 /**
@@ -11,11 +12,18 @@ import { useSettingsStore } from '../../stores/settingsStore'
  */
 const { t } = useI18n()
 const settings = useSettingsStore()
+const { quittingDisconnects } = useTunnelOwner()
 
 const items = computed(() => [
   { value: 'ask', label: t('settings.closeAsk') },
   { value: 'tray', label: t('settings.closeTray') },
-  { value: 'quit', label: t('settings.closeQuit') },
+  {
+    value: 'quit',
+    // "Disconnect and quit" is what it does when this app holds the tunnel, and is simply untrue
+    // when the system service holds it: the app leaves and the VPN stays up. The card above says
+    // which of the two is the case; this is the label that would otherwise contradict it.
+    label: quittingDisconnects() ? t('settings.closeQuit') : t('settings.closeQuitServiceHolds'),
+  },
 ])
 </script>
 
