@@ -35,6 +35,22 @@ struct ActorServer {
 }
 
 impl ActorServer {
+    fn new(handle: TunnelHandle, protocol: u32) -> Self {
+        // `RandomState` is seeded per process by the standard library: entropy with no dependency
+        // and no syscall, and equality is all this value is ever used for.
+        let boot = {
+            use std::hash::{BuildHasher, Hasher};
+            std::collections::hash_map::RandomState::new()
+                .build_hasher()
+                .finish()
+        };
+        Self {
+            handle,
+            boot,
+            protocol,
+        }
+    }
+
     fn published(&self, state: TunnelState) -> Published {
         Published {
             boot: self.boot,
@@ -149,20 +165,33 @@ fn serve_at_protocol(
     handle: TunnelHandle,
     protocol: u32,
 ) -> Result<RpcServerHandle, String> {
-    // `RandomState` is seeded per process by the standard library: entropy with no dependency and
-    // no syscall, and equality is all this value is ever used for.
-    let boot = {
-        use std::hash::{BuildHasher, Hasher};
-        std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-    };
-    let server = ActorServer {
-        handle,
-        boot,
-        protocol,
-    };
-    super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream, cancel| {
+    super::rpc_listener::listen(
+        std::path::Path::new(socket_path),
+        connection_handler(ActorServer::new(handle, protocol)),
+    )
+    .map_err(|e| format!("failed to bind the actor socket at {socket_path}: {e}"))
+}
+
+/// Serve the actor on a listener this process did not bind — systemd's, in the system service.
+///
+/// Infallible where [`serve`] is not: there is nothing left to fail at, the socket already exists
+/// and is already listening.
+#[cfg(target_os = "linux")]
+pub fn serve_on_listener(
+    listener: tokio::net::UnixListener,
+    handle: TunnelHandle,
+) -> RpcServerHandle {
+    super::rpc_listener::serve_on(
+        listener,
+        connection_handler(ActorServer::new(handle, super::rpc::PROTOCOL_VERSION)),
+    )
+}
+
+/// One accepted connection, framed and handed to tarpc, ending when its generation does.
+fn connection_handler(
+    server: ActorServer,
+) -> impl FnMut(tokio::net::UnixStream, tokio_util::sync::CancellationToken) + Send + 'static {
+    move |stream, cancel| {
         debug!("a client connected to the actor");
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
         let transport = tarpc::serde_transport::new(framed, tokio_serde::formats::Json::default());
@@ -176,8 +205,7 @@ fn serve_at_protocol(
                 _ = cancel.cancelled() => debug!("the server is shutting down; closing a connection"),
             }
         });
-    })
-    .map_err(|e| format!("failed to bind the actor socket at {socket_path}: {e}"))
+    }
 }
 
 #[cfg(test)]

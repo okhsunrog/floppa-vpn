@@ -20,5 +20,7 @@ base64.workspace = true
 floppa-api-client = { version = "0.1.0", path = "../floppa-api-client" }
 floppa-vpn-core = { version = "0.1.0", path = "../floppa-vpn-core" }
 floppa-provision = { version = "0.1.0", path = "../floppa-provision" }
+libc = "0.2.189"
+tracing.workspace = true
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }

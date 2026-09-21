@@ -92,6 +92,24 @@ pub const STATE_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_s
 /// the first call every client makes.
 pub const SOCKET_NAME: &str = "vpn.sock";
 
+/// Where the system service listens, when there is one.
+///
+/// Under `/run` rather than beside the state: it is a runtime object that must not survive a
+/// reboot, and systemd creates the directory through `RuntimeDirectory=`. A client decides which
+/// mode it is in by trying to connect here — by *connecting*, not by looking for the file, since
+/// a socket left behind by a process that died refuses connections while still existing.
+#[cfg(target_os = "linux")]
+pub const SYSTEM_SOCKET_DIR: &str = "/run/floppa-vpn";
+
+/// Where the system service keeps everything it persists: the config store, the rollback journal
+/// and the server session.
+///
+/// Root-owned, `0700`. The service has no user session and therefore no keyring, and a VPN that
+/// must come up before anyone logs in cannot depend on one — the same reason `wg-quick` keeps its
+/// configs in `/etc/wireguard` rather than in anybody's.
+#[cfg(target_os = "linux")]
+pub const SYSTEM_STATE_DIR: &str = "/var/lib/floppa-vpn";
+
 /// The actor's boundary, spelled for a socket.
 ///
 /// One method per operation of [`TunnelControl`](crate::actor::handle::TunnelControl), plus

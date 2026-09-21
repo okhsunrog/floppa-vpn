@@ -22,7 +22,10 @@ pub struct RpcServerHandle {
     /// Cancels the tasks serving the connections this loop accepted. Handed to each of them, so
     /// they end with the generation that owns them.
     connections: CancellationToken,
-    socket_path: PathBuf,
+    /// The path this loop bound, and may therefore unlink. `None` when the listener was inherited
+    /// from systemd, which owns that file and re-creates it for the next start: removing it would
+    /// take the socket out from under the unit and leave nothing for a client to connect to.
+    socket_path: Option<PathBuf>,
 }
 
 impl RpcServerHandle {
@@ -46,16 +49,18 @@ impl RpcServerHandle {
     /// Stop accepting connections and unlink the socket file.
     ///
     /// Only for the generation that owns the path — i.e. a `nativeStop` whose epoch matched — and
-    /// never from a handle that has been superseded.
+    /// never from a handle that has been superseded. A listener inherited from systemd owns no
+    /// path and unlinks nothing.
     pub fn shutdown_and_unlink(self) {
         self.shutdown();
-        match std::fs::remove_file(&self.socket_path) {
-            Ok(()) => debug!("removed socket {}", self.socket_path.display()),
+        let Some(path) = &self.socket_path else {
+            debug!("the listener was inherited; leaving its socket to whoever made it");
+            return;
+        };
+        match std::fs::remove_file(path) {
+            Ok(()) => debug!("removed socket {}", path.display()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!(
-                "failed to remove socket {}: {e}",
-                self.socket_path.display()
-            ),
+            Err(e) => warn!("failed to remove socket {}: {e}", path.display()),
         }
     }
 }
@@ -81,7 +86,7 @@ impl Drop for RpcServerHandle {
 /// runtime, so this must be called from within one.
 pub fn listen(
     socket_path: &Path,
-    mut on_connect: impl FnMut(UnixStream, CancellationToken) + Send + 'static,
+    on_connect: impl FnMut(UnixStream, CancellationToken) + Send + 'static,
 ) -> std::io::Result<RpcServerHandle> {
     match std::fs::remove_file(socket_path) {
         Ok(()) => debug!("Removed stale socket: {}", socket_path.display()),
@@ -94,7 +99,117 @@ pub fn listen(
 
     let listener = UnixListener::bind(socket_path)?;
     info!("tarpc server listening on {}", socket_path.display());
+    Ok(spawn_accept_loop(
+        listener,
+        Some(socket_path.to_path_buf()),
+        on_connect,
+    ))
+}
 
+/// Serve on a listening socket systemd passed in, if it did.
+///
+/// `Ok(None)` means this process was not socket-activated and should bind for itself — which is
+/// the ordinary case when the service is started by hand, and the reason this is an option rather
+/// than an error.
+///
+/// Letting systemd own the socket is what keeps its ownership and mode out of this code: a
+/// `.socket` unit states `SocketUser`, `SocketGroup` and `SocketMode`, and the file exists with
+/// those from before the service starts. Doing it here instead would mean creating the file and
+/// then widening it, with a window in between where it is reachable by the wrong people.
+///
+/// The handover is three environment variables and a fixed descriptor number, and this consumes
+/// them: they describe *this* process, and a child that inherited them would believe it had been
+/// handed the same socket.
+#[cfg(target_os = "linux")]
+pub fn inherited_listener() -> std::io::Result<Option<UnixListener>> {
+    use std::os::fd::FromRawFd;
+
+    /// systemd passes descriptors starting here, immediately after stdio.
+    const LISTEN_FDS_START: i32 = 3;
+
+    let fds = std::env::var("LISTEN_FDS").ok();
+    let pid = std::env::var("LISTEN_PID").ok();
+    // Consumed whatever happens next, including on the paths that decide to ignore them.
+    unsafe {
+        std::env::remove_var("LISTEN_FDS");
+        std::env::remove_var("LISTEN_PID");
+        std::env::remove_var("LISTEN_FDNAMES");
+    }
+
+    match read_handover(pid.as_deref(), fds.as_deref(), std::process::id()) {
+        Handover::NotActivated(why) => {
+            if let Some(why) = why {
+                debug!("not socket-activated: {why}");
+            }
+            return Ok(None);
+        }
+        Handover::Wrong(why) => return Err(std::io::Error::other(why)),
+        Handover::OneSocket => {}
+    }
+
+    // SAFETY: systemd guarantees descriptor 3 is an open listening socket when LISTEN_FDS says so
+    // and LISTEN_PID names this process, both checked above. Nothing else in this process has
+    // taken it: the variables are removed here, so this cannot run twice and hand out the same
+    // descriptor to two owners.
+    let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(LISTEN_FDS_START) };
+    // Tokio's reactor requires it, and systemd passes the descriptor blocking.
+    std_listener.set_nonblocking(true)?;
+    let listener = UnixListener::from_std(std_listener)?;
+    info!("serving on the socket systemd passed in");
+    Ok(Some(listener))
+}
+
+/// What `LISTEN_PID` and `LISTEN_FDS` say, before any descriptor is touched.
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum Handover {
+    /// Nobody handed us anything; bind for ourselves. The reason is worth a line when there was
+    /// something to read and it did not apply to us.
+    NotActivated(Option<String>),
+    /// Exactly one listening socket, at `LISTEN_FDS_START`.
+    OneSocket,
+    /// Activated, but not in a way this service can act on. Refusing beats guessing: picking one
+    /// of several sockets, or reading a descriptor number out of nonsense, would serve on
+    /// something nobody meant.
+    Wrong(String),
+}
+
+/// The decision, separated from the descriptor so every branch of it can be tested.
+///
+/// `me` is this process's pid, passed in for the same reason.
+#[cfg(target_os = "linux")]
+fn read_handover(listen_pid: Option<&str>, listen_fds: Option<&str>, me: u32) -> Handover {
+    let (Some(pid), Some(fds)) = (listen_pid, listen_fds) else {
+        return Handover::NotActivated(None);
+    };
+    // Addressed to a process that is not this one: systemd sets these before exec, so anything
+    // that survived into a child says nothing about what *this* process was given.
+    if pid.parse::<u32>().ok() != Some(me) {
+        return Handover::NotActivated(Some(format!("LISTEN_PID is {pid}, not {me}")));
+    }
+    match fds.parse::<i32>() {
+        Ok(0) => Handover::NotActivated(Some("LISTEN_FDS is 0".into())),
+        Ok(1) => Handover::OneSocket,
+        Ok(n) => Handover::Wrong(format!(
+            "systemd passed {n} sockets; this service knows what to do with exactly one"
+        )),
+        Err(e) => Handover::Wrong(format!("LISTEN_FDS is not a number: {e}")),
+    }
+}
+
+/// Serve on a listener this process did not bind, and must not unlink.
+pub fn serve_on(
+    listener: UnixListener,
+    on_connect: impl FnMut(UnixStream, CancellationToken) + Send + 'static,
+) -> RpcServerHandle {
+    spawn_accept_loop(listener, None, on_connect)
+}
+
+fn spawn_accept_loop(
+    listener: UnixListener,
+    socket_path: Option<PathBuf>,
+    mut on_connect: impl FnMut(UnixStream, CancellationToken) + Send + 'static,
+) -> RpcServerHandle {
     let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
     let connections = CancellationToken::new();
     let handed_out = connections.clone();
@@ -125,11 +240,11 @@ pub fn listen(
         // the owning generation's `nativeStop` via [`RpcServerHandle::shutdown_and_unlink`].
     });
 
-    Ok(RpcServerHandle {
+    RpcServerHandle {
         shutdown_tx,
         connections,
-        socket_path: socket_path.to_path_buf(),
-    })
+        socket_path,
+    }
 }
 
 #[cfg(test)]
@@ -218,6 +333,64 @@ mod tests {
 
         handle.shutdown();
         wait_for(&ended, "the accepted connection was told to stop").await;
+    }
+
+    /// The socket-activation handover, every branch of it. The descriptor itself is four lines
+    /// that cannot be exercised without taking fd 3 away from whatever holds it; what can go
+    /// wrong is all here.
+    #[cfg(target_os = "linux")]
+    mod handover {
+        use super::super::{Handover, read_handover};
+
+        #[test]
+        fn nothing_set_means_bind_for_ourselves() {
+            assert_eq!(read_handover(None, None, 42), Handover::NotActivated(None));
+            assert_eq!(
+                read_handover(Some("42"), None, 42),
+                Handover::NotActivated(None)
+            );
+        }
+
+        /// The variables are inherited by children, so seeing them is not the same as being the
+        /// process they were meant for. A child that believed them would take a descriptor that
+        /// is, in its own table, something else entirely.
+        #[test]
+        fn variables_meant_for_another_process_are_ignored() {
+            let Handover::NotActivated(Some(why)) = read_handover(Some("41"), Some("1"), 42) else {
+                panic!("a handover addressed to pid 41 must not be taken by pid 42");
+            };
+            assert!(why.contains("41"), "{why}");
+        }
+
+        #[test]
+        fn one_socket_is_the_case_this_serves() {
+            assert_eq!(
+                read_handover(Some("42"), Some("1"), 42),
+                Handover::OneSocket
+            );
+        }
+
+        #[test]
+        fn zero_sockets_is_not_an_error_it_is_just_nothing() {
+            assert!(matches!(
+                read_handover(Some("42"), Some("0"), 42),
+                Handover::NotActivated(Some(_))
+            ));
+        }
+
+        /// Refused rather than guessed at: serving on whichever descriptor came first would be
+        /// serving on something nobody asked for.
+        #[test]
+        fn several_sockets_are_refused() {
+            assert!(matches!(
+                read_handover(Some("42"), Some("3"), 42),
+                Handover::Wrong(_)
+            ));
+            assert!(matches!(
+                read_handover(Some("42"), Some("banana"), 42),
+                Handover::Wrong(_)
+            ));
+        }
     }
 
     async fn wait_for(counter: &AtomicUsize, what: &str) {

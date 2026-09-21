@@ -2,6 +2,8 @@ mod auth;
 mod connect;
 mod protocol;
 mod provision;
+#[cfg(target_os = "linux")]
+mod service;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -31,6 +33,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Hold the tunnel as a system service (root; normally started by systemd, not by hand)
+    ///
+    /// The tunnel then outlives every client: closing the app, logging out, or never logging in
+    /// stops taking it down, and `systemctl enable` brings it back after a reboot.
+    #[cfg(target_os = "linux")]
+    Service,
     /// Log in via Telegram (opens browser)
     Login {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
@@ -110,6 +118,10 @@ async fn main() -> Result<()> {
     let tokens = auth::TokenSource::new(cli.token, cli.token_file);
 
     match cli.command {
+        #[cfg(target_os = "linux")]
+        Command::Service => {
+            service::run().await?;
+        }
         Command::Login { api_url } => {
             auth::login(&api_url, &tokens).await?;
         }
