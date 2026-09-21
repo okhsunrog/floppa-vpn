@@ -1474,6 +1474,7 @@ version = "0.6.3"
 dependencies = [
  "async-trait",
  "floppa-api-client",
+ "floppa-provision",
  "floppa-vpn-core",
  "jni 0.22.4",
  "serde",
@@ -1494,9 +1495,20 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-vpn",
  "tauri-specta",
- "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "floppa-provision"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "floppa-api-client",
+ "floppa-vpn-core",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 

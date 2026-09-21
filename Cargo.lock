@@ -1513,6 +1513,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "floppa-provision"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "floppa-api-client",
+ "floppa-vpn-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "floppa-server"
 version = "0.1.0"
 dependencies = [

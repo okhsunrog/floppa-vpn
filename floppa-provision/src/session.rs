@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
-use crate::vpn::private_file::write_private;
 use floppa_api_client::DeviceIdentity;
+use floppa_vpn_core::private_file::write_private;
 
 const SESSION_FILENAME: &str = "server-session.json";
 

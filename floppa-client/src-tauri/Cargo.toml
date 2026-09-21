@@ -47,7 +47,6 @@ async-trait = "0.1"
 tauri-plugin-vpn = { path = "../../tauri-plugin-vpn" }
 tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2.5.3"
-tempfile = "3.26.0"
 tauri-plugin-android-fs = "29"
 # VLESS+REALITY protocol support
 shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
@@ -58,6 +57,7 @@ floppa-vpn-core = { version = "0.1.0", path = "../../floppa-vpn-core" }
 # a websocket server, and this one listens for commands. Turn it on with
 # `--features mcp-bridge`, which `just dev-mcp` does.
 tauri-plugin-mcp-bridge = { version = "0.13.0", optional = true }
+floppa-provision = { version = "0.1.0", path = "../../floppa-provision" }
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../../rust/shoes-lite" }
 

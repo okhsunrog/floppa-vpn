@@ -9,6 +9,7 @@ members = [
     "floppa-tunnel-config",
     "floppa-api-client",
     "floppa-vpn-core",
+    "floppa-provision",
     "xtask",
 ]
 exclude = [

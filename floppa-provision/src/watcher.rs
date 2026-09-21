@@ -33,12 +33,12 @@
 use floppa_api_client::{PeerProtocol, RepairOutcome, repair_peer};
 use tracing::{debug, info, warn};
 
-use super::server::{self, ActorSink};
-use super::{OutcomePlan, plan_outcome};
-use crate::vpn::actor::Spawn;
-use crate::vpn::actor::handle::{IntentRequest, TunnelHandle};
-use crate::vpn::actor::types::{IntentView, TunnelParams, TunnelState};
-use crate::vpn::protocol::Protocol;
+use crate::outcome::{OutcomePlan, plan_outcome};
+use crate::server::{self, ActorSink};
+use floppa_vpn_core::actor::Spawn;
+use floppa_vpn_core::actor::handle::{IntentRequest, TunnelHandle};
+use floppa_vpn_core::actor::types::{IntentView, TunnelParams, TunnelState};
+use floppa_vpn_core::protocol::Protocol;
 
 /// Start watching. Returns at once; the work happens on `spawn`.
 ///

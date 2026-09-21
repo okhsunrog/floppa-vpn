@@ -10,9 +10,9 @@ use async_trait::async_trait;
 use floppa_api_client::{ApiClient, ConfigSink, DeviceIdentity};
 use tracing::{debug, warn};
 
-use super::session;
-use crate::vpn::actor::handle::TunnelHandle;
-use crate::vpn::config::config_dir;
+use crate::session;
+use floppa_vpn_core::actor::handle::TunnelHandle;
+use floppa_vpn_core::config::config_dir;
 
 /// A client for the signed-in user, and the identity to introduce this device by.
 ///
