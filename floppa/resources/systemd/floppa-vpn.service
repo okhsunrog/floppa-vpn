@@ -1,0 +1,35 @@
+# The process that holds the tunnel, so that closing a client does not take it down.
+#
+# Started by the socket rather than at boot: a client connecting is what brings it up, and it then
+# stays up on its own for as long as the tunnel does. Reconnecting the last tunnel *after a reboot*
+# is deliberately not wired yet — it needs a stated preference rather than "whatever was up last",
+# and shipping a unit that promises it would be shipping a promise the program does not keep.
+#
+# No RuntimeDirectory=: the socket's directory belongs to the socket unit, which outlives this
+# service, and systemd removes a RuntimeDirectory when the service that declared it stops. That
+# would delete the socket out from under the unit holding it.
+
+[Unit]
+Description=Floppa VPN tunnel service
+Documentation=https://github.com/okhsunrog/floppa-vpn
+Requires=floppa-vpn.socket
+After=floppa-vpn.socket network.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/floppa service
+
+# The config store, the rollback journal and the server session. `0700` because the store holds
+# private keys and the session holds a bearer token; root has no keyring to put them in, which is
+# the whole reason they are files.
+StateDirectory=floppa-vpn
+StateDirectoryMode=0700
+
+# A crash mid-connect leaves routes and DNS applied. Coming straight back is what finds the
+# rollback journal and undoes them; staying dead leaves the machine half-tunnelled.
+Restart=on-failure
+RestartSec=2
+
+# No [Install]. There is nothing to enable: the socket is what starts this, and enabling it at boot
+# would raise a service that holds no tunnel until a client asks for one. The section arrives with
+# the preference that makes booting into a tunnel mean something.

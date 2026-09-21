@@ -1,0 +1,22 @@
+# The socket clients reach the tunnel service through.
+#
+# Letting systemd own it is what keeps its ownership and mode out of the program. The file exists
+# with the group and mode below from before the service starts, so there is never a moment when it
+# is listening and reachable by the wrong people — which is exactly the window a program that
+# binds and then widens its own socket has.
+#
+# Membership of `floppa` is what "may drive this machine's VPN" means, and it is equivalent to
+# root: the tunnel decides the default route. Nobody is put in it by installing the package.
+
+[Unit]
+Description=Socket for the Floppa VPN tunnel service
+Documentation=https://github.com/okhsunrog/floppa-vpn
+
+[Socket]
+ListenStream=/run/floppa-vpn/vpn.sock
+SocketUser=root
+SocketGroup=floppa
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target
