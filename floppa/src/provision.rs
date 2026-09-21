@@ -6,8 +6,7 @@
 
 use anyhow::{Result, bail};
 use floppa_api_client::{ApiClient, ConfigOutcome, DeviceIdentity, ProvisionApi, config_for_peer};
-
-use crate::protocol::Protocol;
+use floppa_vpn_core::protocol::Protocol;
 
 /// This device's config for `protocol`, creating the peer if it has none.
 pub async fn config_for(
@@ -15,7 +14,9 @@ pub async fn config_for(
     protocol: Protocol,
     identity: &DeviceIdentity,
 ) -> Result<String> {
-    let Some(peer_protocol) = protocol.peer() else {
+    // `None` for VLESS, which is provisioned per user and has no peer row. The conversion lives
+    // in `floppa-provision` because it is the same question the peer watcher asks.
+    let Some(peer_protocol) = floppa_provision::peer_protocol(protocol) else {
         // VLESS is per user: there is nothing to look up and nothing to create.
         return Ok(client.vless_config().await?.uri);
     };

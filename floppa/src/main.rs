@@ -8,6 +8,7 @@ mod service;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use floppa_api_client::{ApiClient, ProvisionApi};
+use floppa_vpn_core::protocol::Protocol;
 
 const DEFAULT_API_URL: &str = "https://floppa.okhsunrog.dev/api";
 
@@ -50,8 +51,8 @@ enum Command {
         #[arg(long)]
         config: Option<String>,
         /// Tunnel protocol (AmneziaWG by default, like the app)
-        #[arg(long, value_enum, default_value_t = protocol::Protocol::AmneziaWg)]
-        protocol: protocol::Protocol,
+        #[arg(long, default_value = "amneziawg", value_parser = protocol::parser())]
+        protocol: Protocol,
         /// TUN interface name
         #[arg(long, default_value = floppa_vpn_core::protocol::InterfaceName::DEFAULT)]
         interface: String,
@@ -69,8 +70,8 @@ enum Command {
     /// Fetch and print config (WireGuard/AmneziaWG .conf or VLESS URI)
     Config {
         /// Tunnel protocol (AmneziaWG by default, like the app)
-        #[arg(long, value_enum, default_value_t = protocol::Protocol::AmneziaWg)]
-        protocol: protocol::Protocol,
+        #[arg(long, default_value = "amneziawg", value_parser = protocol::parser())]
+        protocol: Protocol,
         /// Peer ID (WireGuard/AmneziaWG only; uses first active peer of that protocol if omitted)
         #[arg(long)]
         peer_id: Option<i64>,
@@ -187,10 +188,10 @@ async fn main() -> Result<()> {
             let token = tokens.require()?;
             let client = ApiClient::new(&api_url, &token)?;
             let config = match (protocol, peer_id) {
-                (protocol::Protocol::WireGuard | protocol::Protocol::AmneziaWg, Some(id)) => {
+                (Protocol::WireGuard | Protocol::AmneziaWg, Some(id)) => {
                     client.peer_config(id).await?
                 }
-                (protocol::Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
+                (Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
                 (protocol, None) => {
                     provision::config_for(&client, protocol, &auth::device_identity()?).await?
                 }
