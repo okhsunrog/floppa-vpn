@@ -161,6 +161,16 @@ impl VpnRpc for ActorServer {
         let _ = crate::logging::stop_file_capture();
     }
 
+    async fn resume(self, _ctx: Context) -> Result<Option<IntentAccepted>, IntentError> {
+        // Read here rather than remembered in this struct: it is written by whichever cycle last
+        // connected, which may well be a cycle that happened after this server started.
+        let Some(request) = crate::autostart::last_intent() else {
+            debug!("asked to resume, and nothing has ever connected here");
+            return Ok(None);
+        };
+        self.handle.set_intent(request).await.map(Some)
+    }
+
     async fn set_session(self, _ctx: Context, session: Option<String>) -> Result<(), SessionError> {
         let Some(sink) = self.session.as_ref() else {
             return Err(SessionError::NotKept);

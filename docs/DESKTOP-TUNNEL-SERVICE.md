@@ -48,7 +48,7 @@ Four answers, and the difference between two of them is the point:
 
 ## Installing and enabling
 
-The package ships the binary and four files, and puts nobody in the group.
+The package ships the binary and five files, and puts nobody in the group.
 
 ```bash
 sudo usermod -aG floppa "$USER"      # then log in again, so the new group applies
@@ -70,6 +70,7 @@ reached only through the socket.
 |---|---|
 | `/usr/lib/systemd/system/floppa-vpn.socket` | owns the socket, so the program does not have to. A unit states `SocketGroup` and `SocketMode` and the file exists with them *before* the service starts; a program that binds and then widens its own socket has a window where it is listening and reachable by the wrong people |
 | `/usr/lib/systemd/system/floppa-vpn.service` | the tunnel process. No `RuntimeDirectory=`, deliberately: systemd removes one when the service stops, and it would take the socket out from under the unit that outlives it |
+| `/usr/lib/systemd/system/floppa-vpn-autostart.service` | connecting on boot. Not enabled by anything; enabling it *is* the setting |
 | `/usr/lib/tmpfiles.d/floppa-vpn.conf` | `/run/floppa-vpn` as `0750 root:floppa`, so a user outside the group cannot reach the path at all, whatever the socket inside it says |
 | `/usr/lib/sysusers.d/floppa-vpn.conf` | the `floppa` group, created empty |
 
@@ -112,15 +113,45 @@ sudo floppa connect --config ./wg0.conf          # build one here and hold it un
 long-lived one. It is also what `tests/integration/conftest.py` runs, in a container with no
 service in it, which is another reason the flag decides rather than a mode switch.
 
+## Connecting on boot
+
+Enabling one more unit is the setting:
+
+```bash
+sudo systemctl enable floppa-vpn-autostart.service
+```
+
+It is a `oneshot` that runs `floppa resume` — a *client* command, which is the point. The tunnel
+service is started by its socket as well as at boot, so a service that reconnected whenever it
+started would reconnect every time anybody ran `floppa status`, including on a VPN somebody had
+just turned off. Being **asked** is not the same as being **started**, and only a caller can tell
+the two apart.
+
+What it resumes is not named in the unit. The service writes down what last connected — the winner
+first, since that is the protocol that actually carried a tunnel — into `autostart.json` beside the
+configs, which only root can read. So the request is "whatever you had", and the process that knows
+answers it. A machine that has never connected is told so, and nothing happens.
+
+The same file is what Android uses for always-on and boot starts; the difference is only who does
+the asking.
+
+## Handing it a config you already have
+
+```bash
+floppa import ./wg0.conf     # into the service's store
+floppa connect               # uses it
+```
+
+`connect --config` deliberately does not do this — that flag means "build a tunnel in this
+command" — so `import` is the way into a store that belongs to root. With a config there and nobody
+logged in, `floppa connect` uses it rather than sending you to the server for one you already have:
+running a WireGuard tunnel does not require a Floppa account.
+
 ## Not done yet
 
-**Reconnecting after a reboot.** The service holds the tunnel across a client closing, but nothing
-brings one back at boot. That needs a stated preference — "connect on boot" as a thing the user
-turned on — rather than "whatever was up last", so it arrives with the toggle that sets it. The
-`[Install]` section of the service unit arrives then too.
-
-**The desktop app still runs its own actor.** It will use the service the same way the
-command-line client does.
+**The desktop app still runs its own actor** when there is no service, which is correct, but it has
+no switch for connecting on boot — that is `systemctl enable` for now. A GUI toggle needs polkit or
+a preference carried over the socket, and is a piece of its own.
 
 **Windows** needs a named pipe instead of a Unix socket and a service instead of a unit. Deferred:
 the tray already keeps the tunnel alive while the app is open there.

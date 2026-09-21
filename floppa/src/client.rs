@@ -181,6 +181,93 @@ pub async fn disconnect(remote: &RemoteActor) -> Result<()> {
     Ok(())
 }
 
+/// Put a config into the service's store, without connecting.
+///
+/// The gap this fills: `--config` means "build a tunnel here, out of this file", which is the one
+/// shape that must not touch the machine's long-lived tunnel — so a person holding a `.conf` had
+/// no way to hand it to the service at all, and `connect` would have sent them to the server for
+/// one they already had. The store is root's, so this is the only way in.
+pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
+    let protocol = remote
+        .import_config(config_str.to_string())
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    eprintln!("Stored a {protocol} config. `floppa connect` will use it.");
+    Ok(())
+}
+
+/// Connect with whatever the service already holds.
+///
+/// The order is every protocol it has a config for. An empty order is *not* "you choose": the
+/// store resolves a request by filtering it down to what it holds, so nothing in means nothing
+/// out, and the cycle ends before it starts with "probe order is empty". Which of them leads is
+/// still the store's call — `resolve_order` moves the one that last worked to the front — so this
+/// says what is possible and lets the actor say what is preferable.
+pub async fn connect_stored(remote: &RemoteActor) -> Result<()> {
+    let order = first_state(remote).await?.configs.available;
+    if order.is_empty() {
+        bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
+    }
+
+    let accepted = remote
+        .set_intent(IntentRequest::Up {
+            order,
+            params: TunnelParams::new(SplitMode::All, Vec::new()),
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    eprintln!("Connecting with the config the service already holds...");
+    match remote
+        .await_cycle(accepted.epoch)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    {
+        CycleOutcome::Connected { protocol, .. } => {
+            report(&remote.snapshot());
+            println!("READY");
+            eprintln!(
+                "Connected over {protocol}. The service keeps it up; `floppa disconnect` stops it."
+            );
+            Ok(())
+        }
+        other => bail!("could not connect: {}", crate::connect::describe(&other)),
+    }
+}
+
+/// Whether the service already holds something it could connect with.
+pub async fn has_config(remote: &RemoteActor) -> bool {
+    match first_state(remote).await {
+        Ok(state) => !state.configs.available.is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// Ask the service to bring back whatever it last had up.
+///
+/// What `floppa-vpn-autostart.service` runs at boot, and the reason it is a client command rather
+/// than something the service does for itself: the service is started by its socket too, and every
+/// `floppa status` would otherwise reconnect a VPN somebody had turned off. Being asked is
+/// different from being started, and only a caller can tell the two apart.
+pub async fn resume(remote: &RemoteActor) -> Result<()> {
+    let Some(accepted) = remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))? else {
+        eprintln!("Nothing has connected on this machine yet; there is nothing to bring back.");
+        return Ok(());
+    };
+
+    match remote
+        .await_cycle(accepted.epoch)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    {
+        CycleOutcome::Connected { protocol, .. } => {
+            eprintln!("Connected over {protocol}.");
+            Ok(())
+        }
+        other => bail!("could not connect: {}", crate::connect::describe(&other)),
+    }
+}
+
 /// What the service says the tunnel is doing.
 pub async fn status(remote: &RemoteActor) -> Result<()> {
     let state = first_state(remote).await?;

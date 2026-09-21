@@ -72,6 +72,21 @@ enum Command {
     /// Take the tunnel the system service is holding down
     #[cfg(target_os = "linux")]
     Disconnect,
+    /// Bring back whatever tunnel the system service last had up
+    ///
+    /// What `floppa-vpn-autostart.service` runs at boot. Enable that unit to connect on boot;
+    /// disable it to stop.
+    #[cfg(target_os = "linux")]
+    Resume,
+    /// Give the system service a config from a file, without connecting
+    ///
+    /// For a config you already hold. `connect --config` builds a tunnel in this command instead,
+    /// and never touches the service's.
+    #[cfg(target_os = "linux")]
+    Import {
+        /// Config file (.conf) or VLESS URI file
+        config: String,
+    },
     /// What the system service says the tunnel is doing
     #[cfg(target_os = "linux")]
     Status,
@@ -156,6 +171,22 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
 
+            // A service that already holds a config and a shell with no login is a real
+            // combination — `floppa import` puts a `.conf` there, and nothing about running a
+            // WireGuard tunnel requires a Floppa account. Sending that person to the server for a
+            // config they have would fail for a reason that is not their problem.
+            #[cfg(target_os = "linux")]
+            if tokens.load()?.is_none() {
+                let remote = client::reach().await?;
+                if client::has_config(&remote).await {
+                    return client::connect_stored(&remote).await;
+                }
+                return Err(anyhow::anyhow!(
+                    "Not logged in, and the tunnel service holds no config.\n\
+                     Run `floppa login`, or hand it one with `floppa import <file>`."
+                ));
+            }
+
             let token = tokens.require()?;
             let api = ApiClient::new(&api_url, &token)?;
             let me = api.me().await?;
@@ -188,6 +219,18 @@ async fn main() -> Result<()> {
         Command::Disconnect => {
             let remote = client::reach().await?;
             client::disconnect(&remote).await?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::Resume => {
+            let remote = client::reach().await?;
+            client::resume(&remote).await?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::Import { config } => {
+            let raw = std::fs::read_to_string(&config)
+                .with_context(|| format!("Failed to read config file: {config}"))?;
+            let remote = client::reach().await?;
+            client::import(&remote, &raw).await?;
         }
         #[cfg(target_os = "linux")]
         Command::Status => {

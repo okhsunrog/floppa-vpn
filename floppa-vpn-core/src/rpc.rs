@@ -46,8 +46,9 @@ use crate::store::ConfigError;
 /// fails in a way that describes nothing.
 ///
 /// One is the shape that shipped in 0.6.x, before the version was carried at all. Two added
-/// [`VpnRpc::set_session`], which a desktop client does have to call.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
+/// [`VpnRpc::resume`].
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Why a session could not be handed over.
 ///
@@ -207,6 +208,18 @@ pub trait VpnRpc {
     /// Not needed on Android, where the UI and `:vpn` are one uid and share the file directly —
     /// there this answers [`SessionError::NotKept`].
     async fn set_session(session: Option<String>) -> Result<(), SessionError>;
+
+    /// Raise the tunnel that last connected, if there is one recorded.
+    ///
+    /// `None` means nothing has ever connected here, which is not a failure — it is a machine that
+    /// has been asked to bring back a tunnel it never had, and the honest answer is that there is
+    /// nothing to bring back.
+    ///
+    /// What this exists for is a start with nobody watching. The caller cannot name the tunnel
+    /// itself: the record of what last worked lives beside the configs, in the state directory,
+    /// which only the process holding the actor can read. So the request is "whatever you had",
+    /// and the process that knows answers it.
+    async fn resume() -> Result<Option<IntentAccepted>, IntentError>;
 }
 
 #[cfg(test)]
@@ -564,6 +577,32 @@ mod tests {
             assert_eq!(
                 survives("capture_id", &"2026-08-25T12-00-00Z".to_string()),
                 "2026-08-25T12-00-00Z"
+            );
+        }
+
+        /// `resume` answers with an option, and the `None` is load-bearing: "nothing has ever
+        /// connected here" is an answer, not a failure, and a codec that lost the difference would
+        /// turn a machine with no history into one reporting an error at every boot.
+        #[test]
+        fn resuming_when_there_is_nothing_to_resume() {
+            let nothing: Result<Option<IntentAccepted>, IntentError> = Ok(None);
+            assert_eq!(
+                survives("Result<Option<IntentAccepted>, _> None", &nothing),
+                nothing
+            );
+
+            let raised: Result<Option<IntentAccepted>, IntentError> = Ok(Some(IntentAccepted {
+                epoch: IntentEpoch(7),
+            }));
+            assert_eq!(
+                survives("Result<Option<IntentAccepted>, _> Some", &raised),
+                raised
+            );
+
+            let refused: Result<Option<IntentAccepted>, IntentError> = Err(IntentError::ActorGone);
+            assert_eq!(
+                survives("Result<Option<IntentAccepted>, _> Err", &refused),
+                refused
             );
         }
 

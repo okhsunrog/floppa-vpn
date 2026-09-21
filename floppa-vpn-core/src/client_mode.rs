@@ -261,7 +261,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vpn.sock");
 
-        assert_eq!(reach(&path).await, ServiceAccess::Absent, "nothing bound yet");
+        assert_eq!(
+            reach(&path).await,
+            ServiceAccess::Absent,
+            "nothing bound yet"
+        );
 
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
         let held = tokio::spawn(async move {

@@ -1,0 +1,29 @@
+# Connect on boot. Enabling this unit is the setting; disabling it turns it off.
+#
+#   sudo systemctl enable floppa-vpn-autostart.service
+#
+# A unit of its own rather than something the tunnel service does when it starts, because the
+# tunnel service is also started by its socket — every `floppa status` would otherwise reconnect a
+# VPN somebody had deliberately turned off. Being *asked* is different from being *started*, and
+# only a caller can tell the two apart. So this is a caller: one shot, which connects to the socket
+# (activating the service if it is not up) and asks it for whatever it last had.
+#
+# Which tunnel that is, is not stated here. The service wrote it down the last time one connected,
+# beside the configs, in a directory only root can read — so the request is "whatever you had" and
+# the process that knows answers it. A machine that has never connected is told so and nothing
+# happens.
+
+[Unit]
+Description=Connect the Floppa VPN tunnel on boot
+Documentation=https://github.com/okhsunrog/floppa-vpn
+Requires=floppa-vpn.socket
+After=floppa-vpn.socket network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/floppa resume
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -93,6 +93,12 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
 - Standalone WireGuard / AmneziaWG / VLESS client (`floppa`) for headless/server use:
   `login` (Telegram in the browser), `config`, `connect --protocol wireguard|amneziawg|vless`
   (AmneziaWG by default, like the app), `peers`, `logout`
+- The same binary is also the **system service** (`floppa service`, Linux, root), which holds the
+  tunnel in a process that outlives every client. `connect` without `--config` then asks the
+  service instead of building a tunnel here, and `import`, `status`, `disconnect` and `resume`
+  drive it. `--config` keeps the old meaning: a tunnel this command builds and holds. Connecting on
+  boot is `systemctl enable floppa-vpn-autostart.service`. See
+  [`docs/DESKTOP-TUNNEL-SERVICE.md`](docs/DESKTOP-TUNNEL-SERVICE.md)
 - Login token: `<config dir>/floppa/token` (0600; under `sudo` the invoking user's config dir),
   or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`
 - Device identity generated once and persisted next to the token as `device.json`, so every run

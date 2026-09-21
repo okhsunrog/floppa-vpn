@@ -148,6 +148,21 @@ impl RemoteActor {
         }
     }
 
+    /// Ask the process holding the actor to bring back whatever it last had up.
+    ///
+    /// `Ok(None)` is "nothing has ever connected there", which is an answer and not a failure.
+    ///
+    /// Inherent rather than part of [`TunnelControl`] for the same reason as
+    /// [`set_session`](Self::set_session): a local actor has no equivalent. The request only means
+    /// anything to a process that outlived the tunnel it is being asked about.
+    pub async fn resume(&self) -> Result<Option<IntentAccepted>, IntentError> {
+        self.call("resume", |client| async move {
+            client.resume(RemoteActor::deadline(CALL_DEADLINE)).await
+        })
+        .await
+        .map_err(|_| IntentError::ActorGone)?
+    }
+
     /// Hand the credentials this device talks to the server with over to the process holding the
     /// actor, or take them away with `None`.
     ///

@@ -137,6 +137,7 @@
           "/usr/bin/floppa": "../../target/release/floppa",
           "/usr/lib/systemd/system/floppa-vpn.socket": "../../floppa/resources/systemd/floppa-vpn.socket",
           "/usr/lib/systemd/system/floppa-vpn.service": "../../floppa/resources/systemd/floppa-vpn.service",
+          "/usr/lib/systemd/system/floppa-vpn-autostart.service": "../../floppa/resources/systemd/floppa-vpn-autostart.service",
           "/usr/lib/sysusers.d/floppa-vpn.conf": "../../floppa/resources/sysusers.d/floppa-vpn.conf",
           "/usr/lib/tmpfiles.d/floppa-vpn.conf": "../../floppa/resources/tmpfiles.d/floppa-vpn.conf",
         },

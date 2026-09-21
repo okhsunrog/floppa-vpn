@@ -64,7 +64,8 @@ pub async fn run() -> Result<()> {
         Deployment::default(),
     );
 
-    floppa_provision::watcher::watch(handle.clone(), spawn, env!("CARGO_PKG_VERSION"));
+    floppa_provision::watcher::watch(handle.clone(), spawn.clone(), env!("CARGO_PKG_VERSION"));
+    remember_what_connects(handle.clone(), &spawn);
 
     let server = start_server(handle.clone())?;
 
@@ -77,6 +78,48 @@ pub async fn run() -> Result<()> {
     server.shutdown();
     take_down(&handle).await;
     Ok(())
+}
+
+/// Write down what just connected, so a start with nobody watching can ask for it again.
+///
+/// Android does this inside the actor, off `Effect::RememberWinner`, because there the actor and
+/// the thing that restarts it are the same process. Here they are not — systemd restarts this, and
+/// the actor has no opinion about systemd — so it is done from outside, off the published state,
+/// which carries everything the record needs.
+///
+/// The winner leads the order: it is the protocol that actually carried a tunnel on this network,
+/// and trying it first is what makes a resume fast rather than a fresh walk down the ladder.
+///
+/// Written only when it changes. The state publishes on every traffic sample, and a file rewritten
+/// once a second for the life of a connection would be a great deal of writing to say the same
+/// thing.
+fn remember_what_connects(handle: TunnelHandle, spawn: &Spawn) {
+    use floppa_vpn_core::actor::types::{IntentView, Phase};
+
+    let mut states = handle.states();
+    spawn(Box::pin(async move {
+        let mut written: Option<Vec<floppa_vpn_core::protocol::Protocol>> = None;
+        while states.changed().await.is_ok() {
+            let state = states.borrow_and_update().clone();
+            if state.phase != Phase::Connected || state.intent != IntentView::Up {
+                continue;
+            }
+            let (Some(winner), Some(params)) = (state.protocol, state.params.clone()) else {
+                continue;
+            };
+            let mut order = vec![winner];
+            order.extend(state.intent_order.iter().copied().filter(|p| *p != winner));
+            if written.as_ref() == Some(&order) {
+                continue;
+            }
+            let at = chrono::Utc::now().timestamp();
+            let recorded = order.clone();
+            tokio::task::spawn_blocking(move || {
+                floppa_vpn_core::autostart::remember(recorded, params, at)
+            });
+            written = Some(order);
+        }
+    }));
 }
 
 /// Serve on systemd's socket if there is one, and bind for ourselves if not.
