@@ -61,6 +61,8 @@ Coordination: server writes peer `sync_status = 'pending_add'` → DB trigger fi
 
 **Desktop (Linux/Windows):** Single process. `VpnBackend` trait → gotatun (Mullvad's Rust WireGuard, AmneziaWG fork) or shoes-lite (VLESS). `Platform` trait handles routes/DNS/TUN. Graceful cleanup on exit via `RunEvent::Exit` in `lib.rs`.
 
+**Desktop, Linux, with the package:** a second and preferred arrangement — `floppa service`, root, holding the actor in a process that outlives every client, reached over `/run/floppa-vpn/vpn.sock` and gated by the `floppa` group. **There are three modes, not two** (service / in-process unprivileged with pkexec / in-process root), and a client picks one *once* at startup with `client_mode::probe`, which connects rather than checking for the file and keeps "refused" apart from "absent". The single-process mode above is unchanged and is what a tarball, an AppImage, Windows and macOS use, so it cannot rot. See `docs/DESKTOP-TUNNEL-SERVICE.md`; the command-line client drives it and the app does not yet.
+
 **Android:** two processes, and **all the decisions are in `:vpn`** — the intent, the status, the
 connect ladder, the reconnect budget and the config store all live there, beside the tunnel. The UI
 process holds a socket to them and no tunnel state at all. The move happened because Android's

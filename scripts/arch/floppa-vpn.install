@@ -6,16 +6,59 @@ _setcap_floppa() {
   fi
 }
 
+# The `floppa` group, created empty. Being in it means being able to change this machine's default
+# route, so who goes in it is the administrator's decision:
+#
+#   usermod -aG floppa <user>
+#   systemctl enable --now floppa-vpn.socket
+#
+# Not enabled here: Arch packages do not enable their units, and this one is no exception. The
+# tunnel service is reachable only through that socket, so until it is enabled the client falls
+# back to running the tunnel in its own process, exactly as it did before the service existed.
+_service_files() {
+  if command -v systemd-sysusers >/dev/null 2>&1; then
+    systemd-sysusers || true
+  fi
+  if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/floppa-vpn.conf || true
+  fi
+}
+
 post_install() {
   _setcap_floppa
+  _service_files
+  cat <<'EOF'
+==> The tunnel service is installed but not enabled. To let it hold the VPN
+==> after the app is closed:
+==>   sudo usermod -aG floppa "$USER"   # then log in again
+==>   sudo systemctl enable --now floppa-vpn.socket
+EOF
 }
 
 post_upgrade() {
   _setcap_floppa
+  _service_files
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    # The running service is still the old binary, and the wire between the two is versioned — a
+    # client from the new build would refuse to mirror its state and say so. Restarting it here
+    # takes the tunnel down for a moment, which is the honest trade and the one the user can see.
+    if systemctl is-active --quiet floppa-vpn.service; then
+      echo '==> Restarting floppa-vpn.service to pick up the new build.'
+      systemctl restart floppa-vpn.service || true
+    fi
+  fi
 }
 
 post_remove() {
   if command -v setcap >/dev/null 2>&1 && [ -e "${_bin_path}" ]; then
     setcap -r "${_bin_path}" || true
+  fi
+  # Both, and in this order: stopping only the service leaves the socket to start it again.
+  # The group is left alone — removing it would strip a membership somebody granted on purpose.
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl disable --now floppa-vpn.socket >/dev/null 2>&1 || true
+    systemctl stop floppa-vpn.service >/dev/null 2>&1 || true
+    systemctl daemon-reload || true
   fi
 }

@@ -149,6 +149,13 @@ graph LR
 
 Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a polkit helper script for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI); a 0600 file in the config directory is the fallback while the keyring is unavailable, and whichever copy was written last wins (the file is migrated into the keyring and removed once it is usable again). Graceful cleanup on exit restores DNS and routes.
 
+On Linux there is a second, preferred arrangement: **`floppa service`**, a root systemd service that
+holds the actor in a process outliving every client, so the tunnel survives closing the app. Clients
+reach it over `/run/floppa-vpn/vpn.sock`, gated by the `floppa` group, and choose between the two
+modes by probing that socket once at startup. The single-process mode above stays exactly as it is —
+it is what a tarball, an AppImage, Windows and macOS use. See
+[`docs/DESKTOP-TUNNEL-SERVICE.md`](docs/DESKTOP-TUNNEL-SERVICE.md).
+
 ### Android
 
 ```mermaid

@@ -122,6 +122,12 @@ jobs:
       - name: Install frontend dependencies
         run: vp install --frozen-lockfile
 
+      # A separate crate, so `tauri build` does not build it — and the bundler's file map reads it
+      # straight off this path. Building it after the bundle would produce a package without the
+      # service in it, and nothing would say so.
+      - name: Build the tunnel service
+        run: cargo build --release --locked -p floppa
+
       - name: Build Linux client
         env:
           VITE_API_URL: ${{ secrets.VITE_API_URL }}

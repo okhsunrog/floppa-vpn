@@ -126,8 +126,19 @@
         // fixed by this entry appearing.
         //
         // `NoDisplay=true` keeps the menu to one entry: this one exists to be found by name.
+        //
+        // The rest of the map is the tunnel service: its binary, and the units that decide who
+        // may reach it. `floppa` is a separate crate and `tauri build` does not build it, so
+        // whatever produces this package must run `cargo build --release -p floppa` first — the
+        // release workflow and the PKGBUILD both do. The Arch package is made by copying this
+        // deb's `data/`, so everything listed here lands there too.
         files: {
           "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
+          "/usr/bin/floppa": "../../target/release/floppa",
+          "/usr/lib/systemd/system/floppa-vpn.socket": "../../floppa/resources/systemd/floppa-vpn.socket",
+          "/usr/lib/systemd/system/floppa-vpn.service": "../../floppa/resources/systemd/floppa-vpn.service",
+          "/usr/lib/sysusers.d/floppa-vpn.conf": "../../floppa/resources/sysusers.d/floppa-vpn.conf",
+          "/usr/lib/tmpfiles.d/floppa-vpn.conf": "../../floppa/resources/tmpfiles.d/floppa-vpn.conf",
         },
         postInstallScript: "./scripts/linux-postinstall.sh",
         postRemoveScript: "./scripts/linux-postremove.sh",
