@@ -28,6 +28,10 @@ struct ActorServer {
     /// Identity of this run of the actor. Random per process: it is only ever compared for
     /// equality, and what it has to be is *different from the last run's*.
     boot: u64,
+    /// What this build speaks. A field rather than the constant read inline, so a test can stand
+    /// up a server that disagrees — which is the whole point of carrying it, and not something
+    /// that can otherwise be arranged from inside one build.
+    protocol: u32,
 }
 
 impl ActorServer {
@@ -35,6 +39,7 @@ impl ActorServer {
         Published {
             boot: self.boot,
             state,
+            protocol: self.protocol,
         }
     }
 }
@@ -131,6 +136,19 @@ impl VpnRpc for ActorServer {
 /// One server per process, not one per tunnel: what is being served is the actor, which outlives
 /// every individual tunnel and every client that connects to ask about one.
 pub fn serve(socket_path: &str, handle: TunnelHandle) -> Result<RpcServerHandle, String> {
+    serve_at_protocol(socket_path, handle, super::rpc::PROTOCOL_VERSION)
+}
+
+/// [`serve`], answering as a build that speaks `protocol`.
+///
+/// Only a test has a reason to pass anything but [`PROTOCOL_VERSION`](super::rpc::PROTOCOL_VERSION):
+/// what it exists to check is what a client does when the two disagree, and one build cannot
+/// disagree with itself.
+fn serve_at_protocol(
+    socket_path: &str,
+    handle: TunnelHandle,
+    protocol: u32,
+) -> Result<RpcServerHandle, String> {
     // `RandomState` is seeded per process by the standard library: entropy with no dependency and
     // no syscall, and equality is all this value is ever used for.
     let boot = {
@@ -139,7 +157,11 @@ pub fn serve(socket_path: &str, handle: TunnelHandle) -> Result<RpcServerHandle,
             .build_hasher()
             .finish()
     };
-    let server = ActorServer { handle, boot };
+    let server = ActorServer {
+        handle,
+        boot,
+        protocol,
+    };
     super::rpc_listener::listen(std::path::Path::new(socket_path), move |stream, cancel| {
         debug!("a client connected to the actor");
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
@@ -419,5 +441,54 @@ mod tests {
             Phase::Unknown,
             "and it still does not claim to know that there is no tunnel"
         );
+    }
+
+    /// What an update that replaced the binaries without restarting the service looks like from
+    /// the client: a socket that answers, in a language this build does not speak.
+    ///
+    /// The mirror must not take the state. Two builds can disagree about what a field *means*,
+    /// so a state read through the wrong version is not a worse state, it is not a state at all —
+    /// and `Unknown`, which the whole design already uses for "nothing has been heard", is the
+    /// honest thing to keep saying.
+    #[tokio::test]
+    async fn a_service_speaking_another_protocol_version_is_not_mirrored() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(crate::rpc::SOCKET_NAME);
+        let socket = path.to_string_lossy().to_string();
+
+        let (state_tx, state_rx) = watch::channel(connected(1));
+        let actor = Arc::new(FakeActor {
+            state: state_rx,
+            intents: std::sync::Mutex::new(Vec::new()),
+        });
+        let stale = serve_at_protocol(
+            &socket,
+            TunnelHandle::remote(actor.clone()),
+            crate::rpc::PROTOCOL_VERSION + 1,
+        )
+        .expect("bind");
+
+        let process = Arc::new(AlwaysRunning(AtomicUsize::new(0)));
+        let remote = RemoteActor::new(dir.path(), process.clone(), &spawner());
+
+        // Long enough for several polls to have been answered and refused.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            remote.snapshot().phase,
+            Phase::Unknown,
+            "a state from a build speaking another version must not be adopted"
+        );
+
+        // And it recovers by itself once the service is restarted into the installed build, which
+        // is the only thing the user can do about it.
+        stale.shutdown_and_unlink();
+        let current = serve(&socket, TunnelHandle::remote(actor)).expect("rebind");
+        state_tx.send(connected(2)).expect("publish");
+        let seen = wait_for(&remote, "the state after a restart", |s| {
+            s.phase == Phase::Connected
+        })
+        .await;
+        assert_eq!(seen.seq, 2);
+        drop(current);
     }
 }

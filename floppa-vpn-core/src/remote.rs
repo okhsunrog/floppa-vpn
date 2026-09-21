@@ -171,6 +171,23 @@ async fn mirror(remote: Arc<RemoteActor>, state_tx: watch::Sender<TunnelState>) 
             .await;
 
         match asked {
+            Ok(published) if published.protocol != super::rpc::PROTOCOL_VERSION => {
+                // Not a state to mirror. A build that speaks a different version of this wire may
+                // mean something else by the very fields being read, so adopting what it says is
+                // worse than holding what we have — which, being the last thing a peer we *could*
+                // talk to said, is the honest answer until one comes back.
+                //
+                // The ordinary cause is an update that replaced the binaries while the service
+                // kept running the old one, so this keeps polling rather than giving up: whoever
+                // restarts it is answered on the next pass.
+                warn!(
+                    theirs = published.protocol,
+                    ours = super::rpc::PROTOCOL_VERSION,
+                    "the tunnel service speaks a different protocol version; restart it to pick up \
+                     the installed build"
+                );
+                tokio::time::sleep(RECONNECT_DELAY).await;
+            }
             Ok(published) => {
                 if published.boot != following {
                     // A different run of the actor: its sequence starts again, so everything the

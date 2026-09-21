@@ -31,6 +31,15 @@ use crate::actor::types::{CycleOutcome, IntentAccepted, IntentEpoch, IntentError
 use crate::protocol::Protocol;
 use crate::store::ConfigError;
 
+/// The version of everything else in this module.
+///
+/// Bump it whenever the wire changes in a way that a peer built against the old shape would read
+/// wrongly: a method added, removed or reordered (tarpc dispatches by position), a field whose
+/// meaning changes, an enum variant that an old build would fail to match.
+///
+/// One is the shape that shipped in 0.6.x, before the version was carried at all.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// A published state, and which run of the actor published it.
 ///
 /// The `boot` is what makes the sequence numbers mean anything across a restart. The actor stamps
@@ -43,6 +52,15 @@ use crate::store::ConfigError;
 pub struct Published {
     pub boot: u64,
     pub state: TunnelState,
+    /// What the answering build speaks. Carried on the answer every client asks for first, so no
+    /// method has to exist for it — adding one would itself be a wire change, and an old peer
+    /// would fail it in a way that says nothing about why.
+    ///
+    /// `#[serde(default)]` so a 0.6.x server, which sends no such field, reads back as 0 rather
+    /// than as a decode failure. Zero is "older than versioning", which is a mismatch like any
+    /// other, only more specific.
+    #[serde(default)]
+    pub protocol: u32,
 }
 
 /// How long the server holds a [`VpnRpc::state_since`] call open waiting for something to change.
@@ -62,11 +80,16 @@ pub const STATE_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_s
 
 /// The IPC socket name. Keep in sync with `FloppaVpnService.kt`.
 ///
-/// This never needs versioning, and the wire format never needs to stay backward compatible.
-/// Both ends ship in the same APK and are always the same build: installing one replaces the
-/// other, and installing force-stops every process of the package, so two builds cannot be live
-/// at once. Change the format freely — including the method set, which shifts tarpc's dispatch
-/// indices.
+/// On Android the two ends cannot disagree: they ship in the same APK, installing one replaces the
+/// other, and installing force-stops every process of the package, so two builds are never live at
+/// once. That is why this wire was allowed to change freely — including the method set, which
+/// shifts tarpc's dispatch indices.
+///
+/// A desktop system service breaks that guarantee, and quietly. Upgrading the package replaces the
+/// binaries on disk while the old one keeps running until something restarts it, so a new client
+/// talking to a service nobody has restarted is the *ordinary* outcome of an update, not an
+/// unlikely one. Hence [`PROTOCOL_VERSION`], which is stated on every answer to `state_since` —
+/// the first call every client makes.
 pub const SOCKET_NAME: &str = "vpn.sock";
 
 /// The actor's boundary, spelled for a socket.
@@ -338,6 +361,7 @@ mod tests {
                 let published = Published {
                     boot: u64::MAX,
                     state: state.clone(),
+                    protocol: PROTOCOL_VERSION,
                 };
                 assert_eq!(
                     &survives(&format!("Published #{i}"), &published),
@@ -347,6 +371,25 @@ mod tests {
             // state_since's arguments: the run the caller is following, and how far into it.
             assert_eq!(survives("boot", &u64::MAX), u64::MAX);
             assert_eq!(survives("seq", &u64::MAX), u64::MAX);
+        }
+
+        /// The version has to survive meeting a build that predates it, because that is the only
+        /// situation it exists for. A 0.6.x server sends `{boot, state}` and nothing else, and a
+        /// client that failed to decode that would report "no service" instead of "the wrong one".
+        #[test]
+        fn an_answer_from_before_versioning_reads_as_version_zero() {
+            let json = serde_json::json!({
+                "boot": 7u64,
+                "state": TunnelState::initial(),
+            });
+            let published: Published =
+                serde_json::from_value(json).expect("a pre-versioning answer still decodes");
+            assert_eq!(published.boot, 7);
+            assert_eq!(
+                published.protocol, 0,
+                "absent means older than versioning, which is a mismatch like any other"
+            );
+            assert_ne!(published.protocol, PROTOCOL_VERSION);
         }
 
         #[test]
