@@ -24,8 +24,8 @@
 //! would raise a prompt, the tunnel would still die with the program, and the answer ("you are not
 //! in the `floppa` group") would never be said out loud.
 
-use crate::rpc::{PROTOCOL_VERSION, SOCKET_NAME, STATE_POLL_DEADLINE, VpnRpcClient};
-use std::path::{Path, PathBuf};
+use crate::rpc::{PROTOCOL_VERSION, STATE_POLL_DEADLINE, VpnRpcClient};
+use std::path::Path;
 use std::time::Duration;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::debug;
@@ -82,9 +82,13 @@ impl ServiceAccess {
 }
 
 /// The socket the system service listens on.
+///
+/// Linux-only, like the service. Android compiles the rest of this module — its UI probes a socket
+/// too — but reaches `:vpn` at a path the app resolves, not a system one, so the names this needs
+/// are spelled out here rather than imported and left unused there.
 #[cfg(target_os = "linux")]
-pub fn system_socket() -> PathBuf {
-    Path::new(crate::rpc::SYSTEM_SOCKET_DIR).join(SOCKET_NAME)
+pub fn system_socket() -> std::path::PathBuf {
+    Path::new(crate::rpc::SYSTEM_SOCKET_DIR).join(crate::rpc::SOCKET_NAME)
 }
 
 /// Ask the socket what is behind it.

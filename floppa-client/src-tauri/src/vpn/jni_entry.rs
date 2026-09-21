@@ -388,7 +388,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
         }
 
         let socket = dir.join(crate::vpn::rpc::SOCKET_NAME);
-        let handle = crate::vpn::rpc_server::serve(&socket.to_string_lossy(), actor.clone())
+        // No session sink: here the UI and this process are one uid and read the same
+        // `server-session.json` directly, so there is nothing to carry across the socket. A UI
+        // that asked anyway is told `NotKept` rather than quietly succeeding.
+        let handle = crate::vpn::rpc_server::serve(&socket.to_string_lossy(), actor.clone(), None)
             .map_err(EntryError::ServerStart)?;
         *RPC_HANDLE.lock().map_err(|_| EntryError::Poisoned)? = Some(handle);
 
