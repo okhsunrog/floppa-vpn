@@ -27,6 +27,35 @@ pub fn init_config_dir(path: PathBuf) {
     let _ = APP_CONFIG_DIR.set(path);
 }
 
+/// Whether this process may reach for the OS keyring.
+///
+/// A process-wide fact, like the config directory above, and set the same way: the persistence
+/// task that acts on it runs far from whoever knows the answer, and threading a flag from
+/// `Deployment` down through the store's write queue would carry it past a dozen places that have
+/// no opinion about it.
+#[cfg(not(target_os = "android"))]
+static KEYRING_ALLOWED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Keep the configs in a `0600` file and never reach for the OS keyring.
+///
+/// For a process that has no user session to have a keyring in. The system service runs as root
+/// with no D-Bus session, so every keyring call is a blocking round trip that cannot succeed —
+/// once on load, and once *on every save*, each one logging a failure and then doing what it was
+/// always going to do. There the file is not a fallback, it is the storage, and the migration
+/// logic that normally moves a file into the keyring has nowhere to move it to.
+///
+/// Call it before the actor is spawned; after that the store is already reading.
+#[cfg(not(target_os = "android"))]
+pub fn use_file_storage_only() {
+    KEYRING_ALLOWED.store(false, std::sync::atomic::Ordering::Relaxed);
+    info!("configs will be kept in a file; this process has no keyring to use");
+}
+
+#[cfg(not(target_os = "android"))]
+fn keyring_allowed() -> bool {
+    KEYRING_ALLOWED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Get the config directory for the app, creating it if needed.
 pub fn config_dir() -> Result<PathBuf, String> {
     get_config_dir()
@@ -122,7 +151,7 @@ pub fn save_configs(configs: &SavedVpnConfigs) {
 
     #[cfg(not(target_os = "android"))]
     {
-        if save_to_keyring(&json) {
+        if keyring_allowed() && save_to_keyring(&json) {
             remove_config_file();
             return;
         }
@@ -187,12 +216,19 @@ fn load_from_keyring() -> KeyringRead {
 ///
 /// Desktop: whichever of keyring and file was written last wins. A winning file is moved into the
 /// keyring (and deleted) when the keyring is usable; a losing file is a stale plaintext copy and is
-/// deleted. Android: the file.
+/// deleted. Android: the file. After [`use_file_storage_only`]: the file, with none of the above —
+/// there is nothing to compare against and nowhere to migrate to.
 pub fn load_configs() -> Option<SavedVpnConfigs> {
     let from_file = load_configs_file();
 
     #[cfg(not(target_os = "android"))]
     {
+        if !keyring_allowed() {
+            return from_file.map(|f| {
+                info!(storage = ?Storage::File, "VPN configs loaded");
+                f.configs
+            });
+        }
         let from_keyring = load_from_keyring();
         match (from_keyring, from_file) {
             (KeyringRead::Found(k), Some(f)) if f.updated_at > k.updated_at => {
