@@ -109,7 +109,9 @@ fn report(state: &TunnelState) {
     }
 }
 
-fn describe(outcome: &CycleOutcome) -> String {
+/// A finished cycle, in the words a person at a terminal needs. Shared with [`crate::client`],
+/// which asks the service for the same outcomes and owes the same explanation.
+pub fn describe(outcome: &CycleOutcome) -> String {
     match outcome {
         CycleOutcome::Exhausted { failures } => match failures.last() {
             Some(last) => format!("{} failed: {}", last.protocol, last.error),

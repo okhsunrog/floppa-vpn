@@ -1,4 +1,6 @@
 mod auth;
+#[cfg(target_os = "linux")]
+mod client;
 mod connect;
 mod protocol;
 mod provision;
@@ -46,8 +48,13 @@ enum Command {
         api_url: String,
     },
     /// Connect to VPN (auto-detects WireGuard/AmneziaWG .conf or VLESS URI)
+    ///
+    /// Without --config this asks the system service for the machine's tunnel, which then outlives
+    /// this command. With --config it builds one here instead, from the file, and holds it until
+    /// interrupted — that run needs root and never touches the service.
     Connect {
-        /// Config file (.conf) or VLESS URI file
+        /// Config file (.conf) or VLESS URI file. Implies a tunnel run by this command, not by the
+        /// service
         #[arg(long)]
         config: Option<String>,
         /// Tunnel protocol (AmneziaWG by default, like the app)
@@ -62,6 +69,12 @@ enum Command {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
+    /// Take the tunnel the system service is holding down
+    #[cfg(target_os = "linux")]
+    Disconnect,
+    /// What the system service says the tunnel is doing
+    #[cfg(target_os = "linux")]
+    Status,
     /// List your peers
     Peers {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
@@ -133,29 +146,53 @@ async fn main() -> Result<()> {
             no_dns,
             api_url,
         } => {
-            let config_str = match config {
-                Some(path) => std::fs::read_to_string(&path)
-                    .with_context(|| format!("Failed to read config file: {path}"))?,
-                None => {
-                    let token = tokens.require()?;
-                    let client = ApiClient::new(&api_url, &token)?;
-                    let me = client.me().await?;
-                    if let Some(ref sub) = me.subscription {
-                        eprintln!(
-                            "Plan: {} (speed limit: {})",
-                            sub.plan_name,
-                            sub.speed_limit_mbps
-                                .map(|s| format!("{s} Mbps"))
-                                .unwrap_or_else(|| "unlimited".into())
-                        );
-                    } else {
-                        bail!("No active subscription");
-                    }
-                    provision::config_for(&client, protocol, &auth::device_identity()?).await?
-                }
-            };
+            // A config on the command line is a tunnel for this run to build and hold, so it is
+            // also the choice between the two shapes of `connect`. Given one, nothing here looks
+            // for a service; given none, the machine's tunnel is the service's to raise.
+            if let Some(path) = config {
+                let config_str = std::fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read config file: {path}"))?;
+                connect::run(&config_str, &interface, no_dns, &auth::config_dir()?).await?;
+                return Ok(());
+            }
 
+            let token = tokens.require()?;
+            let api = ApiClient::new(&api_url, &token)?;
+            let me = api.me().await?;
+            let Some(sub) = me.subscription.as_ref() else {
+                bail!("No active subscription");
+            };
+            eprintln!(
+                "Plan: {} (speed limit: {})",
+                sub.plan_name,
+                sub.speed_limit_mbps
+                    .map(|s| format!("{s} Mbps"))
+                    .unwrap_or_else(|| "unlimited".into())
+            );
+            let identity = auth::device_identity()?;
+            let config_str = provision::config_for(&api, protocol, &identity).await?;
+
+            #[cfg(target_os = "linux")]
+            {
+                let remote = client::reach().await?;
+                // The service is what will need to reach the server later, with nobody at this
+                // terminal, to replace a peer that has been deleted. Handing the session over is
+                // how it can: the credentials are this user's and the store is root's.
+                client::seed_session(&remote, &api_url, &token, &identity).await;
+                client::connect(&remote, &config_str).await?;
+            }
+            #[cfg(not(target_os = "linux"))]
             connect::run(&config_str, &interface, no_dns, &auth::config_dir()?).await?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::Disconnect => {
+            let remote = client::reach().await?;
+            client::disconnect(&remote).await?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::Status => {
+            let remote = client::reach().await?;
+            client::status(&remote).await?;
         }
         Command::Peers { api_url } => {
             let token = tokens.require()?;

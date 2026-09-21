@@ -26,6 +26,10 @@
 pub mod actor;
 pub mod autostart;
 pub mod backend;
+/// Which of the three ways of running a tunnel a client is in, and how it finds out. Unix-gated
+/// like the socket it asks about.
+#[cfg(unix)]
+pub mod client_mode;
 pub mod config;
 /// What the tunnel needs from whatever hosts it. Android-only: on desktop the ladder configures
 /// the machine itself, and there is no service to ask.
