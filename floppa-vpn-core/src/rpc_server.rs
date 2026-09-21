@@ -10,21 +10,35 @@
 //! desktop app into a privileged helper and a UI later needs this exact machinery rather than a
 //! second copy of it.
 
-use super::rpc::{Published, STATE_HOLD, VpnRpc};
+use super::rpc::{Published, STATE_HOLD, SessionError, VpnRpc};
 pub use super::rpc_listener::RpcServerHandle;
 use crate::actor::handle::{IntentRequest, TunnelHandle};
 use crate::actor::types::{CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelState};
 use crate::protocol::Protocol;
 use crate::store::ConfigError;
 use futures::StreamExt;
+use std::sync::Arc;
 use tarpc::context::Context;
 use tarpc::server::Channel;
 use tokio_util::codec::length_delimited::LengthDelimitedCodec;
 use tracing::{debug, warn};
 
+/// Somewhere to keep the credentials a client hands over, on that client's behalf.
+///
+/// A trait, and the payload opaque, for the reason [`VpnRpc::set_session`] gives: this crate must
+/// not learn what a server session is. The process that *does* know supplies one of these, and a
+/// process with nothing to keep — Android, where the two ends share a file — supplies none.
+pub trait SessionSink: Send + Sync + 'static {
+    /// Store `session`, or remove what is stored when it is `None`.
+    fn store(&self, session: Option<String>) -> Result<(), String>;
+}
+
 #[derive(Clone)]
 struct ActorServer {
     handle: TunnelHandle,
+    /// `None` where sessions are not this process's to keep. Not a no-op: a caller that asked is
+    /// told so, rather than being led to believe a credential was stored somewhere it was not.
+    session: Option<Arc<dyn SessionSink>>,
     /// Identity of this run of the actor. Random per process: it is only ever compared for
     /// equality, and what it has to be is *different from the last run's*.
     boot: u64,
@@ -35,7 +49,7 @@ struct ActorServer {
 }
 
 impl ActorServer {
-    fn new(handle: TunnelHandle, protocol: u32) -> Self {
+    fn new(handle: TunnelHandle, session: Option<Arc<dyn SessionSink>>, protocol: u32) -> Self {
         // `RandomState` is seeded per process by the standard library: entropy with no dependency
         // and no syscall, and equality is all this value is ever used for.
         let boot = {
@@ -46,6 +60,7 @@ impl ActorServer {
         };
         Self {
             handle,
+            session,
             boot,
             protocol,
         }
@@ -145,14 +160,51 @@ impl VpnRpc for ActorServer {
     async fn stop_log_capture(self, _ctx: Context) {
         let _ = crate::logging::stop_file_capture();
     }
+
+    async fn set_session(self, _ctx: Context, session: Option<String>) -> Result<(), SessionError> {
+        let Some(sink) = self.session.as_ref() else {
+            return Err(SessionError::NotKept);
+        };
+        // Whether it arrived or was taken away, and never what was in it: this is a bearer token.
+        let what = if session.is_some() {
+            "stored"
+        } else {
+            "cleared"
+        };
+        // On a blocking thread: the store writes a file and fsyncs it, and the reactor thread this
+        // runs on is the one carrying every other client's calls.
+        let result = tokio::task::spawn_blocking({
+            let sink = sink.clone();
+            move || sink.store(session)
+        })
+        .await
+        .unwrap_or_else(|e| Err(format!("the store task did not finish: {e}")));
+
+        match result {
+            Ok(()) => {
+                debug!("the server session was {what} on a client's behalf");
+                Ok(())
+            }
+            Err(detail) => {
+                warn!("a client's session could not be {what}: {detail}");
+                Err(SessionError::Failed { detail })
+            }
+        }
+    }
 }
 
 /// Serve the actor on a Unix socket until the returned handle is dropped or shut down.
 ///
 /// One server per process, not one per tunnel: what is being served is the actor, which outlives
 /// every individual tunnel and every client that connects to ask about one.
-pub fn serve(socket_path: &str, handle: TunnelHandle) -> Result<RpcServerHandle, String> {
-    serve_at_protocol(socket_path, handle, super::rpc::PROTOCOL_VERSION)
+/// `session` is where a client's credentials are kept on its behalf, or `None` where that is not
+/// this process's job — see [`SessionSink`].
+pub fn serve(
+    socket_path: &str,
+    handle: TunnelHandle,
+    session: Option<Arc<dyn SessionSink>>,
+) -> Result<RpcServerHandle, String> {
+    serve_at_protocol(socket_path, handle, session, super::rpc::PROTOCOL_VERSION)
 }
 
 /// [`serve`], answering as a build that speaks `protocol`.
@@ -163,11 +215,12 @@ pub fn serve(socket_path: &str, handle: TunnelHandle) -> Result<RpcServerHandle,
 fn serve_at_protocol(
     socket_path: &str,
     handle: TunnelHandle,
+    session: Option<Arc<dyn SessionSink>>,
     protocol: u32,
 ) -> Result<RpcServerHandle, String> {
     super::rpc_listener::listen(
         std::path::Path::new(socket_path),
-        connection_handler(ActorServer::new(handle, protocol)),
+        connection_handler(ActorServer::new(handle, session, protocol)),
     )
     .map_err(|e| format!("failed to bind the actor socket at {socket_path}: {e}"))
 }
@@ -180,10 +233,15 @@ fn serve_at_protocol(
 pub fn serve_on_listener(
     listener: tokio::net::UnixListener,
     handle: TunnelHandle,
+    session: Option<Arc<dyn SessionSink>>,
 ) -> RpcServerHandle {
     super::rpc_listener::serve_on(
         listener,
-        connection_handler(ActorServer::new(handle, super::rpc::PROTOCOL_VERSION)),
+        connection_handler(ActorServer::new(
+            handle,
+            session,
+            super::rpc::PROTOCOL_VERSION,
+        )),
     )
 }
 
@@ -320,7 +378,7 @@ mod tests {
             state: state_rx,
             intents: std::sync::Mutex::new(Vec::new()),
         });
-        let server = serve(&socket, TunnelHandle::remote(actor.clone())).expect("bind");
+        let server = serve(&socket, TunnelHandle::remote(actor.clone()), None).expect("bind");
 
         let process = Arc::new(AlwaysRunning(AtomicUsize::new(0)));
         let remote = RemoteActor::new(dir.path(), process.clone(), &spawner());
@@ -362,7 +420,7 @@ mod tests {
             state: fresh_rx,
             intents: std::sync::Mutex::new(Vec::new()),
         });
-        let _server = serve(&socket, TunnelHandle::remote(fresh_actor)).expect("rebind");
+        let _server = serve(&socket, TunnelHandle::remote(fresh_actor), None).expect("rebind");
 
         wait_for(&remote, "the state of the restarted process", |s| {
             s.phase == Phase::Disconnected
@@ -393,8 +451,12 @@ mod tests {
             state: state_rx,
             intents: std::sync::Mutex::new(Vec::new()),
         });
-        let _server =
-            serve(&path.to_string_lossy(), TunnelHandle::remote(actor.clone())).expect("bind");
+        let _server = serve(
+            &path.to_string_lossy(),
+            TunnelHandle::remote(actor.clone()),
+            None,
+        )
+        .expect("bind");
 
         let process = Arc::new(AlwaysRunning(AtomicUsize::new(0)));
         let remote = RemoteActor::new(dir.path(), process.clone(), &spawner());
@@ -471,6 +533,133 @@ mod tests {
         );
     }
 
+    /// Records what it was asked to keep, so a test can tell "stored" from "cleared" from
+    /// "never asked".
+    #[derive(Default)]
+    struct RecordingSink(std::sync::Mutex<Vec<Option<String>>>);
+
+    impl SessionSink for RecordingSink {
+        fn store(&self, session: Option<String>) -> Result<(), String> {
+            self.0.lock().unwrap().push(session);
+            Ok(())
+        }
+    }
+
+    struct RefusingSink;
+
+    impl SessionSink for RefusingSink {
+        fn store(&self, _session: Option<String>) -> Result<(), String> {
+            Err("the disk is full".into())
+        }
+    }
+
+    async fn client_for(socket: &str) -> crate::rpc::VpnRpcClient {
+        let stream = tokio::net::UnixStream::connect(socket)
+            .await
+            .expect("connect");
+        let framed = LengthDelimitedCodec::builder().new_framed(stream);
+        let transport = tarpc::serde_transport::new(framed, tokio_serde::formats::Json::default());
+        crate::rpc::VpnRpcClient::new(tarpc::client::Config::default(), transport).spawn()
+    }
+
+    fn idle_actor() -> Arc<FakeActor> {
+        let (_tx, rx) = watch::channel(TunnelState::initial());
+        // The sender is dropped: nothing under test here ever publishes.
+        Arc::new(FakeActor {
+            state: rx,
+            intents: std::sync::Mutex::new(Vec::new()),
+        })
+    }
+
+    /// The call a client makes so the service can talk to the server without it: the payload is
+    /// opaque to everything it passes through, and `None` is a sign-out.
+    #[tokio::test]
+    async fn a_session_is_handed_over_and_taken_away_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir
+            .path()
+            .join(crate::rpc::SOCKET_NAME)
+            .to_string_lossy()
+            .to_string();
+        let sink = Arc::new(RecordingSink::default());
+        let _server = serve(
+            &socket,
+            TunnelHandle::remote(idle_actor()),
+            Some(sink.clone()),
+        )
+        .expect("bind");
+
+        let client = client_for(&socket).await;
+        let ctx = || tarpc::context::current();
+
+        assert_eq!(
+            client
+                .set_session(ctx(), Some("{\"token\":\"t\"}".into()))
+                .await
+                .expect("call"),
+            Ok(())
+        );
+        assert_eq!(client.set_session(ctx(), None).await.expect("call"), Ok(()));
+
+        let seen = sink.0.lock().unwrap().clone();
+        assert_eq!(
+            seen,
+            vec![Some("{\"token\":\"t\"}".to_string()), None],
+            "the payload crosses unchanged, and a sign-out arrives as one"
+        );
+    }
+
+    /// Android: the two ends are one uid and share the file, so there is nothing for this to do.
+    /// Said, rather than quietly succeeded — a caller that believed a credential had been stored
+    /// somewhere would go on to rely on it.
+    #[tokio::test]
+    async fn a_peer_that_keeps_no_sessions_says_so_rather_than_pretending() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir
+            .path()
+            .join(crate::rpc::SOCKET_NAME)
+            .to_string_lossy()
+            .to_string();
+        let _server = serve(&socket, TunnelHandle::remote(idle_actor()), None).expect("bind");
+
+        let client = client_for(&socket).await;
+        assert_eq!(
+            client
+                .set_session(tarpc::context::current(), Some("x".into()))
+                .await
+                .expect("call"),
+            Err(crate::rpc::SessionError::NotKept)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_that_failed_is_reported_as_a_failure_not_as_a_refusal() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let socket = dir
+            .path()
+            .join(crate::rpc::SOCKET_NAME)
+            .to_string_lossy()
+            .to_string();
+        let _server = serve(
+            &socket,
+            TunnelHandle::remote(idle_actor()),
+            Some(Arc::new(RefusingSink)),
+        )
+        .expect("bind");
+
+        let client = client_for(&socket).await;
+        let answer = client
+            .set_session(tarpc::context::current(), Some("x".into()))
+            .await
+            .expect("call");
+        assert_eq!(
+            answer,
+            Err(crate::rpc::SessionError::Failed {
+                detail: "the disk is full".into()
+            })
+        );
+    }
+
     /// What an update that replaced the binaries without restarting the service looks like from
     /// the client: a socket that answers, in a language this build does not speak.
     ///
@@ -492,6 +681,7 @@ mod tests {
         let stale = serve_at_protocol(
             &socket,
             TunnelHandle::remote(actor.clone()),
+            None,
             crate::rpc::PROTOCOL_VERSION + 1,
         )
         .expect("bind");
@@ -510,7 +700,7 @@ mod tests {
         // And it recovers by itself once the service is restarted into the installed build, which
         // is the only thing the user can do about it.
         stale.shutdown_and_unlink();
-        let current = serve(&socket, TunnelHandle::remote(actor)).expect("rebind");
+        let current = serve(&socket, TunnelHandle::remote(actor), None).expect("rebind");
         state_tx.send(connected(2)).expect("publish");
         let seen = wait_for(&remote, "the state after a restart", |s| {
             s.phase == Phase::Connected

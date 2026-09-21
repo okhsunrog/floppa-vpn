@@ -33,12 +33,38 @@ use crate::store::ConfigError;
 
 /// The version of everything else in this module.
 ///
-/// Bump it whenever the wire changes in a way that a peer built against the old shape would read
-/// wrongly: a method added, removed or reordered (tarpc dispatches by position), a field whose
-/// meaning changes, an enum variant that an old build would fail to match.
+/// Bump it whenever a peer built against the old shape would get something wrong: a method the
+/// caller now needs and the old build does not have, a field whose meaning changed, an enum
+/// variant an old build would fail to match.
 ///
-/// One is the shape that shipped in 0.6.x, before the version was carried at all.
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Reordering methods is *not* such a change, and neither is adding one that nobody has to call.
+/// The transport is JSON and tarpc's request enum is externally tagged, so what is on the wire is
+/// the method's name: an old server meeting a new method answers
+/// `unknown variant `SetSession`, expected one of …` and drops the connection, which the client
+/// sees as "the connection to the server was already shutdown". Clear enough once you know, and
+/// exactly why the version is stated up front instead — so the mismatch is named before a call
+/// fails in a way that describes nothing.
+///
+/// One is the shape that shipped in 0.6.x, before the version was carried at all. Two added
+/// [`VpnRpc::set_session`], which a desktop client does have to call.
+pub const PROTOCOL_VERSION: u32 = 2;
+
+/// Why a session could not be handed over.
+///
+/// Typed rather than a sentence, because the two cases are answered differently: one means this
+/// peer is not the kind that keeps sessions and never will be, the other means a write failed and
+/// trying again may work.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionError {
+    /// The process holding the actor does not keep a session on anyone's behalf. That is the
+    /// Android case: both processes are one uid and share the file directly, so there is nothing
+    /// for this call to do and pretending otherwise would hide a caller doing the wrong thing.
+    #[error("this peer does not keep a session for its clients")]
+    NotKept,
+    #[error("the session could not be stored: {detail}")]
+    Failed { detail: String },
+}
 
 /// A published state, and which run of the actor published it.
 ///
@@ -82,8 +108,7 @@ pub const STATE_POLL_DEADLINE: std::time::Duration = std::time::Duration::from_s
 ///
 /// On Android the two ends cannot disagree: they ship in the same APK, installing one replaces the
 /// other, and installing force-stops every process of the package, so two builds are never live at
-/// once. That is why this wire was allowed to change freely — including the method set, which
-/// shifts tarpc's dispatch indices.
+/// once. That is why this wire was allowed to change freely, in any way at all.
 ///
 /// A desktop system service breaks that guarantee, and quietly. Upgrading the package replaces the
 /// binaries on disk while the old one keeps running until something restarts it, so a new client
@@ -162,6 +187,26 @@ pub trait VpnRpc {
 
     /// Stop writing VPN process logs into a diagnostic capture.
     async fn stop_log_capture();
+
+    /// Hand over — or take away — the credentials this device talks to the server with.
+    ///
+    /// `None` is a sign-out and removes what was stored. A signed-out device must not be able to
+    /// make peers, and the process that would make them is this one.
+    ///
+    /// # Why the payload is opaque
+    ///
+    /// It is `floppa_provision::ServerSession` as JSON, and this crate deliberately does not know
+    /// that. The session describes a *server relationship* — a base URL, a bearer token, which
+    /// device we are to it — and `floppa-vpn-core` runs tunnels and knows nothing about servers;
+    /// naming the type here would mean this crate depending on the one that talks to them, which
+    /// is the layering `floppa-provision` exists to avoid. What the process holding the actor does
+    /// with this is keep it safe at rest on behalf of a client that cannot: the client is an
+    /// unprivileged program, the store is root-owned, and at boot there is no user logged in to
+    /// ask. Custodian, not reader.
+    ///
+    /// Not needed on Android, where the UI and `:vpn` are one uid and share the file directly —
+    /// there this answers [`SessionError::NotKept`].
+    async fn set_session(session: Option<String>) -> Result<(), SessionError>;
 }
 
 #[cfg(test)]
@@ -520,6 +565,29 @@ mod tests {
                 survives("capture_id", &"2026-08-25T12-00-00Z".to_string()),
                 "2026-08-25T12-00-00Z"
             );
+        }
+
+        #[test]
+        fn the_session_handed_over_and_every_way_it_can_be_refused() {
+            // The payload is opaque here on purpose, so what has to survive is a string, an
+            // absent one — which is a sign-out and must not decode as an empty session — and the
+            // two answers.
+            let handed: Option<String> = Some(r#"{"version":1,"token":"a.b.c"}"#.into());
+            assert_eq!(survives("Option<String> Some", &handed), handed);
+            let cleared: Option<String> = None;
+            assert_eq!(survives("Option<String> None", &cleared), cleared);
+
+            let ok: Result<(), SessionError> = Ok(());
+            assert_eq!(survives("Result<(), SessionError> Ok", &ok), ok);
+            for refused in [
+                SessionError::NotKept,
+                SessionError::Failed {
+                    detail: "no space left on device".into(),
+                },
+            ] {
+                let err: Result<(), SessionError> = Err(refused.clone());
+                assert_eq!(survives("Result<(), SessionError> Err", &err), err);
+            }
         }
     }
 

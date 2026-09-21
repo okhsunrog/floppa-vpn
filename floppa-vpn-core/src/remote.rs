@@ -147,6 +147,30 @@ impl RemoteActor {
             }
         }
     }
+
+    /// Hand the credentials this device talks to the server with over to the process holding the
+    /// actor, or take them away with `None`.
+    ///
+    /// An inherent method and not part of [`TunnelControl`], because it is not about the tunnel.
+    /// The actor neither reads this nor is affected by it; what is on the other end is a process
+    /// that can keep a secret at rest where an unprivileged client cannot, and that has to be able
+    /// to reach the server when nobody is logged in.
+    ///
+    /// The payload is opaque on the way through — see [`VpnRpc::set_session`](crate::rpc::VpnRpc).
+    pub async fn set_session(
+        &self,
+        session: Option<String>,
+    ) -> Result<(), crate::rpc::SessionError> {
+        self.call("set_session", |client| async move {
+            client
+                .set_session(RemoteActor::deadline(CALL_DEADLINE), session)
+                .await
+        })
+        .await
+        // A transport failure is not a refusal: nothing looked at the session, and the caller's
+        // only sensible move — try again later — is the same one a failed write asks for.
+        .map_err(|detail| crate::rpc::SessionError::Failed { detail })?
+    }
 }
 
 /// Keep the mirror filled, forever.

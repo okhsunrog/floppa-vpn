@@ -85,10 +85,12 @@ pub async fn run() -> Result<()> {
 /// out before anything is installed, and a mode that only works under systemd is a mode that
 /// cannot be debugged.
 fn start_server(handle: TunnelHandle) -> Result<rpc_server::RpcServerHandle> {
+    let session: Option<Arc<dyn rpc_server::SessionSink>> = Some(Arc::new(StateDirSession));
+
     if let Some(listener) =
         rpc_listener::inherited_listener().context("reading the socket systemd passed")?
     {
-        return Ok(rpc_server::serve_on_listener(listener, handle));
+        return Ok(rpc_server::serve_on_listener(listener, handle, session));
     }
 
     // Root only, both of them. Who *else* may drive the tunnel is a question the `.socket` unit
@@ -103,10 +105,36 @@ fn start_server(handle: TunnelHandle) -> Result<rpc_server::RpcServerHandle> {
     let dir = std::path::Path::new(SYSTEM_SOCKET_DIR);
     create_private_dir(dir)?;
     let socket = dir.join(SOCKET_NAME);
-    let server =
-        rpc_server::serve(&socket.to_string_lossy(), handle).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let server = rpc_server::serve(&socket.to_string_lossy(), handle, session)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     restrict_to_owner(&socket)?;
     Ok(server)
+}
+
+/// The server session, kept in the state directory on a client's behalf.
+///
+/// This is the half of the arrangement the client cannot do for itself. The store is root-owned,
+/// so an unprivileged program cannot write it; and it has to be readable at boot, before anyone
+/// has logged in, which rules out anybody's keyring. The client has the credentials and no way to
+/// keep them here; this process has the place and no way to obtain them.
+///
+/// It goes through `floppa-provision` rather than writing the file directly, so the shape and the
+/// filename have exactly one definition — the same one the peer watcher in this process reads
+/// back a moment later.
+struct StateDirSession;
+
+impl rpc_server::SessionSink for StateDirSession {
+    fn store(&self, session: Option<String>) -> Result<(), String> {
+        let dir = floppa_vpn_core::config::config_dir()?;
+        let parsed = match session {
+            Some(raw) => Some(
+                serde_json::from_str::<floppa_provision::ServerSession>(&raw)
+                    .map_err(|e| format!("the session is not one this build understands: {e}"))?,
+            ),
+            None => None,
+        };
+        floppa_provision::session::store(&dir, parsed)
+    }
 }
 
 /// Make a path readable and writable by its owner and nobody else.
