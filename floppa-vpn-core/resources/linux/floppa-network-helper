@@ -46,10 +46,34 @@ validate_link_target() {
 case "${1:-}" in
     ensure-tun)
         # Usage: ensure-tun <iface> <uid>
+        #
+        # The persistent TUN outlives a run — `deconfigure` only downs it and flushes its
+        # addresses — so finding one already there is the ordinary case, and re-creating it is not
+        # what is wanted. But "already there" is not the same as "ours": once a machine can run the
+        # tunnel from more than one place (the system service, an unprivileged app, `sudo floppa`),
+        # a second one that simply accepted the existing device would lay its own routes and DNS
+        # over the first one's, holding a rollback journal that knows nothing about them. It is
+        # also the only chance to notice: this helper runs privileged in every one of those modes,
+        # so it is the one place that can arbitrate between them.
+        #
+        # `/sys/class/net/<iface>/owner` is the uid a tuntap device was created for, and -1 when it
+        # was created for nobody. Anything that is not the uid asking is somebody else's.
         [[ $# -eq 3 ]] || { echo "Usage: ensure-tun <iface> <uid>" >&2; exit 1; }
         validate_iface "$2"
         validate_uid "$3"
-        if ! ip link show dev "$2" >/dev/null 2>&1; then
+        if ip link show dev "$2" >/dev/null 2>&1; then
+            owner=$(cat "/sys/class/net/$2/owner" 2>/dev/null || true)
+            if [[ -z "$owner" ]]; then
+                echo "$2 already exists and is not a tuntap device" >&2
+                exit 1
+            elif [[ "$owner" == "-1" ]]; then
+                echo "$2 already exists and belongs to no user; remove it with 'ip tuntap del dev $2 mode tun'" >&2
+                exit 1
+            elif [[ "$owner" != "$3" ]]; then
+                echo "$2 is already in use by uid $owner; another Floppa VPN client is running" >&2
+                exit 1
+            fi
+        else
             ip tuntap add dev "$2" mode tun user "$3"
         fi
         ;;
