@@ -54,6 +54,11 @@ impl From<FloppaError> for ApiError {
                 message: "No active subscription".into(),
                 status: StatusCode::PAYMENT_REQUIRED,
             },
+            FloppaError::RegionNotAvailable(region) => Self {
+                error: "region_not_available".into(),
+                message: format!("Region is not available on the current plan: {region}"),
+                status: StatusCode::FORBIDDEN,
+            },
             FloppaError::PeerLimitReached { current, max } => Self {
                 error: "peer_limit_reached".into(),
                 message: format!("Peer limit reached: {current}/{max}"),

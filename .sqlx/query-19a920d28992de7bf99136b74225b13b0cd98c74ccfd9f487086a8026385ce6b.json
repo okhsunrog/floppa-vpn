@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake, p.created_at,\n               ai.device_id, ai.device_name\n        FROM peers p\n        JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND ai.device_id = $2 AND p.protocol = $3\n          AND p.sync_status NOT IN ('removed', 'pending_remove')\n        ",
+  "query": "\n        SELECT p.id, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.region_id, p.last_handshake, p.created_at,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != $2\n        ORDER BY p.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -49,6 +49,17 @@
       },
       {
         "ordinal": 4,
+        "name": "region_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "region_id"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
         "name": "last_handshake",
         "type_info": "Timestamptz",
         "origin": {
@@ -59,24 +70,13 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
             "table": "peers",
             "name": "created_at"
-          }
-        }
-      },
-      {
-        "ordinal": 6,
-        "name": "device_id",
-        "type_info": "Text",
-        "origin": {
-          "Table": {
-            "table": "app_installations",
-            "name": "device_id"
           }
         }
       },
@@ -90,12 +90,22 @@
             "name": "device_name"
           }
         }
+      },
+      {
+        "ordinal": 8,
+        "name": "device_id?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "device_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Int8",
-        "Text",
         "Text"
       ]
     },
@@ -104,11 +114,12 @@
       false,
       false,
       false,
+      false,
       true,
       false,
-      false,
-      true
+      true,
+      false
     ]
   },
-  "hash": "68b42a9df6d7774f5339f64fe5cc060a89c3a63a56b326e9742cae286a86f044"
+  "hash": "19a920d28992de7bf99136b74225b13b0cd98c74ccfd9f487086a8026385ce6b"
 }

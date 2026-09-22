@@ -61,6 +61,7 @@ fn peer(id: i64, protocol: Protocol, status: PeerSyncStatus) -> MyPeer {
         assigned_ip: "10.0.0.2".into(),
         sync_status: status,
         protocol,
+        region_id: "europe".into(),
         download_bytes: 0,
         upload_bytes: 0,
         last_handshake: None,
@@ -157,6 +158,7 @@ impl ProvisionApi for FakeApi {
             device_name: req.device_name.clone(),
             platform: req.platform.clone(),
             app_version: req.app_version.clone(),
+            region_id: "europe".into(),
             created_at: chrono::Utc::now(),
             last_seen_at: chrono::Utc::now(),
         })

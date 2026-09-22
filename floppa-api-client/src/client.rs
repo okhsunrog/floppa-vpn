@@ -82,6 +82,7 @@ pub enum ApiErrorCode {
     NoAvailableIps,
     PeerAlreadyExists,
     PeerLimitReached,
+    RegionNotAvailable,
     VlessNotConfigured,
 }
 
@@ -109,6 +110,7 @@ impl FromStr for ApiErrorCode {
             "no_available_ips" => Self::NoAvailableIps,
             "peer_already_exists" => Self::PeerAlreadyExists,
             "peer_limit_reached" => Self::PeerLimitReached,
+            "region_not_available" => Self::RegionNotAvailable,
             "vless_not_configured" => Self::VlessNotConfigured,
             _ => return Err(()),
         })

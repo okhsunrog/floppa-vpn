@@ -1193,6 +1193,124 @@
         ]
       }
     },
+    "/me/region": {
+      "put": {
+        "tags": [
+          "user"
+        ],
+        "summary": "Select the exit region for every WireGuard-family peer on this device.",
+        "operationId": "set_my_region",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRegionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Region selected"
+          },
+          "400": {
+            "description": "Session is not bound to an installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "No active subscription",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Region is unavailable on the current plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/me/regions": {
+      "get": {
+        "tags": [
+          "user"
+        ],
+        "summary": "List exit regions for this device, including regions hidden by its current plan.",
+        "operationId": "get_my_regions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RegionInfo"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Session is not bound to an installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/me/sessions": {
       "get": {
         "tags": [
@@ -3071,6 +3189,7 @@
         "required": [
           "id",
           "device_id",
+          "region_id",
           "last_seen_at",
           "created_at"
         ],
@@ -3107,6 +3226,9 @@
               "string",
               "null"
             ]
+          },
+          "region_id": {
+            "type": "string"
           }
         }
       },
@@ -3289,6 +3411,7 @@
           "assigned_ip",
           "sync_status",
           "protocol",
+          "region_id",
           "download_bytes",
           "upload_bytes",
           "created_at"
@@ -3330,6 +3453,9 @@
           },
           "protocol": {
             "$ref": "#/components/schemas/Protocol"
+          },
+          "region_id": {
+            "type": "string"
           },
           "sync_status": {
             "$ref": "#/components/schemas/PeerSyncStatus"
@@ -3709,6 +3835,33 @@
           }
         }
       },
+      "RegionInfo": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "available",
+          "selected",
+          "supports_vless"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "selected": {
+            "type": "boolean"
+          },
+          "supports_vless": {
+            "type": "boolean"
+          }
+        }
+      },
       "SessionInfo": {
         "type": "object",
         "description": "One live login of a user, as shown in \"Devices & sessions\".",
@@ -3791,6 +3944,17 @@
             "type": "string"
           },
           "password": {
+            "type": "string"
+          }
+        }
+      },
+      "SetRegionRequest": {
+        "type": "object",
+        "required": [
+          "region_id"
+        ],
+        "properties": {
+          "region_id": {
             "type": "string"
           }
         }

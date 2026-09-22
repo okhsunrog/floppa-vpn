@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        INSERT INTO app_installations (user_id, device_id, device_name, platform, app_version)\n        VALUES ($1, $2, $3, $4, $5)\n        ON CONFLICT (user_id, device_id) DO UPDATE SET\n            device_name = COALESCE($3, app_installations.device_name),\n            platform = COALESCE($4, app_installations.platform),\n            app_version = COALESCE($5, app_installations.app_version),\n            last_seen_at = NOW()\n        RETURNING id, user_id, device_id, device_name, platform, app_version, last_seen_at, created_at\n        ",
+  "query": "\n        INSERT INTO app_installations (user_id, device_id, device_name, platform, app_version)\n        VALUES ($1, $2, $3, $4, $5)\n        ON CONFLICT (user_id, device_id) DO UPDATE SET\n            device_name = COALESCE($3, app_installations.device_name),\n            platform = COALESCE($4, app_installations.platform),\n            app_version = COALESCE($5, app_installations.app_version),\n            last_seen_at = NOW()\n        RETURNING id, user_id, device_id, device_name, platform, app_version, region_id, last_seen_at, created_at\n        ",
   "describe": {
     "columns": [
       {
@@ -71,6 +71,17 @@
       },
       {
         "ordinal": 6,
+        "name": "region_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "app_installations",
+            "name": "region_id"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
         "name": "last_seen_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -109,8 +120,9 @@
       true,
       true,
       false,
+      false,
       false
     ]
   },
-  "hash": "31c92b81cf8addffca50cd42df7f2abf7da788792ab4f06693d12bd4c9dbe038"
+  "hash": "0fd7ac788e88d4616c42efdcc4a184441d9415ebbb973d217d71af94e768d7e1"
 }

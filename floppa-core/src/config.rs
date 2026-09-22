@@ -6,6 +6,7 @@
 
 use ipnetwork::Ipv4Network;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::path::Path;
 use veil::Redact;
@@ -41,6 +42,24 @@ pub struct Config {
     /// Metrics / observability configuration
     #[serde(default)]
     pub metrics: Option<MetricsConfig>,
+    /// Per-region Linux policy-routing tables. The default Europe region needs no
+    /// entry because it follows the server's ordinary routing policy.
+    #[serde(default)]
+    pub regions: HashMap<String, RegionRoutingConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegionRoutingConfig {
+    /// A numeric table id or a name registered in /etc/iproute2/rt_tables.
+    pub routing_table: String,
+    /// Rules must precede the deployment's broad VPN-subnet fallback rule.
+    #[serde(default = "default_region_rule_priority")]
+    pub rule_priority: u32,
+}
+
+fn default_region_rule_priority() -> u32 {
+    90
 }
 
 /// One WireGuard-family server interface: the `[wireguard]` and `[amneziawg]` sections share

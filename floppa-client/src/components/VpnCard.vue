@@ -12,11 +12,13 @@ import { useSettingsStore } from '../stores/settingsStore'
 import { usePermissionsStore } from '../stores/permissionsStore'
 import { usePeerProvisioning } from '../composables/usePeerProvisioning'
 import { needsAttention } from '../utils/outcomes'
+import { useRegionStore } from '../stores/regionStore'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
+const regionStore = useRegionStore()
 const { setupPhase, setupError, meQueryError, noteServerReachable, setupAutoPeer, handleOutcome } =
   usePeerProvisioning()
 
@@ -77,6 +79,7 @@ onMounted(async () => {
 
   if (vpn.deviceId) {
     await setupAutoPeer()
+    await regionStore.refresh()
   }
 })
 
@@ -177,6 +180,10 @@ function selectProtocol(proto: Protocol) {
   // launches, but it is not a reordering of the auto-select priority — that list is its own
   // setting and stays as the user left it.
   settingsStore.manualProtocol = proto
+}
+
+async function selectRegion(regionId: string) {
+  await regionStore.select(regionId)
 }
 
 const healthDotClass = computed(() => {
@@ -457,6 +464,35 @@ const healthDotClass = computed(() => {
             {{ t(`vpn.${proto}`) }}
           </button>
         </div>
+      </div>
+
+      <div v-if="regionStore.regions.length > 1" class="mt-3">
+        <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.region') }}</div>
+        <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
+          <button
+            v-for="region in regionStore.regions"
+            :key="region.id"
+            :disabled="!region.available || vpn.isConnected || busy || regionStore.changing"
+            class="px-4 py-1.5 text-sm rounded-md transition-all disabled:opacity-50"
+            :class="
+              region.selected
+                ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
+                : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
+            "
+            :title="!region.available ? t('vpn.regionUnavailable') : undefined"
+            @click="selectRegion(region.id)"
+          >
+            <UIcon v-if="!region.available" name="i-lucide-lock" class="mr-1" />
+            {{ region.display_name }}
+          </button>
+        </div>
+        <p v-if="regionStore.error" class="text-xs text-error mt-1.5">{{ regionStore.error }}</p>
+        <p
+          v-else-if="!regionStore.supportsVless"
+          class="text-xs text-[var(--ui-text-muted)] mt-1.5"
+        >
+          {{ t('vpn.regionNoVless') }}
+        </p>
       </div>
     </div>
   </UCard>

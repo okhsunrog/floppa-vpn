@@ -4,8 +4,8 @@ import { type _JSONValue, defineQueryOptions, type UseMutationOptions } from '@p
 
 import { serializeQueryKeyValue } from '../client';
 import { client } from '../client.gen';
-import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallation, deleteMyPeer, deleteMySession, deletePlan, deleteSubscription, deleteUserSession, exchangeTelegramLoginCode, getAvatarsBatch, getMe, getMyAvatar, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMySessions, getMyVlessConfig, getPublicConfig, getStats, getUser, getUserAvatar, getVersion, listInstallations, listPeers, listPlans, listPublicPlans, listUsers, listUserSessions, listVlessPeers, loginAccount, type Options, pollTelegramLink, regenerateAdminVlessConfig, regenerateMyVlessConfig, registerAccount, removePeer, revokeAllMySessions, revokeAllUserSessions, sendMyPeerConfig, setMyCredential, setSubscription, setUserCredential, startTelegramDeepLinkLogin, startTelegramLink, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan, upsertMyInstallation } from '../sdk.gen';
-import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeleteMySessionData, DeleteMySessionError, DeleteMySessionResponse, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, DeleteUserSessionData, DeleteUserSessionError, DeleteUserSessionResponse, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetAvatarsBatchData, GetAvatarsBatchError, GetAvatarsBatchResponse, GetMeData, GetMeError, GetMeResponse, GetMyAvatarData, GetMyAvatarError, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMySessionsData, GetMySessionsError, GetMySessionsResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserAvatarData, GetUserAvatarError, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListPublicPlansData, ListPublicPlansResponse, ListUsersData, ListUsersError, ListUserSessionsData, ListUserSessionsError, ListUserSessionsResponse, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, LoginAccountData, LoginAccountError, LoginAccountResponse, PollTelegramLinkData, PollTelegramLinkError, PollTelegramLinkResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RegisterAccountData, RegisterAccountError, RegisterAccountResponse, RemovePeerData, RemovePeerError, RevokeAllMySessionsData, RevokeAllMySessionsError, RevokeAllMySessionsResponse, RevokeAllUserSessionsData, RevokeAllUserSessionsError, RevokeAllUserSessionsResponse, SendMyPeerConfigData, SendMyPeerConfigError, SetMyCredentialData, SetMyCredentialError, SetMyCredentialResponse, SetSubscriptionData, SetSubscriptionError, SetUserCredentialData, SetUserCredentialError, SetUserCredentialResponse, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, StartTelegramLinkData, StartTelegramLinkError, StartTelegramLinkResponse, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
+import { createMyPeer, createPlan, createUser, deleteAdminPeer, deleteInstallation, deleteMyPeer, deleteMySession, deletePlan, deleteSubscription, deleteUserSession, exchangeTelegramLoginCode, getAvatarsBatch, getMe, getMyAvatar, getMyPeerByDevice, getMyPeerConfig, getMyPeers, getMyRegions, getMySessions, getMyVlessConfig, getPublicConfig, getStats, getUser, getUserAvatar, getVersion, listInstallations, listPeers, listPlans, listPublicPlans, listUsers, listUserSessions, listVlessPeers, loginAccount, type Options, pollTelegramLink, regenerateAdminVlessConfig, regenerateMyVlessConfig, registerAccount, removePeer, revokeAllMySessions, revokeAllUserSessions, sendMyPeerConfig, setMyCredential, setMyRegion, setSubscription, setUserCredential, startTelegramDeepLinkLogin, startTelegramLink, telegramDeepLinkCallback, telegramLogin, telegramMiniAppAuth, updatePlan, upsertMyInstallation } from '../sdk.gen';
+import type { CreateMyPeerData, CreateMyPeerError, CreateMyPeerResponse, CreatePlanData, CreatePlanError, CreatePlanResponse, CreateUserData, CreateUserError, CreateUserResponse2, DeleteAdminPeerData, DeleteAdminPeerError, DeleteInstallationData, DeleteInstallationError, DeleteMyPeerData, DeleteMyPeerError, DeleteMySessionData, DeleteMySessionError, DeleteMySessionResponse, DeletePlanData, DeletePlanError, DeletePlanResponse, DeleteSubscriptionData, DeleteSubscriptionError, DeleteUserSessionData, DeleteUserSessionError, DeleteUserSessionResponse, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeError, ExchangeTelegramLoginCodeResponse, GetAvatarsBatchData, GetAvatarsBatchError, GetAvatarsBatchResponse, GetMeData, GetMeError, GetMeResponse, GetMyAvatarData, GetMyAvatarError, GetMyPeerByDeviceData, GetMyPeerByDeviceError, GetMyPeerByDeviceResponse, GetMyPeerConfigData, GetMyPeerConfigError, GetMyPeerConfigResponse, GetMyPeersData, GetMyPeersError, GetMyPeersResponse, GetMyRegionsData, GetMyRegionsError, GetMyRegionsResponse, GetMySessionsData, GetMySessionsError, GetMySessionsResponse, GetMyVlessConfigData, GetMyVlessConfigError, GetMyVlessConfigResponse, GetPublicConfigData, GetPublicConfigResponse, GetStatsData, GetStatsError, GetStatsResponse, GetUserAvatarData, GetUserAvatarError, GetUserData, GetUserError, GetUserResponse, GetVersionData, GetVersionResponse, ListInstallationsData, ListInstallationsError, ListInstallationsResponse, ListPeersData, ListPeersError, ListPeersResponse, ListPlansData, ListPlansError, ListPlansResponse, ListPublicPlansData, ListPublicPlansResponse, ListUsersData, ListUsersError, ListUserSessionsData, ListUserSessionsError, ListUserSessionsResponse, ListUsersResponse, ListVlessPeersData, ListVlessPeersError, ListVlessPeersResponse, LoginAccountData, LoginAccountError, LoginAccountResponse, PollTelegramLinkData, PollTelegramLinkError, PollTelegramLinkResponse, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigError, RegenerateMyVlessConfigData, RegenerateMyVlessConfigError, RegenerateMyVlessConfigResponse, RegisterAccountData, RegisterAccountError, RegisterAccountResponse, RemovePeerData, RemovePeerError, RevokeAllMySessionsData, RevokeAllMySessionsError, RevokeAllMySessionsResponse, RevokeAllUserSessionsData, RevokeAllUserSessionsError, RevokeAllUserSessionsResponse, SendMyPeerConfigData, SendMyPeerConfigError, SetMyCredentialData, SetMyCredentialError, SetMyCredentialResponse, SetMyRegionData, SetMyRegionError, SetMyRegionResponse, SetSubscriptionData, SetSubscriptionError, SetUserCredentialData, SetUserCredentialError, SetUserCredentialResponse, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginError, StartTelegramLinkData, StartTelegramLinkError, StartTelegramLinkResponse, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackError, TelegramLoginData, TelegramLoginError, TelegramLoginResponse, TelegramMiniAppAuthData, TelegramMiniAppAuthError, TelegramMiniAppAuthResponse, UpdatePlanData, UpdatePlanError, UpdatePlanResponse, UpsertMyInstallationData, UpsertMyInstallationError, UpsertMyInstallationResponse } from '../types.gen';
 
 /**
  * Log in with a login + password.
@@ -399,6 +399,37 @@ export const sendMyPeerConfigMutation = (options?: Partial<Options<SendMyPeerCon
         return data;
     }
 });
+
+/**
+ * Select the exit region for every WireGuard-family peer on this device.
+ */
+export const setMyRegionMutation = (options?: Partial<Options<SetMyRegionData>>): UseMutationOptions<SetMyRegionResponse, Options<SetMyRegionData>, SetMyRegionError> => ({
+    mutation: async (vars) => {
+        const { data } = await setMyRegion({
+            ...options,
+            ...vars,
+            throwOnError: true
+        });
+        return data;
+    }
+});
+
+export const getMyRegionsQueryKey = (options?: Options<GetMyRegionsData>) => createQueryKey('getMyRegions', options);
+
+/**
+ * List exit regions for this device, including regions hidden by its current plan.
+ */
+export const getMyRegionsQuery = defineQueryOptions<Options<GetMyRegionsData>, GetMyRegionsResponse, GetMyRegionsError>((options?: Options<GetMyRegionsData>) => ({
+    key: getMyRegionsQueryKey(options),
+    query: async (context) => {
+        const { data } = await getMyRegions({
+            ...options,
+            ...context,
+            throwOnError: true
+        });
+        return data;
+    }
+}));
 
 export const getMySessionsQueryKey = (options?: Options<GetMySessionsData>) => createQueryKey('getMySessions', options);
 

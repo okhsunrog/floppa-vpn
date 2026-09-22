@@ -17,6 +17,7 @@ import { splitBanner } from '../utils/splitRules'
 import type { IntentError } from '../bindings'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
+import { useRegionStore } from './regionStore'
 
 /**
  * `ConnectionStatus` is a hand-written copy of the generated `Phase`, and has to be: it lives in
@@ -119,12 +120,20 @@ export const useVpnStore = defineStore(
     const isBusy = computed(() => requesting.value || state.value.busy)
     const isCancellable = computed(() => state.value.cancellable)
 
-    const availableProtocols = computed(() => state.value.configs.available)
+    const availableProtocols = computed(() =>
+      state.value.configs.available.filter(
+        (protocol) => protocol !== 'vless' || useRegionStore().supportsVless,
+      ),
+    )
     const hasConfig = computed(() => availableProtocols.value.length > 0)
     /** What is running, or failing that what last worked. */
-    const activeProtocol = computed(
-      () => state.value.protocol ?? state.value.configs.preferred ?? availableProtocols.value[0],
-    )
+    const activeProtocol = computed(() => {
+      if (state.value.protocol) return state.value.protocol
+      const preferred = state.value.configs.preferred
+      return preferred && availableProtocols.value.includes(preferred)
+        ? preferred
+        : availableProtocols.value[0]
+    })
     /**
      * What a manual-mode connect would use: the user's pick from the switcher when we still hold
      * a config for it, else whatever `activeProtocol` says. Read by the switcher's highlight and
@@ -296,7 +305,7 @@ export const useVpnStore = defineStore(
     async function connect(): Promise<CycleOutcome | null> {
       const settings = useSettingsStore()
       const order = settings.autoSelect
-        ? [...settings.protocolOrder]
+        ? settings.protocolOrder.filter((protocol) => availableProtocols.value.includes(protocol))
         : [manualProtocol.value].filter((p): p is Protocol => !!p)
 
       return await request(() => commands.tunnelSetIntentUp(order, params()))

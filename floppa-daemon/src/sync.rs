@@ -1,7 +1,7 @@
 use crate::wg::{PeerStat, WgTool};
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use floppa_core::{Config, DbPool, Protocol};
+use floppa_core::{Config, DbPool, Protocol, config::RegionRoutingConfig};
 use sqlx::postgres::PgListener;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,7 @@ struct SyncContext {
     /// `pending_add` peers already reported as having no configured interface, so the
     /// periodic sync does not repeat the warning every 15 s for as long as they sit there.
     unroutable_reported: Mutex<HashSet<i64>>,
+    regions: HashMap<String, RegionRoutingConfig>,
 }
 
 impl SyncContext {
@@ -67,6 +68,7 @@ impl SyncContext {
             pool,
             targets,
             unroutable_reported: Mutex::new(HashSet::new()),
+            regions: config.regions.clone(),
         }
     }
 
@@ -143,6 +145,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     // pending changes, then re-create the ephemeral tc limits.
     info!("Running initial sync");
     reconcile_active_peers(&ctx).await?;
+    reconcile_peer_routes(&ctx, None).await?;
     sync_peers(&ctx).await?;
     reapply_rate_limits(&ctx).await?;
 
@@ -212,6 +215,9 @@ async fn resync_after_reconnect(ctx: &SyncContext) {
     if let Err(e) = reapply_rate_limits(ctx).await {
         error!(error = %e, "Failed to reapply rate limits after reconnect");
     }
+    if let Err(e) = reconcile_peer_routes(ctx, None).await {
+        error!(error = %e, "Failed to reconcile peer routes after reconnect");
+    }
 }
 
 /// Listen for PostgreSQL notifications and sync immediately.
@@ -234,6 +240,9 @@ async fn listen_for_changes(mut listener: PgListener, ctx: &SyncContext) -> Resu
                         if let Err(e) = sync_peers(ctx).await {
                             error!(error = %e, "Failed to sync peers");
                         }
+                        if let Err(e) = reconcile_peer_routes(ctx, None).await {
+                            error!(error = %e, "Failed to reconcile peer routes");
+                        }
                     }
                     "subscription_changed" => {
                         // Payload is user_id
@@ -241,6 +250,11 @@ async fn listen_for_changes(mut listener: PgListener, ctx: &SyncContext) -> Resu
                             && let Err(e) = update_user_rate_limit(ctx, user_id).await
                         {
                             error!(error = %e, user_id, "Failed to update rate limit");
+                        }
+                        if let Ok(user_id) = notification.payload().parse::<i64>()
+                            && let Err(e) = reconcile_peer_routes(ctx, Some(user_id)).await
+                        {
+                            error!(error = %e, user_id, "Failed to update peer routes");
                         }
                     }
                     _ => {}
@@ -365,6 +379,43 @@ async fn reconcile_active_peers(ctx: &SyncContext) -> Result<()> {
     Ok(())
 }
 
+#[derive(sqlx::FromRow)]
+struct RoutePeer {
+    id: i64,
+    assigned_ip: String,
+    region_id: String,
+}
+
+/// Apply the selected region only while the peer owner's current plan still
+/// grants it. A downgrade therefore falls back to Europe even before the client
+/// next opens, while preserving the stored preference for a later upgrade.
+async fn reconcile_peer_routes(ctx: &SyncContext, user_id: Option<i64>) -> Result<()> {
+    let peers = sqlx::query_as::<_, RoutePeer>(
+        r#"
+        SELECT p.id, p.assigned_ip,
+               CASE WHEN EXISTS (
+                   SELECT 1
+                   FROM current_subscriptions cs
+                   JOIN plan_regions pr ON pr.plan_id = cs.plan_id
+                   WHERE cs.user_id = p.user_id AND cs.is_active
+                     AND pr.region_id = p.region_id
+               ) THEN p.region_id ELSE 'europe' END AS region_id
+        FROM peers p
+        WHERE p.sync_status = 'active'
+          AND ($1::bigint IS NULL OR p.user_id = $1)
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(&ctx.pool)
+    .await?;
+
+    for peer in peers {
+        crate::routing::reconcile_peer(&peer.assigned_ip, &peer.region_id, &ctx.regions)
+            .with_context(|| format!("failed to route peer {}", peer.id))?;
+    }
+    Ok(())
+}
+
 /// Re-apply tc rate limits for all active peers.
 /// Called on startup after tc infrastructure is (re)created, since tc rules
 /// are ephemeral and don't survive daemon restarts.
@@ -422,6 +473,10 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
         r#"
         SELECT p.id, p.public_key AS "public_key!", p.assigned_ip AS "assigned_ip!", p.user_id,
                p.protocol AS "protocol: Protocol",
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM plan_regions pr
+                   WHERE pr.plan_id = cs.plan_id AND pr.region_id = p.region_id
+               ) THEN p.region_id ELSE 'europe' END AS "region_id!",
                cs.id AS subscription_id, cs.speed_limit_mbps
         FROM peers p
         LEFT JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active
@@ -489,6 +544,21 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
             info!(peer_id = peer.id, speed_limit, "Rate limit applied");
         }
 
+        if let Err(e) =
+            crate::routing::reconcile_peer(&peer.assigned_ip, &peer.region_id, &ctx.regions)
+        {
+            error!(peer_id = peer.id, error = %e, "Failed to apply peer region; removing the peer again");
+            if target.rate_limit_enabled {
+                let _ = crate::tc::remove_peer_limit(&target.interface, &peer.assigned_ip);
+            }
+            if let Err(remove_error) =
+                crate::wg::remove_peer(target.tool, &target.interface, &peer.public_key)
+            {
+                error!(peer_id = peer.id, error = %remove_error, "Failed to remove peer after routing failure");
+            }
+            continue;
+        }
+
         match sqlx::query!(
             "UPDATE peers SET sync_status = 'active' WHERE id = $1",
             peer.id
@@ -530,6 +600,11 @@ async fn sync_peers(ctx: &SyncContext) -> Result<()> {
             let _ = crate::tc::remove_peer_limit(&target.interface, &peer.assigned_ip);
         }
 
+        if let Err(e) = crate::routing::remove_peer(&peer.assigned_ip, &ctx.regions) {
+            error!(peer_id = peer.id, error = %e, "Failed to remove peer routing rule");
+            continue;
+        }
+
         if let Err(e) = crate::wg::remove_peer(target.tool, &target.interface, &peer.public_key) {
             error!(peer_id = peer.id, error = %e, "Failed to remove peer");
             continue;
@@ -564,6 +639,7 @@ async fn periodic_sync(
     peer_user_map: &mut HashMap<String, (i64, i64)>,
 ) -> Result<()> {
     sync_peers(ctx).await?;
+    reconcile_peer_routes(ctx, None).await?;
     // Refresh the label map BEFORE reading counters: a peer that just went active
     // would otherwise have its first tick's traffic computed (and its prev value
     // stored) while it is still missing from the map, losing that delta for good.

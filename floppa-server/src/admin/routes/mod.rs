@@ -220,6 +220,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(user::start_telegram_link))
     .routes(routes!(user::poll_telegram_link))
     .routes(routes!(user::upsert_my_installation))
+    .routes(routes!(user::get_my_regions, user::set_my_region))
     .routes(routes!(user::get_my_sessions, user::revoke_all_my_sessions))
     .routes(routes!(user::delete_my_session))
     .routes(routes!(user::get_my_peers, user::create_my_peer))
@@ -536,6 +537,7 @@ mod tests {
             allowed_origins: vec![],
             min_client_version: min_client_version.map(str::to_owned),
             metrics: None,
+            regions: Default::default(),
         };
         let secrets = Secrets {
             database_url: String::new(),
@@ -672,6 +674,7 @@ mod tests {
             allowed_origins: vec![],
             min_client_version: Some("not-semver".into()),
             metrics: None,
+            regions: Default::default(),
         };
         let secrets = Secrets {
             database_url: String::new(),

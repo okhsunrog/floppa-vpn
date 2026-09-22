@@ -247,6 +247,7 @@ pub struct AppInstallation {
     pub device_name: Option<String>,
     pub platform: Option<String>,
     pub app_version: Option<String>,
+    pub region_id: String,
     pub last_seen_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }

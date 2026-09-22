@@ -110,6 +110,7 @@ export type InstallationResponse = {
     id: number;
     last_seen_at: string;
     platform?: string | null;
+    region_id: string;
 };
 
 export type InstallationSummary = {
@@ -168,6 +169,7 @@ export type MyPeer = {
     id: number;
     last_handshake?: string | null;
     protocol: Protocol;
+    region_id: string;
     sync_status: PeerSyncStatus;
     upload_bytes: number;
 };
@@ -279,6 +281,14 @@ export type PublicPlan = {
     trial_minutes?: number | null;
 };
 
+export type RegionInfo = {
+    available: boolean;
+    display_name: string;
+    id: string;
+    selected: boolean;
+    supports_vless: boolean;
+};
+
 /**
  * One live login of a user, as shown in "Devices & sessions".
  */
@@ -315,6 +325,10 @@ export type SessionKind = 'telegram_widget' | 'mini_app' | 'deep_link' | 'creden
 export type SetCredentialRequest = {
     login: string;
     password: string;
+};
+
+export type SetRegionRequest = {
+    region_id: string;
 };
 
 export type SetSubscriptionRequest = {
@@ -1133,6 +1147,69 @@ export type SendMyPeerConfigResponses = {
      */
     200: unknown;
 };
+
+export type SetMyRegionData = {
+    body: SetRegionRequest;
+    path?: never;
+    query?: never;
+    url: '/me/region';
+};
+
+export type SetMyRegionErrors = {
+    /**
+     * Session is not bound to an installation
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+    /**
+     * No active subscription
+     */
+    402: ApiError;
+    /**
+     * Region is unavailable on the current plan
+     */
+    403: ApiError;
+};
+
+export type SetMyRegionError = SetMyRegionErrors[keyof SetMyRegionErrors];
+
+export type SetMyRegionResponses = {
+    /**
+     * Region selected
+     */
+    204: void;
+};
+
+export type SetMyRegionResponse = SetMyRegionResponses[keyof SetMyRegionResponses];
+
+export type GetMyRegionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/regions';
+};
+
+export type GetMyRegionsErrors = {
+    /**
+     * Session is not bound to an installation
+     */
+    400: ApiError;
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type GetMyRegionsError = GetMyRegionsErrors[keyof GetMyRegionsErrors];
+
+export type GetMyRegionsResponses = {
+    200: Array<RegionInfo>;
+};
+
+export type GetMyRegionsResponse = GetMyRegionsResponses[keyof GetMyRegionsResponses];
 
 export type GetMySessionsData = {
     body?: never;

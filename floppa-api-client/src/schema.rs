@@ -564,7 +564,8 @@ impl ::std::convert::From<::serde_json::Value> for FloppaApi {
 ///    "created_at",
 ///    "device_id",
 ///    "id",
-///    "last_seen_at"
+///    "last_seen_at",
+///    "region_id"
 ///  ],
 ///  "properties": {
 ///    "app_version": {
@@ -599,6 +600,9 @@ impl ::std::convert::From<::serde_json::Value> for FloppaApi {
 ///        "string",
 ///        "null"
 ///      ]
+///    },
+///    "region_id": {
+///      "type": "string"
 ///    }
 ///  }
 ///}
@@ -616,6 +620,7 @@ pub struct InstallationResponse {
     pub last_seen_at: ::chrono::DateTime<::chrono::offset::Utc>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub platform: ::std::option::Option<::std::string::String>,
+    pub region_id: ::std::string::String,
 }
 ///`InstallationSummary`
 ///
@@ -890,6 +895,7 @@ pub struct MiniAppAuthRequest {
 ///    "download_bytes",
 ///    "id",
 ///    "protocol",
+///    "region_id",
 ///    "sync_status",
 ///    "upload_bytes"
 ///  ],
@@ -931,6 +937,9 @@ pub struct MiniAppAuthRequest {
 ///    "protocol": {
 ///      "$ref": "#/definitions/Protocol"
 ///    },
+///    "region_id": {
+///      "type": "string"
+///    },
 ///    "sync_status": {
 ///      "$ref": "#/definitions/PeerSyncStatus"
 ///    },
@@ -955,6 +964,7 @@ pub struct MyPeer {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub last_handshake: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
     pub protocol: Protocol,
+    pub region_id: ::std::string::String,
     pub sync_status: PeerSyncStatus,
     pub upload_bytes: i64,
 }
@@ -1621,6 +1631,48 @@ pub struct PublicPlan {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub trial_minutes: ::std::option::Option<i32>,
 }
+///`RegionInfo`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "available",
+///    "display_name",
+///    "id",
+///    "selected",
+///    "supports_vless"
+///  ],
+///  "properties": {
+///    "available": {
+///      "type": "boolean"
+///    },
+///    "display_name": {
+///      "type": "string"
+///    },
+///    "id": {
+///      "type": "string"
+///    },
+///    "selected": {
+///      "type": "boolean"
+///    },
+///    "supports_vless": {
+///      "type": "boolean"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct RegionInfo {
+    pub available: bool,
+    pub display_name: ::std::string::String,
+    pub id: ::std::string::String,
+    pub selected: bool,
+    pub supports_vless: bool,
+}
 ///One live login of a user, as shown in "Devices & sessions".
 ///
 /// <details><summary>JSON schema</summary>
@@ -1823,6 +1875,28 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionKind {
 pub struct SetCredentialRequest {
     pub login: ::std::string::String,
     pub password: ::std::string::String,
+}
+///`SetRegionRequest`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "region_id"
+///  ],
+///  "properties": {
+///    "region_id": {
+///      "type": "string"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SetRegionRequest {
+    pub region_id: ::std::string::String,
 }
 ///`SetSubscriptionRequest`
 ///

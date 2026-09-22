@@ -146,6 +146,7 @@ pub struct MyPeer {
     assigned_ip: String,
     sync_status: PeerSyncStatus,
     protocol: Protocol,
+    region_id: String,
     download_bytes: i64,
     upload_bytes: i64,
     last_handshake: Option<chrono::DateTime<Utc>>,
@@ -218,8 +219,23 @@ pub struct InstallationResponse {
     device_name: Option<String>,
     platform: Option<String>,
     app_version: Option<String>,
+    region_id: String,
     last_seen_at: chrono::DateTime<Utc>,
     created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct RegionInfo {
+    id: String,
+    display_name: String,
+    available: bool,
+    selected: bool,
+    supports_vless: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct SetRegionRequest {
+    region_id: String,
 }
 
 /// One live login of a user, as shown in "Devices & sessions".
@@ -568,9 +584,148 @@ pub(super) async fn upsert_my_installation(
         device_name: installation.device_name,
         platform: installation.platform,
         app_version: installation.app_version,
+        region_id: installation.region_id,
         last_seen_at: installation.last_seen_at,
         created_at: installation.created_at,
     }))
+}
+
+/// List exit regions for this device, including regions hidden by its current plan.
+#[utoipa::path(
+    get,
+    path = "/me/regions",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = Vec<RegionInfo>),
+        (status = 400, body = ApiError, description = "Session is not bound to an installation"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn get_my_regions(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<RegionInfo>>, ApiError> {
+    let session_id = auth
+        .session_id
+        .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
+
+    let installation_id = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT installation_id FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    )
+    .bind(session_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .flatten()
+    .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
+
+    let regions = sqlx::query_as::<_, RegionInfo>(
+        r#"
+        SELECT r.id, r.display_name,
+               EXISTS(
+                   SELECT 1
+                   FROM current_subscriptions cs
+                   JOIN plan_regions pr ON pr.plan_id = cs.plan_id
+                   WHERE cs.user_id = $1 AND cs.is_active AND pr.region_id = r.id
+               ) AS available,
+               (r.id = CASE WHEN EXISTS(
+                   SELECT 1
+                   FROM current_subscriptions selected_cs
+                   JOIN plan_regions selected_pr ON selected_pr.plan_id = selected_cs.plan_id
+                   WHERE selected_cs.user_id = $1 AND selected_cs.is_active
+                     AND selected_pr.region_id = ai.region_id
+               ) THEN ai.region_id ELSE 'europe' END) AS selected,
+               r.supports_vless
+        FROM app_installations ai
+        CROSS JOIN regions r
+        WHERE ai.id = $2 AND ai.user_id = $1 AND r.is_active
+        ORDER BY r.sort_order, r.id
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(installation_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(regions))
+}
+
+/// Select the exit region for every WireGuard-family peer on this device.
+#[utoipa::path(
+    put,
+    path = "/me/region",
+    tag = "user",
+    security(("bearer" = [])),
+    request_body = SetRegionRequest,
+    responses(
+        (status = 204, description = "Region selected"),
+        (status = 400, body = ApiError, description = "Session is not bound to an installation"),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+        (status = 402, body = ApiError, description = "No active subscription"),
+        (status = 403, body = ApiError, description = "Region is unavailable on the current plan"),
+    )
+)]
+pub(super) async fn set_my_region(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(req): Json<SetRegionRequest>,
+) -> Result<StatusCode, ApiError> {
+    let session_id = auth
+        .session_id
+        .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
+    let mut tx = state.pool.begin().await?;
+
+    let installation_id = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT installation_id FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL FOR UPDATE",
+    )
+    .bind(session_id)
+    .bind(auth.user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten()
+    .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
+
+    let plan_id = sqlx::query_scalar::<_, i32>(
+        "SELECT plan_id FROM current_subscriptions WHERE user_id = $1 AND is_active",
+    )
+    .bind(auth.user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(FloppaError::NoActiveSubscription)?;
+
+    let allowed = sqlx::query_scalar::<_, bool>(
+        r#"SELECT EXISTS(
+            SELECT 1 FROM regions r
+            JOIN plan_regions pr ON pr.region_id = r.id
+            WHERE r.id = $1 AND r.is_active AND pr.plan_id = $2
+        )"#,
+    )
+    .bind(&req.region_id)
+    .bind(plan_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !allowed {
+        return Err(FloppaError::RegionNotAvailable(req.region_id).into());
+    }
+
+    sqlx::query("UPDATE app_installations SET region_id = $1 WHERE id = $2 AND user_id = $3")
+        .bind(&req.region_id)
+        .bind(installation_id)
+        .bind(auth.user_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE peers SET region_id = $1 WHERE installation_id = $2 AND user_id = $3 AND sync_status NOT IN ('removed', 'pending_remove')",
+    )
+    .bind(&req.region_id)
+    .bind(installation_id)
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// List current user's peers and VLESS info
@@ -591,7 +746,7 @@ pub(super) async fn get_my_peers(
     let rows = sqlx::query!(
         r#"
         SELECT p.id, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
-               p.protocol AS "protocol: Protocol", p.last_handshake, p.created_at,
+               p.protocol AS "protocol: Protocol", p.region_id, p.last_handshake, p.created_at,
                ai.device_name, ai.device_id AS "device_id?"
         FROM peers p
         LEFT JOIN app_installations ai ON p.installation_id = ai.id
@@ -626,6 +781,7 @@ pub(super) async fn get_my_peers(
                 assigned_ip: r.assigned_ip,
                 sync_status: r.sync_status,
                 protocol: r.protocol,
+                region_id: r.region_id,
                 download_bytes: download,
                 upload_bytes: upload,
                 last_handshake: r.last_handshake,
@@ -886,6 +1042,7 @@ pub(super) async fn get_my_peer_by_device(
         assigned_ip: row.assigned_ip,
         sync_status: row.sync_status,
         protocol: row.protocol,
+        region_id: row.region_id,
         download_bytes: download,
         upload_bytes: upload,
         last_handshake: row.last_handshake,

@@ -1076,18 +1076,18 @@ pub async fn create_peer(
     // A caller may only attach a peer to one of their own installations. Locking the row also
     // serializes concurrent peer creation for the same device, so the duplicate check below is
     // race-free even before the database unique index is considered.
-    if let Some(id) = installation_id {
-        let owned_id = sqlx::query_scalar::<_, i64>(
-            "SELECT id FROM app_installations WHERE id = $1 AND user_id = $2 FOR UPDATE",
+    let region_id = if let Some(id) = installation_id {
+        let installation = sqlx::query_as::<_, (i64, String)>(
+            "SELECT id, region_id FROM app_installations WHERE id = $1 AND user_id = $2 FOR UPDATE",
         )
         .bind(id)
         .bind(user_id)
         .fetch_optional(&mut *tx)
         .await?;
 
-        if owned_id.is_none() {
+        let Some((_, region_id)) = installation else {
             return Err(FloppaError::InvalidInstallation(id));
-        }
+        };
 
         let duplicate = sqlx::query_scalar::<_, bool>(
             r#"SELECT EXISTS(
@@ -1107,7 +1107,10 @@ pub async fn create_peer(
                 protocol: protocol.as_db_str(),
             });
         }
-    }
+        region_id
+    } else {
+        "europe".to_owned()
+    };
 
     // Slots are counted per-device: a client device (installation) is ONE slot no matter how many
     // protocol peers it holds (WireGuard + AmneziaWG share a slot), while each standalone exported
@@ -1161,8 +1164,8 @@ pub async fn create_peer(
 
     let peer_id = sqlx::query_scalar!(
         r#"
-        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id, protocol)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO peers (user_id, public_key, private_key_encrypted, assigned_ip, sync_status, installation_id, protocol, region_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         "#,
         user_id,
@@ -1172,6 +1175,7 @@ pub async fn create_peer(
         PeerSyncStatus::PendingAdd as _,
         installation_id,
         protocol as _,
+        &region_id,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -1370,6 +1374,7 @@ pub struct DevicePeer {
     pub assigned_ip: String,
     pub sync_status: PeerSyncStatus,
     pub protocol: Protocol,
+    pub region_id: String,
     pub last_handshake: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub device_id: String,
@@ -1389,7 +1394,7 @@ pub async fn find_peer_by_device_id(
         DevicePeer,
         r#"
         SELECT p.id, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
-               p.protocol AS "protocol: Protocol", p.last_handshake, p.created_at,
+               p.protocol AS "protocol: Protocol", p.region_id, p.last_handshake, p.created_at,
                ai.device_id, ai.device_name
         FROM peers p
         JOIN app_installations ai ON p.installation_id = ai.id
@@ -1425,7 +1430,7 @@ pub async fn upsert_installation(
             platform = COALESCE($4, app_installations.platform),
             app_version = COALESCE($5, app_installations.app_version),
             last_seen_at = NOW()
-        RETURNING id, user_id, device_id, device_name, platform, app_version, last_seen_at, created_at
+        RETURNING id, user_id, device_id, device_name, platform, app_version, region_id, last_seen_at, created_at
         "#,
         user_id,
         device_id,
@@ -1674,6 +1679,7 @@ mod tests {
             allowed_origins: vec![],
             min_client_version: None,
             metrics: None,
+            regions: Default::default(),
         }
     }
 

@@ -8,6 +8,9 @@ pub enum FloppaError {
     #[error("No active subscription")]
     NoActiveSubscription,
 
+    #[error("Region is not available on the current plan: {0}")]
+    RegionNotAvailable(String),
+
     #[error("Peer limit reached: {current}/{max}")]
     PeerLimitReached { current: i32, max: i32 },
 
