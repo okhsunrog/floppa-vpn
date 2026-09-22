@@ -574,6 +574,12 @@ export default {
     lastActivity: 'Последний трафик',
     duration: 'Длительность',
     protocol: 'Протокол',
+    region: 'Локация',
+    regions: {
+      europe: 'Европа',
+      moscow: 'Москва',
+      singapore: 'Сингапур',
+    },
     wireguard: 'WireGuard',
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',

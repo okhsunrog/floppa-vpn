@@ -572,6 +572,12 @@ export default {
     lastActivity: 'Last transfer',
     duration: 'Duration',
     protocol: 'Protocol',
+    region: 'Location',
+    regions: {
+      europe: 'Europe',
+      moscow: 'Moscow',
+      singapore: 'Singapore',
+    },
     wireguard: 'WireGuard',
     amneziawg: 'AmneziaWG',
     vless: 'VLESS',

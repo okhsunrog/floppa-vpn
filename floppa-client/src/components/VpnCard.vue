@@ -46,6 +46,22 @@ watch(
  * busy still has to arrive through here.
  */
 const busy = computed(() => vpn.isBusy)
+const showProtocolPicker = computed(
+  () => !settingsStore.autoSelect && vpn.availableProtocols.length > 1,
+)
+const showRegionPicker = computed(() => regionStore.availableRegions.length > 1)
+const protocolItems = computed(() =>
+  vpn.availableProtocols.map((protocol) => ({
+    label: t(`vpn.${protocol}`),
+    value: protocol,
+  })),
+)
+const regionItems = computed(() =>
+  regionStore.availableRegions.map((region) => ({
+    label: t(`vpn.regions.${region.id}`, region.display_name),
+    value: region.id,
+  })),
+)
 
 /**
  * Whether the device is known to have no network.
@@ -445,53 +461,47 @@ const healthDotClass = computed(() => {
         @click="handleConnect"
       />
 
-      <!-- Protocol toggle — manual mode only (auto-select hides it; the badge above shows the active protocol) -->
-      <div v-if="!settingsStore.autoSelect && vpn.availableProtocols.length > 1" class="mt-3">
-        <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.protocol') }}</div>
-        <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
-          <button
-            v-for="proto in vpn.availableProtocols"
-            :key="proto"
+      <!-- Connection choices sit together: they both decide what the next Connect will build. -->
+      <div
+        v-if="showProtocolPicker || showRegionPicker"
+        class="grid gap-3 w-full mt-4"
+        :class="
+          showProtocolPicker && showRegionPicker
+            ? 'grid-cols-2 max-w-[304px]'
+            : 'grid-cols-1 max-w-[200px]'
+        "
+      >
+        <div v-if="showProtocolPicker" class="min-w-0">
+          <div class="text-xs text-[var(--ui-text-muted)] mb-1.5 text-left">
+            {{ t('vpn.protocol') }}
+          </div>
+          <USelect
+            :model-value="vpn.switcherProtocol"
+            :items="protocolItems"
+            value-key="value"
+            class="w-full"
             :disabled="vpn.isConnected || busy"
-            class="px-4 py-1.5 text-sm rounded-md transition-all"
-            :class="
-              vpn.switcherProtocol === proto
-                ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
-                : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-            "
-            @click="selectProtocol(proto)"
-          >
-            {{ t(`vpn.${proto}`) }}
-          </button>
+            @update:model-value="(value: string) => selectProtocol(value as Protocol)"
+          />
         </div>
-      </div>
 
-      <div v-if="regionStore.availableRegions.length > 1" class="mt-3">
-        <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.region') }}</div>
-        <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
-          <button
-            v-for="region in regionStore.availableRegions"
-            :key="region.id"
+        <div v-if="showRegionPicker" class="min-w-0">
+          <div class="text-xs text-[var(--ui-text-muted)] mb-1.5 text-left">
+            {{ t('vpn.region') }}
+          </div>
+          <USelect
+            :model-value="regionStore.selected?.id"
+            :items="regionItems"
+            value-key="value"
+            icon="i-lucide-globe-2"
+            class="w-full"
+            :loading="regionStore.changing"
             :disabled="vpn.isConnected || busy || regionStore.changing"
-            class="px-4 py-1.5 text-sm rounded-md transition-all disabled:opacity-50"
-            :class="
-              region.selected
-                ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
-                : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
-            "
-            @click="selectRegion(region.id)"
-          >
-            {{ region.display_name }}
-          </button>
+            @update:model-value="selectRegion"
+          />
         </div>
-        <p v-if="regionStore.error" class="text-xs text-error mt-1.5">{{ regionStore.error }}</p>
-        <p
-          v-else-if="!regionStore.supportsVless"
-          class="text-xs text-[var(--ui-text-muted)] mt-1.5"
-        >
-          {{ t('vpn.regionNoVless') }}
-        </p>
       </div>
+      <p v-if="regionStore.error" class="text-xs text-error mt-1.5">{{ regionStore.error }}</p>
     </div>
   </UCard>
 
