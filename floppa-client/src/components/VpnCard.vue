@@ -67,11 +67,12 @@ const regionItems = computed(() =>
 const connectedProtocolLabel = computed(() =>
   vpn.state.protocol ? t(`vpn.${vpn.state.protocol}`) : t('vpn.unknownConnectionValue'),
 )
-const selectedRegionLabel = computed(
-  () =>
-    regionItems.value.find((region) => region.value === regionStore.selected?.id)?.label ??
-    t('vpn.unknownConnectionValue'),
-)
+const selectedRegionLabel = computed(() => {
+  const region = regionStore.selected
+  return region
+    ? t(`vpn.regions.${region.id}`, region.display_name)
+    : t('vpn.unknownConnectionValue')
+})
 
 /**
  * Whether the device is known to have no network.
