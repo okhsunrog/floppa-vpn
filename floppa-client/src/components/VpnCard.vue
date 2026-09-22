@@ -323,15 +323,6 @@ const healthDotClass = computed(() => {
         </template>
       </div>
 
-      <!-- Active protocol — auto-select mode only; manual mode shows it via the switcher -->
-      <UBadge
-        v-else-if="vpn.isConnected && settingsStore.autoSelect && vpn.state.protocol"
-        color="neutral"
-        variant="subtle"
-      >
-        {{ t('vpn.connectedVia', { protocol: t(`vpn.${vpn.state.protocol}`) }) }}
-      </UBadge>
-
       <!--
         Contract fields the snapshot has always published and nobody read. `backend_reachable` is
         the only honest signal that the `:vpn` service has stopped answering while the tunnel is
@@ -389,12 +380,15 @@ const healthDotClass = computed(() => {
         <span v-if="vpn.state.vpn_mode === 'always_on'" class="text-xs">
           {{ t('vpn.alwaysOnConfigured') }}
         </span>
-        <span
-          class="inline-flex items-center justify-center gap-1.5 font-medium text-[var(--ui-text)]"
+        <UBadge
+          color="neutral"
+          variant="subtle"
+          size="lg"
+          icon="i-lucide-map-pin"
+          class="self-center"
         >
-          <UIcon name="i-lucide-map-pin" class="size-4" />
           {{ selectedRegionLabel }} · {{ connectedProtocolLabel }}
-        </span>
+        </UBadge>
         <span v-if="showProtocolPicker || showRegionPicker" class="text-xs">
           {{ t('vpn.disconnectToChangeRoute') }}
         </span>
