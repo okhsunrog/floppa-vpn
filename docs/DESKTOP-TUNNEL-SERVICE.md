@@ -161,9 +161,21 @@ running a WireGuard tunnel does not require a Floppa account.
 
 ## Not done yet
 
-**The desktop app still runs its own actor** when there is no service, which is correct, but it has
-no switch for connecting on boot — that is `systemctl enable` for now. A GUI toggle needs polkit or
-a preference carried over the socket, and is a piece of its own.
+**Diagnostic captures miss the tunnel's own logs.** The service writes to stderr, which journald
+takes; it never calls `logging::init_tracing`, so `start_log_capture` over the socket lands in the
+"the log directory is not initialised" branch and quietly writes nothing. A capture started from
+the app's settings therefore collects the UI's logs and not the tunnel's — which are the ones it is
+usually started for. Deliberately left: the capture machinery exists for Android, where it works,
+and this is not a priority on the desktop. Fixing it means either having the service write a file
+beside its state, as `:vpn` does, or having the capture read journald.
+
+**Hardening the unit.** It runs as root with no `ProtectSystem=` or capability bounding. Narrowing
+it needs testing against the DNS path, which rewrites `/etc/resolv.conf`.
+
+**One tunnel per machine is only half-enforced.** `ensure-tun` refuses a TUN that belongs to
+another uid, which covers two actors reaching for the same interface. It does not cover
+`sudo floppa connect --config … --interface floppa9` beside a running service: different
+interfaces, no collision, and both would lay down a default route.
 
 **Windows** needs a named pipe instead of a Unix socket and a service instead of a unit. Deferred:
 the tray already keeps the tunnel alive while the app is open there.
