@@ -576,7 +576,7 @@ export default {
     protocol: 'Протокол',
     region: 'Локация',
     regions: {
-      europe: 'Европа',
+      europe: 'Франкфурт',
       moscow: 'Москва',
       singapore: 'Сингапур',
     },
