@@ -62,6 +62,14 @@ const regionItems = computed(() =>
     value: region.id,
   })),
 )
+const connectedProtocolLabel = computed(() =>
+  vpn.state.protocol ? t(`vpn.${vpn.state.protocol}`) : t('vpn.unknownConnectionValue'),
+)
+const selectedRegionLabel = computed(
+  () =>
+    regionItems.value.find((region) => region.value === regionStore.selected?.id)?.label ??
+    t('vpn.unknownConnectionValue'),
+)
 
 /**
  * Whether the device is known to have no network.
@@ -461,9 +469,26 @@ const healthDotClass = computed(() => {
         @click="handleConnect"
       />
 
+      <div
+        v-if="vpn.isConnected && (showProtocolPicker || showRegionPicker)"
+        class="mt-4 text-center"
+      >
+        <p class="text-sm font-medium">
+          {{
+            t('vpn.connectedRoute', {
+              region: selectedRegionLabel,
+              protocol: connectedProtocolLabel,
+            })
+          }}
+        </p>
+        <p class="text-xs text-[var(--ui-text-muted)] mt-1">
+          {{ t('vpn.disconnectToChangeRoute') }}
+        </p>
+      </div>
+
       <!-- Connection choices sit together: they both decide what the next Connect will build. -->
       <div
-        v-if="showProtocolPicker || showRegionPicker"
+        v-else-if="showProtocolPicker || showRegionPicker"
         class="grid gap-3 w-full mt-4"
         :class="
           showProtocolPicker && showRegionPicker
@@ -480,7 +505,7 @@ const healthDotClass = computed(() => {
             :items="protocolItems"
             value-key="value"
             class="w-full"
-            :disabled="vpn.isConnected || busy"
+            :disabled="busy"
             @update:model-value="(value: string) => selectProtocol(value as Protocol)"
           />
         </div>
@@ -496,7 +521,7 @@ const healthDotClass = computed(() => {
             icon="i-lucide-globe-2"
             class="w-full"
             :loading="regionStore.changing"
-            :disabled="vpn.isConnected || busy || regionStore.changing"
+            :disabled="busy || regionStore.changing"
             @update:model-value="selectRegion"
           />
         </div>
