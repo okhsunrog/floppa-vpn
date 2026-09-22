@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vite-plus/test'
 import type { TunnelParams } from '../bindings'
 import { sameParams, splitBanner } from './splitRules'
 
-const exclude = (...apps: string[]): TunnelParams => ({ split_mode: 'exclude', apps })
-const all: TunnelParams = { split_mode: 'all', apps: [] }
+const exclude = (...apps: string[]): TunnelParams => ({
+  split_mode: 'exclude',
+  apps,
+  allow_lan: false,
+})
+const all: TunnelParams = { split_mode: 'all', apps: [], allow_lan: false }
 
 /** The settings, the running tunnel and the intent, with the rest of the arguments defaulted. */
 function banner(args: {

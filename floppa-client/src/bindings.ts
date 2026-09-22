@@ -572,11 +572,13 @@ reason: InProcessReason | null };
 /**
  *  Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to
  *  supply it. `apps` is sorted and deduped on construction, so `PartialEq` means "the same tunnel"
- *  rather than "the same list written the same way".
+ *  rather than "the same list written the same way". `allow_lan` defaults off so intents written
+ *  by older clients remain valid.
  */
 export type TunnelParams = {
 	split_mode: SplitMode,
 	apps: string[],
+	allow_lan?: boolean,
 };
 
 /**  Everything the UI can know about the tunnel, in one value. */

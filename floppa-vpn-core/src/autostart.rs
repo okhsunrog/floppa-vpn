@@ -74,11 +74,22 @@ impl TunSpec {
         // because Android prefers IPv6 wherever a route offers it, that was not a slow path but
         // no connectivity at all — a tunnel that reported Connected and carried nothing.
         // See `ProtocolConfig::has_ipv6_address`.
-        let routes = floppa_tunnel_config::route::CATCH_ALL
-            .iter()
-            .filter(|net| net.is_ipv4() || config.has_ipv6_address())
-            .map(ToString::to_string)
-            .collect();
+        let allowed_ips = floppa_tunnel_config::route::CATCH_ALL;
+        let routes = if params.allow_lan {
+            floppa_tunnel_config::route::exclude_local_networks(
+                &allowed_ips,
+                config.has_ipv6_address(),
+            )
+        } else {
+            allowed_ips
+                .iter()
+                .copied()
+                .filter(|net| net.is_ipv4() || config.has_ipv6_address())
+                .collect()
+        }
+        .iter()
+        .map(ToString::to_string)
+        .collect();
 
         let mut spec = Self {
             ipv4_addr: config.address(),
@@ -441,6 +452,24 @@ AllowedIPs = 0.0.0.0/0
             spec.routes,
             vec!["0.0.0.0/0".to_string(), "::/0".to_string()]
         );
+    }
+
+    #[test]
+    fn allowing_lan_removes_private_addresses_from_android_routes() {
+        let params = TunnelParams::new(SplitMode::All, vec![]).with_allow_lan(true);
+        let spec = TunSpec::derive(&config(), &params);
+        let routes = spec
+            .routes
+            .iter()
+            .map(|route| route.parse::<ipnetwork::IpNetwork>().unwrap())
+            .collect::<Vec<_>>();
+
+        for address in ["10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.1.1"] {
+            let address = address.parse().unwrap();
+            assert!(!routes.iter().any(|route| route.contains(address)));
+        }
+        let public = "1.1.1.1".parse().unwrap();
+        assert!(routes.iter().any(|route| route.contains(public)));
     }
 
     fn intent(params: TunnelParams) -> LastIntent {

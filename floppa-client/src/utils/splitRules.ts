@@ -41,6 +41,7 @@ export function splitBanner(args: {
 export function sameParams(a: TunnelParams, b: TunnelParams): boolean {
   return (
     a.split_mode === b.split_mode &&
+    (a.allow_lan ?? false) === (b.allow_lan ?? false) &&
     a.apps.length === b.apps.length &&
     a.apps.every((app, i) => app === b.apps[i])
   )

@@ -35,6 +35,17 @@ pub const CATCH_ALL_HALVES_V6: [IpNetwork; 2] = [
     v6(Ipv6Addr::new(0x8000, 0, 0, 0, 0, 0, 0, 0), 1),
 ];
 
+/// Address ranges that belong to the device's local network and should remain reachable through
+/// the physical interface when local-network access is enabled.
+pub const LOCAL_NETWORKS: [IpNetwork; 6] = [
+    v4(Ipv4Addr::new(10, 0, 0, 0), 8),
+    v4(Ipv4Addr::new(172, 16, 0, 0), 12),
+    v4(Ipv4Addr::new(192, 168, 0, 0), 16),
+    v4(Ipv4Addr::new(169, 254, 0, 0), 16),
+    v6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 0), 7),
+    v6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 0), 10),
+];
+
 /// The single-host route covering `endpoint`: `/32` or `/128` by address family. Pinned to the
 /// physical gateway so the tunnel's own packets never enter the tunnel.
 pub fn endpoint_route(endpoint: IpAddr) -> IpNetwork {
@@ -64,6 +75,85 @@ pub fn split_default(allowed_ips: &[IpNetwork], include_ipv6: bool) -> Vec<IpNet
             None => vec![network],
         })
         .collect()
+}
+
+/// Build positive VPN routes while leaving private and link-local destinations outside them.
+///
+/// Android versions before API 33 have no `VpnService.Builder.excludeRoute`, so the portable way
+/// to bypass LANs is to express the complement as positive routes. The same result is also useful
+/// to platforms that install routes directly.
+pub fn exclude_local_networks(allowed_ips: &[IpNetwork], include_ipv6: bool) -> Vec<IpNetwork> {
+    let mut routes = allowed_ips
+        .iter()
+        .copied()
+        .filter(|network| include_ipv6 || network.is_ipv4())
+        .collect::<Vec<_>>();
+
+    for excluded in LOCAL_NETWORKS {
+        routes = routes
+            .into_iter()
+            .flat_map(|route| subtract_network(route, excluded))
+            .collect();
+    }
+    routes
+}
+
+fn subtract_network(route: IpNetwork, excluded: IpNetwork) -> Vec<IpNetwork> {
+    match (route, excluded) {
+        (IpNetwork::V4(route), IpNetwork::V4(excluded)) => subtract_v4(route, excluded)
+            .into_iter()
+            .map(IpNetwork::V4)
+            .collect(),
+        (IpNetwork::V6(route), IpNetwork::V6(excluded)) => subtract_v6(route, excluded)
+            .into_iter()
+            .map(IpNetwork::V6)
+            .collect(),
+        (route, _) => vec![route],
+    }
+}
+
+fn subtract_v4(route: Ipv4Network, excluded: Ipv4Network) -> Vec<Ipv4Network> {
+    let route_start = u32::from(route.network());
+    let route_end = u32::from(route.broadcast());
+    let excluded_start = u32::from(excluded.network());
+    let excluded_end = u32::from(excluded.broadcast());
+    if route_end < excluded_start || excluded_end < route_start {
+        return vec![route];
+    }
+    if excluded_start <= route_start && route_end <= excluded_end {
+        return Vec::new();
+    }
+
+    let prefix = route.prefix() + 1;
+    let half = 1_u32 << (32 - prefix);
+    let left = Ipv4Network::new_checked(route.network(), prefix).expect("split prefix is valid");
+    let right = Ipv4Network::new_checked(Ipv4Addr::from(route_start + half), prefix)
+        .expect("split prefix is valid");
+    let mut result = subtract_v4(left, excluded);
+    result.extend(subtract_v4(right, excluded));
+    result
+}
+
+fn subtract_v6(route: Ipv6Network, excluded: Ipv6Network) -> Vec<Ipv6Network> {
+    let route_start = u128::from(route.network());
+    let route_end = u128::from(route.broadcast());
+    let excluded_start = u128::from(excluded.network());
+    let excluded_end = u128::from(excluded.broadcast());
+    if route_end < excluded_start || excluded_end < route_start {
+        return vec![route];
+    }
+    if excluded_start <= route_start && route_end <= excluded_end {
+        return Vec::new();
+    }
+
+    let prefix = route.prefix() + 1;
+    let half = 1_u128 << (128 - prefix);
+    let left = Ipv6Network::new_checked(route.network(), prefix).expect("split prefix is valid");
+    let right = Ipv6Network::new_checked(Ipv6Addr::from(route_start + half), prefix)
+        .expect("split prefix is valid");
+    let mut result = subtract_v6(left, excluded);
+    result.extend(subtract_v6(right, excluded));
+    result
 }
 
 /// Pick the address to use from a resolved endpoint, preferring IPv4 when both exist: the host
@@ -206,6 +296,22 @@ mod tests {
                 net("fd00::/8"),
             ]
         );
+    }
+
+    #[test]
+    fn local_networks_are_absent_from_the_positive_route_complement() {
+        let routes = exclude_local_networks(&CATCH_ALL, true);
+        for local in LOCAL_NETWORKS {
+            let probe = local.ip();
+            assert!(
+                !routes.iter().any(|route| route.contains(probe)),
+                "{probe} is still covered by {routes:?}"
+            );
+        }
+        for public in ["1.1.1.1", "8.8.8.8", "2001:4860:4860::8888"] {
+            let public: IpAddr = public.parse().unwrap();
+            assert!(routes.iter().any(|route| route.contains(public)));
+        }
     }
 
     #[test]

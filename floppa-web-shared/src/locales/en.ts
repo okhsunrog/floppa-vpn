@@ -398,6 +398,10 @@ export default {
     autoSelectProtocol: 'Auto-select protocol',
     autoSelectProtocolHint:
       'Automatically pick the fastest working protocol on connect. Turn off to choose manually.',
+    localNetwork: 'Local network',
+    allowLocalNetwork: 'Allow access outside the VPN',
+    allowLocalNetworkHint:
+      'Keep private and link-local addresses reachable directly. Reconnect to apply changes.',
     resetProtocolPreference: 'Reset',
     protocolPreferenceReset: 'Protocol preference reset',
     protocolPreferenceResetFailed: 'Could not reset the protocol preference',

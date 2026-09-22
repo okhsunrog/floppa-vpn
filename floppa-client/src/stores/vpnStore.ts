@@ -266,7 +266,7 @@ export const useVpnStore = defineStore(
     function params(): TunnelParams {
       const settings = useSettingsStore()
       const apps = settings.splitMode === 'all' ? [] : [...new Set(settings.selectedApps)].sort()
-      return { split_mode: settings.splitMode, apps }
+      return { split_mode: settings.splitMode, apps, allow_lan: settings.allowLan }
     }
 
     /**

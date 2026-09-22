@@ -397,6 +397,10 @@ export default {
     autoSelectProtocol: 'Автовыбор протокола',
     autoSelectProtocolHint:
       'Автоматически подбирать самый быстрый рабочий протокол при подключении. Выключите для ручного выбора.',
+    localNetwork: 'Локальная сеть',
+    allowLocalNetwork: 'Разрешить доступ в обход VPN',
+    allowLocalNetworkHint:
+      'Оставить приватные и link-local адреса доступными напрямую. Для применения переподключитесь.',
     resetProtocolPreference: 'Сбросить',
     protocolPreferenceReset: 'Предпочтение протокола сброшено',
     protocolPreferenceResetFailed: 'Не удалось сбросить предпочтение протокола',
