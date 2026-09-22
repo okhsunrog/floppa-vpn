@@ -597,6 +597,7 @@ async function doRemovePeer() {
               <UButton
                 v-if="activeSubscription"
                 icon="i-lucide-trash-2"
+                :aria-label="t('adminUserDetail.deleteSubscription')"
                 color="error"
                 variant="outline"
                 size="sm"

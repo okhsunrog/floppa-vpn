@@ -138,6 +138,7 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
     <template #actions-cell="{ row }">
       <UButton
         icon="i-lucide-refresh-cw"
+        :aria-label="t('adminVless.regenerate')"
         color="warning"
         variant="ghost"
         size="xs"
@@ -159,6 +160,7 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
         </div>
         <UButton
           icon="i-lucide-refresh-cw"
+          :aria-label="t('adminVless.regenerate')"
           color="warning"
           variant="ghost"
           size="xs"

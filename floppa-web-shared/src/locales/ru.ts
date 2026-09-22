@@ -78,6 +78,8 @@ export default {
       dark: 'Тёмная',
       auto: 'Авто',
     },
+    themeToggle: 'Тема: {mode}',
+    openMenu: 'Открыть меню',
   },
   login: {
     subtitle: 'Войдите через Telegram',
@@ -480,6 +482,8 @@ export default {
       'Задайте фильтр в формате RUST_LOG. Когда он включен, он заменяет выбранный профиль.',
     customFilterPlaceholder: 'напр. floppa_client_lib=trace,gotatun=debug',
     customFilterEnabled: 'Включить пользовательский фильтр',
+    clearCustomFilter: 'Очистить пользовательский фильтр',
+    refreshApps: 'Обновить список приложений',
     customFilterActive: 'Пользовательский фильтр активен',
     apply: 'Применить',
     logConfigSaveFailed: 'Не удалось сохранить настройки логирования',
@@ -537,6 +541,8 @@ export default {
     fixed: 'Исправлено',
     changed: 'Изменено',
     notes: 'Примечания',
+    newer: 'Более новая версия',
+    older: 'Более старая версия',
   },
   vpn: {
     connect: 'Подключить',

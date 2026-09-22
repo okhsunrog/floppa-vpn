@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useColorMode } from '@vueuse/core'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
 const { store } = useColorMode()
 
 const modes = ['light', 'dark', 'auto'] as const
@@ -12,6 +14,9 @@ const icons: Record<string, string> = {
 }
 
 const currentIcon = computed(() => icons[store.value] ?? icons.auto)
+const currentLabel = computed(() =>
+  t('nav.themeToggle', { mode: t(`nav.theme.${store.value in icons ? store.value : 'auto'}`) }),
+)
 
 function cycle() {
   const idx = modes.indexOf(store.value as (typeof modes)[number])
@@ -20,5 +25,12 @@ function cycle() {
 </script>
 
 <template>
-  <UButton :icon="currentIcon" color="neutral" variant="ghost" size="sm" @click="cycle" />
+  <UButton
+    :icon="currentIcon"
+    :aria-label="currentLabel"
+    color="neutral"
+    variant="ghost"
+    size="sm"
+    @click="cycle"
+  />
 </template>

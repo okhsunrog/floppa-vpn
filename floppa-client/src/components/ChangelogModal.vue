@@ -52,6 +52,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
       <div class="flex items-center gap-1">
         <UButton
           icon="i-lucide-chevron-left"
+          :aria-label="t('changelog.newer')"
           variant="ghost"
           size="xs"
           :disabled="!updateStore.hasNewerChangelog"
@@ -62,6 +63,7 @@ const isUpdateMode = computed(() => updateStore.changelogMode === 'update')
         }}</span>
         <UButton
           icon="i-lucide-chevron-right"
+          :aria-label="t('changelog.older')"
           variant="ghost"
           size="xs"
           :disabled="!updateStore.hasOlderChangelog"

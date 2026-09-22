@@ -53,7 +53,7 @@ function openProtocolModal() {
             size="sm"
             @click="openProtocolModal"
           />
-          <USwitch v-model="settings.autoSelect" />
+          <USwitch v-model="settings.autoSelect" :aria-label="t('settings.autoSelectProtocol')" />
         </div>
       </div>
     </UCard>

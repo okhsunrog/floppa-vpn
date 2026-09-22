@@ -79,6 +79,8 @@ export default {
       dark: 'Dark',
       auto: 'System',
     },
+    themeToggle: 'Theme: {mode}',
+    openMenu: 'Open menu',
   },
   login: {
     subtitle: 'Login with your Telegram account',
@@ -479,6 +481,8 @@ export default {
       'Set a raw RUST_LOG-style filter string. When enabled, it replaces the selected profile.',
     customFilterPlaceholder: 'e.g. floppa_client_lib=trace,gotatun=debug',
     customFilterEnabled: 'Enable custom filter',
+    clearCustomFilter: 'Clear custom filter',
+    refreshApps: 'Refresh app list',
     customFilterActive: 'Custom filter is active',
     apply: 'Apply',
     logConfigSaveFailed: 'Failed to save log configuration',
@@ -536,6 +540,8 @@ export default {
     fixed: 'Fixed',
     changed: 'Changed',
     notes: 'Notes',
+    newer: 'Newer version',
+    older: 'Older version',
   },
   vpn: {
     connect: 'Connect',

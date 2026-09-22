@@ -273,6 +273,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             <div class="flex gap-1">
               <UButton
                 icon="i-lucide-pencil"
+                :aria-label="t('adminPlans.editPlan')"
                 color="neutral"
                 variant="ghost"
                 size="xs"
@@ -280,6 +281,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               />
               <UButton
                 icon="i-lucide-trash-2"
+                :aria-label="t('common.delete')"
                 color="error"
                 variant="ghost"
                 size="xs"
@@ -312,6 +314,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             <div class="flex gap-1">
               <UButton
                 icon="i-lucide-pencil"
+                :aria-label="t('adminPlans.editPlan')"
                 color="neutral"
                 variant="ghost"
                 size="xs"
@@ -319,6 +322,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               />
               <UButton
                 icon="i-lucide-trash-2"
+                :aria-label="t('common.delete')"
                 color="error"
                 variant="ghost"
                 size="xs"

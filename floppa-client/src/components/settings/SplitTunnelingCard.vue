@@ -206,6 +206,7 @@ function selectMode(mode: SplitMode) {
         />
         <UButton
           icon="i-lucide-refresh-cw"
+          :aria-label="t('settings.refreshApps')"
           color="neutral"
           variant="ghost"
           size="sm"

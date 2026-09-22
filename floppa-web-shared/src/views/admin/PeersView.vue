@@ -155,6 +155,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
     <template #actions-cell="{ row }">
       <UButton
         icon="i-lucide-trash-2"
+        :aria-label="t('common.delete')"
         color="error"
         variant="ghost"
         size="xs"
@@ -170,6 +171,7 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
         </div>
         <UButton
           icon="i-lucide-trash-2"
+          :aria-label="t('common.delete')"
           color="error"
           variant="ghost"
           size="xs"

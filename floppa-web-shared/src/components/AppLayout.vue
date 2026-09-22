@@ -168,6 +168,7 @@ const navItems = computed(() => {
           <UButton
             class="md:hidden"
             icon="i-lucide-menu"
+            :aria-label="t('nav.openMenu')"
             color="neutral"
             variant="ghost"
             size="sm"

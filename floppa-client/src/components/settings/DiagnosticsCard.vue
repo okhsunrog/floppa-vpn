@@ -134,6 +134,7 @@ onMounted(load)
           <UButton
             v-if="logConfig.custom_filter"
             icon="i-lucide-x"
+            :aria-label="t('settings.clearCustomFilter')"
             size="sm"
             variant="ghost"
             :disabled="captureStatus.active"

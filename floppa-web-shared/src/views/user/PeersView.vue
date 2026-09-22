@@ -473,6 +473,7 @@ async function doRegenerateVless() {
               <UButton
                 v-if="peer.sync_status === 'active'"
                 icon="i-lucide-trash-2"
+                :aria-label="t('common.delete')"
                 color="error"
                 variant="ghost"
                 size="sm"
