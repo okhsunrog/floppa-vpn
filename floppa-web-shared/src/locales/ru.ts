@@ -401,6 +401,9 @@ export default {
     allowLocalNetwork: 'Разрешить доступ в обход VPN',
     allowLocalNetworkHint:
       'Оставить приватные и link-local адреса доступными напрямую. Для применения переподключитесь.',
+    connectionDisplay: 'Отображение подключения',
+    showConnectionDetails: 'Показывать технические данные',
+    showConnectionDetailsHint: 'Показывать IP туннеля и адрес сервера во время подключения.',
     resetProtocolPreference: 'Сбросить',
     protocolPreferenceReset: 'Предпочтение протокола сброшено',
     protocolPreferenceResetFailed: 'Не удалось сбросить предпочтение протокола',
@@ -580,7 +583,6 @@ export default {
       moscow: 'Москва',
       singapore: 'Сингапур',
     },
-    connectedRoute: 'Подключено к локации {region} по протоколу {protocol}.',
     disconnectToChangeRoute: 'Отключитесь, чтобы изменить протокол или локацию.',
     unknownConnectionValue: 'Неизвестно',
     wireguard: 'WireGuard',

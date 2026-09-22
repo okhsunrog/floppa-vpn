@@ -11,6 +11,7 @@ import AboutCard from '../components/settings/AboutCard.vue'
 import WindowCloseCard from '../components/settings/WindowCloseCard.vue'
 import TunnelServiceCard from '../components/settings/TunnelServiceCard.vue'
 import LocalNetworkCard from '../components/settings/LocalNetworkCard.vue'
+import ConnectionDisplayCard from '../components/settings/ConnectionDisplayCard.vue'
 
 const { t } = useI18n()
 const vpn = useVpnStore()
@@ -58,6 +59,7 @@ function openProtocolModal() {
     </UCard>
 
     <LocalNetworkCard />
+    <ConnectionDisplayCard />
 
     <template v-if="vpn.isAndroid">
       <AndroidPermissionsCard />

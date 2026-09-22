@@ -402,6 +402,9 @@ export default {
     allowLocalNetwork: 'Allow access outside the VPN',
     allowLocalNetworkHint:
       'Keep private and link-local addresses reachable directly. Reconnect to apply changes.',
+    connectionDisplay: 'Connection display',
+    showConnectionDetails: 'Show technical details',
+    showConnectionDetailsHint: 'Show the tunnel IP address and server endpoint while connected.',
     resetProtocolPreference: 'Reset',
     protocolPreferenceReset: 'Protocol preference reset',
     protocolPreferenceResetFailed: 'Could not reset the protocol preference',
@@ -578,7 +581,6 @@ export default {
       moscow: 'Moscow',
       singapore: 'Singapore',
     },
-    connectedRoute: 'Connected to {region} using {protocol}.',
     disconnectToChangeRoute: 'Disconnect to change the protocol or location.',
     unknownConnectionValue: 'Unknown',
     wireguard: 'WireGuard',

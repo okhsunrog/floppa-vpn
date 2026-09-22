@@ -389,10 +389,21 @@ const healthDotClass = computed(() => {
         <span v-if="vpn.state.vpn_mode === 'always_on'" class="text-xs">
           {{ t('vpn.alwaysOnConfigured') }}
         </span>
-        <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
-        <span v-if="vpn.state.server_endpoint">
-          {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
+        <span
+          class="inline-flex items-center justify-center gap-1.5 font-medium text-[var(--ui-text)]"
+        >
+          <UIcon name="i-lucide-map-pin" class="size-4" />
+          {{ selectedRegionLabel }} · {{ connectedProtocolLabel }}
         </span>
+        <span v-if="showProtocolPicker || showRegionPicker" class="text-xs">
+          {{ t('vpn.disconnectToChangeRoute') }}
+        </span>
+        <template v-if="settingsStore.showConnectionDetails">
+          <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
+          <span v-if="vpn.state.server_endpoint">
+            {{ t('vpn.server') }}: {{ vpn.state.server_endpoint }}
+          </span>
+        </template>
         <span>{{ t('vpn.duration') }}: {{ connectionDuration }}</span>
         <span class="inline-flex items-center justify-center gap-1.5">
           {{ t('vpn.lastActivity') }}:
@@ -469,26 +480,9 @@ const healthDotClass = computed(() => {
         @click="handleConnect"
       />
 
-      <div
-        v-if="vpn.isConnected && (showProtocolPicker || showRegionPicker)"
-        class="mt-4 text-center"
-      >
-        <p class="text-sm font-medium">
-          {{
-            t('vpn.connectedRoute', {
-              region: selectedRegionLabel,
-              protocol: connectedProtocolLabel,
-            })
-          }}
-        </p>
-        <p class="text-xs text-[var(--ui-text-muted)] mt-1">
-          {{ t('vpn.disconnectToChangeRoute') }}
-        </p>
-      </div>
-
       <!-- Connection choices sit together: they both decide what the next Connect will build. -->
       <div
-        v-else-if="showProtocolPicker || showRegionPicker"
+        v-if="!vpn.isConnected && (showProtocolPicker || showRegionPicker)"
         class="grid gap-3 w-full mt-4"
         :class="
           showProtocolPicker && showRegionPicker

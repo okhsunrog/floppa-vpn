@@ -25,6 +25,7 @@ export const useSettingsStore = defineStore(
     const splitMode = ref<SplitMode>('all')
     const selectedApps = ref<string[]>([])
     const allowLan = ref(false)
+    const showConnectionDetails = ref(false)
 
     // When true (default), connecting auto-probes protocols in order and stays on
     // the first that works. When false, the user picks the protocol manually via
@@ -93,6 +94,7 @@ export const useSettingsStore = defineStore(
       splitMode,
       selectedApps,
       allowLan,
+      showConnectionDetails,
       autoSelect,
       protocolOrder,
       manualProtocol,
@@ -112,6 +114,7 @@ export const useSettingsStore = defineStore(
         'splitMode',
         'selectedApps',
         'allowLan',
+        'showConnectionDetails',
         'autoSelect',
         'protocolOrder',
         'manualProtocol',
