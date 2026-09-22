@@ -15,6 +15,7 @@ import { needsAttention } from '../utils/outcomes'
 import { useRegionStore } from '../stores/regionStore'
 
 const { t } = useI18n()
+const toast = useToast()
 const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
@@ -50,6 +51,7 @@ const showProtocolPicker = computed(
   () => !settingsStore.autoSelect && vpn.availableProtocols.length > 1,
 )
 const showRegionPicker = computed(() => regionStore.availableRegions.length > 1)
+const canChangeRoute = computed(() => showProtocolPicker.value || showRegionPicker.value)
 const protocolItems = computed(() =>
   vpn.availableProtocols.map((protocol) => ({
     label: t(`vpn.${protocol}`),
@@ -116,6 +118,15 @@ async function handleConnect() {
     return
   }
   await handleOutcome(await vpn.connect())
+}
+
+function showRouteChangeHint() {
+  if (!canChangeRoute.value) return
+  toast.add({
+    title: t('vpn.disconnectToChangeRoute'),
+    icon: 'i-lucide-info',
+    color: 'neutral',
+  })
 }
 
 /**
@@ -385,13 +396,17 @@ const healthDotClass = computed(() => {
           variant="subtle"
           size="lg"
           icon="i-lucide-map-pin"
-          class="self-center"
+          :as="canChangeRoute ? 'button' : 'span'"
+          :type="canChangeRoute ? 'button' : undefined"
+          :class="[
+            'self-center',
+            canChangeRoute &&
+              'cursor-pointer transition-transform active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary',
+          ]"
+          @click="showRouteChangeHint"
         >
           {{ selectedRegionLabel }} · {{ connectedProtocolLabel }}
         </UBadge>
-        <span v-if="showProtocolPicker || showRegionPicker" class="text-xs">
-          {{ t('vpn.disconnectToChangeRoute') }}
-        </span>
         <template v-if="settingsStore.showConnectionDetails">
           <span v-if="vpn.state.assigned_ip"> IP: {{ vpn.state.assigned_ip }} </span>
           <span v-if="vpn.state.server_endpoint">
