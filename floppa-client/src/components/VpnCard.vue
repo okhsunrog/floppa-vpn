@@ -466,23 +466,21 @@ const healthDotClass = computed(() => {
         </div>
       </div>
 
-      <div v-if="regionStore.regions.length > 1" class="mt-3">
+      <div v-if="regionStore.availableRegions.length > 1" class="mt-3">
         <div class="text-xs text-[var(--ui-text-muted)] mb-1.5">{{ t('vpn.region') }}</div>
         <div class="inline-flex rounded-lg bg-[var(--ui-bg-elevated)] p-0.5">
           <button
-            v-for="region in regionStore.regions"
+            v-for="region in regionStore.availableRegions"
             :key="region.id"
-            :disabled="!region.available || vpn.isConnected || busy || regionStore.changing"
+            :disabled="vpn.isConnected || busy || regionStore.changing"
             class="px-4 py-1.5 text-sm rounded-md transition-all disabled:opacity-50"
             :class="
               region.selected
                 ? 'bg-[var(--ui-bg)] text-[var(--ui-text)] shadow-sm font-medium'
                 : 'text-[var(--ui-text-muted)] hover:text-[var(--ui-text)]'
             "
-            :title="!region.available ? t('vpn.regionUnavailable') : undefined"
             @click="selectRegion(region.id)"
           >
-            <UIcon v-if="!region.available" name="i-lucide-lock" class="mr-1" />
             {{ region.display_name }}
           </button>
         </div>

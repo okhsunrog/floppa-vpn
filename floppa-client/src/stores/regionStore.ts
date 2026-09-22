@@ -18,6 +18,7 @@ export const useRegionStore = defineStore('regions', () => {
   const changing = ref(false)
   const error = ref<string | null>(null)
 
+  const availableRegions = computed(() => regions.value.filter((region) => region.available))
   const selected = computed(() => regions.value.find((region) => region.selected) ?? null)
   const supportsVless = computed(() => selected.value?.supports_vless ?? true)
 
@@ -55,5 +56,15 @@ export const useRegionStore = defineStore('regions', () => {
     }
   }
 
-  return { regions, selected, supportsVless, loading, changing, error, refresh, select }
+  return {
+    regions,
+    availableRegions,
+    selected,
+    supportsVless,
+    loading,
+    changing,
+    error,
+    refresh,
+    select,
+  }
 })
