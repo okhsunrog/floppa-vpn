@@ -32,6 +32,9 @@ post_install() {
 ==> after the app is closed:
 ==>   sudo usermod -aG floppa "$USER"   # then log in again
 ==>   sudo systemctl enable --now floppa-vpn.socket
+==> And to bring the tunnel back after a reboot:
+==>   sudo systemctl enable floppa-vpn-autostart.service
+==>   floppa autostart on
 EOF
 }
 
@@ -57,6 +60,7 @@ post_remove() {
   # Both, and in this order: stopping only the service leaves the socket to start it again.
   # The group is left alone — removing it would strip a membership somebody granted on purpose.
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl disable floppa-vpn-autostart.service >/dev/null 2>&1 || true
     systemctl disable --now floppa-vpn.socket >/dev/null 2>&1 || true
     systemctl stop floppa-vpn.service >/dev/null 2>&1 || true
     systemctl daemon-reload || true

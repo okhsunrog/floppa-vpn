@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { commands } from '../../bindings'
 import { useTunnelOwner } from '../../composables/useTunnelOwner'
 
 /**
- * Which of the two places is holding the tunnel, said out loud.
+ * Which of the two places is holding the tunnel, and the one thing that depends on it.
  *
- * It is not a setting and there is nothing to click, which is why it reads as a status rather than
- * a control — the mode is decided once when the app starts and kept for the run, because two
- * actors must never both be live.
+ * The mode itself reads as a status rather than a control, because it is not something to choose:
+ * it is decided once when the app starts and kept for the run, since two actors must never both be
+ * live. Only the boot switch below it is a setting, and it appears only in the mode that can honour
+ * it.
  *
- * It is on the screen because the promises differ. With the system service, closing the window or
+ * The mode is on the screen because the promises differ. With the system service, closing the window or
  * quitting leaves the tunnel up; without it, quitting takes the tunnel down. Nothing else in the
  * app distinguishes those, so without this the same words would mean two different things and
  * nobody could tell which they had.
@@ -23,6 +25,35 @@ import { useTunnelOwner } from '../../composables/useTunnelOwner'
 const { t } = useI18n()
 // Calling it is what asks; the answer arrives a tick later and the card re-renders.
 const { owner, lockedOut } = useTunnelOwner()
+
+/**
+ * Whether this machine brings its tunnel back after a reboot.
+ *
+ * `null` means there is nothing to answer — no service is holding the tunnel, so nothing outlives
+ * this app to bring anything back — and the switch is hidden rather than shown doing nothing.
+ *
+ * Not `systemctl enable`, although that is where anyone would look for it. systemd gives polkit
+ * the unit's name for starting and stopping a unit but not for enabling one, so a rule letting the
+ * `floppa` group enable this one unit without an administrator's password cannot be written — only
+ * one letting it enable any unit at all. Group membership is the authority everything else here
+ * runs on, so the setting lives where that reaches.
+ */
+const onBoot = ref<boolean | null>(null)
+const saving = ref(false)
+
+onMounted(async () => {
+  const result = await commands.getResumeOnBoot()
+  if (result.status === 'ok') onBoot.value = result.data
+  else console.warn(`[service] could not read the boot setting: ${result.error}`)
+})
+
+async function setOnBoot(enabled: boolean) {
+  saving.value = true
+  const result = await commands.setResumeOnBoot(enabled)
+  saving.value = false
+  if (result.status === 'ok') onBoot.value = enabled
+  else console.error(`[service] could not change the boot setting: ${result.error}`)
+}
 
 const state = computed(() => {
   if (owner.value?.kind === 'service') {
@@ -65,6 +96,22 @@ const state = computed(() => {
         <p class="text-sm font-medium">{{ state.title }}</p>
         <p class="text-xs text-(--ui-text-muted) mt-1">{{ state.detail }}</p>
       </div>
+    </div>
+
+    <div
+      v-if="onBoot !== null"
+      class="flex items-center justify-between gap-3 mt-4 pt-4 border-t border-(--ui-border)"
+    >
+      <div>
+        <p class="text-sm font-medium">{{ t('settings.connectOnBoot') }}</p>
+        <p class="text-xs text-(--ui-text-muted) mt-1">{{ t('settings.connectOnBootDetail') }}</p>
+      </div>
+      <USwitch
+        :model-value="onBoot"
+        :disabled="saving"
+        :aria-label="t('settings.connectOnBoot')"
+        @update:model-value="setOnBoot"
+      />
     </div>
   </UCard>
 </template>

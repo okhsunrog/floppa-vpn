@@ -148,6 +148,28 @@ impl RemoteActor {
         }
     }
 
+    /// Whether the machine reconnects its tunnel on boot. `false` when it cannot be asked.
+    pub async fn resume_on_boot(&self) -> bool {
+        self.call("resume_on_boot", |client| async move {
+            client
+                .resume_on_boot(RemoteActor::deadline(CALL_DEADLINE))
+                .await
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Turn reconnecting on boot on or off.
+    pub async fn set_resume_on_boot(&self, enabled: bool) -> Result<(), crate::rpc::SessionError> {
+        self.call("set_resume_on_boot", |client| async move {
+            client
+                .set_resume_on_boot(RemoteActor::deadline(CALL_DEADLINE), enabled)
+                .await
+        })
+        .await
+        .map_err(|detail| crate::rpc::SessionError::Failed { detail })?
+    }
+
     /// Ask the process holding the actor to bring back whatever it last had up.
     ///
     /// `Ok(None)` is "nothing has ever connected there", which is an answer and not a failure.

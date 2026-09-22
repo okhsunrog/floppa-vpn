@@ -14,6 +14,7 @@ fi
 # a membership an administrator granted, and a reinstall would then silently not work for the
 # person who had set it up.
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+  systemctl disable floppa-vpn-autostart.service >/dev/null 2>&1 || true
   systemctl disable --now floppa-vpn.socket >/dev/null 2>&1 || true
   systemctl stop floppa-vpn.service >/dev/null 2>&1 || true
   systemctl daemon-reload || true

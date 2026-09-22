@@ -247,6 +247,55 @@ pub fn remove(dir: &Path) {
     }
 }
 
+/// Whether this machine should bring its tunnel back when it boots.
+///
+/// A marker file, present or absent, in the same directory as everything else the tunnel process
+/// keeps. Presence rather than a value inside a file because the only two states are the two
+/// states, and creating or removing a file is atomic in a way that rewriting one is not.
+///
+/// Kept apart from [`LastIntent`] deliberately, although both are about starting with nobody
+/// watching. That one is *what* to bring back and is rewritten by every successful connect; this
+/// one is *whether* to, and is a decision a person made once. Folding them together would mean a
+/// connect could silently change a preference.
+///
+/// # Why this is a file here and not `systemctl enable`
+///
+/// Because enabling a unit cannot be granted to the group that is allowed to drive this VPN.
+/// systemd hands polkit the unit's name for `manage-units` (start, stop) but **not** for
+/// `manage-unit-files` (enable, disable) — verified against polkit 127 — so a rule that let the
+/// `floppa` group enable *this* unit without a prompt cannot be written. Only one that lets it
+/// enable any unit at all, which is root by another name.
+///
+/// So the unit is always enabled, and this is what it reads. `floppa-vpn-autostart.service` runs
+/// `floppa resume --if-enabled`, which asks the service for this and does nothing when it is off.
+const RESUME_ON_BOOT: &str = "resume-on-boot";
+
+fn resume_marker(dir: &Path) -> PathBuf {
+    dir.join(RESUME_ON_BOOT)
+}
+
+/// Whether a boot should reconnect. `false` unless somebody has said otherwise.
+pub fn resume_on_boot(dir: &Path) -> bool {
+    resume_marker(dir).exists()
+}
+
+/// Turn reconnect-on-boot on or off.
+pub fn set_resume_on_boot(dir: &Path, enabled: bool) -> Result<(), String> {
+    let path = resume_marker(dir);
+    if enabled {
+        // Empty on purpose: what is being recorded is that the file is there.
+        write_private(&path, b"").map_err(|e| format!("write {}: {e}", path.display()))?;
+        info!("this machine will reconnect its tunnel on boot");
+        return Ok(());
+    }
+    match std::fs::remove_file(&path) {
+        Ok(()) => info!("this machine will no longer reconnect its tunnel on boot"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("remove {}: {e}", path.display())),
+    }
+    Ok(())
+}
+
 /// The identity of one Android service start, minted by the UI process.
 ///
 /// Deliberately **not** the cycle's `IntentEpoch`. An intent's epoch is shared by every protocol

@@ -1,6 +1,17 @@
-# Connect on boot. Enabling this unit is the setting; disabling it turns it off.
+# Connect on boot, if this machine has been told to.
 #
-#   sudo systemctl enable floppa-vpn-autostart.service
+#   floppa autostart on
+#
+# The setting is *not* whether this unit is enabled; the package enables it and it stays enabled,
+# doing nothing until asked. That is not the shape anyone would choose — `systemctl is-enabled`
+# would be the obvious place to look — and the reason is a limit in systemd: it hands polkit the
+# unit's name for `manage-units` (start, stop) but not for `manage-unit-files` (enable, disable),
+# verified against polkit 127. So no rule can let the `floppa` group enable *this one* unit without
+# a password prompt; only one that lets it enable any unit at all, which is root by another name.
+#
+# Group membership is the authority every other thing a client does here is gated by, and
+# connecting on boot belongs inside it. So the preference lives where that authority reaches — the
+# service's own state directory — and `--if-enabled` asks for it.
 #
 # A unit of its own rather than something the tunnel service does when it starts, because the
 # tunnel service is also started by its socket — every `floppa status` would otherwise reconnect a
@@ -22,7 +33,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/floppa resume
+ExecStart=/usr/bin/floppa resume --if-enabled
 RemainAfterExit=yes
 
 [Install]

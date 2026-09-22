@@ -161,6 +161,22 @@ impl VpnRpc for ActorServer {
         let _ = crate::logging::stop_file_capture();
     }
 
+    async fn resume_on_boot(self, _ctx: Context) -> bool {
+        match crate::config::config_dir() {
+            Ok(dir) => crate::autostart::resume_on_boot(&dir),
+            Err(e) => {
+                warn!("cannot tell whether this machine resumes on boot: {e}");
+                false
+            }
+        }
+    }
+
+    async fn set_resume_on_boot(self, _ctx: Context, enabled: bool) -> Result<(), SessionError> {
+        let dir = crate::config::config_dir().map_err(|e| SessionError::Failed { detail: e })?;
+        crate::autostart::set_resume_on_boot(&dir, enabled)
+            .map_err(|detail| SessionError::Failed { detail })
+    }
+
     async fn resume(self, _ctx: Context) -> Result<Option<IntentAccepted>, IntentError> {
         // Read here rather than remembered in this struct: it is written by whichever cycle last
         // connected, which may well be a cycle that happened after this server started.

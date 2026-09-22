@@ -97,7 +97,7 @@ Telegram profile photos are served from a CDN that's unreachable from clients in
   tunnel in a process that outlives every client. `connect` without `--config` then asks the
   service instead of building a tunnel here, and `import`, `status`, `disconnect` and `resume`
   drive it. `--config` keeps the old meaning: a tunnel this command builds and holds. Connecting on
-  boot is `systemctl enable floppa-vpn-autostart.service`. See
+  boot is `floppa autostart on`, or a switch in the app's settings. See
   [`docs/DESKTOP-TUNNEL-SERVICE.md`](docs/DESKTOP-TUNNEL-SERVICE.md)
 - Login token: `<config dir>/floppa/token` (0600; under `sudo` the invoking user's config dir),
   or `--token-file` / `FLOPPA_TOKEN_FILE`, or inline `--token` / `FLOPPA_TOKEN`

@@ -445,6 +445,9 @@ export default {
     closeQuit: 'Disconnect and quit',
     closeQuitServiceHolds: 'Quit the app (the VPN keeps running)',
     tunnelService: 'Tunnel service',
+    connectOnBoot: 'Connect on boot',
+    connectOnBootDetail:
+      'Bring back the tunnel that last connected when this machine starts, without waiting for anyone to log in.',
     serviceActive: 'The system service is holding the tunnel',
     serviceActiveDetail:
       'Closing the window or quitting leaves the VPN connected. It is stopped with the Disconnect button, or with `floppa disconnect`.',

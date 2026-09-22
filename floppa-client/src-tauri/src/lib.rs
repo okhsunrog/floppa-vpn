@@ -61,6 +61,8 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::hide_to_tray,
             vpn::commands::quit_app,
             vpn::commands::get_tunnel_owner,
+            vpn::commands::get_resume_on_boot,
+            vpn::commands::set_resume_on_boot,
         ])
         .events(tauri_specta::collect_events![
             vpn::events::TunnelStateChanged,
@@ -320,6 +322,10 @@ pub fn run() {
                     log_dir.clone(),
                     remote.clone(),
                 ));
+                // Kept beside the handle, because some of what a client may ask the service is
+                // not about the tunnel and so is not on `TunnelControl` — whether this machine
+                // reconnects on boot, for one.
+                app.manage(remote.clone());
                 vpn::actor::handle::TunnelHandle::remote(remote)
             } else {
                 in_process_actor(app, &spawn, &log_dir)

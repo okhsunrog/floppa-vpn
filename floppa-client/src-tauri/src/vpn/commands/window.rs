@@ -37,6 +37,58 @@ pub fn quit_app(app: AppHandle) {
     tray::quit(&app);
 }
 
+/// Whether this machine reconnects its tunnel on boot.
+///
+/// `None` where there is nothing to answer: no system service is holding the tunnel, so nothing
+/// outlives this app to bring anything back. The UI hides the control rather than showing one that
+/// could not do anything.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_resume_on_boot(
+    #[allow(unused_variables)] app: AppHandle,
+) -> Result<Option<bool>, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use tauri::Manager as _;
+        let Some(remote) = app.try_state::<std::sync::Arc<crate::vpn::remote::RemoteActor>>()
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(remote.resume_on_boot().await));
+    }
+    #[cfg(not(target_os = "linux"))]
+    Ok(None)
+}
+
+/// Turn reconnecting on boot on or off.
+///
+/// Not `systemctl enable`, and not because that would be harder to call: systemd gives polkit the
+/// unit's name for `manage-units` but not for `manage-unit-files`, so no rule can let the `floppa`
+/// group enable *this one* unit without an administrator's password. Group membership is what
+/// every other thing this app asks of the service is gated by, so the preference lives where that
+/// authority reaches — see `VpnRpc::set_resume_on_boot`.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_resume_on_boot(
+    #[allow(unused_variables)] app: AppHandle,
+    #[allow(unused_variables)] enabled: bool,
+) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        use tauri::Manager as _;
+        let Some(remote) = app.try_state::<std::sync::Arc<crate::vpn::remote::RemoteActor>>()
+        else {
+            return Err("no tunnel service is holding the tunnel".into());
+        };
+        return remote
+            .set_resume_on_boot(enabled)
+            .await
+            .map_err(|e| e.to_string());
+    }
+    #[cfg(not(target_os = "linux"))]
+    Err("this platform has no tunnel service".into())
+}
+
 /// Who holds the tunnel this app is showing.
 ///
 /// The UI needs it because the promises differ. "Quitting will disconnect you" is true when the

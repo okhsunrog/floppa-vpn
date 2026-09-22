@@ -159,6 +159,24 @@ export const commands = {
 	 *  everything is quietly worse.
 	 */
 	getTunnelOwner: () => __TAURI_INVOKE<TunnelOwner>("get_tunnel_owner"),
+	/**
+	 *  Whether this machine reconnects its tunnel on boot.
+	 * 
+	 *  `None` where there is nothing to answer: no system service is holding the tunnel, so nothing
+	 *  outlives this app to bring anything back. The UI hides the control rather than showing one that
+	 *  could not do anything.
+	 */
+	getResumeOnBoot: () => typedError<boolean | null, string>(__TAURI_INVOKE("get_resume_on_boot")),
+	/**
+	 *  Turn reconnecting on boot on or off.
+	 * 
+	 *  Not `systemctl enable`, and not because that would be harder to call: systemd gives polkit the
+	 *  unit's name for `manage-units` but not for `manage-unit-files`, so no rule can let the `floppa`
+	 *  group enable *this one* unit without an administrator's password. Group membership is what
+	 *  every other thing this app asks of the service is gated by, so the preference lives where that
+	 *  authority reaches — see `VpnRpc::set_resume_on_boot`.
+	 */
+	setResumeOnBoot: (enabled: boolean) => typedError<null, string>(__TAURI_INVOKE("set_resume_on_boot", { enabled })),
 };
 
 /** Events */

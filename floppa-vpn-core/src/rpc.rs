@@ -47,8 +47,8 @@ use crate::store::ConfigError;
 ///
 /// One is the shape that shipped in 0.6.x, before the version was carried at all. Two added
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
-/// [`VpnRpc::resume`].
-pub const PROTOCOL_VERSION: u32 = 3;
+/// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Why a session could not be handed over.
 ///
@@ -220,6 +220,19 @@ pub trait VpnRpc {
     /// which only the process holding the actor can read. So the request is "whatever you had",
     /// and the process that knows answers it.
     async fn resume() -> Result<Option<IntentAccepted>, IntentError>;
+
+    /// Whether this machine reconnects its tunnel on boot.
+    async fn resume_on_boot() -> bool;
+
+    /// Turn reconnecting on boot on or off.
+    ///
+    /// A preference rather than `systemctl enable`, and not by choice: systemd gives polkit the
+    /// unit's name for `manage-units` but not for `manage-unit-files`, so no rule can let the
+    /// `floppa` group enable *this one* unit without a prompt — only one that lets it enable any
+    /// unit, which is root by another name. Group membership is the authority every other call
+    /// here is gated by, and connecting on boot belongs inside it, so the preference lives where
+    /// that authority reaches.
+    async fn set_resume_on_boot(enabled: bool) -> Result<(), SessionError>;
 }
 
 #[cfg(test)]
@@ -583,6 +596,15 @@ mod tests {
         /// `resume` answers with an option, and the `None` is load-bearing: "nothing has ever
         /// connected here" is an answer, not a failure, and a codec that lost the difference would
         /// turn a machine with no history into one reporting an error at every boot.
+        #[test]
+        fn the_reconnect_on_boot_preference() {
+            for enabled in [true, false] {
+                assert_eq!(survives("resume_on_boot", &enabled), enabled);
+            }
+            let ok: Result<(), SessionError> = Ok(());
+            assert_eq!(survives("set_resume_on_boot Ok", &ok), ok);
+        }
+
         #[test]
         fn resuming_when_there_is_nothing_to_resume() {
             let nothing: Result<Option<IntentAccepted>, IntentError> = Ok(None);

@@ -235,6 +235,22 @@ pub async fn connect_stored(remote: &RemoteActor) -> Result<()> {
     }
 }
 
+/// Show or change whether this machine reconnects its tunnel on boot.
+pub async fn autostart(remote: &RemoteActor, set: Option<bool>) -> Result<()> {
+    if let Some(enabled) = set {
+        remote
+            .set_resume_on_boot(enabled)
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    let on = remote.resume_on_boot().await;
+    println!("{}", if on { "on" } else { "off" });
+    if on && set == Some(true) {
+        eprintln!("The tunnel that last connected will be brought back at boot.");
+    }
+    Ok(())
+}
+
 /// Whether the service already holds something it could connect with.
 pub async fn has_config(remote: &RemoteActor) -> bool {
     match first_state(remote).await {
@@ -249,7 +265,12 @@ pub async fn has_config(remote: &RemoteActor) -> bool {
 /// than something the service does for itself: the service is started by its socket too, and every
 /// `floppa status` would otherwise reconnect a VPN somebody had turned off. Being asked is
 /// different from being started, and only a caller can tell the two apart.
-pub async fn resume(remote: &RemoteActor) -> Result<()> {
+pub async fn resume(remote: &RemoteActor, only_if_enabled: bool) -> Result<()> {
+    // Asked of the service rather than read here: the preference lives beside the configs, in a
+    // directory only root can read, for the same reason everything else about this does.
+    if only_if_enabled && !remote.resume_on_boot().await {
+        return Ok(());
+    }
     let Some(accepted) = remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))? else {
         eprintln!("Nothing has connected on this machine yet; there is nothing to bring back.");
         return Ok(());

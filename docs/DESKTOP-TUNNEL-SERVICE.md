@@ -115,17 +115,29 @@ service in it, which is another reason the flag decides rather than a mode switc
 
 ## Connecting on boot
 
-Enabling one more unit is the setting:
-
 ```bash
-sudo systemctl enable floppa-vpn-autostart.service
+floppa autostart on      # or the switch in the app's settings
+floppa autostart         # prints on/off
 ```
 
-It is a `oneshot` that runs `floppa resume` — a *client* command, which is the point. The tunnel
-service is started by its socket as well as at boot, so a service that reconnected whenever it
-started would reconnect every time anybody ran `floppa status`, including on a VPN somebody had
-just turned off. Being **asked** is not the same as being **started**, and only a caller can tell
-the two apart.
+`floppa-vpn-autostart.service` is a `oneshot` running `floppa resume --if-enabled`, and the package
+enables it. **Its enabled-ness is not the setting** — it stays on and does nothing until asked.
+
+That is not the shape anyone would pick. `systemctl is-enabled` is exactly where a person would
+look, and this deliberately does not answer there. The reason is a limit in systemd, verified
+against polkit 127 rather than assumed: it passes polkit the unit's name for `manage-units` (start,
+stop) but **not** for `manage-unit-files` (enable, disable). A rule scoped to this one unit
+therefore matches nothing, and the only rule that would work grants the `floppa` group the right to
+enable *any* unit — which is root under another name. The alternative is an administrator password
+prompt on the switch, which would put a setting behind an authority that has nothing to do with
+whether someone may run this VPN: group membership is what gates everything else a client does
+here, and connecting on boot belongs inside it. So the preference lives where that authority
+reaches, in the service's own state directory, and the unit asks for it.
+
+`resume` is a *client* command for a separate reason: the tunnel service is started by its socket
+as well as at boot, so a service that reconnected whenever it started would reconnect every time
+anybody ran `floppa status`, on a VPN they had just turned off. Being **asked** is not the same as
+being **started**, and only a caller can tell the two apart.
 
 What it resumes is not named in the unit. The service writes down what last connected — the winner
 first, since that is the protocol that actually carried a tunnel — into `autostart.json` beside the

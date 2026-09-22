@@ -73,11 +73,19 @@ enum Command {
     #[cfg(target_os = "linux")]
     Disconnect,
     /// Bring back whatever tunnel the system service last had up
-    ///
-    /// What `floppa-vpn-autostart.service` runs at boot. Enable that unit to connect on boot;
-    /// disable it to stop.
     #[cfg(target_os = "linux")]
-    Resume,
+    Resume {
+        /// Do nothing unless `floppa autostart on` was set. What the boot unit passes.
+        #[arg(long)]
+        if_enabled: bool,
+    },
+    /// Whether to reconnect the tunnel on boot; with no argument, prints the current setting
+    #[cfg(target_os = "linux")]
+    Autostart {
+        /// `on` or `off`
+        #[arg(value_parser = ["on", "off"])]
+        state: Option<String>,
+    },
     /// Give the system service a config from a file, without connecting
     ///
     /// For a config you already hold. `connect --config` builds a tunnel in this command instead,
@@ -221,9 +229,14 @@ async fn main() -> Result<()> {
             client::disconnect(&remote).await?;
         }
         #[cfg(target_os = "linux")]
-        Command::Resume => {
+        Command::Resume { if_enabled } => {
             let remote = client::reach().await?;
-            client::resume(&remote).await?;
+            client::resume(&remote, if_enabled).await?;
+        }
+        #[cfg(target_os = "linux")]
+        Command::Autostart { state } => {
+            let remote = client::reach().await?;
+            client::autostart(&remote, state.map(|s| s == "on")).await?;
         }
         #[cfg(target_os = "linux")]
         Command::Import { config } => {
