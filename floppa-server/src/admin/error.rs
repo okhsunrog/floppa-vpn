@@ -35,8 +35,29 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Constraints raised by the private-network triggers (migration 0024). They refuse an
+/// administrator's action, so they are a 409 the admin panel can show, not a server fault.
+fn private_network_refusal(e: &sqlx::Error) -> Option<&'static str> {
+    match e.as_database_error()?.constraint()? {
+        "private_network_admin_only" => {
+            Some("This plan grants a private network: only an administrator can be on it")
+        }
+        "private_network_plan_not_public" => {
+            Some("A plan that grants a private network cannot be public")
+        }
+        _ => None,
+    }
+}
+
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
+        if let Some(message) = private_network_refusal(&e) {
+            return Self {
+                error: "private_network_restricted".into(),
+                message: message.into(),
+                status: StatusCode::CONFLICT,
+            };
+        }
         Self::server_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "database_error",

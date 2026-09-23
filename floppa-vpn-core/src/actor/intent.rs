@@ -36,14 +36,20 @@ pub enum SplitMode {
 
 /// Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to
 /// supply it. `apps` is sorted and deduped on construction, so `PartialEq` means "the same tunnel"
-/// rather than "the same list written the same way". `allow_lan` defaults off so intents written
-/// by older clients remain valid.
+/// rather than "the same list written the same way". `allow_lan` and `private_routes` default
+/// off so intents written by older clients remain valid.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct TunnelParams {
     pub split_mode: SplitMode,
     pub apps: Vec<String>,
     #[serde(default)]
     pub allow_lan: bool,
+    /// IPv4 CIDRs of the private networks the user's plan grants (`GET /me/private-networks`),
+    /// routed into the tunnel on top of everything else — including when `allow_lan` has taken
+    /// the private ranges out of it. Canonical, sorted and deduplicated by
+    /// [`Self::with_private_routes`].
+    #[serde(default)]
+    pub private_routes: Vec<String>,
 }
 
 impl TunnelParams {
@@ -54,12 +60,39 @@ impl TunnelParams {
             split_mode,
             apps,
             allow_lan: false,
+            private_routes: Vec::new(),
         }
     }
 
     pub fn with_allow_lan(mut self, allow_lan: bool) -> Self {
         self.allow_lan = allow_lan;
         self
+    }
+
+    /// Set the private routes, keeping only IPv4 networks and writing each the one way
+    /// (`10.66.66.7/24` becomes `10.66.66.0/24`), so equal grants make equal params. Sorted as
+    /// strings, which is what the app's `Array.prototype.sort` does to the same list.
+    pub fn with_private_routes(mut self, routes: impl IntoIterator<Item = String>) -> Self {
+        let mut canonical: Vec<String> = routes
+            .into_iter()
+            .filter_map(|r| r.trim().parse::<ipnetwork::Ipv4Network>().ok())
+            .filter_map(|n| ipnetwork::Ipv4Network::new(n.network(), n.prefix()).ok())
+            .map(|n| n.to_string())
+            .collect();
+        canonical.sort_unstable();
+        canonical.dedup();
+        self.private_routes = canonical;
+        self
+    }
+
+    /// The private routes as networks. Entries that do not parse — only possible in an intent
+    /// written by hand — are skipped rather than failing the tunnel.
+    pub fn private_route_networks(&self) -> Vec<ipnetwork::IpNetwork> {
+        self.private_routes
+            .iter()
+            .filter_map(|r| r.parse::<ipnetwork::Ipv4Network>().ok())
+            .map(ipnetwork::IpNetwork::V4)
+            .collect()
     }
 }
 
@@ -159,6 +192,29 @@ mod tests {
         let a = TunnelParams::new(SplitMode::Include, vec!["b".into(), "a".into(), "b".into()]);
         let b = TunnelParams::new(SplitMode::Include, vec!["a".into(), "b".into()]);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn private_routes_are_canonical_ipv4_and_compare_by_content() {
+        let a = TunnelParams::new(SplitMode::All, vec![]).with_private_routes([
+            "10.66.66.7/24".to_string(),
+            "10.65.65.0/24".into(),
+            "fd00::/8".into(),
+            "garbage".into(),
+            "10.66.66.0/24".into(),
+        ]);
+        assert_eq!(a.private_routes, ["10.65.65.0/24", "10.66.66.0/24"]);
+        let b = TunnelParams::new(SplitMode::All, vec![])
+            .with_private_routes(["10.66.66.0/24".to_string(), "10.65.65.0/24".into()]);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn an_intent_written_before_private_routes_still_reads() {
+        let old: TunnelParams =
+            serde_json::from_str(r#"{"split_mode":"all","apps":[],"allow_lan":true}"#).unwrap();
+        assert!(old.private_routes.is_empty());
+        assert!(old.allow_lan);
     }
 
     #[test]

@@ -18,6 +18,7 @@ import type { IntentError } from '../bindings'
 import type { VpnError } from '../utils/vpnErrors'
 import { platform } from '@tauri-apps/plugin-os'
 import { useRegionStore } from './regionStore'
+import { usePrivateNetworksStore } from './privateNetworksStore'
 
 /**
  * `ConnectionStatus` is a hand-written copy of the generated `Phase`, and has to be: it lives in
@@ -266,7 +267,12 @@ export const useVpnStore = defineStore(
     function params(): TunnelParams {
       const settings = useSettingsStore()
       const apps = settings.splitMode === 'all' ? [] : [...new Set(settings.selectedApps)].sort()
-      return { split_mode: settings.splitMode, apps, allow_lan: settings.allowLan }
+      return {
+        split_mode: settings.splitMode,
+        apps,
+        allow_lan: settings.allowLan,
+        private_routes: usePrivateNetworksStore().routes,
+      }
     }
 
     /**

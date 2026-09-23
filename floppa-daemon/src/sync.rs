@@ -1,9 +1,15 @@
+use crate::nft::{Isolation, PrivateAccess};
 use crate::wg::{PeerStat, WgTool};
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
-use floppa_core::{Config, DbPool, Protocol, config::RegionRoutingConfig};
+use floppa_core::{
+    Config, DbPool, Protocol,
+    config::{RegionRoutingConfig, networks_overlap},
+};
+use ipnetwork::Ipv4Network;
 use sqlx::postgres::PgListener;
 use std::collections::{HashMap, HashSet};
+use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -28,6 +34,15 @@ struct SyncContext {
     /// periodic sync does not repeat the warning every 15 s for as long as they sit there.
     unroutable_reported: Mutex<HashSet<i64>>,
     regions: HashMap<String, RegionRoutingConfig>,
+    /// Client isolation as configured, with no private access; `None` when turned off.
+    isolation: Option<Isolation>,
+    /// What is on the host now, so an unchanged grant set costs a query and nothing else.
+    /// Starts as the base `main` applied before the loop.
+    applied_isolation: Mutex<Option<Isolation>>,
+    client_subnets: Vec<Ipv4Network>,
+    /// Private-network CIDRs already reported as overlapping a client subnet, so the periodic
+    /// reconcile does not repeat the error every 15 s.
+    overlap_reported: Mutex<HashSet<Ipv4Network>>,
 }
 
 impl SyncContext {
@@ -64,11 +79,16 @@ impl SyncContext {
             });
         }
 
+        let isolation = Isolation::from_config(config);
         Self {
             pool,
             targets,
             unroutable_reported: Mutex::new(HashSet::new()),
             regions: config.regions.clone(),
+            applied_isolation: Mutex::new(isolation.clone()),
+            isolation,
+            client_subnets: config.client_subnets(),
+            overlap_reported: Mutex::new(HashSet::new()),
         }
     }
 
@@ -118,7 +138,11 @@ impl From<&PeerStat> for Counters {
 }
 
 /// Notification channels the daemon subscribes to.
-const LISTEN_CHANNELS: [&str; 2] = ["peer_changed", "subscription_changed"];
+const LISTEN_CHANNELS: [&str; 3] = [
+    "peer_changed",
+    "subscription_changed",
+    "private_networks_changed",
+];
 
 /// Main synchronization loop using PostgreSQL LISTEN/NOTIFY
 /// - Listens for 'peer_changed' notifications for immediate sync
@@ -148,6 +172,7 @@ pub async fn run_sync_loop(pool: &DbPool, config: &Config) -> Result<()> {
     reconcile_peer_routes(&ctx, None).await?;
     sync_peers(&ctx).await?;
     reapply_rate_limits(&ctx).await?;
+    reconcile_private_access(&ctx).await?;
 
     // Spawn listener task
     let listener_handle = tokio::spawn({
@@ -218,6 +243,9 @@ async fn resync_after_reconnect(ctx: &SyncContext) {
     if let Err(e) = reconcile_peer_routes(ctx, None).await {
         error!(error = %e, "Failed to reconcile peer routes after reconnect");
     }
+    if let Err(e) = reconcile_private_access(ctx).await {
+        error!(error = %e, "Failed to reconcile private access after reconnect");
+    }
 }
 
 /// Listen for PostgreSQL notifications and sync immediately.
@@ -258,6 +286,12 @@ async fn listen_for_changes(mut listener: PgListener, ctx: &SyncContext) -> Resu
                         }
                     }
                     _ => {}
+                }
+                // Every channel can change who may reach a private network: a peer added or
+                // removed, a plan switched, a network linked. The rebuild is a no-op when the
+                // grants come out the same.
+                if let Err(e) = reconcile_private_access(ctx).await {
+                    error!(error = %e, "Failed to reconcile private access");
                 }
             }
             Ok(None) => {
@@ -649,6 +683,83 @@ async fn periodic_sync(
     }
     update_traffic_stats(ctx, prev_wg_counters, peer_user_map).await?;
     check_expired_subscriptions(&ctx.pool).await?;
+    // A subscription that runs out by the clock sends no notification.
+    reconcile_private_access(ctx).await?;
+    Ok(())
+}
+
+#[derive(sqlx::FromRow)]
+struct PrivateGrantRow {
+    assigned_ip: String,
+    cidrs: Vec<String>,
+}
+
+/// Rebuild the daemon's table with the private access the database grants now: every active
+/// peer whose owner's current, active subscription is on a plan linked to an active network.
+async fn reconcile_private_access(ctx: &SyncContext) -> Result<()> {
+    let Some(base) = &ctx.isolation else {
+        return Ok(());
+    };
+
+    let rows = sqlx::query_as::<_, PrivateGrantRow>(
+        r#"
+        SELECT p.assigned_ip, n.cidrs::text[] AS cidrs
+        FROM peers p
+        JOIN current_subscriptions cs ON cs.user_id = p.user_id AND cs.is_active
+        JOIN plan_private_networks ppn ON ppn.plan_id = cs.plan_id
+        JOIN private_networks n ON n.id = ppn.network_id AND n.is_active
+        WHERE p.sync_status = 'active'
+        "#,
+    )
+    .fetch_all(&ctx.pool)
+    .await
+    .context("failed to load private network grants")?;
+
+    let mut grants = Vec::new();
+    for row in rows {
+        let Ok(client) = row.assigned_ip.parse::<Ipv4Addr>() else {
+            warn!(assigned_ip = %row.assigned_ip, "Peer address is not IPv4; no private access");
+            continue;
+        };
+        for cidr in &row.cidrs {
+            let Ok(network) = cidr.parse::<Ipv4Network>() else {
+                warn!(%cidr, "Unparseable private network CIDR; skipped");
+                continue;
+            };
+            if let Some(subnet) = ctx
+                .client_subnets
+                .iter()
+                .find(|subnet| networks_overlap(network, **subnet))
+            {
+                // Granting it would open clients to each other.
+                let first_time = ctx
+                    .overlap_reported
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(network);
+                if first_time {
+                    error!(%network, %subnet, "Private network overlaps a client subnet; not granted");
+                }
+                continue;
+            }
+            grants.push(PrivateAccess { client, network });
+        }
+    }
+
+    let wanted = base.with_private_access(grants);
+    let mut applied = ctx
+        .applied_isolation
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if applied.as_ref() == Some(&wanted) {
+        return Ok(());
+    }
+    wanted.apply()?;
+    info!(
+        grants = wanted.private_access.len(),
+        "Private network access updated"
+    );
+    *applied = Some(wanted);
     Ok(())
 }
 

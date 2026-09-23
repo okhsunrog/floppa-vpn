@@ -1446,6 +1446,44 @@ pub struct Plan {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub trial_minutes: ::std::option::Option<i32>,
 }
+///A private network the caller's plan grants. The client routes `cidrs` into the tunnel.
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "description": "A private network the caller's plan grants. The client routes `cidrs` into the tunnel.",
+///  "type": "object",
+///  "required": [
+///    "cidrs",
+///    "display_name",
+///    "id"
+///  ],
+///  "properties": {
+///    "cidrs": {
+///      "description": "IPv4 CIDRs, e.g. `10.66.66.0/24`.",
+///      "type": "array",
+///      "items": {
+///        "type": "string"
+///      }
+///    },
+///    "display_name": {
+///      "type": "string"
+///    },
+///    "id": {
+///      "type": "string"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct PrivateNetworkInfo {
+    ///IPv4 CIDRs, e.g. `10.66.66.0/24`.
+    pub cidrs: ::std::vec::Vec<::std::string::String>,
+    pub display_name: ::std::string::String,
+    pub id: ::std::string::String,
+}
 /**VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
 AmneziaWG adds interface-wide obfuscation and runs on its own server interface.*/
 ///

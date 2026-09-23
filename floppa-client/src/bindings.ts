@@ -572,13 +572,20 @@ reason: InProcessReason | null };
 /**
  *  Everything a *self-initiated* reconnect needs, because at reconnect time there is no caller to
  *  supply it. `apps` is sorted and deduped on construction, so `PartialEq` means "the same tunnel"
- *  rather than "the same list written the same way". `allow_lan` defaults off so intents written
- *  by older clients remain valid.
+ *  rather than "the same list written the same way". `allow_lan` and `private_routes` default
+ *  off so intents written by older clients remain valid.
  */
 export type TunnelParams = {
 	split_mode: SplitMode,
 	apps: string[],
 	allow_lan?: boolean,
+	/**
+	 *  IPv4 CIDRs of the private networks the user's plan grants (`GET /me/private-networks`),
+	 *  routed into the tunnel on top of everything else — including when `allow_lan` has taken
+	 *  the private ranges out of it. Canonical, sorted and deduplicated by
+	 *  [`Self::with_private_routes`].
+	 */
+	private_routes?: string[],
 };
 
 /**  Everything the UI can know about the tunnel, in one value. */

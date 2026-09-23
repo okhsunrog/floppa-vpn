@@ -233,6 +233,15 @@ pub struct RegionInfo {
     supports_vless: bool,
 }
 
+/// A private network the caller's plan grants. The client routes `cidrs` into the tunnel.
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct PrivateNetworkInfo {
+    id: String,
+    display_name: String,
+    /// IPv4 CIDRs, e.g. `10.66.66.0/24`.
+    cidrs: Vec<String>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct SetRegionRequest {
     region_id: String,
@@ -649,6 +658,40 @@ pub(super) async fn get_my_regions(
     .await?;
 
     Ok(Json(regions))
+}
+
+/// List the private networks the caller's current plan grants: what the WireGuard-family tunnel
+/// should route besides the internet. Empty for almost everyone; floppa-daemon enforces the same
+/// grants on the server side, so this list only decides routes, never access.
+#[utoipa::path(
+    get,
+    path = "/me/private-networks",
+    tag = "user",
+    security(("bearer" = [])),
+    responses(
+        (status = 200, body = Vec<PrivateNetworkInfo>),
+        (status = 401, body = ApiError, description = "Unauthorized"),
+    )
+)]
+pub(super) async fn get_my_private_networks(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<PrivateNetworkInfo>>, ApiError> {
+    let networks = sqlx::query_as::<_, PrivateNetworkInfo>(
+        r#"
+        SELECT n.id, n.display_name, n.cidrs::text[] AS cidrs
+        FROM current_subscriptions cs
+        JOIN plan_private_networks ppn ON ppn.plan_id = cs.plan_id
+        JOIN private_networks n ON n.id = ppn.network_id AND n.is_active
+        WHERE cs.user_id = $1 AND cs.is_active
+        ORDER BY n.id
+        "#,
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.pool)
+    .await?;
+
+    Ok(Json(networks))
 }
 
 /// Select the exit region for every WireGuard-family peer on this device.

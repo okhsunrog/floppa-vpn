@@ -1193,6 +1193,45 @@
         ]
       }
     },
+    "/me/private-networks": {
+      "get": {
+        "tags": [
+          "user"
+        ],
+        "summary": "List the private networks the caller's current plan grants: what the WireGuard-family tunnel\nshould route besides the internet. Empty for almost everyone; floppa-daemon enforces the same\ngrants on the server side, so this list only decides routes, never access.",
+        "operationId": "get_my_private_networks",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PrivateNetworkInfo"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/me/region": {
       "put": {
         "tags": [
@@ -3751,6 +3790,30 @@
               "null"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "PrivateNetworkInfo": {
+        "type": "object",
+        "description": "A private network the caller's plan grants. The client routes `cidrs` into the tunnel.",
+        "required": [
+          "id",
+          "display_name",
+          "cidrs"
+        ],
+        "properties": {
+          "cidrs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "IPv4 CIDRs, e.g. `10.66.66.0/24`."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
           }
         }
       },

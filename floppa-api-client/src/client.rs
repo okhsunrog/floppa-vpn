@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use crate::schema::{
     ApiError as ApiErrorBody, AuthResponse, CreatePeerRequest, CreatePeerResponse,
-    InstallationResponse, MeResponse, MyPeer, MyPeersResponse, Protocol, PublicConfig,
-    UpsertInstallationRequest, VlessConfigResponse,
+    InstallationResponse, MeResponse, MyPeer, MyPeersResponse, PrivateNetworkInfo, Protocol,
+    PublicConfig, UpsertInstallationRequest, VlessConfigResponse,
 };
 
 /// The TLS configuration every request goes out on.
@@ -264,6 +264,22 @@ impl ApiClient {
     pub async fn list_peers(&self) -> Result<Vec<MyPeer>, ApiFailure> {
         let body: MyPeersResponse = self.get_json("/me/peers").await?;
         Ok(body.peers)
+    }
+
+    /// The private networks this account's plan grants, whose CIDRs a WireGuard-family tunnel
+    /// routes on top of the internet. Empty for almost every account.
+    pub async fn private_networks(&self) -> Result<Vec<PrivateNetworkInfo>, ApiFailure> {
+        self.get_json("/me/private-networks").await
+    }
+
+    /// Every CIDR of [`Self::private_networks`], flattened: what `TunnelParams` carries.
+    pub async fn private_routes(&self) -> Result<Vec<String>, ApiFailure> {
+        Ok(self
+            .private_networks()
+            .await?
+            .into_iter()
+            .flat_map(|n| n.cidrs)
+            .collect())
     }
 
     /// Exchange a one-time login code for a token. The one call made without one.

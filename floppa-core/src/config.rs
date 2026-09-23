@@ -46,6 +46,47 @@ pub struct Config {
     /// entry because it follows the server's ordinary routing policy.
     #[serde(default)]
     pub regions: HashMap<String, RegionRoutingConfig>,
+    /// What clients may reach besides the internet. On by default: see [`IsolationConfig`].
+    #[serde(default)]
+    pub isolation: IsolationConfig,
+}
+
+/// Client isolation, enforced by floppa-daemon in its own nftables table.
+///
+/// A client reaches the public internet and nothing else: not another client, not the server's
+/// private addresses, not any private network the server can route to. Without this a VPN host
+/// forwards whatever its routing table knows, and on a host that also carries the operator's own
+/// tunnels that is the operator's network.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IsolationConfig {
+    /// Turn isolation off entirely. Only for a host whose firewall already does all of this.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Private destinations every client may reach anyway, e.g. a resolver the operator runs for
+    /// clients. Must not overlap a client subnet: that would let clients reach each other.
+    #[serde(default)]
+    pub allow_destinations: Vec<Ipv4Network>,
+    /// Packet mark set on traffic a plan's private network lets through (see migration
+    /// `0024_private_networks.sql`). The daemon's table only ever narrows what the host allows;
+    /// a host firewall that drops private destinations on its own has to recognise this mark to
+    /// let those packets pass. Unset, nothing is marked.
+    #[serde(default)]
+    pub private_access_mark: Option<u32>,
+}
+
+impl Default for IsolationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            allow_destinations: Vec::new(),
+            private_access_mark: None,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -383,7 +424,31 @@ impl Config {
         if let Some(awg) = &mut config.amneziawg {
             awg.settle_section(TunnelSection::AmneziaWg)?;
         }
+        config.check_isolation()?;
         Ok(config)
+    }
+
+    /// The subnets clients are given addresses from, one per configured interface.
+    pub fn client_subnets(&self) -> Vec<Ipv4Network> {
+        std::iter::once(self.wireguard.client_subnet)
+            .chain(self.amneziawg.as_ref().map(|awg| awg.client_subnet))
+            .collect()
+    }
+
+    fn check_isolation(&self) -> Result<(), ConfigError> {
+        for allowed in &self.isolation.allow_destinations {
+            if let Some(subnet) = self
+                .client_subnets()
+                .into_iter()
+                .find(|subnet| networks_overlap(*allowed, *subnet))
+            {
+                return Err(ConfigError::IsolationOverlap {
+                    allowed: *allowed,
+                    subnet,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn from_env() -> Result<Self, ConfigError> {
@@ -537,6 +602,19 @@ pub enum ConfigError {
         max: u16,
         why: &'static str,
     },
+    /// An `[isolation]` exception that covers client addresses, which would let clients reach
+    /// each other.
+    #[error("[isolation] allow_destinations entry {allowed} overlaps client subnet {subnet}")]
+    IsolationOverlap {
+        allowed: Ipv4Network,
+        subnet: Ipv4Network,
+    },
+}
+
+/// Whether two IPv4 networks share any address. Two CIDR blocks either nest or are disjoint, so
+/// it is enough to ask whether either contains the other's first address.
+pub fn networks_overlap(a: Ipv4Network, b: Ipv4Network) -> bool {
+    a.contains(b.network()) || b.contains(a.network())
 }
 
 #[cfg(test)]
@@ -703,6 +781,54 @@ mod tests {
         let secrets = format!("{SECRETS_EXAMPLE}\njwt_secrett = \"x\"\n");
         let err = toml::from_str::<Secrets>(&secrets).unwrap_err();
         assert!(err.to_string().contains("jwt_secrett"), "{err}");
+    }
+
+    #[test]
+    fn isolation_is_on_unless_turned_off() {
+        let config = Config::parse(MINIMAL_CONFIG).unwrap();
+        assert_eq!(config.isolation, IsolationConfig::default());
+        assert!(config.isolation.enabled);
+        assert!(config.isolation.allow_destinations.is_empty());
+
+        let config =
+            Config::parse(&format!("{MINIMAL_CONFIG}\n[isolation]\nenabled = false\n")).unwrap();
+        assert!(!config.isolation.enabled);
+    }
+
+    #[test]
+    fn an_isolation_exception_may_not_cover_clients() {
+        let ok =
+            format!("{MINIMAL_CONFIG}\n[isolation]\nallow_destinations = [\"10.8.0.53/32\"]\n");
+        let config = Config::parse(&ok).unwrap();
+        assert_eq!(
+            config.isolation.allow_destinations,
+            vec!["10.8.0.53/32".parse().unwrap()]
+        );
+
+        // Wider than the client subnet, inside it, and equal to it: all three open clients to
+        // each other.
+        for allowed in ["10.0.0.0/8", "10.100.0.7/32", "10.100.0.0/24"] {
+            let toml =
+                format!("{MINIMAL_CONFIG}\n[isolation]\nallow_destinations = [\"{allowed}\"]\n");
+            let err = Config::parse(&toml).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::IsolationOverlap { .. }),
+                "{allowed}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overlap_is_symmetric_and_exact() {
+        let net = |s: &str| s.parse::<Ipv4Network>().unwrap();
+        assert!(networks_overlap(net("10.0.0.0/8"), net("10.1.0.0/16")));
+        assert!(networks_overlap(net("10.1.0.0/16"), net("10.0.0.0/8")));
+        assert!(networks_overlap(net("10.1.0.0/16"), net("10.1.0.0/16")));
+        assert!(!networks_overlap(net("10.1.0.0/16"), net("10.2.0.0/16")));
+        assert!(!networks_overlap(
+            net("10.100.0.0/24"),
+            net("10.100.1.0/24")
+        ));
     }
 
     #[test]

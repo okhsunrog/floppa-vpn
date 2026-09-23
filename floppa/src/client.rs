@@ -129,7 +129,11 @@ async fn first_state(remote: &RemoteActor) -> Result<TunnelState> {
 ///
 /// Returns rather than waits: the tunnel outlives this command, which is the whole point of there
 /// being a service. A caller who wants to watch it has `floppa status`.
-pub async fn connect(remote: &RemoteActor, config_str: &str) -> Result<()> {
+pub async fn connect(
+    remote: &RemoteActor,
+    config_str: &str,
+    private_routes: Vec<String>,
+) -> Result<()> {
     let protocol = remote
         .import_config(config_str.to_string())
         .await
@@ -138,8 +142,10 @@ pub async fn connect(remote: &RemoteActor, config_str: &str) -> Result<()> {
     let accepted = remote
         .set_intent(IntentRequest::Up {
             order: vec![protocol],
-            // Split tunnelling is an Android affair; on a desktop everything goes through.
-            params: TunnelParams::new(SplitMode::All, Vec::new()),
+            // Split tunnelling is an Android affair; on a desktop everything goes through, plus
+            // the private networks the plan grants.
+            params: TunnelParams::new(SplitMode::All, Vec::new())
+                .with_private_routes(private_routes),
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

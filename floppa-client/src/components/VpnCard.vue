@@ -13,6 +13,7 @@ import { usePermissionsStore } from '../stores/permissionsStore'
 import { usePeerProvisioning } from '../composables/usePeerProvisioning'
 import { needsAttention } from '../utils/outcomes'
 import { useRegionStore } from '../stores/regionStore'
+import { usePrivateNetworksStore } from '../stores/privateNetworksStore'
 
 const { t } = useI18n()
 const toast = useToast()
@@ -20,6 +21,7 @@ const vpn = useVpnStore()
 const settingsStore = useSettingsStore()
 const permissions = usePermissionsStore()
 const regionStore = useRegionStore()
+const privateNetworks = usePrivateNetworksStore()
 const { setupPhase, setupError, meQueryError, noteServerReachable, setupAutoPeer, handleOutcome } =
   usePeerProvisioning()
 
@@ -106,7 +108,7 @@ onMounted(async () => {
 
   if (vpn.deviceId) {
     await setupAutoPeer()
-    await regionStore.refresh()
+    await Promise.all([regionStore.refresh(), privateNetworks.refresh()])
   }
 })
 

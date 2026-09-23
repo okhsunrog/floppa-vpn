@@ -86,7 +86,11 @@ impl TunSpec {
                 .copied()
                 .filter(|net| net.is_ipv4() || config.has_ipv6_address())
                 .collect()
-        }
+        };
+        let routes = floppa_tunnel_config::route::with_extra_routes(
+            routes,
+            &params.private_route_networks(),
+        )
         .iter()
         .map(ToString::to_string)
         .collect();
@@ -470,6 +474,26 @@ AllowedIPs = 0.0.0.0/0
         }
         let public = "1.1.1.1".parse().unwrap();
         assert!(routes.iter().any(|route| route.contains(public)));
+    }
+
+    #[test]
+    fn granted_private_networks_are_android_routes_even_with_lan_allowed() {
+        let params = TunnelParams::new(SplitMode::All, vec![])
+            .with_allow_lan(true)
+            .with_private_routes(["10.66.66.0/24".to_string()]);
+        let spec = TunSpec::derive(&config(), &params);
+        assert!(spec.routes.iter().any(|r| r == "10.66.66.0/24"));
+        // The rest of the LAN bypass is untouched.
+        let routes = spec
+            .routes
+            .iter()
+            .map(|route| route.parse::<ipnetwork::IpNetwork>().unwrap())
+            .collect::<Vec<_>>();
+        assert!(
+            !routes
+                .iter()
+                .any(|r| r.contains("192.168.1.1".parse().unwrap()))
+        );
     }
 
     fn intent(params: TunnelParams) -> LastIntent {

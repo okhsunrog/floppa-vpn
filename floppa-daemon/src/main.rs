@@ -1,3 +1,4 @@
+mod nft;
 mod routing;
 mod sync;
 mod tc;
@@ -6,7 +7,7 @@ mod wg;
 use anyhow::Result;
 use floppa_core::{Config, Secrets, db};
 use tokio::signal::unix::{SignalKind, signal};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -39,6 +40,18 @@ async fn main() -> Result<()> {
         let awg_public_key = secrets.awg_public_key()?;
         wg::ensure_interface(wg::WgTool::Awg, awg, awg_private_key)?;
         info!(public_key = %awg_public_key, "AmneziaWG interface ready");
+    }
+
+    // Confine clients before any peer is synced. A failure here stops the daemon: running
+    // without isolation would hand clients the host's private networks.
+    // Private access granted by plans is added by the sync loop once the database is reachable;
+    // until then nobody has any.
+    if let Some(isolation) = nft::Isolation::from_config(&config) {
+        isolation.apply()?;
+        info!(table = nft::TABLE, interfaces = ?isolation.interfaces, "Client isolation applied");
+    } else {
+        warn!("Client isolation is disabled by config; clients can reach private networks");
+        nft::remove()?;
     }
 
     // Start Prometheus metrics exporter

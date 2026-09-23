@@ -161,6 +161,10 @@ pub(super) async fn ladder(
     } else {
         split_default(&ctx.config.allowed_ips_networks(), ipv6)
     };
+    let routes = floppa_tunnel_config::route::with_extra_routes(
+        routes,
+        &ctx.params.private_route_networks(),
+    );
     stack.push(Step::Routes {
         iface: iface.clone(),
         routes: routes.clone(),

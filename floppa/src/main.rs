@@ -175,7 +175,14 @@ async fn main() -> Result<()> {
             if let Some(path) = config {
                 let config_str = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?;
-                connect::run(&config_str, &interface, no_dns, &auth::config_dir()?).await?;
+                connect::run(
+                    &config_str,
+                    &interface,
+                    no_dns,
+                    &auth::config_dir()?,
+                    Vec::new(),
+                )
+                .await?;
                 return Ok(());
             }
 
@@ -210,6 +217,20 @@ async fn main() -> Result<()> {
             );
             let identity = auth::device_identity()?;
             let config_str = provision::config_for(&api, protocol, &identity).await?;
+            // Routes only: the server enforces the grant either way, so failing to ask costs this
+            // run the private networks and nothing else.
+            let private_routes = match api.private_routes().await {
+                Ok(routes) => {
+                    if !routes.is_empty() {
+                        eprintln!("Private networks: {}", routes.join(", "));
+                    }
+                    routes
+                }
+                Err(e) => {
+                    eprintln!("Could not fetch private networks ({e}); connecting without them");
+                    Vec::new()
+                }
+            };
 
             #[cfg(target_os = "linux")]
             {
@@ -218,10 +239,17 @@ async fn main() -> Result<()> {
                 // terminal, to replace a peer that has been deleted. Handing the session over is
                 // how it can: the credentials are this user's and the store is root's.
                 client::seed_session(&remote, &api_url, &token, &identity).await;
-                client::connect(&remote, &config_str).await?;
+                client::connect(&remote, &config_str, private_routes).await?;
             }
             #[cfg(not(target_os = "linux"))]
-            connect::run(&config_str, &interface, no_dns, &auth::config_dir()?).await?;
+            connect::run(
+                &config_str,
+                &interface,
+                no_dns,
+                &auth::config_dir()?,
+                private_routes,
+            )
+            .await?;
         }
         #[cfg(target_os = "linux")]
         Command::Disconnect => {

@@ -22,12 +22,14 @@ use floppa_vpn_core::protocol::InterfaceName;
 use floppa_vpn_core::rollback::Journal;
 use floppa_vpn_core::{create_backend, get_platform};
 
-/// Bring up `config_str` and stay up until a signal says otherwise.
+/// Bring up `config_str` and stay up until a signal says otherwise. `private_routes` are the
+/// plan's private networks (empty for a config from a file), routed on top of everything else.
 pub async fn run(
     config_str: &str,
     interface: &str,
     no_dns: bool,
     config_dir: &std::path::Path,
+    private_routes: Vec<String>,
 ) -> Result<()> {
     let iface = InterfaceName::new(interface)
         .map_err(|e| anyhow::anyhow!("{interface} is not a usable interface name: {}", e.0))?;
@@ -62,8 +64,10 @@ pub async fn run(
     let accepted = handle
         .set_intent(IntentRequest::Up {
             order: vec![protocol],
-            // Split tunnelling is an Android affair; on a desktop everything goes through.
-            params: TunnelParams::new(SplitMode::All, Vec::new()),
+            // Split tunnelling is an Android affair; on a desktop everything goes through, plus
+            // the private networks the plan grants.
+            params: TunnelParams::new(SplitMode::All, Vec::new())
+                .with_private_routes(private_routes),
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

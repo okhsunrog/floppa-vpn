@@ -98,6 +98,21 @@ pub fn exclude_local_networks(allowed_ips: &[IpNetwork], include_ipv6: bool) -> 
     routes
 }
 
+/// `routes` plus each of `extra` that is not already one of them.
+///
+/// The extra routes are the private networks a plan grants. They are added even where a wider
+/// route already covers them: `allow_lan` may have carved the private ranges out, and on a network
+/// whose own LAN overlaps a granted range, the more specific route through the tunnel is the one
+/// that has to win.
+pub fn with_extra_routes(mut routes: Vec<IpNetwork>, extra: &[IpNetwork]) -> Vec<IpNetwork> {
+    for net in extra {
+        if !routes.contains(net) {
+            routes.push(*net);
+        }
+    }
+    routes
+}
+
 fn subtract_network(route: IpNetwork, excluded: IpNetwork) -> Vec<IpNetwork> {
     match (route, excluded) {
         (IpNetwork::V4(route), IpNetwork::V4(excluded)) => subtract_v4(route, excluded)
@@ -312,6 +327,23 @@ mod tests {
             let public: IpAddr = public.parse().unwrap();
             assert!(routes.iter().any(|route| route.contains(public)));
         }
+    }
+
+    #[test]
+    fn granted_networks_are_routed_even_with_the_lan_carved_out() {
+        let home = net("10.66.66.0/24");
+        let routes = with_extra_routes(exclude_local_networks(&CATCH_ALL, false), &[home]);
+        assert!(routes.contains(&home));
+        assert!(
+            routes
+                .iter()
+                .all(|r| *r == home || !r.contains("10.1.2.3".parse().unwrap())),
+            "the rest of 10/8 stays outside the tunnel"
+        );
+
+        // Already present: not added twice.
+        let routes = with_extra_routes(vec![home], &[home]);
+        assert_eq!(routes, vec![home]);
     }
 
     #[test]

@@ -211,7 +211,49 @@ production before the deploy that carries them:
   old tokens. The number skips 0017 on purpose — it was left free for a migration developed in
   parallel; sqlx applies whatever is unapplied, in version order, so the gap is harmless.
 
-## 6. Rate limits (tc)
+## 6. Client isolation (nftables)
+
+The daemon keeps a table of its own, `inet floppa`, so that a client reaches the public internet
+and nothing else: not another client, not the host's private addresses, not any private network the
+host can route to (RFC 1918, CGNAT `100.64.0.0/10`, link-local, loopback, IPv6 ULA). It needs the
+`nft` binary (`nftables` package) and refuses to start if it cannot load the table.
+
+- The table is replaced whole, in one transaction, at every daemon start, and is **left in place
+  when the daemon stops**: the peers stay on the interfaces after the daemon exits, and so must the
+  rules that confine them. `[isolation] enabled = false` removes it on the next start.
+- Its chains run at `filter - 10`, ahead of an iptables-nft `filter` table. A packet has to pass
+  every base chain on a hook, so the host's own firewall can only narrow what this table allows.
+- The host's public addresses stay reachable from inside the tunnel (a connected client still
+  talks to the API on them), and so does ICMP to the host.
+- A private destination every client should reach anyway, such as a resolver you run for clients,
+  goes in `[isolation] allow_destinations`. It must not overlap a client subnet; the config is
+  refused at startup if it does.
+
+Inspect it with `nft list table inet floppa`.
+
+### Private networks
+
+A plan can grant access to operator networks (migration `0024_private_networks.sql`). The daemon
+keeps a set of `client address . network` pairs in the same table, rebuilt from the database on
+every notification and every periodic sync, and lets those pairs through ahead of the drops. The
+server lists the plan's networks at `GET /me/private-networks`, and the clients route their CIDRs
+into the tunnel on top of everything else, the LAN bypass included.
+
+```sql
+INSERT INTO private_networks (id, display_name, cidrs) VALUES ('home', 'Home', '{10.66.66.0/24}');
+INSERT INTO plan_private_networks SELECT id, 'home' FROM plans WHERE name = 'admin';
+```
+
+Two invariants are enforced by triggers, whoever writes: a plan with a network is never public,
+and only an administrator can be subscribed to it. A refusal reaches the admin API as a 409
+`private_network_restricted`. A network that overlaps a client subnet is skipped by the daemon
+with an error, since granting it would open clients to each other.
+
+The daemon's table can only narrow what the host allows. If the host firewall drops private
+destinations on its own, set `[isolation] private_access_mark` and have the host accept packets
+carrying that mark; the daemon sets it on everything a grant lets through.
+
+## 7. Rate limits (tc)
 
 With `rate_limit.enabled = true` the daemon owns the qdiscs on each VPN interface. Useful when
 reading `tc -s class show dev wg-floppa` or debugging a limit:
@@ -232,7 +274,7 @@ reading `tc -s class show dev wg-floppa` or debugging a limit:
   ~2046 of those per qdisc (`cls_u32` table ids are 12-bit) — a known ceiling on limited peers
   per interface, far above the current /24 subnets; see the note at the top of `tc.rs`.
 
-## 7. Verify
+## 8. Verify
 
 ```bash
 ssh user@your-server "systemctl status floppa-daemon floppa-server floppa-vless"

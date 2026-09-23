@@ -250,6 +250,18 @@ export type Plan = {
 };
 
 /**
+ * A private network the caller's plan grants. The client routes `cidrs` into the tunnel.
+ */
+export type PrivateNetworkInfo = {
+    /**
+     * IPv4 CIDRs, e.g. `10.66.66.0/24`.
+     */
+    cidrs: Array<string>;
+    display_name: string;
+    id: string;
+};
+
+/**
  * VPN tunnel protocol. WireGuard and AmneziaWG share the peers table (keypair + IP);
  * AmneziaWG adds interface-wide obfuscation and runs on its own server interface.
  */
@@ -1147,6 +1159,28 @@ export type SendMyPeerConfigResponses = {
      */
     200: unknown;
 };
+
+export type GetMyPrivateNetworksData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/private-networks';
+};
+
+export type GetMyPrivateNetworksErrors = {
+    /**
+     * Unauthorized
+     */
+    401: ApiError;
+};
+
+export type GetMyPrivateNetworksError = GetMyPrivateNetworksErrors[keyof GetMyPrivateNetworksErrors];
+
+export type GetMyPrivateNetworksResponses = {
+    200: Array<PrivateNetworkInfo>;
+};
+
+export type GetMyPrivateNetworksResponse = GetMyPrivateNetworksResponses[keyof GetMyPrivateNetworksResponses];
 
 export type SetMyRegionData = {
     body: SetRegionRequest;

@@ -627,7 +627,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeAdbSta
         // Normalised the way every other caller's are, so "the same tunnel" stays a comparison of
         // rules rather than of the order they were typed in.
         let allow_lan = params.allow_lan;
-        let params = TunnelParams::new(params.split_mode, params.apps).with_allow_lan(allow_lan);
+        let private_routes = params.private_routes;
+        let params = TunnelParams::new(params.split_mode, params.apps)
+            .with_allow_lan(allow_lan)
+            .with_private_routes(private_routes);
         raise_last_intent("a shell", Some(params))
     });
     log_outcome("nativeAdbStart", outcome.into_outcome());

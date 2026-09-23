@@ -1680,6 +1680,7 @@ mod tests {
             min_client_version: None,
             metrics: None,
             regions: Default::default(),
+            isolation: Default::default(),
         }
     }
 
