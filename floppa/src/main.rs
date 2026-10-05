@@ -53,7 +53,7 @@ enum Command {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
     },
-    /// Connect to VPN (auto-detects WireGuard/AmneziaWG .conf or VLESS URI)
+    /// Connect to VPN (auto-detects WG/AWG .conf, VLESS URI or Foldfin JSON)
     ///
     /// Uses the system service when available, otherwise holds a standalone tunnel until Ctrl+C.
     /// --config is temporary input to the selected owner; it does not change ownership.
@@ -61,7 +61,7 @@ enum Command {
         /// JSON file containing {"excluded_routes": ["194.186.63.0/24"]}
         #[arg(long)]
         routes: Option<std::path::PathBuf>,
-        /// Temporary config file (.conf) or VLESS URI file; not saved for future connections
+        /// Temporary config file (.conf, VLESS URI or Foldfin JSON); not saved for future connections
         #[arg(long)]
         config: Option<String>,
         /// Tunnel protocol (AmneziaWG by default, like the app)
@@ -378,7 +378,9 @@ async fn main() -> Result<()> {
                 (Protocol::WireGuard | Protocol::AmneziaWg, Some(id)) => {
                     client.peer_config(id).await?
                 }
-                (Protocol::Vless, Some(_)) => bail!("--peer-id does not apply to VLESS"),
+                (Protocol::Vless | Protocol::Foldfin, Some(_)) => {
+                    bail!("--peer-id applies only to WireGuard/AmneziaWG")
+                }
                 (protocol, None) => {
                     provision::config_for(&client, protocol, &auth::device_identity()?).await?
                 }

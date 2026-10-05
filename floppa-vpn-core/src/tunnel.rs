@@ -392,12 +392,17 @@ impl Drop for GotatunTunnel {
 enum ActiveTunnel {
     WireGuard(GotatunTunnel),
     Vless(shoes_lite::api::VlessTunnel),
+    Foldfin(crate::foldfin_tunnel::FoldfinTunnel),
 }
 
 impl ActiveTunnel {
     async fn get_stats(&self) -> Option<RawStats> {
         match self {
             Self::WireGuard(t) => t.get_stats().await.ok(),
+            Self::Foldfin(t) => Some(RawStats {
+                tx_bytes: t.stats().tx_bytes,
+                rx_bytes: t.stats().rx_bytes,
+            }),
             Self::Vless(t) => {
                 let stats = t.get_stats();
                 Some(RawStats {
@@ -411,6 +416,7 @@ impl ActiveTunnel {
     async fn get_last_packet_received(&self) -> Option<i64> {
         match self {
             Self::WireGuard(t) => t.get_last_packet_received().await,
+            Self::Foldfin(t) => t.last_rx().map(|d| d.as_secs() as i64),
             Self::Vless(t) => t
                 .time_since_last_packet_received()
                 .map(|d| d.as_secs() as i64),
@@ -420,6 +426,7 @@ impl ActiveTunnel {
     fn connection_duration(&self) -> Option<Duration> {
         match self {
             Self::WireGuard(t) => t.connection_duration(),
+            Self::Foldfin(t) => Some(t.duration()),
             Self::Vless(t) => Some(t.connection_duration()),
         }
     }
@@ -432,6 +439,7 @@ impl ActiveTunnel {
     async fn silence(&self) -> Option<Duration> {
         match self {
             Self::WireGuard(t) => t.silence().await,
+            Self::Foldfin(t) => Some(t.silence()),
             Self::Vless(t) => Some(
                 t.time_since_last_packet_received()
                     .unwrap_or_else(|| t.connection_duration())
@@ -452,6 +460,7 @@ impl ActiveTunnel {
             // A fresh handshake *is* the proof, and the rebind is what makes it happen now rather
             // than at the next rekey.
             Self::WireGuard(t) => t.rebind().await,
+            Self::Foldfin(t) => t.probe().await,
             Self::Vless(t) => t
                 .ping(Duration::from_secs(10))
                 .await
@@ -468,6 +477,7 @@ impl ActiveTunnel {
     async fn network_changed(&self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.rebind().await,
+            Self::Foldfin(t) => t.probe().await,
             Self::Vless(_) => Ok(()),
         }
     }
@@ -478,6 +488,7 @@ impl ActiveTunnel {
                 .ping(Duration::from_secs(10))
                 .await
                 .map_err(|detail| BackendError::Engine { detail }),
+            Self::Foldfin(t) => t.probe().await,
             Self::WireGuard(_) => Ok(()), // WireGuard has handshake-based health
         }
     }
@@ -485,6 +496,7 @@ impl ActiveTunnel {
     async fn stop(self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.stop().await,
+            Self::Foldfin(t) => t.stop().await,
             Self::Vless(t) => t
                 .stop()
                 .await
@@ -527,7 +539,12 @@ impl TunnelManager {
 
     /// Identity of the running tunnel, if there is one.
     pub async fn meta(&self) -> Option<TunnelMeta> {
-        self.tunnel.read().await.as_ref().map(|(_, m)| m.clone())
+        self.tunnel
+            .read()
+            .await
+            .as_ref()
+            .filter(|(t, _)| !matches!(t, ActiveTunnel::Foldfin(f) if !f.alive()))
+            .map(|(_, m)| m.clone())
     }
 
     /// Start a WireGuard / AmneziaWG tunnel on desktop platforms (creates TUN device)
@@ -644,6 +661,74 @@ impl TunnelManager {
         info!("VLESS tunnel started successfully from fd={}", tun_fd);
         *tunnel_guard = Some((ActiveTunnel::Vless(tunnel), vless_meta(config)));
         Ok(())
+    }
+
+    /// Start Foldfin with caller-owned packet endpoints (also used by integration tests).
+    pub async fn start_foldfin_packets(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        endpoint: std::net::SocketAddr,
+        device: foldfin::packet::PacketDevice,
+        fwmark: Option<u32>,
+    ) -> Result<(), BackendError> {
+        let mut guard = self.tunnel.write().await;
+        Self::stop_existing(&mut guard).await?;
+        let tunnel =
+            crate::foldfin_tunnel::FoldfinTunnel::start(config, endpoint, device, fwmark).await?;
+        *guard = Some((
+            ActiveTunnel::Foldfin(tunnel),
+            TunnelMeta {
+                protocol: Protocol::Foldfin,
+                endpoint: config.endpoint().to_owned(),
+                address: config.address().to_string(),
+            },
+        ));
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub async fn start_foldfin(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        interface_name: &str,
+        tun_params: &TunParams,
+        endpoint: std::net::SocketAddr,
+    ) -> Result<(), BackendError> {
+        #[cfg(target_os = "linux")]
+        {
+            let device = foldfin::adapters::tun::Tun::open(interface_name)
+                .map_err(|e| engine_error("Foldfin TUN", e))?
+                .into_device();
+            self.start_foldfin_packets(config, endpoint, device, tun_params.fwmark)
+                .await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (config, interface_name, tun_params, endpoint);
+            Err(BackendError::Unsupported)
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn start_foldfin_with_fd(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        tun_fd: RawFd,
+        endpoint: std::net::SocketAddr,
+    ) -> Result<(), BackendError> {
+        use std::os::fd::{AsFd, BorrowedFd};
+        // Kotlin retains its ParcelFileDescriptor. Only our CLOEXEC duplicate is consumed.
+        // SAFETY: the service keeps its descriptor open throughout this call.
+        let borrowed = unsafe { BorrowedFd::borrow_raw(tun_fd) };
+        let owned = borrowed
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|e| engine_error("duplicate Foldfin TUN", e))?;
+        let device = foldfin::adapters::tun::Tun::from_owned_fd(owned)
+            .map_err(|e| engine_error("Foldfin TUN", e))?
+            .into_device();
+        self.start_foldfin_packets(config, endpoint, device, None)
+            .await
     }
 
     pub async fn stop(&self) -> Result<(), BackendError> {
@@ -782,5 +867,19 @@ mod tests {
                 detail: "building: bind failed".into()
             }
         );
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn protect_tcp_socket(fd: RawFd) -> Result<(), BackendError> {
+    if SOCKET_PROTECT_CALLBACK
+        .get()
+        .is_some_and(|callback| callback(fd))
+    {
+        Ok(())
+    } else {
+        Err(BackendError::Engine {
+            detail: "Foldfin TCP socket protection failed".into(),
+        })
     }
 }

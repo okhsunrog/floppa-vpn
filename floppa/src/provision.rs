@@ -14,6 +14,9 @@ pub async fn config_for(
     protocol: Protocol,
     identity: &DeviceIdentity,
 ) -> Result<String> {
+    if protocol == Protocol::Foldfin {
+        bail!("Foldfin API provisioning is not available yet; import a Foldfin JSON config first");
+    }
     // `None` for VLESS, which is provisioned per user and has no peer row. The conversion lives
     // in `floppa-provision` because it is the same question the peer watcher asks.
     let Some(peer_protocol) = floppa_provision::peer_protocol(protocol) else {

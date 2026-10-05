@@ -83,6 +83,13 @@ pub(super) async fn ladder(
         iface: iface.clone(),
     });
 
+    if matches!(ctx.config, crate::state::ProtocolConfig::Foldfin(_)) {
+        ctx.platform
+            .configure_mtu(&iface, ctx.config.get_mtu())
+            .await
+            .map_err(|e| platform_error(StepKind::PrepareLink, e))?;
+    }
+
     // 3. Address --------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Configuring).await;

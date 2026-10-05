@@ -69,7 +69,7 @@ pub fn peer_protocol(protocol: Protocol) -> Option<PeerProtocol> {
     match protocol {
         Protocol::WireGuard => Some(PeerProtocol::Wireguard),
         Protocol::AmneziaWg => Some(PeerProtocol::Amneziawg),
-        Protocol::Vless => None,
+        Protocol::Vless | Protocol::Foldfin => None,
     }
 }
 

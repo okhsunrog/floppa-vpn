@@ -62,8 +62,14 @@ async fn bring_up(
         // VLESS dials by address while taking its SNI from `server_name`, so substituting a
         // literal here does not disturb the REALITY handshake.
         ProtocolConfig::Vless(vless) => vless.server_addr = endpoint.to_string(),
+        ProtocolConfig::Foldfin(_) => (), // preserve authority and verification name; dial literal separately
     }
     let result = match &config {
+        ProtocolConfig::Foldfin(config) => {
+            tunnel_manager
+                .start_foldfin_with_fd(config, tun_fd, endpoint)
+                .await
+        }
         ProtocolConfig::Vless(vless) => {
             tunnel_manager
                 .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)

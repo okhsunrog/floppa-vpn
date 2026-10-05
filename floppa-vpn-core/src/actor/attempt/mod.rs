@@ -299,6 +299,10 @@ pub(super) async fn verify(
             info!("tunnel up, waiting for a handshake");
             wait_for_handshake(ctx).await
         }
+        ProtocolConfig::Foldfin(_) => tokio::select! {
+            _ = ctx.cancel.cancelled() => Err(AttemptError::Cancelled),
+            result = ctx.backend.probe() => result.map_err(|_| AttemptError::VerifyFailed),
+        },
         ProtocolConfig::Vless(vless) => {
             info!("tunnel up, checking VLESS connectivity");
             let mut dialled = vless.clone();

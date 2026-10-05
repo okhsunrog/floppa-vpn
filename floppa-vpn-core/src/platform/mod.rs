@@ -177,6 +177,14 @@ pub trait Platform: Send + Sync {
     /// Undo [`Self::prepare_link`]. Must be safe to call when nothing was prepared.
     async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError>;
 
+    /// Configure MTU on the link owned by this attempt, before installing routes.
+    /// Platforms with an atomic VPN builder already receive MTU in the link spec.
+    async fn configure_mtu(&self, _iface: &InterfaceName, _mtu: u16) -> Result<(), PlatformError> {
+        Err(PlatformError::Unavailable(
+            "link MTU configuration is unsupported".into(),
+        ))
+    }
+
     /// Configure the tunnel address. Undone by [`Self::deconfigure_address`] with the same value.
     async fn configure_address(
         &self,

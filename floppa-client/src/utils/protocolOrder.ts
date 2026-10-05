@@ -12,6 +12,7 @@ const DEFAULT_PRIORITY: Record<Protocol, number> = {
   amneziawg: 0,
   wireguard: 1,
   vless: 2,
+  foldfin: 3,
 }
 
 export const DEFAULT_PROTOCOL_ORDER: readonly Protocol[] = (

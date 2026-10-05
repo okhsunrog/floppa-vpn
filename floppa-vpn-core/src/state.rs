@@ -22,6 +22,8 @@ pub enum ConfigParseError {
     Conf(#[from] floppa_tunnel_config::ConfigParseError),
     #[error("invalid VLESS URI: {0}")]
     Vless(String),
+    #[error("invalid Foldfin config: {0}")]
+    Foldfin(String),
     /// A well-formed config of a protocol the caller cannot take (the legacy WireGuard-only
     /// store handed an AmneziaWG file).
     #[error("expected a {expected} config, got {found}")]
@@ -371,6 +373,8 @@ pub enum ProtocolConfig {
     AmneziaWg(AwgConfig),
     #[serde(rename = "vless")]
     Vless(VlessVpnConfig),
+    #[serde(rename = "foldfin")]
+    Foldfin(crate::foldfin_config::FoldfinVpnConfig),
 }
 
 /// Whether a WireGuard-family interface names an IPv6 address of its own.
@@ -388,6 +392,17 @@ impl ProtocolConfig {
     /// `.conf` (an `[Interface]` carrying obfuscation keys), or a plain WireGuard `.conf`.
     pub fn parse(raw: &str) -> Result<Self, ConfigParseError> {
         let trimmed = raw.trim();
+        if trimmed.starts_with('{') {
+            let config: Self = serde_json::from_str(trimmed).map_err(|_| {
+                ConfigParseError::Foldfin("invalid versioned provisioning document".into())
+            })?;
+            if !matches!(config, Self::Foldfin(_)) {
+                return Err(ConfigParseError::Foldfin(
+                    "expected Foldfin document".into(),
+                ));
+            }
+            return Ok(config);
+        }
         if trimmed.starts_with("vless://") {
             return VlessVpnConfig::from_uri(trimmed).map(Self::Vless);
         }
@@ -407,6 +422,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.peer.endpoint.to_string(),
             Self::AmneziaWg(awg) => awg.wg.0.peer.endpoint.to_string(),
             Self::Vless(vless) => vless.server_addr.clone(),
+            Self::Foldfin(config) => config.endpoint().to_owned(),
         }
     }
 
@@ -433,6 +449,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.interface.address.to_string(),
             Self::AmneziaWg(awg) => awg.wg.0.interface.address.to_string(),
             Self::Vless(vless) => vless.address.clone(),
+            Self::Foldfin(config) => config.address().to_string(),
         }
     }
 
@@ -442,6 +459,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => Ok(wg.0.interface.address),
             Self::AmneziaWg(awg) => Ok(awg.wg.0.interface.address),
             Self::Vless(vless) => vless.address_network(),
+            Self::Foldfin(config) => Ok(config.address()),
         }
     }
 
@@ -466,6 +484,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => interface_has_ipv6(&wg.0.interface),
             Self::AmneziaWg(awg) => interface_has_ipv6(&awg.wg.0.interface),
             Self::Vless(_) => false,
+            Self::Foldfin(config) => config.address().is_ipv6(),
         }
     }
 
@@ -475,6 +494,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.dns_servers(),
             Self::AmneziaWg(awg) => awg.wg.0.dns_servers(),
             Self::Vless(vless) => vless.dns_servers(),
+            Self::Foldfin(config) => config.dns().to_vec(),
         }
     }
 
@@ -484,6 +504,14 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.dns_line(),
             Self::AmneziaWg(awg) => awg.wg.0.dns_line(),
             Self::Vless(vless) => vless.dns.clone(),
+            Self::Foldfin(config) => Some(
+                config
+                    .dns()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
         }
     }
 
@@ -493,6 +521,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.peer.allowed_ips.clone(),
             Self::AmneziaWg(awg) => awg.wg.0.peer.allowed_ips.clone(),
             Self::Vless(vless) => vless.allowed_ips_networks(),
+            Self::Foldfin(config) => config.routes(),
         }
     }
 
@@ -502,6 +531,12 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.allowed_ips_line(),
             Self::AmneziaWg(awg) => awg.wg.0.allowed_ips_line(),
             Self::Vless(vless) => vless.allowed_ips.clone(),
+            Self::Foldfin(config) => config
+                .routes()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
         }
     }
 
@@ -511,6 +546,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => wg.0.mtu(),
             Self::AmneziaWg(awg) => awg.wg.0.mtu(),
             Self::Vless(vless) => vless.get_mtu(),
+            Self::Foldfin(config) => config.mtu(),
         }
     }
 
@@ -520,6 +556,7 @@ impl ProtocolConfig {
             Self::WireGuard(_) => Protocol::WireGuard,
             Self::AmneziaWg(_) => Protocol::AmneziaWg,
             Self::Vless(_) => Protocol::Vless,
+            Self::Foldfin(_) => Protocol::Foldfin,
         }
     }
 }
@@ -542,6 +579,8 @@ pub struct SavedVpnConfigs {
     /// Cached VLESS config (if any)
     #[serde(default)]
     pub vless: Option<VlessVpnConfig>,
+    #[serde(default)]
+    pub foldfin: Option<crate::foldfin_config::FoldfinVpnConfig>,
 }
 
 impl SavedVpnConfigs {
@@ -551,6 +590,7 @@ impl SavedVpnConfigs {
             Protocol::WireGuard => self.wireguard.clone().map(ProtocolConfig::WireGuard),
             Protocol::AmneziaWg => self.amneziawg.clone().map(ProtocolConfig::AmneziaWg),
             Protocol::Vless => self.vless.clone().map(ProtocolConfig::Vless),
+            Protocol::Foldfin => self.foldfin.clone().map(ProtocolConfig::Foldfin),
         }
     }
 
@@ -566,7 +606,10 @@ impl SavedVpnConfigs {
 
     /// Whether any config is stored.
     pub fn has_any(&self) -> bool {
-        self.wireguard.is_some() || self.amneziawg.is_some() || self.vless.is_some()
+        self.wireguard.is_some()
+            || self.amneziawg.is_some()
+            || self.vless.is_some()
+            || self.foldfin.is_some()
     }
 }
 

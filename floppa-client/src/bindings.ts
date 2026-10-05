@@ -450,7 +450,7 @@ export type Phase =
  *  their OS keyrings via the old `SavedVpnConfigs.active_protocol: String`, and in all three
  *  arms of the migration chain in `config.rs::parse_stored_configs`.
  */
-export type Protocol = "wireguard" | "amneziawg" | "vless";
+export type Protocol = "wireguard" | "amneziawg" | "vless" | "foldfin";
 
 export type ProtocolSettings = {
 	mode: SelectionMode,

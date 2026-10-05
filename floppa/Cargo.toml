@@ -25,3 +25,6 @@ tracing.workspace = true
 chrono.workspace = true
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }
+
+[features]
+foldfin-chrome = ["floppa-vpn-core/foldfin-chrome"]

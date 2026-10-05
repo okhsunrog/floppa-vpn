@@ -179,6 +179,28 @@ ssh ubuntu@msk.okhsunrog.ru "sudo -u postgres psql floppa_vpn -c \"UPDATE plans 
 
 Set to `NULL` for unlimited. Use `test_plan` (id=5) for experiments.
 
+## Foldfin throughput (Frankfurt)
+
+For the current Foldfin integration, run from `~/code/rust/foldfin`:
+
+```bash
+uv run --no-project tests/bench_vps.py --seconds 12 --repeats 2
+```
+
+This builds the real Floppa CLI with Foldfin/Chrome support in release mode and
+uses the namespace/veth/NAT isolation above with a physical-gateway policy route.
+It compares direct TCP with Rustls and Chrome CONNECT-IP, upload/download, one
+and four streams. It records raw iperf3 JSON, binary hashes and process CPU usage,
+and removes the temporary rules, listener and private configs on normal exit.
+See `~/code/rust/foldfin/docs/BENCHMARKS.md` for requirements and interpretation.
+If the physical path cannot reach the VPS, an explicit
+`--underlay-interface sirius_nova` selects the existing WireGuard tunnel for both
+baseline and Foldfin; those results must be labelled as a VPN underlay. A local
+release comparison without WAN is available via
+`uv run --no-project tests/integration/test_foldfin.py --benchmark`.
+The historical March figures below use different routes/workloads and are not
+a controlled comparison against Foldfin.
+
 ## Reference results (March 2026)
 
 ### WireGuard — kernel module (baseline, host system)

@@ -401,6 +401,11 @@ impl Platform for LinuxPlatform {
         self.run_helper(&["recover-link"], Some(UNDO_TIMEOUT)).await
     }
 
+    async fn configure_mtu(&self, iface: &InterfaceName, mtu: u16) -> Result<(), PlatformError> {
+        self.run_helper(&["set-mtu", iface.as_str(), &mtu.to_string()], None)
+            .await
+    }
+
     async fn configure_address(
         &self,
         iface: &InterfaceName,

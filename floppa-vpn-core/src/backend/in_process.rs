@@ -42,6 +42,11 @@ impl VpnBackend for InProcessBackend {
                     .start_wireguard(&awg.tunnel(), interface_name, tun_params, endpoint)
                     .await
             }
+            ProtocolConfig::Foldfin(config) => {
+                self.tunnel_manager
+                    .start_foldfin(config, interface_name, tun_params, endpoint)
+                    .await
+            }
             ProtocolConfig::Vless(vless) => {
                 // Resolution is owned by the attempt, before tunnel routing is applied.
                 // Keep REALITY's server_name intact, but avoid re-resolving the outer endpoint

@@ -12,6 +12,7 @@ members = [
     "floppa-provision",
     "xtask",
     "floppa-net",
+    "floppa-foldfin",
 ]
 exclude = [
     "floppa-client/src-tauri",
