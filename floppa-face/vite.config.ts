@@ -2,6 +2,8 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig, lazyPlugins } from 'vite-plus'
 import { collectLucideIcons } from '../floppa-web-shared/vite/icons'
 
+const localDev = process.env.FLOPPA_LOCAL_DEV === '1'
+
 // https://vite.dev/config/
 export default defineConfig({
   run: {
@@ -38,6 +40,18 @@ export default defineConfig({
       import('vite-plugin-vue-devtools'),
     ])
     return [
+      // The ordinary application and auth stay intact. Only the external Telegram SDK is
+      // omitted in explicit local mode; the real API advertises credential login only.
+      ...(localDev
+        ? [
+            {
+              name: 'local-development',
+              apply: 'serve' as const,
+              transformIndexHtml: (html: string) =>
+                html.replace(/<script src="https:\/\/telegram.org[^>]+><\/script>/, ''),
+            },
+          ]
+        : []),
       vue(),
       // WARNING: The autoImport config is critical! Nuxt UI's unplugin-auto-import registers
       // "options" from useResizable.js as an auto-importable name. Since "options" is used as a
@@ -101,6 +115,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '127.0.0.1',
     proxy: {
       // Defaults to a local backend on :3000. Set FLOPPA_DEV_API to proxy at a remote
       // backend instead, e.g. FLOPPA_DEV_API=https://floppa.okhsunrog.dev vp dev

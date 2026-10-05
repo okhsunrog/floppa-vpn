@@ -44,8 +44,11 @@ const DURATION_BUCKETS: [f64; 12] = [
 
 /// Start the exporter and register HELP/TYPE text for every series this process emits.
 pub fn install_exporter() -> anyhow::Result<()> {
+    let listen: std::net::SocketAddr = std::env::var("FLOPPA_METRICS_LISTEN")
+        .unwrap_or_else(|_| format!("{}:{}", LISTEN.0, LISTEN.1))
+        .parse()?;
     PrometheusBuilder::new()
-        .with_http_listener(LISTEN)
+        .with_http_listener(listen)
         .set_buckets_for_metric(Matcher::Full(HTTP_DURATION.into()), &DURATION_BUCKETS)?
         .install()?;
 

@@ -132,9 +132,10 @@ async fn refresh_avatar(state: &AppState, user_id: i64, telegram_id: i64, photo_
 /// Fetch the largest profile photo via the Bot API. Requires the user to be reachable by the bot.
 async fn fetch_via_bot(state: &AppState, telegram_id: i64) -> Option<Vec<u8>> {
     let token = state.secrets.bot.as_ref()?.token.clone();
+    let bot = state.bot.as_ref()?;
     let uid = UserId(telegram_id as u64);
 
-    let photos = state.bot.get_user_profile_photos(uid).await.ok()?;
+    let photos = bot.get_user_profile_photos(uid).await.ok()?;
     // photos[0] is the most recent photo as a set of sizes; take the largest.
     let largest = photos
         .photos
@@ -143,7 +144,7 @@ async fn fetch_via_bot(state: &AppState, telegram_id: i64) -> Option<Vec<u8>> {
         .into_iter()
         .max_by_key(|p| p.width * p.height)?;
 
-    let file = state.bot.get_file(largest.file.id).await.ok()?;
+    let file = bot.get_file(largest.file.id).await.ok()?;
     let url = format!("https://api.telegram.org/file/bot{token}/{}", file.path);
     let resp = state.http_client.get(&url).send().await.ok()?;
     if !resp.status().is_success() {

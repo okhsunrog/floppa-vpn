@@ -402,6 +402,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             <label class="text-sm font-medium">{{ t('adminPlans.internalName') }}</label>
             <UInput
               v-model="planForm.name"
+              :aria-label="t('adminPlans.internalName')"
               :disabled="isEditing"
               :placeholder="t('adminPlans.internalNamePlaceholder')"
             />
@@ -410,6 +411,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
             <label class="text-sm font-medium">{{ t('adminPlans.displayName') }}</label>
             <UInput
               v-model="planForm.display_name"
+              :aria-label="t('adminPlans.displayName')"
               :placeholder="t('adminPlans.displayNamePlaceholder')"
             />
           </div>
@@ -419,6 +421,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.default_speed_limit_mbps?.toString()"
+                :aria-label="t('adminPlans.speedLimit')"
                 @update:model-value="
                   (v: string | number) => (planForm.default_speed_limit_mbps = toIntOrNull(v))
                 "
@@ -431,6 +434,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.max_peers ?? undefined"
+                :aria-label="t('adminPlans.maxPeers')"
                 @update:model-value="(v: string | number) => (planForm.max_peers = toIntOrNull(v))"
                 :min="1"
               />
@@ -442,6 +446,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.price_stars?.toString()"
+                :aria-label="t('adminPlans.priceLabel')"
                 @update:model-value="
                   (v: string | number) => (planForm.price_stars = toIntOrNull(v))
                 "
@@ -454,6 +459,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               <UInput
                 type="number"
                 :model-value="planForm.period_days?.toString()"
+                :aria-label="t('adminPlans.periodDays')"
                 @update:model-value="
                   (v: string | number) => (planForm.period_days = toIntOrNull(v))
                 "
@@ -470,6 +476,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                   type="number"
                   class="flex-1"
                   :model-value="trialValue?.toString()"
+                  :aria-label="t('adminPlans.trialDuration')"
                   @update:model-value="(v: string | number) => (trialValue = toIntOrNull(v))"
                   :placeholder="t('adminPlans.notATrial')"
                   :min="1"

@@ -55,7 +55,7 @@ pub struct AppState {
     pub wg_public_key: String,
     /// AmneziaWG server public key (None if AmneziaWG is not configured).
     pub awg_public_key: Option<String>,
-    pub bot: Bot,
+    pub bot: Option<Bot>,
     /// Outbound HTTP (Telegram file downloads, avatar URLs) with short timeouts — a hung
     /// upstream must not hold a request or a background task forever.
     pub http_client: reqwest::Client,
@@ -394,7 +394,7 @@ impl AppState {
         secrets: Secrets,
         wg_public_key: String,
         awg_public_key: Option<String>,
-        bot: Bot,
+        bot: impl Into<Option<Bot>>,
     ) -> Result<Self, StartupError> {
         let auth_secrets = secrets
             .auth
@@ -431,7 +431,7 @@ impl AppState {
             min_client_version,
             wg_public_key,
             awg_public_key,
-            bot,
+            bot: bot.into(),
             vm: VmClient::new(http_client.clone(), vm_url),
             http_client,
             telegram_login_states: Arc::new(RwLock::new(TtlMap::with_cap(PENDING_LOGIN_CAP))),

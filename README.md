@@ -253,6 +253,7 @@ vp install
 just check
 
 # Dev servers
+just dev                              # Real web + API + isolated PostgreSQL + test accounts
 cd floppa-face && vp dev               # Admin panel (proxies /api → :3000)
 cd floppa-client && vp exec tauri dev  # Client app
 
@@ -267,6 +268,9 @@ just package
 ```
 
 ## Deployment
+
+For local accounts, database reset, multiple frontend worktrees and browser tests,
+see [Local frontend development](docs/FRONTEND-TESTING.md).
 
 See [DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full guide. Ansible deploys across two VPS regions:
 

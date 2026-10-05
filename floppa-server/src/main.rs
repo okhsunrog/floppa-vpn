@@ -36,24 +36,32 @@ async fn main() -> Result<()> {
         VERSION, GIT_HASH, BUILD_TIME
     );
 
-    metrics::install_exporter()
-        .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
-    info!(
-        "Metrics exporter listening on {}:{}",
-        metrics::LISTEN.0,
-        metrics::LISTEN.1
-    );
-
-    let config = Config::from_env()?;
-    let secrets = Secrets::from_env()?;
-
-    let bot_secrets = secrets
-        .bot
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Bot secrets missing (bot.token)"))?;
-
+    let api_only = std::env::args().any(|a| a == "--api-only");
+    let mut config = Config::from_env()?;
+    let mut secrets = Secrets::from_env()?;
     let pool = db::init_pool(&secrets.database_url).await?;
     info!("Connected to database");
+    if std::env::args().any(|a| a == "--migrate") {
+        db::run_migrations(&pool).await?;
+        return Ok(());
+    }
+    // API-only mode retains real credential auth and all database operations. It neither
+    // needs a Telegram token nor starts polling/notifications or advertises Telegram login.
+    let bot = if api_only {
+        config.bot = None;
+        secrets.bot = None;
+        None
+    } else {
+        let bot_secrets = secrets.bot.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bot secrets missing (bot.token); use --api-only to serve without Telegram"
+            )
+        })?;
+        Some(Bot::new(&bot_secrets.token))
+    };
+
+    metrics::install_exporter()
+        .map_err(|e| anyhow::anyhow!("Failed to start metrics exporter: {e}"))?;
 
     // Derive the server public keys for client configs. A configured AmneziaWG section with
     // a bad/missing awg_private_key is a startup error, not a silently disabled protocol.
@@ -63,10 +71,6 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|_| secrets.awg_public_key())
         .transpose()?;
-
-    // Build teloxide bot (shared between Axum and dispatcher)
-    let bot = Bot::new(&bot_secrets.token);
-    info!("Bot initialized");
 
     let web_app_url = config.bot.as_ref().and_then(|b| b.web_app_url.clone());
 
@@ -132,8 +136,23 @@ async fn main() -> Result<()> {
         .layer(trace)
         .layer(cors);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr: SocketAddr = std::env::var("FLOPPA_LISTEN")
+        .unwrap_or_else(|_| "0.0.0.0:3000".into())
+        .parse()?;
     info!("Listening on {}", addr);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+
+    let Some(bot) = bot else {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await?;
+        return Ok(());
+    };
 
     // Spawn background notification checker (every 30 min)
     bot::notifications::spawn(pool.clone(), bot.clone(), config.clone());
@@ -155,8 +174,6 @@ async fn main() -> Result<()> {
         .build();
 
     // Run both concurrently
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-
     // Telegram-side cosmetics (command menu, Mini App button) are best-effort and must not
     // hold up serving: register them once we are listening.
     tokio::spawn(bot::configure_menu(bot, web_app_url));

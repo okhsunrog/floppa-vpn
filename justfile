@@ -191,6 +191,33 @@ build-frontend:
     vp install --frozen-lockfile
     vp run --filter floppa-face build
 
+# Real web app + API + isolated PostgreSQL. Ctrl+C stops both development servers.
+dev:
+    uv run --no-project python scripts/dev.py up
+
+# Real API + database, for multiple frontend worktrees or browser tests.
+dev-api:
+    uv run --no-project python scripts/dev.py api
+
+# Additional frontend using the local API (e.g. just dev-frontend 5181 in a worktree).
+dev-frontend port="5173":
+    cd floppa-face && FLOPPA_LOCAL_DEV=1 FLOPPA_DEV_API=http://127.0.0.1:{{ env('FLOPPA_DEV_API_PORT', '3100') }} vp dev --host 127.0.0.1 --port {{ port }} --strictPort
+
+# Stop the local database container, retaining its volume. Stop `just dev` first.
+dev-down:
+    uv run --no-project python scripts/dev.py down
+
+# Recreate only this checkout's local database and seed it. Stop `just dev` first.
+dev-reset:
+    uv run --no-project python scripts/dev.py reset
+
+frontend-browser-install:
+    cd floppa-face && vpx playwright install chromium
+
+# Real API/DB regression tests, in a separate local instance.
+frontend-e2e:
+    cd floppa-face && vpx playwright test
+
 # Regenerate the API clients — TypeScript and Rust — from the server's own annotations
 openapi:
     cargo run -p floppa-server -- --openapi > floppa-web-shared/openapi.json

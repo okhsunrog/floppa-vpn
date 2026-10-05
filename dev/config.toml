@@ -1,0 +1,26 @@
+# Used only by `just dev`. All endpoints are local or reserved example addresses.
+[wireguard]
+interface = "wg-dev"
+endpoint = "192.0.2.1:51820"
+client_subnet = "10.240.0.0/24"
+dns = ["1.1.1.1"]
+allowed_ips = "0.0.0.0/0, ::/0"
+
+[amneziawg]
+interface = "awg-dev"
+endpoint = "192.0.2.1:51821"
+client_subnet = "10.241.0.0/24"
+dns = ["1.1.1.1"]
+allowed_ips = "0.0.0.0/0, ::/0"
+
+[vless]
+endpoint = "192.0.2.1:443"
+sni = "example.com"
+short_id = "aabbccdd"
+
+[metrics]
+# Fail quickly and truthfully show unavailable traffic; no fabricated counters.
+victoria_metrics_url = "http://127.0.0.1:1"
+
+[auth]
+login_ip_rate_limit_per_15min = 500

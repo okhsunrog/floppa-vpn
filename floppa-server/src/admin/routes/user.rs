@@ -1047,6 +1047,8 @@ pub(super) async fn send_my_peer_config(
 
     state
         .bot
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("Telegram is disabled; download the config directly"))?
         .send_document(ChatId(telegram_id), file)
         .await
         .map_err(|e| ApiError::bad_gateway(format!("Failed to send config via Telegram: {e}")))?;

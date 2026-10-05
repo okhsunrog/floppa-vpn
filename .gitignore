@@ -54,3 +54,8 @@ scripts/arch/*.tar.zst
 # OS
 .DS_Store
 Thumbs.db
+
+# Local browser test output
+.dev/
+floppa-face/test-results/
+floppa-face/playwright-report/

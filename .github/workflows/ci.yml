@@ -201,6 +201,38 @@ jobs:
           path: node_modules/.vite/task-cache
           key: ${{ steps.vite-task-cache.outputs.cache-primary-key }}
 
+  frontend-browser:
+    name: Frontend with real API and database
+    runs-on: ubuntu-latest
+    env:
+      FLOPPA_DEV_CONTAINER: docker
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          cache: true
+      - uses: extractions/setup-just@v4
+      - uses: astral-sh/setup-uv@v10
+      - run: vp install --frozen-lockfile
+      - name: Install browser
+        working-directory: floppa-face
+        run: vpx playwright install --with-deps chromium
+      - name: Browser tests against real local services
+        run: just frontend-e2e
+      - name: Failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-browser-failures
+          path: |
+            floppa-face/playwright-report/
+            floppa-face/test-results/
+      - name: Stop test database
+        if: always()
+        run: FLOPPA_DEV_INSTANCE=e2e FLOPPA_DEV_DB_PORT=54339 just dev-down
+
   client:
     name: Client checks
     runs-on: ubuntu-latest
