@@ -1,7 +1,8 @@
 //! What a start with nobody watching rebuilds from, and what a TUN is built from.
 //!
 //! Android starts the VPN service without any UI for always-on VPN, at boot, and to restore a
-//! lockdown ("block connections without VPN") session. The intent it sends carries no
+//! lockdown ("block connections without VPN") session. The Linux system service also
+//! restores a recorded request at boot or when a client asks to resume. A system start carries no
 //! configuration, so the actor can only honour it from something written down earlier. That is
 //! [`LastIntent`]: the order and split rules of the last connect that actually worked. The configs
 //! themselves are not here — the actor owns the store, in the same process — which is what shrank
@@ -14,9 +15,9 @@
 //! Protection at rest matches `vpn-config.json`: a `0600` file in the app's private data
 //! directory, written atomically (see [`private_file`](super::private_file)) — a file caught
 //! half-written is one that does not parse, and the reader's only recourse is to stop, which under
-//! lockdown is a device with no network until somebody opens the app. Only the calls that touch
-//! the filesystem are Android-specific; the types and the derivations are plain data, so their
-//! tests run on the host.
+//! lockdown is a device with no network until somebody opens the app. Persistence is shared
+//! with the Linux system service; Android-specific TUN derivation stays separate from
+//! desktop routing. The persistence and derivation tests run on the host.
 
 use super::actor::types::{SplitMode, TunnelParams};
 use super::private_file::write_private;
@@ -187,6 +188,30 @@ pub fn save(dir: &Path, intent: &LastIntent) -> Result<(), String> {
     write_private(&path, json.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
     debug!(order = ?intent.order, "the last-good intent was written to {}", path.display());
     Ok(())
+}
+
+/// Serial writer for successful connections. Traffic samples do not rewrite the
+/// record, but changes to any connection parameters do. Failed writes remain
+/// retryable on the next sample.
+pub struct IntentRecorder {
+    dir: PathBuf,
+    written: Option<(Vec<super::protocol::Protocol>, TunnelParams)>,
+}
+
+impl IntentRecorder {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir, written: None }
+    }
+
+    pub fn record(&mut self, intent: LastIntent) -> Result<(), String> {
+        let key = (intent.order.clone(), intent.params.clone());
+        if self.written.as_ref() == Some(&key) && bundle_path(&self.dir).exists() {
+            return Ok(());
+        }
+        save(&self.dir, &intent)?;
+        self.written = Some(key);
+        Ok(())
+    }
 }
 
 /// Read the last-good intent, if there is one this build can use.
@@ -556,7 +581,9 @@ AllowedIPs = 0.0.0.0/0
     #[test]
     fn the_last_good_intent_round_trips_through_the_file() {
         let dir = tempfile::tempdir().unwrap();
-        let params = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()]);
+        let params = TunnelParams::new(SplitMode::Exclude, vec!["org.example".into()])
+            .with_allow_lan(true)
+            .with_private_routes(["10.66.66.0/24".into()]);
         save(dir.path(), &intent(params.clone())).unwrap();
 
         let loaded = load(dir.path()).expect("it is readable");
@@ -576,6 +603,49 @@ AllowedIPs = 0.0.0.0/0
             }
             other => panic!("expected an Up, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn recording_updates_parameters_without_rewriting_traffic_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recorder = IntentRecorder::new(dir.path().to_path_buf());
+        let mut first = intent(TunnelParams::default());
+        recorder.record(first.clone()).unwrap();
+        first.saved_at += 1;
+        recorder.record(first.clone()).unwrap();
+        assert_eq!(load(dir.path()).unwrap().saved_at, first.saved_at - 1);
+
+        first.params = first
+            .params
+            .with_allow_lan(true)
+            .with_private_routes(["10.66.66.0/24".into()]);
+        recorder.record(first.clone()).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), first);
+    }
+
+    #[test]
+    fn a_failed_record_is_retried_for_the_same_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("not-a-directory");
+        std::fs::write(&destination, "blocked").unwrap();
+        let mut recorder = IntentRecorder::new(destination.clone());
+        let last = intent(TunnelParams::default());
+        assert!(recorder.record(last.clone()).is_err());
+        std::fs::remove_file(&destination).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        recorder.record(last.clone()).unwrap();
+        assert_eq!(load(&destination).unwrap(), last);
+    }
+
+    #[test]
+    fn reconnecting_after_forgetting_recreates_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recorder = IntentRecorder::new(dir.path().to_path_buf());
+        let last = intent(TunnelParams::default());
+        recorder.record(last.clone()).unwrap();
+        remove(dir.path());
+        recorder.record(last.clone()).unwrap();
+        assert_eq!(load(dir.path()).unwrap(), last);
     }
 
     #[test]

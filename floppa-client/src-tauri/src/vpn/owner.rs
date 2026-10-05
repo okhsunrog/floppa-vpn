@@ -101,21 +101,6 @@ pub async fn decide() -> TunnelOwner {
     TunnelOwner::InProcess { reason: None }
 }
 
-/// Making the service exist, from the app's side.
-///
-/// Nothing to do: under socket activation, connecting is what starts it, and the connection the
-/// remote handle opens is that connection.
-#[cfg(target_os = "linux")]
-pub struct StartedByConnecting;
-
-#[cfg(target_os = "linux")]
-#[async_trait::async_trait]
-impl floppa_vpn_core::remote::TunnelProcess for StartedByConnecting {
-    async fn ensure_running(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
-
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;

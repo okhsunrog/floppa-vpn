@@ -159,15 +159,13 @@ command" — so `import` is the way into a store that belongs to root. With a co
 logged in, `floppa connect` uses it rather than sending you to the server for one you already have:
 running a WireGuard tunnel does not require a Floppa account.
 
-## Not done yet
+Connecting from the service's store restores the last successful request,
+including its private routes and LAN preference. If no connection has succeeded
+yet, it tries the stored configs with default parameters. The boot record is
+updated when either the protocol order or connection parameters change; traffic
+samples alone do not rewrite it, and failed saves can be retried.
 
-**Diagnostic captures miss the tunnel's own logs.** The service writes to stderr, which journald
-takes; it never calls `logging::init_tracing`, so `start_log_capture` over the socket lands in the
-"the log directory is not initialised" branch and quietly writes nothing. A capture started from
-the app's settings therefore collects the UI's logs and not the tunnel's — which are the ones it is
-usually started for. Deliberately left: the capture machinery exists for Android, where it works,
-and this is not a priority on the desktop. Fixing it means either having the service write a file
-beside its state, as `:vpn` does, or having the capture read journald.
+## Not done yet
 
 **Hardening the unit.** It runs as root with no `ProtectSystem=` or capability bounding. Narrowing
 it needs testing against the DNS path, which rewrites `/etc/resolv.conf`.
@@ -180,8 +178,20 @@ interfaces, no collision, and both would lay down a default route.
 **Windows** needs a named pipe instead of a Unix socket and a service instead of a unit. Deferred:
 the tray already keeps the tunnel alive while the app is open there.
 
-**Hardening the unit.** It runs as root with no `ProtectSystem=` or capability bounding. Narrowing
-it is worthwhile and needs testing against the DNS path, which rewrites `/etc/resolv.conf`.
+## Diagnostic collection
+
+Diagnostic capture was primarily built for Android, where exporting app and VPN
+process logs from the GUI avoids needing adb. It can also collect GUI logs on desktop.
+The Linux system tunnel service logs to journald, independently of GUI capture:
+
+```sh
+journalctl -u floppa-vpn.service --since "30 minutes ago" --no-pager > floppa-vpn-service.log
+```
+
+GUI export does not currently include these journal entries. This is a difference
+in collection methods, not missing service logs. Combining them into one support
+archive is optional convenience work, not a requirement for service support.
+See [the client backlog](CLIENT-BACKLOG.md).
 
 ## Troubleshooting
 

@@ -310,14 +310,9 @@ pub fn run() {
 
             #[cfg(target_os = "linux")]
             let handle = if owner == vpn::owner::TunnelOwner::Service {
-                let dir = std::path::Path::new(vpn::rpc::SYSTEM_SOCKET_DIR).to_path_buf();
-                let remote = vpn::remote::RemoteActor::new(
-                    &dir,
-                    Arc::new(vpn::owner::StartedByConnecting),
-                    &spawn,
-                );
-                // The logs of the tunnel are written where the tunnel is, so a capture has to be
-                // started there too — the same reasoning as on Android, and the same relay.
+                let remote = vpn::client_mode::system_remote(&spawn);
+                // Keep the capture relay on the remote owner. The Linux service logs to
+                // journald; GUI export does not currently include those journal entries.
                 app.manage(logging::capture::CaptureSession::new(
                     log_dir.clone(),
                     remote.clone(),

@@ -1,9 +1,8 @@
 # The process that holds the tunnel, so that closing a client does not take it down.
 #
 # Started by the socket rather than at boot: a client connecting is what brings it up, and it then
-# stays up on its own for as long as the tunnel does. Reconnecting the last tunnel *after a reboot*
-# is deliberately not wired yet — it needs a stated preference rather than "whatever was up last",
-# and shipping a unit that promises it would be shipping a promise the program does not keep.
+# stays up on its own for as long as the tunnel does. Reconnecting after a reboot
+# is handled separately by floppa-vpn-autostart.service and the stored preference.
 #
 # No RuntimeDirectory=: the socket's directory belongs to the socket unit, which outlives this
 # service, and systemd removes a RuntimeDirectory when the service that declared it stops. That
@@ -31,5 +30,4 @@ Restart=on-failure
 RestartSec=2
 
 # No [Install]. There is nothing to enable: the socket is what starts this, and enabling it at boot
-# would raise a service that holds no tunnel until a client asks for one. The section arrives with
-# the preference that makes booting into a tunnel mean something.
+# would raise a service that holds no tunnel until a client asks for one.

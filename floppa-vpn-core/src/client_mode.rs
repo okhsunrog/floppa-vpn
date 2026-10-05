@@ -91,6 +91,29 @@ pub fn system_socket() -> std::path::PathBuf {
     Path::new(crate::rpc::SYSTEM_SOCKET_DIR).join(crate::rpc::SOCKET_NAME)
 }
 
+/// Socket activation starts the system service when the remote connects.
+#[cfg(target_os = "linux")]
+struct StartedByConnecting;
+
+#[cfg(target_os = "linux")]
+#[async_trait::async_trait]
+impl crate::remote::TunnelProcess for StartedByConnecting {
+    async fn ensure_running(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// The shared RPC client used by desktop GUI and CLI after selecting service mode.
+#[cfg(target_os = "linux")]
+pub fn system_remote(spawn: &crate::actor::Spawn) -> std::sync::Arc<crate::remote::RemoteActor> {
+    let socket = system_socket();
+    crate::remote::RemoteActor::new(
+        socket.parent().expect("the system socket has a directory"),
+        std::sync::Arc::new(StartedByConnecting),
+        spawn,
+    )
+}
+
 /// Whether the socket opens at all, without waiting to be spoken to.
 ///
 /// Instant: a connect to a Unix socket either succeeds, finds nothing, or is refused, and none of

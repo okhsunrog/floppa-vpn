@@ -19,9 +19,9 @@ use std::time::Duration;
 use floppa_vpn_core::actor::Spawn;
 use floppa_vpn_core::actor::handle::{IntentRequest, TunnelControl};
 use floppa_vpn_core::actor::types::{CycleOutcome, Phase, SplitMode, TunnelParams, TunnelState};
-use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_socket};
+use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_remote, system_socket};
 use floppa_vpn_core::protocol::Protocol;
-use floppa_vpn_core::remote::{RemoteActor, TunnelProcess};
+use floppa_vpn_core::remote::RemoteActor;
 
 /// How long to wait for the mirror to say anything at all before giving up on the service.
 ///
@@ -30,17 +30,6 @@ use floppa_vpn_core::remote::{RemoteActor, TunnelProcess};
 /// so this only covers the moment between opening a second connection and the first state
 /// arriving.
 const FIRST_STATE: Duration = Duration::from_secs(10);
-
-/// Under socket activation the socket is what starts the service, and a client connecting to it is
-/// what makes that happen. There is nothing left for this to do.
-struct StartedByConnecting;
-
-#[async_trait::async_trait]
-impl TunnelProcess for StartedByConnecting {
-    async fn ensure_running(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
 
 /// Reach the service, or say why not in terms the person can act on.
 pub async fn reach() -> Result<Arc<RemoteActor>> {
@@ -57,18 +46,10 @@ pub async fn reach() -> Result<Arc<RemoteActor>> {
         other => bail!("{}", other.explain().expect("not a usable answer")),
     }
 
-    let dir = socket
-        .parent()
-        .expect("the socket is inside a directory")
-        .to_path_buf();
     let spawn: Spawn = Arc::new(|fut| {
         tokio::spawn(fut);
     });
-    Ok(RemoteActor::new(
-        &dir,
-        Arc::new(StartedByConnecting),
-        &spawn,
-    ))
+    Ok(system_remote(&spawn))
 }
 
 /// Give the service the credentials it will need when nobody is at this terminal.
@@ -204,24 +185,28 @@ pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
 
 /// Connect with whatever the service already holds.
 ///
-/// The order is every protocol it has a config for. An empty order is *not* "you choose": the
-/// store resolves a request by filtering it down to what it holds, so nothing in means nothing
-/// out, and the cycle ends before it starts with "probe order is empty". Which of them leads is
-/// still the store's call — `resolve_order` moves the one that last worked to the front — so this
-/// says what is possible and lets the actor say what is preferable.
+/// Restore the last successful request, including its routing parameters. If no
+/// connection has succeeded yet, try the available configs with default parameters.
 pub async fn connect_stored(remote: &RemoteActor) -> Result<()> {
-    let order = first_state(remote).await?.configs.available;
-    if order.is_empty() {
-        bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
-    }
-
-    let accepted = remote
-        .set_intent(IntentRequest::Up {
-            order,
-            params: TunnelParams::new(SplitMode::All, Vec::new()),
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    // A successful connection already has the full parameter set persisted by
+    // the service. Reuse it, including private routes and LAN preferences.
+    let accepted = if let Some(accepted) =
+        remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))?
+    {
+        accepted
+    } else {
+        let order = first_state(remote).await?.configs.available;
+        if order.is_empty() {
+            bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
+        }
+        remote
+            .set_intent(IntentRequest::Up {
+                order,
+                params: TunnelParams::default(),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    };
 
     eprintln!("Connecting with the config the service already holds...");
     match remote

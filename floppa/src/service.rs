@@ -10,12 +10,8 @@
 //! users cannot each have their own VPN in any sense that means anything, and pretending otherwise
 //! would buy a second actor fighting the first for the same interface.
 //!
-//! # What it is not, yet
-//!
-//! Clients cannot drive it: `floppa connect` and the app still run their own actor. That is the
-//! next piece. The watcher is started here all the same — it no-ops while there is no session to
-//! repair peers with, and starting it where the actor is, rather than remembering to later, is the
-//! rule this codebase already keeps.
+//! CLI and GUI clients control this actor over RPC. The peer repair watcher runs
+//! here too, using the server session supplied by a client.
 
 use anyhow::{Context, Result, bail};
 use std::sync::Arc;
@@ -98,7 +94,9 @@ fn remember_what_connects(handle: TunnelHandle, spawn: &Spawn) {
 
     let mut states = handle.states();
     spawn(Box::pin(async move {
-        let mut written: Option<Vec<floppa_vpn_core::protocol::Protocol>> = None;
+        let mut recorder = floppa_vpn_core::autostart::IntentRecorder::new(
+            std::path::PathBuf::from(SYSTEM_STATE_DIR),
+        );
         while states.changed().await.is_ok() {
             let state = states.borrow_and_update().clone();
             if state.phase != Phase::Connected || state.intent != IntentView::Up {
@@ -109,15 +107,29 @@ fn remember_what_connects(handle: TunnelHandle, spawn: &Spawn) {
             };
             let mut order = vec![winner];
             order.extend(state.intent_order.iter().copied().filter(|p| *p != winner));
-            if written.as_ref() == Some(&order) {
-                continue;
-            }
             let at = chrono::Utc::now().timestamp();
-            let recorded = order.clone();
-            tokio::task::spawn_blocking(move || {
-                floppa_vpn_core::autostart::remember(recorded, params, at)
-            });
-            written = Some(order);
+            // Await each write: a slower earlier save must not replace newer parameters.
+            let result = tokio::task::spawn_blocking(move || {
+                let result = recorder.record(floppa_vpn_core::autostart::LastIntent::new(
+                    order, params, at,
+                ));
+                (recorder, result)
+            })
+            .await;
+            match result {
+                Ok((returned, result)) => {
+                    recorder = returned;
+                    if let Err(e) = result {
+                        tracing::warn!("failed to record the last-good intent: {e}");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("the last-good intent writer did not finish: {e}");
+                    recorder = floppa_vpn_core::autostart::IntentRecorder::new(
+                        std::path::PathBuf::from(SYSTEM_STATE_DIR),
+                    );
+                }
+            }
         }
     }));
 }
