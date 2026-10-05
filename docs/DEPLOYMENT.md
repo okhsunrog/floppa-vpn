@@ -98,7 +98,7 @@ configured), `[bot] token`, `[auth] jwt_secret` / `encryption_key` / `admin_tele
 
 ```bash
 cd /path/to/floppa-vpn
-just package-server  # Ubuntu 24.04-compatible floppa-vpn-release.tar.gz: floppa-daemon + floppa-server, migrations,
+just package-server  # static musl floppa-vpn-release.tar.gz: floppa-daemon + floppa-server, migrations,
                      # systemd units, config.example.toml
 just package-vless   # floppa-vless-release.tar.gz: floppa-vless + its unit
 ```
@@ -109,10 +109,18 @@ archives at `../floppa-vpn/*.tar.gz` relative to the cloud-forge checkout and fa
 missing. `just deploy` and `just deploy-europe` chain build and playbook. `just deploy-server`
 updates only the Moscow API/admin panel and daemon, using the archive from the current checkout
 (including a separate Git worktree). It does not run other protocol, network or release-mirror
-roles. Both `deploy` and `deploy-server` build the server binaries in an Ubuntu 24.04 Docker
-container, matching the VPS's glibc/OpenSSL instead of the build host's libraries. Docker and
-the host Rust toolchain are required. Build artifacts are cached under `target/ubuntu-server`;
-set `FLOPPA_SERVER_BUILD_DIR` to use another cache directory. Native `just package` remains
+roles. The deployment recipes build static `x86_64-unknown-linux-musl` executables in a Docker
+builder with musl tools; none of the three server binaries requires glibc or shared libraries
+on the VPS. Telegram HTTPS uses rustls with the host certificate store, so the VPS still needs
+`ca-certificates`. Docker and the host Rust toolchain are required; the script installs the musl
+Rust target through rustup. Build artifacts are cached under `target/musl-server`; set
+`FLOPPA_SERVER_BUILD_DIR` to use another cache directory. Each build checks the ELF for an
+interpreter and shared-library dependencies and runs the API binary's `--openapi` mode.
+`just deploy-vless` updates only the Moscow proxy. `just test-server-static` runs the server
+suite as musl executables; supply `DATABASE_URL` for an isolated test PostgreSQL instance.
+`just test-server-tls` explicitly checks the bot HTTP client's DNS and validated HTTPS against
+Telegram without credentials or sending messages. This network test is ignored in the ordinary
+suite. Native `just package` remains
 available for a target with libraries compatible with the build host. Archives include the
 source commit in `REVISION`.
 

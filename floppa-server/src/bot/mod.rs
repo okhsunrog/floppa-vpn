@@ -43,3 +43,23 @@ pub async fn configure_menu(bot: Bot, web_app_url: Option<Url>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tls_tests {
+    /// Explicit smoke check for the bot's TLS provider, DNS and system CA store.
+    /// No real bot credentials are used and no Telegram messages are sent.
+    #[tokio::test]
+    #[ignore = "requires internet access; run just test-server-tls"]
+    async fn telegram_https_uses_native_roots() {
+        let bot = teloxide::Bot::new("123456:test-token");
+        let response = bot
+            .client()
+            .get("https://api.telegram.org/")
+            .timeout(std::time::Duration::from_secs(20))
+            .send()
+            .await
+            .expect("bot client must complete a validated HTTPS request");
+        assert_eq!(response.url().scheme(), "https");
+        assert!(response.status().is_success());
+    }
+}

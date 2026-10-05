@@ -41,7 +41,7 @@ sha2 = "0.10"
 hex = "0.4"
 
 # Telegram bot
-teloxide = { version = "0.17", features = ["macros"] }
+teloxide = { version = "0.17", default-features = false, features = ["macros", "ctrlc_handler", "rustls-native-roots"] }
 
 # Database (PostgreSQL)
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "chrono", "uuid"] }

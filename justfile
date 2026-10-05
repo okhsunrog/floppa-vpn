@@ -17,7 +17,7 @@ build: build-frontend
 build-target:
     cargo build --release --target {{ target }} -p floppa-daemon -p floppa-server
 
-# Create a native-host deployment archive. Use package-server for Ubuntu VPSes.
+# Create a native-host deployment archive. Use package-server for Linux VPSes.
 package: build
     just _package-binaries "target/release"
 
@@ -25,13 +25,21 @@ package: build
 package-target: build-target
     just _package-binaries "target/{{ target }}/release"
 
-# Build server binaries against the Ubuntu 24.04 libraries used by the VPS.
+# Build server binaries with musl and rustls for a static Linux executable.
 build-server: build-frontend
-    bash scripts/build-server-ubuntu.sh
+    bash scripts/build-server-musl.sh
 
-# Package the Ubuntu-compatible server binaries and embedded admin panel.
+# Run server tests as musl executables; DATABASE_URL must refer to a test database.
+test-server-static:
+    bash scripts/build-server-musl.sh --test floppa-server
+
+# Explicit network smoke test: bot TLS, DNS and system trust roots, without credentials.
+test-server-tls:
+    bash scripts/build-server-musl.sh --tls-smoke floppa-server
+
+# Package the statically linked server binaries and embedded admin panel.
 package-server: build-server
-    just _package-binaries "{{ env('FLOPPA_SERVER_BUILD_DIR', absolute_path('target/ubuntu-server')) }}/target/release"
+    just _package-binaries "{{ env('FLOPPA_SERVER_BUILD_DIR', absolute_path('target/musl-server')) }}/target/x86_64-unknown-linux-musl/release"
 
 [private]
 _package-binaries binary_dir:
@@ -380,7 +388,7 @@ build-cli:
 
 # Build floppa-vless binary in release mode
 build-vless:
-    cargo build --release -p floppa-vless
+    bash scripts/build-server-musl.sh floppa-vless
 
 # Create deployment archive for floppa-vless (runs on the Moscow VPS behind HAProxy)
 package-vless: build-vless
@@ -390,8 +398,9 @@ package-vless: build-vless
     rm -rf release-vless
     mkdir -p release-vless/{bin,systemd}
 
-    cp target/release/floppa-vless release-vless/bin/
+    cp "{{ env('FLOPPA_SERVER_BUILD_DIR', absolute_path('target/musl-server')) }}/target/x86_64-unknown-linux-musl/release/floppa-vless" release-vless/bin/
     cp systemd/floppa-vless.service release-vless/systemd/
+    git rev-parse HEAD > release-vless/REVISION
 
     tar -czvf floppa-vless-release.tar.gz -C release-vless .
 
@@ -401,13 +410,17 @@ package-vless: build-vless
 
 # Deploy to Moscow VPS via Ansible (builds, packages, then deploys).
 # Includes the network role so AmneziaWG's firewall port, NAT and tunnel routing are applied.
-deploy: package-server
-    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa,network -e "floppa_release_archive={{ absolute_path('floppa-vpn-release.tar.gz') }}"
+deploy: package-server package-vless
+    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa,network -e "floppa_vless_release_archive={{ absolute_path('floppa-vless-release.tar.gz') }}" -e "floppa_release_archive={{ absolute_path('floppa-vpn-release.tar.gz') }}"
 
 # Update only the API/admin panel and daemon, using an archive from this checkout.
 # Other protocol, network and release-mirror roles are left for the full deploy recipe.
 deploy-server: package-server
     cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa-vpn -e "floppa_release_archive={{ absolute_path('floppa-vpn-release.tar.gz') }}"
+
+# Update the Moscow VLESS proxy with the static binary from this checkout.
+deploy-vless: package-vless
+    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa-vless -e "floppa_vless_release_archive={{ absolute_path('floppa-vless-release.tar.gz') }}"
 
 # Deploy to Europe VPS via Ansible (builds, packages, then deploys).
 # Includes the network role so the AmneziaWG subnet gets exit NAT (masquerade). The floppa_vless
