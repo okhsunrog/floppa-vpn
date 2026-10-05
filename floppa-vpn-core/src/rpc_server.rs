@@ -716,6 +716,11 @@ mod tests {
         let remote = RemoteActor::new(dir.path(), process.clone(), &spawner());
 
         // Long enough for several polls to have been answered and refused.
+        assert!(remote.set_intent(IntentRequest::Down).await.is_err());
+        assert!(
+            actor.intents.lock().unwrap().is_empty(),
+            "an incompatible service must not receive a command before the mirror notices"
+        );
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(
             remote.snapshot().phase,

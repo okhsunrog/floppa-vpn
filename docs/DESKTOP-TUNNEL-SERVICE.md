@@ -34,17 +34,25 @@ rollback journal that knows nothing about what the other applied. The privileged
 the overlap as a floor under this: `ensure-tun` will not hand over a TUN that belongs to another
 uid.
 
-Four answers, and the difference between two of them is the point:
+Five answers:
 
 - **Available** — drive the service.
-- **Absent** — nothing is listening. Run the tunnel in this process.
+- **Absent** — nothing is listening. GUI may run the tunnel in its own process.
+  CLI `connect` without a config requires the service; `connect --config` explicitly
+  selects an independent foreground run.
 - **Forbidden** — a service *is* there and this user may not talk to it. This is not absence, and
-  treating it as absence is the trap: falling back would work, polkit would ask for a password,
-  and a tunnel would come up. It would then work slightly worse forever — a prompt on every
-  connect, a tunnel that still dies with the program — for a reason nobody would ever be shown.
-  So it is shown: you are not in the `floppa` group.
+  treating it as absence could start a competing local actor. Neither CLI nor GUI
+  falls back in this case; the user is told how to obtain access to the `floppa` group.
 - **WrongVersion** — a service is there speaking a protocol this build does not. Almost always an
   upgrade that replaced the binaries while the old service kept running. Restart it.
+- **Unresponsive** — the socket accepts connections but the service cannot answer,
+  or an unexpected socket error prevents determining its owner. This is not absence
+  and does not authorize a local actor.
+
+GUI setup checks socket reachability without waiting for a service cold start.
+The settings page checks health asynchronously and can refresh it when reopened.
+Every newly opened RPC connection checks the protocol version before any mutation,
+including on Android; an incompatible service receives no control commands.
 
 ## Installing and enabling
 

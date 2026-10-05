@@ -94,15 +94,19 @@ pub async fn set_resume_on_boot(
 /// The UI needs it because the promises differ. "Quitting will disconnect you" is true when the
 /// tunnel is in this process and false when the service has it, and a close dialog that says it
 /// either way is wrong half the time. It is also the only place a user can be told that a service
-/// *is* installed and they are not allowed to use it — a state where nothing looks broken and
-/// everything is quietly worse.
+/// *is* installed but cannot currently be used. Inspecting health is asynchronous
+/// and never changes which process was selected to own the tunnel at startup.
 #[tauri::command]
 #[specta::specta]
-pub fn get_tunnel_owner(#[allow(unused_variables)] app: AppHandle) -> TunnelOwner {
+pub async fn get_tunnel_owner(#[allow(unused_variables)] app: AppHandle) -> TunnelOwner {
     #[cfg(not(target_os = "android"))]
     {
         use tauri::Manager as _;
-        app.state::<TunnelOwner>().inner().clone()
+        let owner = app.state::<TunnelOwner>().inner().clone();
+        #[cfg(target_os = "linux")]
+        return crate::vpn::owner::inspect(&owner).await;
+        #[cfg(not(target_os = "linux"))]
+        owner
     }
     // Android's tunnel is always in `:vpn`, and that process is not a thing the app quits.
     #[cfg(target_os = "android")]

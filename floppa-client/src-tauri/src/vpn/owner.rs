@@ -27,6 +27,8 @@ use specta::Type;
 pub enum TunnelOwner {
     /// The system service. The tunnel outlives this app.
     Service,
+    /// Service mode is selected, but the service cannot currently be used.
+    ServiceUnavailable { problem: ServiceProblem },
     /// This process. The tunnel goes when the app does.
     InProcess {
         /// Why it is not the service, when that is worth saying. `None` on the platforms where
@@ -41,12 +43,14 @@ pub enum TunnelOwner {
 pub enum InProcessReason {
     /// No service is installed or its socket is not enabled.
     NotInstalled,
-    /// A service is running and this user may not talk to it — they are not in the `floppa` group.
-    ///
-    /// Kept apart from [`NotInstalled`](Self::NotInstalled) all the way to the screen. Falling
-    /// back works, so nothing looks broken; it just quietly works worse forever, and the reason
-    /// has to be visible or nobody will ever find it.
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ServiceProblem {
     NotPermitted,
+    WrongVersion { theirs: u32 },
+    Unresponsive,
 }
 
 impl TunnelOwner {
@@ -58,9 +62,8 @@ impl TunnelOwner {
 
 /// Decide, on a platform where there is a service to look for.
 ///
-/// By reachability rather than a full probe: this runs while a window is on screen, and the wait a
-/// full probe can incur is a service cold start, not a call. A version mismatch is caught a moment
-/// later by the mirror, which declines to adopt a state it cannot read.
+/// Use a quick socket check during setup. RPC validates the version before commands;
+/// the GUI's asynchronous ownership query supplies detailed status without blocking setup.
 #[cfg(target_os = "linux")]
 pub async fn decide() -> TunnelOwner {
     use floppa_vpn_core::client_mode::{reach, system_socket};
@@ -79,19 +82,35 @@ fn from_access(access: floppa_vpn_core::client_mode::ServiceAccess) -> TunnelOwn
             TunnelOwner::Service
         }
         ServiceAccess::Forbidden { detail } => {
-            tracing::warn!(
-                "the tunnel service is running but this user may not use it ({detail}); \
-                 falling back to running the tunnel in this process"
-            );
-            TunnelOwner::InProcess {
-                reason: Some(InProcessReason::NotPermitted),
+            tracing::warn!("the tunnel service is running but this user may not use it ({detail})");
+            TunnelOwner::ServiceUnavailable {
+                problem: ServiceProblem::NotPermitted,
             }
         }
-        // `reach` never answers `WrongVersion` — nothing has been said yet — and an unusable
-        // socket is the same as none for the purpose of choosing.
-        ServiceAccess::Absent | ServiceAccess::WrongVersion { .. } => TunnelOwner::InProcess {
+        ServiceAccess::Absent => TunnelOwner::InProcess {
             reason: Some(InProcessReason::NotInstalled),
         },
+        ServiceAccess::WrongVersion { theirs } => TunnelOwner::ServiceUnavailable {
+            problem: ServiceProblem::WrongVersion { theirs },
+        },
+        ServiceAccess::Unresponsive { .. } => TunnelOwner::ServiceUnavailable {
+            problem: ServiceProblem::Unresponsive,
+        },
+    }
+}
+
+/// Report service health without changing the owner selected at startup.
+#[cfg(target_os = "linux")]
+pub async fn inspect(owner: &TunnelOwner) -> TunnelOwner {
+    use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_socket};
+    if owner.owns_the_tunnel() {
+        return owner.clone();
+    }
+    match probe(&system_socket()).await {
+        ServiceAccess::Absent => TunnelOwner::ServiceUnavailable {
+            problem: ServiceProblem::Unresponsive,
+        },
+        access => from_access(access),
     }
 }
 
@@ -116,9 +135,7 @@ mod tests {
         );
     }
 
-    /// The distinction the whole module exists to carry. Both end up running the tunnel here, so
-    /// the *behaviour* is the same — and collapsing them would lose the only chance to tell
-    /// somebody that a service they installed is one they are not allowed to use.
+    /// Permission denial must never authorize a competing local actor.
     #[test]
     fn being_refused_is_not_the_same_as_finding_nothing() {
         let refused = from_access(ServiceAccess::Forbidden {
@@ -126,12 +143,13 @@ mod tests {
         });
         let nothing = from_access(ServiceAccess::Absent);
 
-        assert!(refused.owns_the_tunnel() && nothing.owns_the_tunnel());
+        assert!(!refused.owns_the_tunnel());
+        assert!(nothing.owns_the_tunnel());
         assert_ne!(refused, nothing);
         assert_eq!(
             refused,
-            TunnelOwner::InProcess {
-                reason: Some(InProcessReason::NotPermitted)
+            TunnelOwner::ServiceUnavailable {
+                problem: ServiceProblem::NotPermitted
             }
         );
         assert_eq!(
@@ -140,5 +158,19 @@ mod tests {
                 reason: Some(InProcessReason::NotInstalled)
             }
         );
+    }
+
+    #[test]
+    fn a_broken_or_incompatible_service_never_authorizes_a_local_actor() {
+        for access in [
+            ServiceAccess::WrongVersion { theirs: 999 },
+            ServiceAccess::Unresponsive {
+                detail: "timeout".into(),
+            },
+        ] {
+            let owner = from_access(access);
+            assert!(!owner.owns_the_tunnel());
+            assert!(matches!(owner, TunnelOwner::ServiceUnavailable { .. }));
+        }
     }
 }

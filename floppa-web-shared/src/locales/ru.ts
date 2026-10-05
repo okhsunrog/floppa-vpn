@@ -469,7 +469,14 @@ export default {
       'VPN отключится вместе с приложением. Чтобы туннель продолжал работать, включите службу: `sudo systemctl enable --now floppa-vpn.socket`.',
     serviceLockedOut: 'Служба туннеля работает, но этому пользователю она недоступна',
     serviceLockedOutDetail:
-      'Вы не состоите в группе `floppa`, поэтому приложение держит туннель само и будет спрашивать пароль при каждом подключении. Выполните `sudo usermod -aG floppa $USER` и войдите в систему заново.',
+      'Доступ к службе запрещён. Выполните `sudo usermod -aG floppa $USER` и войдите в систему заново. Приложение не будет запускать отдельный туннель.',
+    serviceChecking: 'Проверяем службу туннеля…',
+    serviceWrongVersion: 'Службу туннеля нужно перезапустить',
+    serviceWrongVersionDetail:
+      'Работающая служба использует другую версию протокола. Выполните `sudo systemctl restart floppa-vpn.service` и откройте эту страницу настроек заново.',
+    serviceUnavailable: 'Служба туннеля не отвечает',
+    serviceUnavailableDetail:
+      'Проверьте `systemctl status floppa-vpn.service`. Приложение будет ждать службу, а не запускать отдельный туннель.',
     about: 'О приложении',
     version: 'Версия {version}',
     diagnostics: 'Диагностика',

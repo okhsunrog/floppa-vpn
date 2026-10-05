@@ -18,13 +18,12 @@ import { useTunnelOwner } from '../../composables/useTunnelOwner'
  * nobody could tell which they had.
  *
  * The third state is the one worth the card on its own: a service is installed and running, and
- * this user is not in the group that may use it. Everything still works — the app falls back to
- * running the tunnel itself — so nothing looks wrong, and without being told, nobody would ever
- * discover why they are asked for a password on every connect.
+ * this user is not in the group that may use it. The app reports the reason and keeps
+ * service ownership, rather than starting a competing local tunnel.
  */
 const { t } = useI18n()
 // Calling it is what asks; the answer arrives a tick later and the card re-renders.
-const { owner, lockedOut } = useTunnelOwner()
+const { owner, lockedOut, refresh } = useTunnelOwner()
 
 /**
  * Whether this machine brings its tunnel back after a reboot.
@@ -42,6 +41,8 @@ const onBoot = ref<boolean | null>(null)
 const saving = ref(false)
 
 onMounted(async () => {
+  await refresh()
+  if (owner.value?.kind !== 'service') return
   const result = await commands.getResumeOnBoot()
   if (result.status === 'ok') onBoot.value = result.data
   else console.warn(`[service] could not read the boot setting: ${result.error}`)
@@ -70,6 +71,25 @@ const state = computed(() => {
       tone: 'text-(--ui-warning)',
       title: t('settings.serviceLockedOut'),
       detail: t('settings.serviceLockedOutDetail'),
+    }
+  }
+  if (owner.value?.kind === 'service_unavailable') {
+    const wrongVersion = owner.value.problem.kind === 'wrong_version'
+    return {
+      icon: 'i-lucide-shield-alert',
+      tone: 'text-(--ui-warning)',
+      title: t(wrongVersion ? 'settings.serviceWrongVersion' : 'settings.serviceUnavailable'),
+      detail: t(
+        wrongVersion ? 'settings.serviceWrongVersionDetail' : 'settings.serviceUnavailableDetail',
+      ),
+    }
+  }
+  if (owner.value === null) {
+    return {
+      icon: 'i-lucide-loader',
+      tone: 'text-(--ui-text-muted)',
+      title: t('settings.serviceChecking'),
+      detail: '',
     }
   }
   return {

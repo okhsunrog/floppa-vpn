@@ -112,6 +112,22 @@ impl RemoteActor {
         let framed = LengthDelimitedCodec::builder().new_framed(stream);
         let transport = tarpc::serde_transport::new(framed, tokio_serde::formats::Json::default());
         let client = VpnRpcClient::new(tarpc::client::Config::default(), transport).spawn();
+        // Validate each new connection before caching it or issuing a mutation.
+        // The mirror alone cannot guard a command racing its first state poll.
+        let published = tokio::time::timeout(
+            crate::client_mode::PROBE_DEADLINE,
+            client.state_since(Self::deadline(crate::client_mode::PROBE_DEADLINE), 0, 0),
+        )
+        .await
+        .map_err(|_| "the tunnel service did not answer in time".to_owned())?
+        .map_err(|e| format!("cannot identify the tunnel service: {e}"))?;
+        if published.protocol != super::rpc::PROTOCOL_VERSION {
+            return Err(format!(
+                "the tunnel service speaks protocol {} and this build speaks {}; restart the tunnel service",
+                published.protocol,
+                super::rpc::PROTOCOL_VERSION,
+            ));
+        }
         debug!("opened a connection to the tunnel process");
         *guard = Some(client.clone());
         Ok(client)

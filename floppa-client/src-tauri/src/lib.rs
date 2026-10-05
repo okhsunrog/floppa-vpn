@@ -309,7 +309,7 @@ pub fn run() {
             let owner = tauri::async_runtime::block_on(vpn::owner::decide());
 
             #[cfg(target_os = "linux")]
-            let handle = if owner == vpn::owner::TunnelOwner::Service {
+            let handle = if !owner.owns_the_tunnel() {
                 let remote = vpn::client_mode::system_remote(&spawn);
                 // Keep the capture relay on the remote owner. The Linux service logs to
                 // journald; GUI export does not currently include those journal entries.

@@ -468,7 +468,14 @@ export default {
       'The VPN stops when the app quits. Installing and enabling the tunnel service lets it keep running: `sudo systemctl enable --now floppa-vpn.socket`.',
     serviceLockedOut: 'The tunnel service is running, but this user may not use it',
     serviceLockedOutDetail:
-      'You are not in the `floppa` group, so the app is running the tunnel itself and will ask for a password on every connect. Run `sudo usermod -aG floppa $USER`, then log in again.',
+      'Access to the service is denied. Run `sudo usermod -aG floppa $USER`, then log in again. The app will not start a separate tunnel.',
+    serviceChecking: 'Checking the tunnel service…',
+    serviceWrongVersion: 'The tunnel service needs a restart',
+    serviceWrongVersionDetail:
+      'The running service uses a different protocol version. Run `sudo systemctl restart floppa-vpn.service` and reopen this settings page.',
+    serviceUnavailable: 'The tunnel service is not responding',
+    serviceUnavailableDetail:
+      'Check `systemctl status floppa-vpn.service`. The app will wait for the service instead of starting a separate tunnel.',
     about: 'About',
     version: 'Version {version}',
     diagnostics: 'Diagnostics',

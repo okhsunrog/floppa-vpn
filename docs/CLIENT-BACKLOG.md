@@ -33,9 +33,13 @@ has passed desktop or Android runtime acceptance.
 
 ## Shared client behavior and service integration
 
-- [ ] Align and document CLI/GUI service selection and errors. In particular,
+- [x] Align and document CLI/GUI service selection and errors. In particular,
   decide consistent behavior for a missing service, denied socket access and an
   incompatible RPC version; avoid silently starting a competing Floppa actor.
+- [x] Prevent GUI fallback on denied or unresponsive service access, report
+  service health asynchronously, and verify RPC versions before control commands.
+  Keep the explicit CLI foreground `--config` path separate; runtime/package
+  acceptance remains below.
 - [ ] Consolidate remaining shared orchestration where behavior should match:
   connection parameters, session handoff and RPC client initialization. Keep
   presentation, process hosting and OS adapters in their respective applications.

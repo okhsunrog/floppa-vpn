@@ -155,8 +155,8 @@ export const commands = {
 	 *  The UI needs it because the promises differ. "Quitting will disconnect you" is true when the
 	 *  tunnel is in this process and false when the service has it, and a close dialog that says it
 	 *  either way is wrong half the time. It is also the only place a user can be told that a service
-	 *  *is* installed and they are not allowed to use it — a state where nothing looks broken and
-	 *  everything is quietly worse.
+	 *  *is* installed but cannot currently be used. Inspecting health is asynchronous
+	 *  and never changes which process was selected to own the tunnel at startup.
 	 */
 	getTunnelOwner: () => __TAURI_INVOKE<TunnelOwner>("get_tunnel_owner"),
 	/**
@@ -328,15 +328,7 @@ failures: AttemptFailure[] } |
 /**  Why the tunnel ended up in this process on a platform that has a service. */
 export type InProcessReason = 
 /**  No service is installed or its socket is not enabled. */
-{ kind: "not_installed" } | 
-/**
- *  A service is running and this user may not talk to it — they are not in the `floppa` group.
- * 
- *  Kept apart from [`NotInstalled`](Self::NotInstalled) all the way to the screen. Falling
- *  back works, so nothing looks broken; it just quietly works worse forever, and the reason
- *  has to be visible or nobody will ever find it.
- */
-{ kind: "not_permitted" };
+{ kind: "not_installed" };
 
 export type IntentAccepted = {
 	epoch: IntentEpoch,
@@ -447,6 +439,8 @@ export type SafeAreaInsets = {
 	top: number | null,
 	bottom: number | null,
 };
+
+export type ServiceProblem = { kind: "not_permitted" } | { kind: "wrong_version"; theirs: number } | { kind: "unresponsive" };
 
 export type SplitMode = "all" | "include" | "exclude";
 
@@ -561,6 +555,8 @@ export type TrayView = {
 export type TunnelOwner = 
 /**  The system service. The tunnel outlives this app. */
 { kind: "service" } | 
+/**  Service mode is selected, but the service cannot currently be used. */
+{ kind: "service_unavailable"; problem: ServiceProblem } | 
 /**  This process. The tunnel goes when the app does. */
 { kind: "in_process"; 
 /**

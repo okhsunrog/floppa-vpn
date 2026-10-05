@@ -38,7 +38,7 @@ use tracing::debug;
 /// disk and start an actor before it can answer anything. So this is not the latency of a call, it
 /// is the latency of a cold start, and shrinking it to what a warm service needs would make a
 /// first connect report "no service" on a slow machine.
-const PROBE_DEADLINE: Duration = Duration::from_secs(5);
+pub(crate) const PROBE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// What was found at the socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +59,8 @@ pub enum ServiceAccess {
     /// Distinct from [`Absent`](Self::Absent) because the answer is "restart the service", and
     /// quietly running a second actor beside a live one is the one thing that must not happen.
     WrongVersion { theirs: u32 },
+    /// A socket exists but its service cannot be identified or reached reliably.
+    Unresponsive { detail: String },
 }
 
 impl ServiceAccess {
@@ -76,6 +78,10 @@ impl ServiceAccess {
                 "the tunnel service speaks protocol {theirs} and this build speaks \
                  {PROTOCOL_VERSION} — it is still running the binary from before an update.\n\
                  Restart it with `systemctl restart floppa-vpn.service`."
+            )),
+            Self::Unresponsive { detail } => Some(format!(
+                "the tunnel service cannot be used ({detail}).\n\
+                 Check `systemctl status floppa-vpn.service` and restart it if necessary."
             )),
         }
     }
@@ -159,15 +165,19 @@ pub async fn probe(socket_path: &Path) -> ServiceAccess {
     .await
     {
         Ok(Ok(published)) => published,
-        // Answered by accepting and then not speaking. Nothing usable is there, and the caller's
-        // move is the same as for an empty socket.
+        // A listening socket is evidence of another owner, even if it cannot answer.
+        // Do not authorize an in-process fallback in this case.
         Ok(Err(e)) => {
             debug!("the socket answered but the call failed: {e}");
-            return ServiceAccess::Absent;
+            return ServiceAccess::Unresponsive {
+                detail: e.to_string(),
+            };
         }
         Err(_) => {
             debug!("the socket accepted the connection and then said nothing");
-            return ServiceAccess::Absent;
+            return ServiceAccess::Unresponsive {
+                detail: "the service did not answer in time".into(),
+            };
         }
     };
 
@@ -194,11 +204,12 @@ fn from_connect_error(socket_path: &Path, e: std::io::Error) -> ServiceAccess {
             debug!("no service at {}: {e}", socket_path.display());
             ServiceAccess::Absent
         }
-        // Anything else — the path is a directory, the name is too long, the socket is of the
-        // wrong kind. None of it is a service, and none of it is this client's to fix.
+        // An unexpected failure does not prove that no service owns the network.
         _ => {
             debug!("nothing usable at {}: {e}", socket_path.display());
-            ServiceAccess::Absent
+            ServiceAccess::Unresponsive {
+                detail: e.to_string(),
+            }
         }
     }
 }
@@ -232,7 +243,7 @@ mod tests {
     /// Something is listening but never answers. A client must not hang on it, and must not
     /// mistake it for a service it can drive.
     #[tokio::test]
-    async fn a_listener_that_never_answers_is_not_a_service() {
+    async fn a_listener_that_never_answers_does_not_allow_fallback() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vpn.sock");
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
@@ -242,7 +253,10 @@ mod tests {
             std::future::pending::<()>().await;
         });
 
-        assert_eq!(probe(&path).await, ServiceAccess::Absent);
+        assert!(matches!(
+            probe(&path).await,
+            ServiceAccess::Unresponsive { .. }
+        ));
     }
 
     /// The whole point of the module. A directory nobody may enter is how the socket is kept from
@@ -277,7 +291,7 @@ mod tests {
     }
 
     /// `reach` answers from the connection alone, so a listener that never speaks is *available*
-    /// to it where `probe` calls it absent. That difference is the point of having both: one asks
+    /// to it where `probe` calls it unresponsive. That difference is the point of having both: one asks
     /// "can I open this", the other "is there something I can talk to".
     #[tokio::test]
     async fn reaching_asks_only_whether_the_socket_opens() {
