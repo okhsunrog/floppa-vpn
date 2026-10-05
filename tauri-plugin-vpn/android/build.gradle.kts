@@ -50,6 +50,9 @@ android {
         // declared, in the app manifest, because that is where app-level permissions belong and
         // manifest merging unions the two — which a library module linted on its own cannot see.
         disable += listOf("ForegroundServicePermission", "QueryPermissionsNeeded")
+        // Dependency versions are pinned deliberately. A new upstream release must not make
+        // an unchanged release fail; review upgrades separately from source correctness.
+        disable += "GradleDependency"
         textReport = true
     }
 }
