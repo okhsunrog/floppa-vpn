@@ -14,6 +14,12 @@ export type AccountRegisterRequest = {
     password: string;
 };
 
+export type AdminRegion = {
+    display_name: string;
+    id: string;
+    is_active: boolean;
+};
+
 /**
  * The JSON error body every failing endpoint returns.
  *
@@ -73,6 +79,7 @@ export type CreatePlanRequest = {
     name: string;
     period_days?: number | null;
     price_stars?: number | null;
+    region_ids?: Array<string> | null;
     trial_minutes?: number | null;
 };
 
@@ -237,7 +244,11 @@ export type PeerSummary = {
  */
 export type PeerSyncStatus = 'pending_add' | 'active' | 'pending_remove' | 'removed';
 
-export type Plan = {
+export type Plan = PlanFields & {
+    region_ids: Array<string>;
+};
+
+export type PlanFields = {
     default_speed_limit_mbps?: number | null;
     display_name: string;
     id: number;
@@ -418,6 +429,7 @@ export type UpdatePlanRequest = {
     max_peers?: number | null;
     period_days?: number | null;
     price_stars?: number | null;
+    region_ids?: Array<string> | null;
     trial_minutes?: number | null;
 };
 
@@ -1593,6 +1605,25 @@ export type UpdatePlanResponses = {
 };
 
 export type UpdatePlanResponse = UpdatePlanResponses[keyof UpdatePlanResponses];
+
+export type ListRegionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/regions';
+};
+
+export type ListRegionsErrors = {
+    403: ApiError;
+};
+
+export type ListRegionsError = ListRegionsErrors[keyof ListRegionsErrors];
+
+export type ListRegionsResponses = {
+    200: Array<AdminRegion>;
+};
+
+export type ListRegionsResponse = ListRegionsResponses[keyof ListRegionsResponses];
 
 export type GetStatsData = {
     body?: never;

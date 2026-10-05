@@ -1975,6 +1975,44 @@
         ]
       }
     },
+    "/regions": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "list_regions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdminRegion"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/stats": {
       "get": {
         "tags": [
@@ -2957,6 +2995,25 @@
           }
         }
       },
+      "AdminRegion": {
+        "type": "object",
+        "required": [
+          "id",
+          "display_name",
+          "is_active"
+        ],
+        "properties": {
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "description": "The JSON error body every failing endpoint returns.\n\n4xx messages are meant for the client and may describe the problem. 5xx messages are fixed\nstrings: the details (config paths, crypto/DB errors, upstream responses) are logged exactly\nonce, at the point where the error is mapped, and never sent to the client.",
@@ -3147,6 +3204,15 @@
               "null"
             ],
             "format": "int32"
+          },
+          "region_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           },
           "trial_minutes": {
             "type": [
@@ -3737,6 +3803,27 @@
         ]
       },
       "Plan": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PlanFields"
+          },
+          {
+            "type": "object",
+            "required": [
+              "region_ids"
+            ],
+            "properties": {
+              "region_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "PlanFields": {
         "type": "object",
         "required": [
           "id",
@@ -4276,6 +4363,15 @@
               "null"
             ],
             "format": "int32"
+          },
+          "region_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           },
           "trial_minutes": {
             "type": [

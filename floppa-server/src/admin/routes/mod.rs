@@ -255,6 +255,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(avatar::get_avatars_batch))
     .routes(routes!(admin::list_installations))
     .routes(routes!(admin::delete_installation))
+    .routes(routes!(plans::list_regions))
     .routes(routes!(plans::list_plans, plans::create_plan))
     .routes(routes!(plans::update_plan, plans::delete_plan))
 }
@@ -652,6 +653,188 @@ mod tests {
         resp.headers()
             .get(REFRESHED_TOKEN_HEADER)
             .map(|v| v.to_str().unwrap().to_owned())
+    }
+
+    async fn plan_request(
+        router: &axum::Router,
+        method: axum::http::Method,
+        uri: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) -> axum::response::Response {
+        router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, bearer(token))
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn plan_regions_admin_roundtrip_and_atomic_validation(pool: DbPool) {
+        use axum::http::Method;
+        use serde_json::json;
+        let admin = seed_user(&pool, 123, true).await;
+        let auth = token(admin, true, Utc::now(), None);
+        let router = create_router(test_state(pool.clone(), None));
+        let regions = get(&router, "/regions", &[("authorization", &bearer(&auth))]).await;
+        assert_eq!(regions.status(), StatusCode::OK);
+        assert!(
+            json_body(regions)
+                .await
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == "singapore")
+        );
+
+        let created = plan_request(
+            &router,
+            Method::POST,
+            "/plans",
+            &auth,
+            json!({"name":"region-test", "display_name":"Region test",
+                "region_ids":["europe", "singapore", "singapore"]}),
+        )
+        .await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        let created = json_body(created).await;
+        assert_eq!(created["region_ids"], json!(["europe", "singapore"]));
+        let uri = format!("/plans/{}", created["id"]);
+
+        // Invalid grants roll back other fields in the same PATCH.
+        for invalid in [json!([]), json!(["europe", "unknown"])] {
+            let response = plan_request(
+                &router,
+                Method::PATCH,
+                &uri,
+                &auth,
+                json!({"display_name":"Must roll back", "region_ids":invalid}),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        }
+        let listed =
+            json_body(get(&router, "/plans", &[("authorization", &bearer(&auth))]).await).await;
+        let plan = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == created["id"])
+            .unwrap();
+        assert_eq!(plan["display_name"], "Region test");
+        assert_eq!(plan["region_ids"], created["region_ids"]);
+
+        // Legacy PATCH requests preserve grants.
+        let unchanged = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"display_name":"Renamed"}),
+        )
+        .await;
+        assert_eq!(
+            json_body(unchanged).await["region_ids"],
+            created["region_ids"]
+        );
+        sqlx::query("UPDATE regions SET is_active = false WHERE id = 'singapore'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Existing inactive grants can be retained, then removed; not re-added.
+        let retained = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"region_ids":["europe", "singapore"]}),
+        )
+        .await;
+        assert_eq!(retained.status(), StatusCode::OK);
+        sqlx::query("INSERT INTO subscriptions (user_id, plan_id, starts_at, is_current) VALUES ($1, $2, NOW(), true)")
+            .bind(admin).bind(created["id"].as_i64().unwrap() as i32)
+            .execute(&pool).await.unwrap();
+        let mut listener = sqlx::postgres::PgListener::connect_with(&pool)
+            .await
+            .unwrap();
+        listener.listen("subscription_changed").await.unwrap();
+        let removed = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"region_ids":["europe"]}),
+        )
+        .await;
+        assert_eq!(json_body(removed).await["region_ids"], json!(["europe"]));
+        let notification = tokio::time::timeout(std::time::Duration::from_secs(2), listener.recv())
+            .await
+            .expect("daemon must receive the changed entitlement")
+            .unwrap();
+        assert_eq!(notification.payload(), admin.to_string());
+        let refused = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"region_ids":["europe", "singapore"]}),
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+
+        let bad_create = plan_request(&router, Method::POST, "/plans", &auth,
+            json!({"name":"bad-region-test", "display_name":"Invalid", "region_ids":["europe", "unknown"]})).await;
+        assert_eq!(bad_create.status(), StatusCode::BAD_REQUEST);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM plans WHERE name = 'bad-region-test'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0);
+        let legacy = plan_request(
+            &router,
+            Method::POST,
+            "/plans",
+            &auth,
+            json!({"name":"legacy-region-test", "display_name":"Legacy"}),
+        )
+        .await;
+        assert_eq!(json_body(legacy).await["region_ids"], json!(["europe"]));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn plan_regions_require_admin(pool: DbPool) {
+        use axum::http::Method;
+        use serde_json::json;
+        let user = seed_user(&pool, 124, false).await;
+        let auth = token(user, false, Utc::now(), None);
+        let router = create_router(test_state(pool, None));
+        assert_eq!(
+            get(&router, "/regions", &[("authorization", &bearer(&auth))])
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            plan_request(
+                &router,
+                Method::POST,
+                "/plans",
+                &auth,
+                json!({"name":"forbidden", "display_name":"Forbidden", "region_ids":["europe"]})
+            )
+            .await
+            .status(),
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[sqlx::test(migrations = "../migrations")]

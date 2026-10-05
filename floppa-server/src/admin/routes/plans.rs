@@ -12,7 +12,7 @@ use crate::admin::{auth::AdminUser, error::ApiError};
 use super::AppState;
 
 #[derive(Serialize, ToSchema)]
-pub struct Plan {
+pub struct PlanFields {
     id: i32,
     name: String,
     display_name: String,
@@ -24,8 +24,84 @@ pub struct Plan {
     period_days: Option<i32>,
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct Plan {
+    #[serde(flatten)]
+    fields: PlanFields,
+    region_ids: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema, sqlx::FromRow)]
+pub struct AdminRegion {
+    id: String,
+    display_name: String,
+    is_active: bool,
+}
+
+#[utoipa::path(get, path = "/regions", tag = "admin", security(("bearer" = [])),
+    responses((status = 200, body = Vec<AdminRegion>), (status = 403, body = ApiError)))]
+pub(super) async fn list_regions(
+    _admin: AdminUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<AdminRegion>>, ApiError> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, display_name, is_active FROM regions ORDER BY sort_order, id")
+            .fetch_all(&state.pool)
+            .await?,
+    ))
+}
+
+async fn with_regions(fields: PlanFields, conn: &mut sqlx::PgConnection) -> Result<Plan, ApiError> {
+    let region_ids = sqlx::query_scalar(
+        "SELECT region_id FROM plan_regions WHERE plan_id = $1 ORDER BY region_id",
+    )
+    .bind(fields.id)
+    .fetch_all(conn)
+    .await?;
+    Ok(Plan { fields, region_ids })
+}
+
+/// Europe is the daemon's fallback exit, so it must remain available on every plan.
+/// Inactive regions may be retained, but cannot be newly granted.
+async fn replace_regions(
+    conn: &mut sqlx::PgConnection,
+    plan_id: i32,
+    region_ids: &[String],
+) -> Result<(), ApiError> {
+    if !region_ids.iter().any(|id| id == "europe") {
+        return Err(ApiError::bad_request(
+            "Europe is required as the fallback region",
+        ));
+    }
+    let invalid: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM unnest($1::text[]) AS requested(id) \
+         WHERE NOT EXISTS (SELECT 1 FROM regions r WHERE r.id = requested.id \
+         AND (r.is_active OR EXISTS (SELECT 1 FROM plan_regions pr \
+         WHERE pr.plan_id = $2 AND pr.region_id = r.id))))",
+    )
+    .bind(region_ids)
+    .bind(plan_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if invalid {
+        return Err(ApiError::bad_request("Unknown or inactive region"));
+    }
+    sqlx::query("DELETE FROM plan_regions WHERE plan_id = $1")
+        .bind(plan_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("INSERT INTO plan_regions (plan_id, region_id) SELECT DISTINCT $1, id FROM unnest($2::text[]) AS requested(id)")
+        .bind(plan_id).bind(region_ids).execute(&mut *conn).await?;
+    // Notify each affected subscriber after the transaction commits.
+    sqlx::query("SELECT pg_notify('subscription_changed', user_id::text) FROM current_subscriptions WHERE plan_id = $1")
+        .bind(plan_id).execute(conn).await?;
+    Ok(())
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct CreatePlanRequest {
+    #[serde(default)]
+    region_ids: Option<Vec<String>>,
     name: String,
     display_name: String,
     #[serde(default)]
@@ -44,6 +120,8 @@ pub struct CreatePlanRequest {
 
 #[derive(Deserialize, ToSchema)]
 pub struct UpdatePlanRequest {
+    #[serde(default)]
+    region_ids: Option<Vec<String>>,
     #[serde(default)]
     display_name: Option<String>,
     #[serde(default)]
@@ -128,14 +206,19 @@ pub(super) async fn list_plans(
     _admin: AdminUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<Plan>>, ApiError> {
-    let plans: Vec<Plan> = sqlx::query_as!(
-        Plan,
+    let plans: Vec<PlanFields> = sqlx::query_as!(
+        PlanFields,
         "SELECT id, name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days FROM plans ORDER BY id"
     )
     .fetch_all(&state.pool)
     .await?;
 
-    Ok(Json(plans))
+    let mut conn = state.pool.acquire().await?;
+    let mut result = Vec::with_capacity(plans.len());
+    for plan in plans {
+        result.push(with_regions(plan, &mut conn).await?);
+    }
+    Ok(Json(result))
 }
 
 /// Create a new plan (admin only)
@@ -168,8 +251,9 @@ pub(super) async fn create_plan(
         return Err(ApiError::bad_request("period_days must be at least 1"));
     }
 
-    let plan: Plan = sqlx::query_as!(
-        Plan,
+    let mut tx = state.pool.begin().await?;
+    let plan: PlanFields = sqlx::query_as!(
+        PlanFields,
         r#"
         INSERT INTO plans (name, display_name, default_speed_limit_mbps, max_peers, is_public, trial_minutes, price_stars, period_days)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -184,9 +268,13 @@ pub(super) async fn create_plan(
         req.price_stars,
         req.period_days
     )
-    .fetch_one(&state.pool)
+    .fetch_one(&mut *tx)
     .await?;
-
+    if let Some(region_ids) = &req.region_ids {
+        replace_regions(&mut tx, plan.id, region_ids).await?;
+    }
+    let plan = with_regions(plan, &mut tx).await?;
+    tx.commit().await?;
     Ok((StatusCode::CREATED, Json(plan)))
 }
 
@@ -222,8 +310,9 @@ pub(super) async fn update_plan(
         return Err(ApiError::bad_request("period_days must be at least 1"));
     }
 
-    let plan: Plan = sqlx::query_as!(
-        Plan,
+    let mut tx = state.pool.begin().await?;
+    let plan: PlanFields = sqlx::query_as!(
+        PlanFields,
         r#"
         UPDATE plans SET
             display_name = COALESCE($2, display_name),
@@ -249,10 +338,14 @@ pub(super) async fn update_plan(
         req.clear_period_days,
         req.period_days
     )
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| ApiError::not_found("Plan not found"))?;
-
+    if let Some(region_ids) = &req.region_ids {
+        replace_regions(&mut tx, plan.id, region_ids).await?;
+    }
+    let plan = with_regions(plan, &mut tx).await?;
+    tx.commit().await?;
     Ok(Json(plan))
 }
 

@@ -231,6 +231,22 @@ host can route to (RFC 1918, CGNAT `100.64.0.0/10`, link-local, loopback, IPv6 U
 
 Inspect it with `nft list table inet floppa`.
 
+### Managing exit-region access
+
+In the admin panel, open **Plans**, create or edit a plan, and select its available exit
+regions. Subscribers receive the regions of their current active plan; assign the appropriate
+plan through the existing user/subscription controls. Europe remains required because the
+daemon uses it as the fallback exit. Inactive regions can be removed from existing plans but
+cannot be newly granted. Creating regions and configuring their routing remain deployment tasks.
+
+The admin-only `GET /regions` lists the choices. `GET /plans` includes `region_ids`;
+`POST /plans` and `PATCH /plans/{id}` accept `region_ids`. Omit it to keep the creation default
+(Europe) or leave an existing plan's grants unchanged. Unknown regions, newly granted inactive
+regions, and a list without Europe are rejected. Plan fields and region grants commit together;
+a successful grant change notifies the daemon for each current subscriber.
+
+Exit-region permissions do not grant access to private networks.
+
 ### Private networks
 
 A plan can grant access to operator networks (migration `0024_private_networks.sql`). The daemon

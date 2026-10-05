@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
   listPlansQuery,
+  listRegionsQuery,
   listPlansQueryKey,
   createPlanMutation,
   updatePlanMutation,
@@ -21,6 +22,17 @@ const { t } = useI18n()
 const toast = useToast()
 
 const { data: plans, status, error } = useQuery(listPlansQuery())
+const { data: regions, status: regionsStatus } = useQuery(listRegionsQuery())
+const selectedRegions = ref<string[]>(['europe'])
+function regionName(id: string) {
+  return regions.value?.find((region) => region.id === id)?.display_name ?? id
+}
+function toggleRegion(id: string, enabled: boolean | 'indeterminate') {
+  selectedRegions.value =
+    enabled === true
+      ? [...new Set([...selectedRegions.value, id])]
+      : selectedRegions.value.filter((region) => region !== id)
+}
 
 // The plan list is also read by the user/subscription dialogs, so invalidate rather than refresh.
 const invalidate = useInvalidateQueries()
@@ -73,6 +85,8 @@ const planValid = computed(() => {
   const f = planForm.value
   const positiveOrEmpty = (n: number | null | undefined) => n == null || n >= 1
   return (
+    regionsStatus.value === 'success' &&
+    selectedRegions.value.includes('europe') &&
     f.name.trim() !== '' &&
     f.display_name.trim() !== '' &&
     f.max_peers !== null &&
@@ -108,6 +122,7 @@ const {
 
 function openNewPlanDialog() {
   isEditing.value = false
+  selectedRegions.value = ['europe']
   editingPlanId.value = null
   planForm.value = {
     name: '',
@@ -125,6 +140,7 @@ function openNewPlanDialog() {
 
 function openEditPlanDialog(plan: Plan) {
   isEditing.value = true
+  selectedRegions.value = [...new Set(['europe', ...plan.region_ids])]
   editingPlanId.value = plan.id
   planForm.value = {
     name: plan.name,
@@ -143,10 +159,15 @@ function openEditPlanDialog(plan: Plan) {
 async function savePlan() {
   const form = planForm.value
   if (!planValid.value || form.max_peers === null) return
-  const body: CreatePlanRequest = { ...form, max_peers: form.max_peers }
+  const body: CreatePlanRequest = {
+    ...form,
+    max_peers: form.max_peers,
+    region_ids: selectedRegions.value,
+  }
   try {
     if (isEditing.value && editingPlanId.value) {
       const update: UpdatePlanRequest = {
+        region_ids: body.region_ids,
         display_name: body.display_name,
         default_speed_limit_mbps: body.default_speed_limit_mbps,
         max_peers: body.max_peers,
@@ -217,6 +238,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
   { accessorKey: 'price_stars', header: t('adminPlans.price') },
   { accessorKey: 'period_days', header: t('adminPlans.period') },
   { accessorKey: 'trial_minutes', header: t('adminPlans.trial') },
+  { accessorKey: 'region_ids', header: t('adminPlans.regions') },
   { accessorKey: 'is_public', header: t('adminPlans.public') },
   { id: 'actions', header: t('adminPlans.actions') },
 ])
@@ -261,6 +283,9 @@ const columns = computed<TableColumn<Plan>[]>(() => [
           </template>
           <template #trial_minutes-cell="{ row }">
             {{ row.original.trial_minutes ? formatTrial(row.original.trial_minutes) : '-' }}
+          </template>
+          <template #region_ids-cell="{ row }">
+            {{ row.original.region_ids.map(regionName).join(', ') || '—' }}
           </template>
           <template #is_public-cell="{ row }">
             <UBadge
@@ -337,6 +362,8 @@ const columns = computed<TableColumn<Plan>[]>(() => [
                 ? `${plan.default_speed_limit_mbps} Mbps`
                 : t('common.unlimited')
             }}</span>
+            <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.regions') }}</span>
+            <span>{{ plan.region_ids.map(regionName).join(', ') || '—' }}</span>
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.maxPeers') }}</span>
             <span>{{ plan.max_peers }}</span>
             <span class="text-[var(--ui-text-muted)]">{{ t('adminPlans.price') }}</span>
@@ -456,6 +483,29 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               </div>
             </div>
           </div>
+          <fieldset class="flex flex-col gap-2">
+            <legend class="text-sm font-medium mb-2">{{ t('adminPlans.regions') }}</legend>
+            <p class="text-sm text-[var(--ui-text-muted)]">{{ t('adminPlans.regionsHint') }}</p>
+            <p v-if="regionsStatus === 'error'" role="alert" class="text-sm text-[var(--ui-error)]">
+              {{ t('adminPlans.regionsLoadFailed') }}
+            </p>
+            <UCheckbox
+              v-for="region in regions ?? []"
+              :key="region.id"
+              :label="
+                region.display_name +
+                (region.is_active ? '' : ` (${t('adminPlans.inactiveRegion')})`)
+              "
+              :model-value="selectedRegions.includes(region.id)"
+              :disabled="
+                region.id === 'europe' ||
+                (!region.is_active && !selectedRegions.includes(region.id))
+              "
+              @update:model-value="
+                (value: boolean | 'indeterminate') => toggleRegion(region.id, value)
+              "
+            />
+          </fieldset>
           <UCheckbox v-model="planForm.is_public" :label="t('adminPlans.publicCheckbox')" />
         </div>
       </template>

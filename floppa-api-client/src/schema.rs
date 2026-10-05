@@ -85,6 +85,38 @@ pub struct AccountRegisterRequest {
     pub login: ::std::string::String,
     pub password: ::std::string::String,
 }
+///`AdminRegion`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "display_name",
+///    "id",
+///    "is_active"
+///  ],
+///  "properties": {
+///    "display_name": {
+///      "type": "string"
+///    },
+///    "id": {
+///      "type": "string"
+///    },
+///    "is_active": {
+///      "type": "boolean"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AdminRegion {
+    pub display_name: ::std::string::String,
+    pub id: ::std::string::String,
+    pub is_active: bool,
+}
 /**The JSON error body every failing endpoint returns.
 
 4xx messages are meant for the client and may describe the problem. 5xx messages are fixed
@@ -385,6 +417,15 @@ pub struct CreatePeerResponse {
 ///      ],
 ///      "format": "int32"
 ///    },
+///    "region_ids": {
+///      "type": [
+///        "array",
+///        "null"
+///      ],
+///      "items": {
+///        "type": "string"
+///      }
+///    },
 ///    "trial_minutes": {
 ///      "type": [
 ///        "integer",
@@ -410,6 +451,8 @@ pub struct CreatePlanRequest {
     pub period_days: ::std::option::Option<i32>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub price_stars: ::std::option::Option<i32>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub region_ids: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub trial_minutes: ::std::option::Option<i32>,
 }
@@ -1372,6 +1415,51 @@ impl ::std::convert::TryFrom<::std::string::String> for PeerSyncStatus {
 ///
 /// ```json
 ///{
+///  "allOf": [
+///    {
+///      "$ref": "#/definitions/PlanFields"
+///    },
+///    {
+///      "type": "object",
+///      "required": [
+///        "region_ids"
+///      ],
+///      "properties": {
+///        "region_ids": {
+///          "type": "array",
+///          "items": {
+///            "type": "string"
+///          }
+///        }
+///      }
+///    }
+///  ]
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Plan {
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_speed_limit_mbps: ::std::option::Option<i32>,
+    pub display_name: ::std::string::String,
+    pub id: i32,
+    pub is_public: bool,
+    pub max_peers: i32,
+    pub name: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub period_days: ::std::option::Option<i32>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub price_stars: ::std::option::Option<i32>,
+    pub region_ids: ::std::vec::Vec<::std::string::String>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub trial_minutes: ::std::option::Option<i32>,
+}
+///`PlanFields`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
 ///  "type": "object",
 ///  "required": [
 ///    "display_name",
@@ -1431,7 +1519,7 @@ impl ::std::convert::TryFrom<::std::string::String> for PeerSyncStatus {
 /// ```
 /// </details>
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-pub struct Plan {
+pub struct PlanFields {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub default_speed_limit_mbps: ::std::option::Option<i32>,
     pub display_name: ::std::string::String,
@@ -2362,6 +2450,15 @@ pub struct TelegramAuthData {
 ///      ],
 ///      "format": "int32"
 ///    },
+///    "region_ids": {
+///      "type": [
+///        "array",
+///        "null"
+///      ],
+///      "items": {
+///        "type": "string"
+///      }
+///    },
 ///    "trial_minutes": {
 ///      "type": [
 ///        "integer",
@@ -2396,6 +2493,8 @@ pub struct UpdatePlanRequest {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub price_stars: ::std::option::Option<i32>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub region_ids: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub trial_minutes: ::std::option::Option<i32>,
 }
 impl ::std::default::Default for UpdatePlanRequest {
@@ -2411,6 +2510,7 @@ impl ::std::default::Default for UpdatePlanRequest {
             max_peers: Default::default(),
             period_days: Default::default(),
             price_stars: Default::default(),
+            region_ids: Default::default(),
             trial_minutes: Default::default(),
         }
     }

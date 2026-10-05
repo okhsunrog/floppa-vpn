@@ -252,6 +252,12 @@ export default {
     idAndTelegram: 'ID: {id} · TG: {tg}',
   },
   adminPlans: {
+    regions: 'Available exit regions',
+    regionsHint:
+      'Subscribers can select these exit regions. Europe is the required fallback. Private network access is configured separately.',
+    regionsLoadFailed: 'Could not load regions. Reopen this page to retry.',
+    inactiveRegion: 'inactive',
+
     title: 'Plans',
     addPlan: 'Add Plan',
     name: 'Name',
