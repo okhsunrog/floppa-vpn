@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
   getMeQuery,
   getMyPeersQuery,
   getMyPeersQueryKey,
+  getMyRegionsQuery,
   getPublicConfigQuery,
   createMyPeerMutation,
   deleteMyPeerMutation,
@@ -29,11 +30,33 @@ const isMiniApp = detectMiniApp()
 const { data: me, status: meStatus, error: meError } = useQuery(getMeQuery())
 const { data: publicConfig } = useQuery(getPublicConfigQuery())
 const { data: peersData, status: peersStatus, error: peersError } = useQuery(getMyPeersQuery())
+const {
+  data: regions,
+  status: regionsStatus,
+  error: regionsError,
+} = useQuery({
+  ...getMyRegionsQuery(),
+  enabled: computed(() => !!me.value?.subscription),
+})
+const configRegion = ref('europe')
+const regionItems = computed(() =>
+  (regions.value ?? [])
+    .filter((region) => region.available)
+    .map((region) => ({
+      label: t(`vpn.regions.${region.id}`, region.display_name),
+      value: region.id,
+    })),
+)
+watch(regionItems, (items) => {
+  if (items.length && !items.some((item) => item.value === configRegion.value)) {
+    configRegion.value = items[0]!.value
+  }
+})
 
 const amneziaWgAvailable = computed(() => publicConfig.value?.amneziawg_available ?? false)
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
-const queryError = computed(() => meError.value || peersError.value)
+const queryError = computed(() => meError.value || peersError.value || regionsError.value)
 const queryErrorMessage = computed(() => {
   const err = queryError.value
   if (!err) return ''
@@ -104,6 +127,8 @@ const slotsUsed = computed(() => {
 
 const canCreatePeer = computed(() => {
   if (!me.value?.subscription || !peers.value) return false
+  if (regionsStatus.value !== 'success') return false
+  if (!regionItems.value.some((item) => item.value === configRegion.value)) return false
   return slotsUsed.value < me.value.subscription.max_peers
 })
 
@@ -115,7 +140,9 @@ const peersRemaining = computed(() => {
 async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
   if (!canCreatePeer.value) return
   try {
-    const response = await createMut.mutateAsync({ body: { protocol } })
+    const response = await createMut.mutateAsync({
+      body: { protocol, region_id: configRegion.value },
+    })
     currentConfig.value = response
     currentProtocol.value = protocol
     configDialog.value = true
@@ -296,27 +323,39 @@ async function doRegenerateVless() {
           {{ t('userPeers.remaining', { count: peersRemaining, max: me.subscription.max_peers }) }}
         </p>
       </div>
-      <UDropdownMenu
-        v-if="me?.subscription && amneziaWgAvailable"
-        :items="createMenuItems"
-        :content="{ align: 'end' }"
-      >
+      <div v-if="me?.subscription" class="flex items-end gap-3 flex-wrap">
+        <UFormField :label="t('vpn.region')">
+          <USelect
+            v-model="configRegion"
+            :items="regionItems"
+            :aria-label="t('vpn.region')"
+            :loading="regionsStatus === 'pending'"
+            :disabled="regionsStatus !== 'success' || createMut.asyncStatus.value === 'loading'"
+            class="min-w-40"
+          />
+        </UFormField>
+        <UDropdownMenu
+          v-if="me?.subscription && amneziaWgAvailable"
+          :items="createMenuItems"
+          :content="{ align: 'end' }"
+        >
+          <UButton
+            :label="t('userPeers.createNew')"
+            icon="i-lucide-plus"
+            trailing-icon="i-lucide-chevron-down"
+            :disabled="!canCreatePeer"
+            :loading="createMut.asyncStatus.value === 'loading'"
+          />
+        </UDropdownMenu>
         <UButton
+          v-else-if="me?.subscription"
           :label="t('userPeers.createNew')"
           icon="i-lucide-plus"
-          trailing-icon="i-lucide-chevron-down"
           :disabled="!canCreatePeer"
           :loading="createMut.asyncStatus.value === 'loading'"
+          @click="createPeer('wireguard')"
         />
-      </UDropdownMenu>
-      <UButton
-        v-else-if="me?.subscription"
-        :label="t('userPeers.createNew')"
-        icon="i-lucide-plus"
-        :disabled="!canCreatePeer"
-        :loading="createMut.asyncStatus.value === 'loading'"
-        @click="createPeer('wireguard')"
-      />
+      </div>
     </div>
 
     <div v-if="loading" class="flex justify-center py-12">
@@ -420,6 +459,9 @@ async function doRegenerateVless() {
               <div class="flex items-center gap-2">
                 <UBadge color="neutral" variant="subtle" size="sm">
                   {{ t(`vpn.${peer.protocol}`) }}
+                </UBadge>
+                <UBadge color="neutral" variant="subtle" size="sm">
+                  {{ t(`vpn.regions.${peer.region_id}`, peer.region_id) }}
                 </UBadge>
                 <StatusBadge :status="peer.sync_status" />
               </div>

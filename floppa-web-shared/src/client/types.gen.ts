@@ -63,6 +63,11 @@ export type CreatePeerRequest = {
     device_name?: string | null;
     installation_id?: number | null;
     protocol?: null | Protocol;
+    /**
+     * Exit region for a standalone exported config. Defaults to Europe.
+     * Device-bound peers inherit their installation's region instead.
+     */
+    region_id?: string | null;
 };
 
 export type CreatePeerResponse = {
@@ -1001,6 +1006,10 @@ export type CreateMyPeerData = {
 
 export type CreateMyPeerErrors = {
     /**
+     * Region supplied for a device-bound config
+     */
+    400: ApiError;
+    /**
      * Unauthorized
      */
     401: ApiError;
@@ -1009,7 +1018,7 @@ export type CreateMyPeerErrors = {
      */
     402: ApiError;
     /**
-     * Peer limit reached
+     * Peer limit reached or region unavailable
      */
     403: ApiError;
     /**
@@ -1239,10 +1248,6 @@ export type GetMyRegionsData = {
 };
 
 export type GetMyRegionsErrors = {
-    /**
-     * Session is not bound to an installation
-     */
-    400: ApiError;
     /**
      * Unauthorized
      */

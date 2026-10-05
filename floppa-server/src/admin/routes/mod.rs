@@ -678,6 +678,136 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../migrations")]
+    async fn standalone_configs_use_only_granted_active_regions(pool: DbPool) {
+        use axum::http::Method;
+        let user = seed_user(&pool, 70001, false).await;
+        let plan: i32 = sqlx::query_scalar("SELECT id FROM plans WHERE name = 'premium'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO subscriptions (user_id, plan_id, starts_at, is_current) VALUES ($1, $2, NOW(), true)",
+        )
+        .bind(user)
+        .bind(plan)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let session = open_session(&pool, user).await;
+        let auth = token(user, false, Utc::now(), Some(session));
+        let mut state = test_state(pool.clone(), None);
+        state.config.amneziawg = Some(TunnelInterfaceConfig {
+            client_subnet: "10.201.0.0/24".parse().unwrap(),
+            ..state.config.wireguard.clone()
+        });
+        state.awg_public_key = Some("server-public-key".into());
+        let router = create_router(state);
+
+        let regions = get(&router, "/me/regions", &[("authorization", &bearer(&auth))]).await;
+        assert_eq!(regions.status(), StatusCode::OK);
+        let regions = json_body(regions).await;
+        assert!(
+            regions
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == "europe" && r["available"] == true)
+        );
+        assert!(
+            regions
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == "singapore" && r["available"] == false)
+        );
+
+        for region in ["singapore", "unknown"] {
+            let denied = plan_request(
+                &router,
+                Method::POST,
+                "/me/peers",
+                &auth,
+                serde_json::json!({"protocol":"wireguard", "region_id":region}),
+            )
+            .await;
+            assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM peers WHERE user_id=$1")
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+
+        sqlx::query("INSERT INTO plan_regions (plan_id, region_id) VALUES ($1, 'singapore')")
+            .bind(plan)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for protocol in ["wireguard", "amneziawg"] {
+            let created = plan_request(
+                &router,
+                Method::POST,
+                "/me/peers",
+                &auth,
+                serde_json::json!({"protocol":protocol, "region_id":"singapore"}),
+            )
+            .await;
+            assert_eq!(created.status(), StatusCode::OK);
+            let id = json_body(created).await["id"].as_i64().unwrap();
+            let stored: (String, Option<i64>) =
+                sqlx::query_as("SELECT region_id, installation_id FROM peers WHERE id=$1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, ("singapore".into(), None));
+        }
+
+        let invalid = plan_request(
+            &router,
+            Method::POST,
+            "/me/peers",
+            &auth,
+            serde_json::json!({"region_id":"singapore", "device_id":"unexpected-device"}),
+        )
+        .await;
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM app_installations WHERE user_id=$1")
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+
+        sqlx::query("UPDATE regions SET is_active=false WHERE id='singapore'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let inactive = plan_request(
+            &router,
+            Method::POST,
+            "/me/peers",
+            &auth,
+            serde_json::json!({"protocol":"wireguard", "region_id":"singapore"}),
+        )
+        .await;
+        assert_eq!(inactive.status(), StatusCode::FORBIDDEN);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM peers WHERE user_id=$1")
+                .bind(user)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            2
+        );
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
     async fn plan_regions_admin_roundtrip_and_atomic_validation(pool: DbPool) {
         use axum::http::Method;
         use serde_json::json;

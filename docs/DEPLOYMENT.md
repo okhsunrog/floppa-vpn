@@ -255,6 +255,13 @@ plan through the existing user/subscription controls. Europe remains required be
 daemon uses it as the fallback exit. Inactive regions can be removed from existing plans but
 cannot be newly granted. Creating regions and configuring their routing remain deployment tasks.
 
+On the user's **Configs** page, the location selector applies to new standalone WireGuard and
+AmneziaWG exports. These configs can be used in third-party clients without installing Floppa.
+`POST /me/peers` accepts `region_id` for those exports and checks the current plan's active region
+grants before creating a peer. Omitting it preserves the Europe default. Device-bound peers
+inherit the installation's region; use `PUT /me/region` to change that selection.
+`GET /me/regions` works for web sessions as well as sessions linked to an installation.
+
 The admin-only `GET /regions` lists the choices. `GET /plans` includes `region_ids`;
 `POST /plans` and `PATCH /plans/{id}` accept `region_ids`. Omit it to keep the creation default
 (Europe) or leave an existing plan's grants unchanged. Unknown regions, newly granted inactive

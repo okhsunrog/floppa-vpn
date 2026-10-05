@@ -185,6 +185,10 @@ pub struct CreatePeerResponse {
 
 #[derive(Deserialize, ToSchema)]
 pub struct CreatePeerRequest {
+    /// Exit region for a standalone exported config. Defaults to Europe.
+    /// Device-bound peers inherit their installation's region instead.
+    #[serde(default)]
+    region_id: Option<String>,
     #[serde(default)]
     device_name: Option<String>,
     #[serde(default)]
@@ -607,7 +611,6 @@ pub(super) async fn upsert_my_installation(
     security(("bearer" = [])),
     responses(
         (status = 200, body = Vec<RegionInfo>),
-        (status = 400, body = ApiError, description = "Session is not bound to an installation"),
         (status = 401, body = ApiError, description = "Unauthorized"),
     )
 )]
@@ -615,19 +618,14 @@ pub(super) async fn get_my_regions(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<RegionInfo>>, ApiError> {
-    let session_id = auth
-        .session_id
-        .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
-
     let installation_id = sqlx::query_scalar::<_, Option<i64>>(
         "SELECT installation_id FROM sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL",
     )
-    .bind(session_id)
+    .bind(auth.session_id)
     .bind(auth.user_id)
     .fetch_optional(&state.pool)
     .await?
-    .flatten()
-    .ok_or_else(|| ApiError::bad_request("This session has no device installation"))?;
+    .flatten();
 
     let regions = sqlx::query_as::<_, RegionInfo>(
         r#"
@@ -646,9 +644,9 @@ pub(super) async fn get_my_regions(
                      AND selected_pr.region_id = ai.region_id
                ) THEN ai.region_id ELSE 'europe' END) AS selected,
                r.supports_vless
-        FROM app_installations ai
-        CROSS JOIN regions r
-        WHERE ai.id = $2 AND ai.user_id = $1 AND r.is_active
+        FROM regions r
+        LEFT JOIN app_installations ai ON ai.id = $2 AND ai.user_id = $1
+        WHERE r.is_active
         ORDER BY r.sort_order, r.id
         "#,
     )
@@ -890,7 +888,8 @@ pub(super) async fn get_my_peers(
         (status = 200, body = CreatePeerResponse),
         (status = 401, body = ApiError, description = "Unauthorized"),
         (status = 402, body = ApiError, description = "No active subscription"),
-        (status = 403, body = ApiError, description = "Peer limit reached"),
+        (status = 400, body = ApiError, description = "Region supplied for a device-bound config"),
+        (status = 403, body = ApiError, description = "Peer limit reached or region unavailable"),
         (status = 404, body = ApiError, description = "Installation not found"),
         (status = 409, body = ApiError, description = "Peer already exists for installation and protocol"),
         (status = 500, body = ApiError, description = "Internal server error"),
@@ -913,6 +912,16 @@ pub(super) async fn create_my_peer(
         .as_ref()
         .and_then(|Json(req)| req.protocol)
         .unwrap_or(LEGACY_REQUEST_PROTOCOL);
+
+    let region_id = body.as_ref().and_then(|Json(req)| req.region_id.as_deref());
+    if let Some(Json(req)) = &body
+        && region_id.is_some()
+        && (req.installation_id.is_some() || req.device_id.is_some())
+    {
+        return Err(ApiError::bad_request(
+            "Select a device region through /me/region; region_id here is for exported configs",
+        ));
+    }
 
     // Resolve installation_id: use explicit field, or auto-upsert from legacy device_id/device_name
     let installation_id = if let Some(Json(ref req)) = body {
@@ -941,7 +950,11 @@ pub(super) async fn create_my_peer(
         protocol,
     };
 
-    let result = services::create_peer(&ctx, auth.user_id, options).await?;
+    let result = if let Some(region_id) = region_id {
+        services::create_standalone_peer(&ctx, auth.user_id, protocol, region_id).await?
+    } else {
+        services::create_peer(&ctx, auth.user_id, options).await?
+    };
 
     Ok(Json(CreatePeerResponse {
         id: result.id,

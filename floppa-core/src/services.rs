@@ -1024,6 +1024,35 @@ pub async fn create_peer(
     user_id: i64,
     options: CreatePeerOptions,
 ) -> Result<CreatePeerResult> {
+    create_peer_in_region(ctx, user_id, options, None).await
+}
+
+/// Create an exported config in a region granted by the user's active plan.
+/// Device-bound peers instead inherit their installation's selected region.
+pub async fn create_standalone_peer(
+    ctx: &CreatePeerContext<'_>,
+    user_id: i64,
+    protocol: Protocol,
+    region_id: &str,
+) -> Result<CreatePeerResult> {
+    create_peer_in_region(
+        ctx,
+        user_id,
+        CreatePeerOptions {
+            installation_id: None,
+            protocol,
+        },
+        Some(region_id),
+    )
+    .await
+}
+
+async fn create_peer_in_region(
+    ctx: &CreatePeerContext<'_>,
+    user_id: i64,
+    options: CreatePeerOptions,
+    standalone_region: Option<&str>,
+) -> Result<CreatePeerResult> {
     let CreatePeerOptions {
         installation_id,
         protocol,
@@ -1109,7 +1138,23 @@ pub async fn create_peer(
         }
         region_id
     } else {
-        "europe".to_owned()
+        let region_id = standalone_region.unwrap_or("europe");
+        let allowed = sqlx::query_scalar::<_, bool>(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM current_subscriptions cs
+                JOIN plan_regions pr ON pr.plan_id = cs.plan_id
+                JOIN regions r ON r.id = pr.region_id AND r.is_active
+                WHERE cs.user_id = $1 AND cs.is_active AND r.id = $2
+            )"#,
+        )
+        .bind(user_id)
+        .bind(region_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if !allowed {
+            return Err(FloppaError::RegionNotAvailable(region_id.to_owned()));
+        }
+        region_id.to_owned()
     };
 
     // Slots are counted per-device: a client device (installation) is ONE slot no matter how many

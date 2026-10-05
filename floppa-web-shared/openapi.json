@@ -889,6 +889,16 @@
               }
             }
           },
+          "400": {
+            "description": "Region supplied for a device-bound config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
@@ -910,7 +920,7 @@
             }
           },
           "403": {
-            "description": "Peer limit reached",
+            "description": "Peer limit reached or region unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -1318,16 +1328,6 @@
                   "items": {
                     "$ref": "#/components/schemas/RegionInfo"
                   }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Session is not bound to an installation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -3141,6 +3141,13 @@
                 "description": "Tunnel protocol. Defaults to WireGuard when omitted (pre-AmneziaWG clients)."
               }
             ]
+          },
+          "region_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exit region for a standalone exported config. Defaults to Europe.\nDevice-bound peers inherit their installation's region instead."
           }
         }
       },

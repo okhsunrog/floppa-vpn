@@ -312,6 +312,13 @@ pub struct AvatarBatchRequest {
 ///          "$ref": "#/definitions/Protocol"
 ///        }
 ///      ]
+///    },
+///    "region_id": {
+///      "description": "Exit region for a standalone exported config. Defaults to Europe.\nDevice-bound peers inherit their installation's region instead.",
+///      "type": [
+///        "string",
+///        "null"
+///      ]
 ///    }
 ///  }
 ///}
@@ -327,6 +334,10 @@ pub struct CreatePeerRequest {
     pub installation_id: ::std::option::Option<i64>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub protocol: ::std::option::Option<Protocol>,
+    /**Exit region for a standalone exported config. Defaults to Europe.
+    Device-bound peers inherit their installation's region instead.*/
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub region_id: ::std::option::Option<::std::string::String>,
 }
 impl ::std::default::Default for CreatePeerRequest {
     fn default() -> Self {
@@ -335,6 +346,7 @@ impl ::std::default::Default for CreatePeerRequest {
             device_name: Default::default(),
             installation_id: Default::default(),
             protocol: Default::default(),
+            region_id: Default::default(),
         }
     }
 }
