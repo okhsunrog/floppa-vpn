@@ -14,7 +14,6 @@ import {
 } from '../../client/@pinia/colada.gen'
 import { getMyPeerConfig, getMyVlessConfig, sendMyPeerConfig } from '../../client/sdk.gen'
 import type { CreatePeerResponse, MyPeer } from '../../client/types.gen'
-import type { DropdownMenuItem } from '@nuxt/ui'
 import { describeError, formatTraffic, formatDate, formatDateTime } from '../../utils'
 import { isTauri } from '../../utils/platform'
 import { isMiniApp as detectMiniApp } from '../../utils/telegram'
@@ -34,6 +33,7 @@ const {
   data: regions,
   status: regionsStatus,
   error: regionsError,
+  refresh: refreshRegions,
 } = useQuery({
   ...getMyRegionsQuery(),
   enabled: computed(() => !!me.value?.subscription),
@@ -56,7 +56,7 @@ watch(regionItems, (items) => {
 const amneziaWgAvailable = computed(() => publicConfig.value?.amneziawg_available ?? false)
 
 const loading = computed(() => meStatus.value === 'pending' || peersStatus.value === 'pending')
-const queryError = computed(() => meError.value || peersError.value || regionsError.value)
+const queryError = computed(() => meError.value || peersError.value)
 const queryErrorMessage = computed(() => {
   const err = queryError.value
   if (!err) return ''
@@ -83,19 +83,14 @@ const configDialogTitle = computed(() =>
   t('userPeers.configTitleFor', { protocol: t(`vpn.${currentProtocol.value}`) }),
 )
 
-// Protocols offered by the "Create New Config" dropdown. AmneziaWG only appears when the
-// server advertises it via the public config (state.config.amneziawg + awg_public_key present).
-const createMenuItems = computed<DropdownMenuItem[]>(() => [
-  {
-    label: t('vpn.wireguard'),
-    icon: 'i-lucide-shield',
-    onSelect: () => createPeer('wireguard'),
-  },
-  {
-    label: t('vpn.amneziawg'),
-    icon: 'i-lucide-shield-check',
-    onSelect: () => createPeer('amneziawg'),
-  },
+const createDialog = ref(false)
+const selectedProtocol = ref<'wireguard' | 'amneziawg'>('wireguard')
+const creating = computed(() => createMut.asyncStatus.value === 'loading')
+const protocolItems = computed(() => [
+  { value: 'wireguard', label: t('vpn.wireguard'), description: t('userPeers.wireguardHint') },
+  ...(amneziaWgAvailable.value
+    ? [{ value: 'amneziawg', label: t('vpn.amneziawg'), description: t('userPeers.amneziawgHint') }]
+    : []),
 ])
 
 const {
@@ -127,8 +122,6 @@ const slotsUsed = computed(() => {
 
 const canCreatePeer = computed(() => {
   if (!me.value?.subscription || !peers.value) return false
-  if (regionsStatus.value !== 'success') return false
-  if (!regionItems.value.some((item) => item.value === configRegion.value)) return false
   return slotsUsed.value < me.value.subscription.max_peers
 })
 
@@ -137,14 +130,25 @@ const peersRemaining = computed(() => {
   return me.value.subscription.max_peers - slotsUsed.value
 })
 
-async function createPeer(protocol: 'wireguard' | 'amneziawg' = 'wireguard') {
-  if (!canCreatePeer.value) return
+const canSubmitConfig = computed(
+  () =>
+    canCreatePeer.value &&
+    !creating.value &&
+    regionsStatus.value === 'success' &&
+    regionItems.value.some((item) => item.value === configRegion.value) &&
+    protocolItems.value.some((item) => item.value === selectedProtocol.value),
+)
+
+async function createPeer() {
+  if (!canSubmitConfig.value) return
+  const protocol = selectedProtocol.value
   try {
     const response = await createMut.mutateAsync({
       body: { protocol, region_id: configRegion.value },
     })
     currentConfig.value = response
     currentProtocol.value = protocol
+    createDialog.value = false
     configDialog.value = true
     toast.add({
       title: t('userPeers.configCreated'),
@@ -323,39 +327,13 @@ async function doRegenerateVless() {
           {{ t('userPeers.remaining', { count: peersRemaining, max: me.subscription.max_peers }) }}
         </p>
       </div>
-      <div v-if="me?.subscription" class="flex items-end gap-3 flex-wrap">
-        <UFormField :label="t('vpn.region')">
-          <USelect
-            v-model="configRegion"
-            :items="regionItems"
-            :aria-label="t('vpn.region')"
-            :loading="regionsStatus === 'pending'"
-            :disabled="regionsStatus !== 'success' || createMut.asyncStatus.value === 'loading'"
-            class="min-w-40"
-          />
-        </UFormField>
-        <UDropdownMenu
-          v-if="me?.subscription && amneziaWgAvailable"
-          :items="createMenuItems"
-          :content="{ align: 'end' }"
-        >
-          <UButton
-            :label="t('userPeers.createNew')"
-            icon="i-lucide-plus"
-            trailing-icon="i-lucide-chevron-down"
-            :disabled="!canCreatePeer"
-            :loading="createMut.asyncStatus.value === 'loading'"
-          />
-        </UDropdownMenu>
-        <UButton
-          v-else-if="me?.subscription"
-          :label="t('userPeers.createNew')"
-          icon="i-lucide-plus"
-          :disabled="!canCreatePeer"
-          :loading="createMut.asyncStatus.value === 'loading'"
-          @click="createPeer('wireguard')"
-        />
-      </div>
+      <UButton
+        v-if="me?.subscription"
+        :label="t('userPeers.createNew')"
+        icon="i-lucide-plus"
+        :disabled="!canCreatePeer"
+        @click="createDialog = true"
+      />
     </div>
 
     <div v-if="loading" class="flex justify-center py-12">
@@ -526,6 +504,68 @@ async function doRegenerateVless() {
         </div>
       </template>
     </template>
+
+    <UModal
+      v-model:open="createDialog"
+      :title="t('userPeers.createNew')"
+      :description="t('userPeers.createDescription')"
+      :dismissible="!creating"
+      :close="!creating"
+    >
+      <template #body>
+        <div class="flex flex-col gap-6">
+          <UFormField :label="t('vpn.protocol')">
+            <URadioGroup
+              v-model="selectedProtocol"
+              :items="protocolItems"
+              :disabled="creating"
+              variant="card"
+              class="mt-2"
+            />
+          </UFormField>
+          <UFormField :label="t('userPeers.exitRegion')" :help="t('userPeers.exitRegionHint')">
+            <USelect
+              v-model="configRegion"
+              :items="regionItems"
+              :aria-label="t('userPeers.exitRegion')"
+              :loading="regionsStatus === 'pending'"
+              :disabled="regionsStatus !== 'success' || creating"
+              class="w-full"
+            />
+          </UFormField>
+          <UAlert
+            v-if="regionsError"
+            color="error"
+            :title="t('userPeers.regionsLoadFailed')"
+            :actions="[{ label: t('vpn.retry'), onClick: () => refreshRegions() }]"
+          />
+          <UAlert
+            v-else-if="regionsStatus === 'success' && !regionItems.length"
+            color="warning"
+            :title="t('userPeers.noRegions')"
+          />
+          <p class="text-sm text-[var(--ui-text-muted)]">{{ t('userPeers.configSlotHint') }}</p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="flex justify-end gap-3 w-full flex-wrap">
+          <UButton
+            :label="t('common.cancel')"
+            color="neutral"
+            variant="outline"
+            :disabled="creating"
+            @click="createDialog = false"
+          />
+          <UButton
+            :label="t('userPeers.createNew')"
+            icon="i-lucide-plus"
+            :loading="creating"
+            :disabled="!canSubmitConfig"
+            @click="createPeer"
+          />
+        </div>
+      </template>
+    </UModal>
 
     <!-- WG Config Dialog -->
     <UModal v-model:open="configDialog" :title="configDialogTitle">

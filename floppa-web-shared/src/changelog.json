@@ -9,8 +9,8 @@
           "ru": "Выбирайте регион выхода VPN из доступных вашему тарифу. Пользователям Premium доступен Сингапур вместе с Франкфуртом."
         },
         {
-          "en": "Export WireGuard and AmneziaWG configs for a selected location from the web interface, without installing the app. Each config shows its location in the list.",
-          "ru": "Создавайте WireGuard- и AmneziaWG-конфиги для выбранного региона в веб-интерфейсе без установки приложения. Регион каждого конфига показан в списке."
+          "en": "Create a config from a single dialog: choose WireGuard or AmneziaWG and an exit region, then confirm. Export it for a third-party VPN client without installing the app. Each config shows its region in the list.",
+          "ru": "Создавайте конфиг в одном окне: выберите WireGuard или AmneziaWG и регион выхода, затем подтвердите создание. Скачайте его для стороннего VPN-клиента без установки приложения. Регион каждого конфига показан в списке."
         },
         {
           "en": "On Linux, the app and command-line client can control the same system VPN service and configure connection on boot.",
