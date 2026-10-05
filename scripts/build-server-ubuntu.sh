@@ -17,6 +17,7 @@ docker run --rm --init \
     -v "$cargo_dir/registry:/cargo/registry" -v "$cargo_dir/git:/cargo/git" \
     -v "$repo_dir:$repo_dir" -v "$git_dir:$git_dir:ro" -v "$build_dir:/build" \
     -w "$repo_dir" floppa-server-build:ubuntu24 bash -c '
+        set -euo pipefail
         git config --global --add safe.directory "$PWD"
         export PATH=/rust-bin:$PATH
         cargo build --locked --release --target-dir /build/target -p floppa-daemon -p floppa-server
