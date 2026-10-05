@@ -17,43 +17,35 @@ build: build-frontend
 build-target:
     cargo build --release --target {{ target }} -p floppa-daemon -p floppa-server
 
-# Create deployment archive with binaries, migrations, and systemd units
+# Create a native-host deployment archive. Use package-server for Ubuntu VPSes.
 package: build
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    rm -rf {{ release_dir }}
-    mkdir -p {{ release_dir }}/{bin,migrations,systemd}
-
-    cp target/release/floppa-daemon {{ release_dir }}/bin/
-    cp target/release/floppa-server {{ release_dir }}/bin/
-    cp -r migrations/* {{ release_dir }}/migrations/
-    cp config.example.toml {{ release_dir }}/
-    cp systemd/*.service {{ release_dir }}/systemd/
-
-    tar -czvf floppa-vpn-release.tar.gz -C {{ release_dir }} .
-
-    echo "Created floppa-vpn-release.tar.gz"
-    echo "Contents:"
-    tar -tzvf floppa-vpn-release.tar.gz
+    just _package-binaries "target/release"
 
 # Cross-compile and package for target
 package-target: build-target
+    just _package-binaries "target/{{ target }}/release"
+
+# Build server binaries against the Ubuntu 24.04 libraries used by the VPS.
+build-server: build-frontend
+    bash scripts/build-server-ubuntu.sh
+
+# Package the Ubuntu-compatible server binaries and embedded admin panel.
+package-server: build-server
+    just _package-binaries "{{ env('FLOPPA_SERVER_BUILD_DIR', absolute_path('target/ubuntu-server')) }}/target/release"
+
+[private]
+_package-binaries binary_dir:
     #!/usr/bin/env bash
     set -euo pipefail
 
     rm -rf {{ release_dir }}
     mkdir -p {{ release_dir }}/{bin,migrations,systemd}
-
-    cp target/{{ target }}/release/floppa-daemon {{ release_dir }}/bin/
-    cp target/{{ target }}/release/floppa-server {{ release_dir }}/bin/
+    cp "{{ binary_dir }}/floppa-daemon" "{{ binary_dir }}/floppa-server" {{ release_dir }}/bin/
     cp -r migrations/* {{ release_dir }}/migrations/
     cp config.example.toml {{ release_dir }}/
     cp systemd/*.service {{ release_dir }}/systemd/
-
+    git rev-parse HEAD > {{ release_dir }}/REVISION
     tar -czvf floppa-vpn-release.tar.gz -C {{ release_dir }} .
-
-    echo "Created floppa-vpn-release.tar.gz"
 
 # ktfmt (Kotlin formatter) — auto-downloaded on first use
 
@@ -409,8 +401,13 @@ package-vless: build-vless
 
 # Deploy to Moscow VPS via Ansible (builds, packages, then deploys).
 # Includes the network role so AmneziaWG's firewall port, NAT and tunnel routing are applied.
-deploy: package
-    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa,network
+deploy: package-server
+    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa,network -e "floppa_release_archive={{ absolute_path('floppa-vpn-release.tar.gz') }}"
+
+# Update only the API/admin panel and daemon, using an archive from this checkout.
+# Other protocol, network and release-mirror roles are left for the full deploy recipe.
+deploy-server: package-server
+    cd ../cloud-forge && ansible-playbook site-moscow.yml --tags floppa-vpn -e "floppa_release_archive={{ absolute_path('floppa-vpn-release.tar.gz') }}"
 
 # Deploy to Europe VPS via Ansible (builds, packages, then deploys).
 # Includes the network role so the AmneziaWG subnet gets exit NAT (masquerade). The floppa_vless

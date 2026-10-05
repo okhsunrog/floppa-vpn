@@ -1,0 +1,4 @@
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential pkg-config libssl-dev ca-certificates git cmake \
+    && rm -rf /var/lib/apt/lists/*

@@ -98,15 +98,23 @@ configured), `[bot] token`, `[auth] jwt_secret` / `encryption_key` / `admin_tele
 
 ```bash
 cd /path/to/floppa-vpn
-just package         # floppa-vpn-release.tar.gz: floppa-daemon + floppa-server, migrations,
+just package-server  # Ubuntu 24.04-compatible floppa-vpn-release.tar.gz: floppa-daemon + floppa-server, migrations,
                      # systemd units, config.example.toml
 just package-vless   # floppa-vless-release.tar.gz: floppa-vless + its unit
 ```
 
-`just package` builds the admin panel (`floppa-face`) first; it is embedded into `floppa-server`
+`just package-server` builds the admin panel (`floppa-face`) first; it is embedded into `floppa-server`
 via `memory-serve` at compile time, so no static files are deployed. Both roles look for the
 archives at `../floppa-vpn/*.tar.gz` relative to the cloud-forge checkout and fail if one is
-missing. `just deploy` and `just deploy-europe` chain build and playbook.
+missing. `just deploy` and `just deploy-europe` chain build and playbook. `just deploy-server`
+updates only the Moscow API/admin panel and daemon, using the archive from the current checkout
+(including a separate Git worktree). It does not run other protocol, network or release-mirror
+roles. Both `deploy` and `deploy-server` build the server binaries in an Ubuntu 24.04 Docker
+container, matching the VPS's glibc/OpenSSL instead of the build host's libraries. Docker and
+the host Rust toolchain are required. Build artifacts are cached under `target/ubuntu-server`;
+set `FLOPPA_SERVER_BUILD_DIR` to use another cache directory. Native `just package` remains
+available for a target with libraries compatible with the build host. Archives include the
+source commit in `REVISION`.
 
 ## 4. Deploy
 
