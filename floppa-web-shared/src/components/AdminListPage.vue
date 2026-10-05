@@ -14,6 +14,7 @@ import type { TableColumn, TableRow } from '@nuxt/ui'
 const props = withDefaults(
   defineProps<{
     title: string
+    headingTag?: 'h1' | 'h2'
     /** As Pinia Colada reports it. */
     status: 'pending' | 'error' | 'success'
     error?: { message: string } | null
@@ -29,7 +30,7 @@ const props = withDefaults(
     /** Tailwind max-width of the page. */
     containerClass?: string
   }>(),
-  { error: null, containerClass: 'max-w-7xl' },
+  { error: null, containerClass: 'max-w-7xl', headingTag: 'h1' },
 )
 
 const page = defineModel<number>('page', { required: true })
@@ -64,7 +65,11 @@ const showPagination = computed(() => props.total > props.pageSize)
 <template>
   <div :class="[containerClass, 'mx-auto']">
     <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
-      <h1 class="text-2xl font-bold">{{ title }}</h1>
+      <component
+        :is="headingTag"
+        :class="headingTag === 'h1' ? 'text-2xl font-bold' : 'text-xl font-semibold'"
+        >{{ title }}</component
+      >
       <div class="flex items-center gap-2 w-full sm:w-auto">
         <UInput
           v-model="search"

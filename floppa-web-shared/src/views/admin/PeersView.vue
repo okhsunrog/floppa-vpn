@@ -6,6 +6,8 @@ import { useQuery, useMutation } from '@pinia/colada'
 import {
   listPeersQuery,
   listPeersQueryKey,
+  listUsersQueryKey,
+  getStatsQueryKey,
   deleteAdminPeerMutation,
 } from '../../client/@pinia/colada.gen'
 import type { PeerSummary } from '../../client/types.gen'
@@ -16,14 +18,22 @@ import { useInvalidateQueries } from '../../composables/invalidate'
 import AdminListPage from '../../components/AdminListPage.vue'
 import ConfirmModal from '../../components/ConfirmModal.vue'
 
+const props = withDefaults(defineProps<{ embedded?: boolean; activeOnly?: boolean }>(), {
+  embedded: false,
+  activeOnly: false,
+})
+
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: peers, status, error } = useQuery(listPeersQuery())
+const { data: allPeers, status, error } = useQuery(listPeersQuery())
+const peers = computed(() =>
+  allPeers.value?.filter((p) => !props.activeOnly || p.sync_status === 'active'),
+)
 const invalidate = useInvalidateQueries()
 const deleteMut = useMutation({
   ...deleteAdminPeerMutation(),
-  onSettled: () => invalidate(listPeersQueryKey()),
+  onSettled: () => invalidate(listPeersQueryKey(), listUsersQueryKey(), getStatsQueryKey()),
 })
 
 const {
@@ -39,7 +49,11 @@ const {
   page,
   paginated: paginatedPeers,
   pageSize,
-} = useAdminList(peers, (p) => [p.assigned_ip, p.username, p.device_name, p.device_id])
+} = useAdminList(
+  peers,
+  (p) => [p.assigned_ip, p.username, p.device_name, p.device_id],
+  props.embedded ? 10 : 100,
+)
 
 function confirmDeletePeer(peerId: number, peerIp: string) {
   requestDeletePeer(peerId, t('adminPeers.deleteConfirm', { ip: peerIp }))
@@ -68,7 +82,7 @@ function openUser(peer: PeerSummary) {
   void router.push(`/admin/users/${peer.user_id}`)
 }
 
-const columns = computed<TableColumn<PeerSummary>[]>(() => [
+const allColumns = computed<TableColumn<PeerSummary>[]>(() => [
   { accessorKey: 'assigned_ip', header: t('adminPeers.ip') },
   { accessorKey: 'protocol', header: t('adminPeers.protocol') },
   { accessorKey: 'username', header: t('adminPeers.user') },
@@ -81,13 +95,26 @@ const columns = computed<TableColumn<PeerSummary>[]>(() => [
   { accessorKey: 'has_vless', header: 'VLESS' },
   { id: 'actions', header: '' },
 ])
+const columns = computed(() =>
+  props.embedded
+    ? allColumns.value.filter(
+        (c) =>
+          ('accessorKey' in c &&
+            ['assigned_ip', 'protocol', 'username', 'device_name', 'last_handshake'].includes(
+              String(c.accessorKey),
+            )) ||
+          ('id' in c && c.id === 'actions'),
+      )
+    : allColumns.value,
+)
 </script>
 
 <template>
   <AdminListPage
     v-model:search="search"
     v-model:page="page"
-    :title="t('adminPeers.title')"
+    :title="t(embedded ? 'adminDashboard.configs' : 'adminPeers.title')"
+    :heading-tag="embedded ? 'h2' : 'h1'"
     :status="status"
     :error="error"
     :columns="columns"

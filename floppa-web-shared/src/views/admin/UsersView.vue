@@ -6,6 +6,7 @@ import { useQuery, useMutation } from '@pinia/colada'
 import {
   listUsersQuery,
   listUsersQueryKey,
+  getStatsQueryKey,
   listPlansQuery,
   createUserMutation,
 } from '../../client/@pinia/colada.gen'
@@ -17,10 +18,16 @@ import { useAdminList } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import AdminListPage from '../../components/AdminListPage.vue'
 
+const props = withDefaults(defineProps<{ embedded?: boolean; activeOnly?: boolean }>(), {
+  embedded: false,
+  activeOnly: false,
+})
+
 const router = useRouter()
 const { t } = useI18n()
 const toast = useToast()
-const { data: users, status, error } = useQuery(listUsersQuery())
+const { data: allUsers, status, error } = useQuery(listUsersQuery())
+const users = computed(() => allUsers.value?.filter((u) => !props.activeOnly || !!u.active_plan))
 const invalidate = useInvalidateQueries()
 const { data: plans } = useQuery(listPlansQuery())
 
@@ -30,7 +37,11 @@ const {
   page,
   paginated: paginatedUsers,
   pageSize,
-} = useAdminList(users, (u) => [u.username, u.first_name, u.last_name, u.telegram_id])
+} = useAdminList(
+  users,
+  (u) => [u.username, u.first_name, u.last_name, u.telegram_id],
+  props.embedded ? 10 : 100,
+)
 
 function openUser(user: UserSummary) {
   void router.push(`/admin/users/${user.id}`)
@@ -47,6 +58,13 @@ const avatars = ref<Record<string, string>>({})
 // Fetch avatars only for the currently visible page (and only those not already cached), so the
 // base64 payload stays bounded regardless of total user count.
 watch(
+  () => props.activeOnly,
+  () => {
+    page.value = 1
+  },
+)
+
+watch(
   paginatedUsers,
   async (list) => {
     const missing = list.filter((u) => !(String(u.id) in avatars.value)).map((u) => u.id)
@@ -61,7 +79,7 @@ watch(
   { immediate: true },
 )
 
-const columns = computed<TableColumn<UserSummary>[]>(() => [
+const allColumns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'id', header: t('adminUsers.id') },
   { accessorKey: 'username', header: t('adminUsers.username') },
   { accessorKey: 'telegram_id', header: t('adminUsers.telegramId') },
@@ -72,6 +90,18 @@ const columns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'is_admin', header: t('adminUsers.admin') },
   { accessorKey: 'created_at', header: t('adminUsers.created') },
 ])
+
+const columns = computed(() =>
+  props.embedded
+    ? allColumns.value.filter(
+        (c) =>
+          'accessorKey' in c &&
+          ['username', 'active_plan', 'peer_count', 'client_version'].includes(
+            String(c.accessorKey),
+          ),
+      )
+    : allColumns.value,
+)
 
 // Add User dialog
 const addUserDialog = ref(false)
@@ -91,7 +121,7 @@ const addUserValid = computed(
 
 const addUserMut = useMutation({
   ...createUserMutation(),
-  onSettled: () => invalidate(listUsersQueryKey()),
+  onSettled: () => invalidate(listUsersQueryKey(), getStatsQueryKey()),
 })
 
 const planItems = computed(() =>
@@ -157,7 +187,8 @@ async function addUser() {
   <AdminListPage
     v-model:search="search"
     v-model:page="page"
-    :title="t('adminUsers.title')"
+    :title="t(activeOnly ? 'adminDashboard.currentSubscriptions' : 'adminUsers.title')"
+    :heading-tag="embedded ? 'h2' : 'h1'"
     :status="status"
     :error="error"
     :columns="columns"
@@ -246,7 +277,7 @@ async function addUser() {
               class="block text-xs text-[var(--ui-text-muted)]"
               >@{{ user.username }}</span
             >
-            <span class="block text-xs text-[var(--ui-text-muted)]">{{
+            <span v-if="!embedded" class="block text-xs text-[var(--ui-text-muted)]">{{
               t('adminUsers.idAndTelegram', { id: user.id, tg: user.telegram_id ?? '—' })
             }}</span>
           </div>
@@ -271,7 +302,7 @@ async function addUser() {
       </div>
       <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)] items-center">
         <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
-        <span class="flex items-center gap-1">
+        <span v-if="!embedded" class="flex items-center gap-1">
           VLESS
           <UIcon
             :name="user.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
@@ -280,7 +311,7 @@ async function addUser() {
           />
         </span>
         <span v-if="user.client_version">v{{ user.client_version }}</span>
-        <span>{{ formatDate(user.created_at) }}</span>
+        <span v-if="!embedded">{{ formatDate(user.created_at) }}</span>
       </div>
     </template>
 
