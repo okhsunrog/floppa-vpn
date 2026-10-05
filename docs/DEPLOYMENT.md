@@ -120,9 +120,9 @@ interpreter and shared-library dependencies and runs the API binary's `--openapi
 suite as musl executables; supply `DATABASE_URL` for an isolated test PostgreSQL instance.
 `just test-server-tls` explicitly checks the bot HTTP client's DNS and validated HTTPS against
 Telegram without credentials or sending messages. This network test is ignored in the ordinary
-suite. Native `just package` remains
-available for a target with libraries compatible with the build host. Archives include the
-source commit in `REVISION`.
+suite. `just build` and `just package` use the same static production build, with no separate
+GNU server release. Native Cargo builds remain useful for development checks. Archives include
+the source commit in `REVISION`.
 
 ## 4. Deploy
 

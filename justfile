@@ -4,26 +4,12 @@
 setup:
     ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
 
-# Default target architecture for VPS deployment
-
-target := "x86_64-unknown-linux-gnu"
 release_dir := "release"
 
-# Build all binaries in release mode (frontend is embedded in floppa-server via memory-serve)
-build: build-frontend
-    cargo build --release -p floppa-daemon -p floppa-server
+# Default server build and package use the production musl target.
+build: build-server
 
-# Build for specific target (cross-compilation)
-build-target:
-    cargo build --release --target {{ target }} -p floppa-daemon -p floppa-server
-
-# Create a native-host deployment archive. Use package-server for Linux VPSes.
-package: build
-    just _package-binaries "target/release"
-
-# Cross-compile and package for target
-package-target: build-target
-    just _package-binaries "target/{{ target }}/release"
+package: package-server
 
 # Build server binaries with musl and rustls for a static Linux executable.
 build-server: build-frontend
@@ -31,7 +17,7 @@ build-server: build-frontend
 
 # Run server tests as musl executables; DATABASE_URL must refer to a test database.
 test-server-static:
-    bash scripts/build-server-musl.sh --test floppa-server
+    bash scripts/build-server-musl.sh --test floppa-core floppa-server
 
 # Explicit network smoke test: bot TLS, DNS and system trust roots, without credentials.
 test-server-tls:

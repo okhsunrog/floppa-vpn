@@ -24,6 +24,12 @@ fi
 for package in "${packages[@]}"; do
     case "$package" in
         floppa-daemon|floppa-server|floppa-vless) ;;
+        floppa-core)
+            if [[ $mode != test ]]; then
+                echo "floppa-core is supported only in test mode" >&2
+                exit 1
+            fi
+            ;;
         *) echo "Unsupported server package: $package" >&2; exit 1 ;;
     esac
 done
