@@ -5,8 +5,17 @@ fn main() {
 
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=Cargo.toml");
-    println!("cargo::rerun-if-changed=../.git/HEAD");
-    println!("cargo::rerun-if-changed=../.git/refs/heads/");
+    // A worktree's .git is a file; ask Git for the actual ref paths.
+    for git_path in ["HEAD", "refs/heads", "packed-refs"] {
+        if let Ok(output) = Command::new("git")
+            .args(["rev-parse", "--git-path", git_path])
+            .output()
+            && output.status.success()
+            && let Ok(path) = String::from_utf8(output.stdout)
+        {
+            println!("cargo::rerun-if-changed={}", path.trim());
+        }
+    }
 
     let git_hash = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
