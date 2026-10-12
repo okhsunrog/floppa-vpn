@@ -1475,12 +1475,11 @@ dependencies = [
  "thiserror 2.0.20",
  "tracing",
  "uuid",
- "webpki-roots",
 ]
 
 [[package]]
 name = "floppa-client"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-trait",
  "floppa-api-client",

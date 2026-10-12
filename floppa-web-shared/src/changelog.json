@@ -1,20 +1,25 @@
 {
-  "version": "0.6.4",
+  "version": "0.6.5",
   "sections": [
     {
       "type": "added",
       "items": [
         {
-          "en": "Choose the VPN exit location from the regions included in your plan. Premium subscribers can use Singapore alongside Frankfurt.",
-          "ru": "Выбирайте регион выхода VPN из доступных вашему тарифу. Пользователям Premium доступен Сингапур вместе с Франкфуртом."
+          "en": "Android now supports a themed app icon that follows your launcher colors.",
+          "ru": "На Android появилась тематическая иконка приложения, которая подстраивается под цвета лаунчера."
         },
         {
-          "en": "Create a config from a single dialog: choose WireGuard or AmneziaWG and an exit region, then confirm. Export it for a third-party VPN client without installing the app. Each config shows its region in the list.",
-          "ru": "Создавайте конфиг в одном окне: выберите WireGuard или AmneziaWG и регион выхода, затем подтвердите создание. Скачайте его для стороннего VPN-клиента без установки приложения. Регион каждого конфига показан в списке."
-        },
+          "en": "The admin overview separates subscription purchases and renewals from subscriptions granted manually. Subscription lists support plan filters and sorting, and peer lists and user details show the VPN exit region.",
+          "ru": "Обзор админки отдельно показывает покупки и продления подписок и ручные выдачи. В списке подписок доступны фильтры по тарифу и сортировка, а в списках пиров и карточке пользователя виден регион выхода VPN."
+        }
+      ]
+    },
+    {
+      "type": "changed",
+      "items": [
         {
-          "en": "On Linux, the app and command-line client can control the same system VPN service and configure connection on boot.",
-          "ru": "На Linux приложение и CLI могут управлять одним системным VPN-сервисом и настраивать подключение при загрузке."
+          "en": "Admin sections use a sidebar on desktop and the navigation drawer on mobile.",
+          "ru": "Разделы админки доступны в боковой панели на компьютере и в меню навигации на телефоне."
         }
       ]
     },
@@ -22,13 +27,48 @@
       "type": "fixed",
       "items": [
         {
-          "en": "The system VPN service preserves its connection settings and keeps ownership of its tunnel when access or protocol setup fails.",
-          "ru": "Системный VPN-сервис сохраняет настройки подключения и корректно управляет своим туннелем при ошибках доступа или настройки протокола."
+          "en": "The app can use cached addresses and alternative DNS resolvers when the system resolver fails. API requests use the same native network transport, and VPN connections can try another resolved server address when an endpoint is unreachable.",
+          "ru": "При сбое системного DNS приложение может использовать сохранённые адреса и резервные DNS-серверы. Запросы к API используют общий сетевой транспорт приложения, а при недоступности VPN-сервера подключение может попробовать другой найденный адрес."
+        },
+        {
+          "en": "Empty or incompatible API responses now produce an explicit error instead of being accepted as valid data.",
+          "ru": "Пустые или несовместимые ответы API теперь дают понятную ошибку вместо того, чтобы восприниматься как корректные данные."
         }
       ]
     }
   ],
   "history": [
+    {
+      "version": "0.6.4",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "Choose the VPN exit location from the regions included in your plan. Premium subscribers can use Singapore alongside Frankfurt.",
+              "ru": "Выбирайте регион выхода VPN из доступных вашему тарифу. Пользователям Premium доступен Сингапур вместе с Франкфуртом."
+            },
+            {
+              "en": "Create a config from a single dialog: choose WireGuard or AmneziaWG and an exit region, then confirm. Export it for a third-party VPN client without installing the app. Each config shows its region in the list.",
+              "ru": "Создавайте конфиг в одном окне: выберите WireGuard или AmneziaWG и регион выхода, затем подтвердите создание. Скачайте его для стороннего VPN-клиента без установки приложения. Регион каждого конфига показан в списке."
+            },
+            {
+              "en": "On Linux, the app and command-line client can control the same system VPN service and configure connection on boot.",
+              "ru": "На Linux приложение и CLI могут управлять одним системным VPN-сервисом и настраивать подключение при загрузке."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "The system VPN service preserves its connection settings and keeps ownership of its tunnel when access or protocol setup fails.",
+              "ru": "Системный VPN-сервис сохраняет настройки подключения и корректно управляет своим туннелем при ошибках доступа или настройки протокола."
+            }
+          ]
+        }
+      ]
+    },
     {
       "version": "0.6.3",
       "sections": [
