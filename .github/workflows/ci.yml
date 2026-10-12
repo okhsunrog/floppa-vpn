@@ -181,6 +181,8 @@ jobs:
         run: vp run --filter floppa-web-shared --filter floppa-face --filter floppa-client typecheck
 
       - name: Frontend tests
+        env:
+          VITE_API_URL: https://example.test
         run: vp test --run
 
       - name: Build frontends
@@ -214,7 +216,7 @@ jobs:
         with:
           cache: true
       - uses: extractions/setup-just@v4
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.0
       - run: vp install --frozen-lockfile
       - name: Install browser
         working-directory: floppa-face
