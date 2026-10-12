@@ -392,7 +392,7 @@ impl Drop for GotatunTunnel {
 enum ActiveTunnel {
     WireGuard(GotatunTunnel),
     Vless(shoes_lite::api::VlessTunnel),
-    Foldfin(crate::foldfin_tunnel::FoldfinTunnel),
+    Foldfin(Box<crate::foldfin_tunnel::FoldfinTunnel>),
 }
 
 impl ActiveTunnel {
@@ -474,10 +474,10 @@ impl ActiveTunnel {
     /// into a hole, so it is rebound. VLESS dials a TCP connection per flow and protects each one
     /// as it is dialled, so it heals on its own — the connections open across the old network die
     /// with it, and nothing here can save them.
-    async fn network_changed(&self) -> Result<(), BackendError> {
+    async fn network_changed(&mut self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.rebind().await,
-            Self::Foldfin(t) => t.probe().await,
+            Self::Foldfin(t) => t.network_changed().await,
             Self::Vless(_) => Ok(()),
         }
     }
@@ -676,7 +676,7 @@ impl TunnelManager {
         let tunnel =
             crate::foldfin_tunnel::FoldfinTunnel::start(config, endpoint, device, fwmark).await?;
         *guard = Some((
-            ActiveTunnel::Foldfin(tunnel),
+            ActiveTunnel::Foldfin(Box::new(tunnel)),
             TunnelMeta {
                 protocol: Protocol::Foldfin,
                 endpoint: config.endpoint().to_owned(),
@@ -795,8 +795,8 @@ impl TunnelManager {
     /// Silently fine when nothing is running: this arrives from the OS, not from a caller who
     /// knows what state we are in.
     pub async fn network_changed(&self) -> Result<(), BackendError> {
-        let tunnel_guard = self.tunnel.read().await;
-        match tunnel_guard.as_ref() {
+        let mut tunnel_guard = self.tunnel.write().await;
+        match tunnel_guard.as_mut() {
             Some((tunnel, _)) => tunnel.network_changed().await,
             None => Ok(()),
         }

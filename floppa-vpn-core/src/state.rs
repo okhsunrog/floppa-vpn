@@ -393,6 +393,20 @@ impl ProtocolConfig {
     pub fn parse(raw: &str) -> Result<Self, ConfigParseError> {
         let trimmed = raw.trim();
         if trimmed.starts_with('{') {
+            // Report the actionable migration error without rendering JSON values or tokens.
+            if let Ok(document) = serde_json::from_str::<serde_json::Value>(trimmed)
+                && document.get("protocol").and_then(serde_json::Value::as_str) == Some("foldfin")
+                && document
+                    .get("config")
+                    .and_then(|c| c.get("version"))
+                    .and_then(serde_json::Value::as_u64)
+                    != Some(2)
+            {
+                return Err(ConfigParseError::Foldfin(
+                    "config v2 required; reissue the configuration".into(),
+                ));
+            }
+
             let config: Self = serde_json::from_str(trimmed).map_err(|_| {
                 ConfigParseError::Foldfin("invalid versioned provisioning document".into())
             })?;
@@ -484,7 +498,7 @@ impl ProtocolConfig {
             Self::WireGuard(wg) => interface_has_ipv6(&wg.0.interface),
             Self::AmneziaWg(awg) => interface_has_ipv6(&awg.wg.0.interface),
             Self::Vless(_) => false,
-            Self::Foldfin(config) => config.address().is_ipv6(),
+            Self::Foldfin(config) => config.addresses().iter().any(|a| a.is_ipv6()),
         }
     }
 

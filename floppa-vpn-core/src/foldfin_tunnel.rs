@@ -1,9 +1,9 @@
 //! Foldfin engine adapter. Host networking and reconnect policy stay in the actor.
 use crate::{backend::BackendError, foldfin_config::FoldfinVpnConfig};
 use foldfin::{
-    client::{Client, VpnTunnel},
+    client::Client,
     packet::PacketDevice,
-    stats::SessionState,
+    session::{Event, Session},
 };
 use std::{
     net::SocketAddr,
@@ -13,8 +13,10 @@ use std::{
 use tokio::net::TcpSocket;
 
 pub(crate) struct FoldfinTunnel {
-    client: Client,
-    vpn: VpnTunnel,
+    session: Session,
+    config: FoldfinVpnConfig,
+    endpoint: SocketAddr,
+    fwmark: Option<u32>,
     started: Instant,
     last_probe: Mutex<Option<Instant>>,
 }
@@ -31,6 +33,27 @@ impl FoldfinTunnel {
         device: PacketDevice,
         fwmark: Option<u32>,
     ) -> Result<Self, BackendError> {
+        let client = Self::dial(config, endpoint, fwmark).await?;
+        let mut session = Session::new(config.policy(), device).map_err(error)?;
+        session.recover(client).await.map_err(error)?;
+        Ok(Self {
+            session,
+            config: config.clone(),
+            endpoint,
+            fwmark,
+            started: Instant::now(),
+            last_probe: Mutex::new(None),
+        })
+    }
+
+    async fn dial(
+        config: &FoldfinVpnConfig,
+        endpoint: SocketAddr,
+        fwmark: Option<u32>,
+    ) -> Result<Client, BackendError> {
+        if config.transport() == crate::foldfin_config::TransportPolicy::H3Only {
+            return Err(error("H3 VPN bridge is not available in this build"));
+        }
         let socket = if endpoint.is_ipv4() {
             TcpSocket::new_v4()
         } else {
@@ -75,24 +98,19 @@ impl FoldfinTunnel {
         let client = Client::connect_over(config.client_config().map_err(error)?, tcp)
             .await
             .map_err(error)?;
-        let prepared = match client.prepare_vpn(config.policy()).await {
-            Ok(prepared) => prepared,
-            Err(cause) => {
-                let _ = client.stop().await;
-                return Err(error(cause));
-            }
-        };
-        let vpn = prepared.start(device);
-        Ok(Self {
-            client,
-            vpn,
-            started: Instant::now(),
-            last_probe: Mutex::new(None),
-        })
+        Ok(client)
+    }
+
+    pub(crate) async fn network_changed(&mut self) -> Result<(), BackendError> {
+        self.session.underlay_changed().await;
+        *self.last_probe.lock().unwrap() = None;
+        let client = Self::dial(&self.config, self.endpoint, self.fwmark).await?;
+        self.session.recover(client).await.map_err(error)?;
+        self.probe().await
     }
 
     pub(crate) fn stats(&self) -> foldfin::stats::TrafficStats {
-        self.vpn.stats()
+        self.session.stats()
     }
     pub(crate) fn duration(&self) -> Duration {
         self.started.elapsed()
@@ -109,19 +127,16 @@ impl FoldfinTunnel {
         self.last_rx().unwrap_or_else(|| self.duration())
     }
     pub(crate) fn alive(&self) -> bool {
-        matches!(
-            self.vpn.snapshot(),
-            SessionState::AwaitingConfiguration | SessionState::Running
-        ) && matches!(self.client.snapshot(), SessionState::Running)
+        !matches!(self.session.snapshot(), Event::Closed)
     }
     pub(crate) async fn probe(&self) -> Result<(), BackendError> {
         // Capsule confirmation is required; H2 PING alone cannot verify a VPN session.
-        let mut state = self.vpn.subscribe();
+        let mut state = self.session.subscribe();
         tokio::time::timeout(foldfin::DEADLINE, async {
             loop {
                 match state.borrow_and_update().clone() {
-                    SessionState::Running => break Ok(()),
-                    SessionState::AwaitingConfiguration => (),
+                    Event::Running => break Ok(()),
+                    Event::Preparing | Event::Recovering => (),
                     other => break Err(error(format!("session ended: {other:?}"))),
                 }
                 state.changed().await.map_err(error)?;
@@ -129,13 +144,11 @@ impl FoldfinTunnel {
         })
         .await
         .map_err(error)??;
-        self.client.probe().await.map_err(error)?;
+        self.session.probe_carrier().await.map_err(error)?;
         *self.last_probe.lock().unwrap() = Some(Instant::now());
         Ok(())
     }
-    pub(crate) async fn stop(self) -> Result<(), BackendError> {
-        let vpn = self.vpn.stop().await;
-        let carrier = self.client.stop().await;
-        vpn.and(carrier).map_err(error)
+    pub(crate) async fn stop(mut self) -> Result<(), BackendError> {
+        self.session.stop().await.map_err(error)
     }
 }

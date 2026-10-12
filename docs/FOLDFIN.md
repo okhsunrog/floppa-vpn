@@ -16,7 +16,7 @@ TLS uses rustls. The former Chrome/BoringSSL backend has been removed.
 ## Import and run
 
 Development dependency: `floppa-vpn-core` and `floppa-foldfin` currently use the
-local checkout at `../../rust/foldfin`. Keep `floppa-vpn` in `~/code/floppa-vpn` and
+local checkout at `../../rust/foldfin`. Keep this worktree in `~/code/floppa-vpn-foldfin` and
 Foldfin in `~/code/rust/foldfin`. Release packaging/CI needs a published or pinned
 Git Foldfin dependency before distribution; the current local path is intentional.
 
@@ -29,23 +29,35 @@ it contains a device bearer credential. The token below is a dummy example.
 {
   "protocol": "foldfin",
   "config": {
-    "version": 1,
-    "endpoint": "vpn.example.org:8445",
+    "version": 2,
+    "endpoints": ["vpn.example.org:8445"],
+    "transport": "h2_only",
     "server_name": "vpn.example.org",
     "token": "0123456789abcdef0123456789abcdef",
-    "address": "198.18.77.2/32",
-    "peer": "198.18.77.1",
-    "routes": ["198.18.77.1/32", "198.19.77.0/24"],
-    "dns": [],
-    "mtu": 1280
+    "network": {
+      "revision": 1,
+      "addresses": ["198.18.77.2/32", "fd42:77::2/128"],
+      "peers": ["198.18.77.1", "fd42:77::1"],
+      "routes": ["198.18.77.1/32", "198.19.77.0/24", "fd42:77::/64"],
+      "excluded_routes": [],
+      "dns": [],
+      "mtu": 1280
+    }
   }
 }
 ```
 
 Optional `additional_ca_pem` embeds a development CA; production normally omits
-it and uses the system profile's public trust anchors. The current document holds
-one IP family, matching the actor's single address setup. Routes must be canonical
-and match that family. MTU is 1280..1500. Arbitrary host/LAN routes in the GUI do
+it and uses public trust anchors. Version 1 is explicitly rejected; reissue it as v2.
+The cached network plan carries both address families, canonical routes, explicit
+exclusions, DNS and an MTU of 1280. Android derives routes from this plan instead
+of unconditionally capturing all traffic. Desktop setup records each address
+separately in rollback. Android owns "block connections without VPN" behavior.
+`auto` currently uses H2 because the H3 VPN bridge is still being integrated;
+`h3_only` fails explicitly. The first endpoint is used until underlay candidate
+selection lands.
+
+Arbitrary host/LAN routes in the GUI do
 not grant access: the server's grant must permit them as well. Full internet
 routing requires a server grant, forwarding and egress setup; importing `0.0.0.0/0`
 alone does not configure server NAT or firewall.

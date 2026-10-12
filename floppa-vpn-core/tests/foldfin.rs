@@ -81,9 +81,9 @@ fn packet(source: [u8; 4], dest: [u8; 4]) -> Vec<u8> {
     bytes
 }
 fn document(endpoint: &str, ca: &str) -> String {
-    serde_json::json!({"protocol":"foldfin", "config": {"version":1,"endpoint":endpoint,
-        "server_name":"localhost","token":TOKEN,"address":"192.0.2.2/32","peer":"192.0.2.1",
-        "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280,"additional_ca_pem":ca}})
+    serde_json::json!({"protocol":"foldfin", "config": {"version":2,"endpoints":[endpoint],
+        "server_name":"localhost","token":TOKEN,"network":{"revision":1,"addresses":["192.0.2.2/32"],"peers":["192.0.2.1"],
+        "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280},"additional_ca_pem":ca}})
     .to_string()
 }
 
@@ -145,10 +145,10 @@ fn import_persistence_validation_and_secret_redaction() {
         "localhost:8443"
     );
     let mut invalid: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    invalid["config"]["mtu"] = serde_json::json!(1501);
+    invalid["config"]["network"]["mtu"] = serde_json::json!(1501);
     assert!(ProtocolConfig::parse(&invalid.to_string()).is_err());
-    invalid["config"]["mtu"] = serde_json::json!(1280);
-    invalid["config"]["peer"] = serde_json::json!("192.0.2.2");
+    invalid["config"]["network"]["mtu"] = serde_json::json!(1280);
+    invalid["config"]["network"]["peers"] = serde_json::json!(["192.0.2.2"]);
     assert!(ProtocolConfig::parse(&invalid.to_string()).is_err());
 }
 
@@ -160,6 +160,7 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
     let (device, server_input, mut server_output) = packets(server_drops.clone());
     let (successor_device, _successor_server_input, mut successor_server_output) =
         packets(server_drops.clone());
+    let (recovery_device, _recovery_input, mut recovery_output) = packets(server_drops.clone());
     let registry = Arc::new(DeviceRegistry::default());
     registry
         .install(DeviceGrant {
@@ -175,7 +176,9 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
                     local_routes: vec![],
                     peer_routes: vec![],
                 },
-                device: Arc::new(Factory(Mutex::new(vec![device, successor_device].into()))),
+                device: Arc::new(Factory(Mutex::new(
+                    vec![device, recovery_device, successor_device].into(),
+                ))),
             }),
         })
         .unwrap();
@@ -225,6 +228,20 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
         response
     );
     assert_eq!(manager.get_stats().await.unwrap().tx_bytes, 20);
+    // Host network change replaces only the carrier, preserving the client packet device.
+    timeout(Duration::from_secs(3), manager.network_changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(client_drops.load(Ordering::SeqCst), 0);
+    input.send(request.clone()).await.unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(3), recovery_output.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        request
+    );
     // A second authenticated carrier takes over the same device after roaming,
     // waiting for old packet IO ownership rather than rejecting it by source IP.
     let successor = TunnelManager::default();
@@ -238,7 +255,7 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
         .unwrap()
         .unwrap();
     timeout(Duration::from_secs(3), async {
-        while manager.meta().await.is_some() {
+        while manager.probe().await.is_ok() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
@@ -256,7 +273,7 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
     );
     registry.revoke("installation-1/eu");
     timeout(Duration::from_secs(3), async {
-        while successor.meta().await.is_some() {
+        while successor.probe().await.is_ok() {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
@@ -266,7 +283,7 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
     assert_eq!(client_drops.load(Ordering::SeqCst), 4);
     shutdown.send(()).unwrap();
     server_task.await.unwrap().unwrap();
-    assert_eq!(server_drops.load(Ordering::SeqCst), 4);
+    assert_eq!(server_drops.load(Ordering::SeqCst), 6);
 }
 
 #[tokio::test]
@@ -383,4 +400,45 @@ async fn backend_checks_each_connect_rotation_expiry_and_mode() {
     registry.prune_expired();
     shutdown.send(()).unwrap();
     task.await.unwrap().unwrap();
+}
+
+#[test]
+fn v2_bootstrap_plan_preserves_dual_stack_routes_and_exclusions() {
+    use floppa_vpn_core::{
+        actor::types::{SplitMode, TunnelParams},
+        autostart::TunSpec,
+    };
+    let mut document: serde_json::Value =
+        serde_json::from_str(&document("localhost:8443", "")).unwrap();
+    document["config"]["network"]["addresses"] = serde_json::json!(["192.0.2.2/32", "fd42::2/128"]);
+    document["config"]["network"]["peers"] = serde_json::json!(["192.0.2.1", "fd42::1"]);
+    document["config"]["network"]["routes"] = serde_json::json!(["192.0.2.1/32", "2001:db8::/32"]);
+    document["config"]["network"]["excluded_routes"] = serde_json::json!(["2001:db8:1::/48"]);
+    let config = ProtocolConfig::parse(&document.to_string()).unwrap();
+    let spec = TunSpec::derive(&config, &TunnelParams::new(SplitMode::All, vec![]));
+    assert_eq!(spec.ipv4_addr, "192.0.2.2/32");
+    assert_eq!(spec.ipv6_addr.as_deref(), Some("fd42::2/128"));
+    let routes: Vec<ipnetwork::IpNetwork> =
+        spec.routes.iter().map(|s| s.parse().unwrap()).collect();
+    for (address, expected) in [
+        ("192.0.2.1", true),
+        ("8.8.8.8", false),
+        ("2001:db8:2::1", true),
+        ("2001:db8:1::1", false),
+    ] {
+        assert_eq!(
+            routes
+                .iter()
+                .any(|route| route.contains(address.parse().unwrap())),
+            expected,
+            "{address}"
+        );
+    }
+    document["config"]["version"] = serde_json::json!(1);
+    assert!(
+        ProtocolConfig::parse(&document.to_string())
+            .unwrap_err()
+            .to_string()
+            .contains("reissue")
+    );
 }
