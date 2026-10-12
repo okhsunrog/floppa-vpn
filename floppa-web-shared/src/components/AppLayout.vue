@@ -3,7 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useColorMode } from '@vueuse/core'
+import { useColorMode, useMediaQuery } from '@vueuse/core'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery } from '../client/@pinia/colada.gen'
 import { useAuthStore } from '../stores'
@@ -44,6 +44,10 @@ const showBackupNudge = computed(
 
 const isMiniApp = detectMiniApp()
 const mobileMenuOpen = ref(false)
+const desktopNavigation = useMediaQuery('(min-width: 1280px)')
+watch(desktopNavigation, (desktop) => {
+  if (desktop) mobileMenuOpen.value = false
+})
 
 // Android back button support for sidebar via history API.
 //

@@ -16,7 +16,7 @@ const active = computed(
 <template>
   <div
     :class="
-      ADMIN_NAVIGATION === 'sidebar' ? 'lg:grid lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-8' : ''
+      ADMIN_NAVIGATION === 'sidebar' ? 'xl:grid xl:grid-cols-[12rem_minmax(0,1fr)] xl:gap-8' : ''
     "
   >
     <template v-if="ADMIN_NAVIGATION !== 'overview'">
@@ -24,8 +24,8 @@ const active = computed(
         :aria-label="t('adminWorkspace.sections')"
         :class="
           ADMIN_NAVIGATION === 'sidebar'
-            ? 'hidden lg:flex lg:flex-col self-start sticky top-20 gap-1 border-r border-[var(--ui-border)] pr-4'
-            : 'hidden lg:flex flex-wrap gap-1 mb-7 border-b border-[var(--ui-border)] pb-2'
+            ? 'hidden xl:flex xl:flex-col self-start sticky top-20 gap-1 border-r border-[var(--ui-border)] pr-4'
+            : 'hidden xl:flex flex-wrap gap-1 mb-7 border-b border-[var(--ui-border)] pb-2'
         "
       >
         <RouterLink
