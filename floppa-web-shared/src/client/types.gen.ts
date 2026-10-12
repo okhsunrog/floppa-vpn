@@ -261,6 +261,7 @@ export type PeerDetail = {
     last_handshake?: string | null;
     protocol: Protocol;
     public_key: string;
+    region_id: string;
     sync_status: PeerSyncStatus;
     upload_bytes: number;
 };
@@ -276,6 +277,7 @@ export type PeerSummary = {
     last_handshake?: string | null;
     plan_name?: string | null;
     protocol: Protocol;
+    region_id: string;
     sync_status: PeerSyncStatus;
     upload_bytes: number;
     user_id: number;

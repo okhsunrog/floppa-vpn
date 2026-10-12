@@ -439,6 +439,7 @@ pub struct PeerDetail {
     id: i64,
     public_key: String,
     assigned_ip: String,
+    region_id: String,
     sync_status: PeerSyncStatus,
     protocol: Protocol,
     download_bytes: i64,
@@ -492,7 +493,7 @@ pub(super) async fn get_user(
     let peer_rows = sqlx::query!(
         r#"
         SELECT p.id, p.public_key, p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
-               p.protocol AS "protocol: Protocol", p.last_handshake,
+               p.protocol AS "protocol: Protocol", p.region_id, p.last_handshake,
                ai.device_name, ai.device_id AS "device_id?"
         FROM peers p
         LEFT JOIN app_installations ai ON p.installation_id = ai.id
@@ -523,6 +524,7 @@ pub(super) async fn get_user(
                 id: r.id,
                 public_key: r.public_key,
                 assigned_ip: r.assigned_ip,
+                region_id: r.region_id,
                 sync_status: r.sync_status,
                 protocol: r.protocol,
                 download_bytes: download,
@@ -718,6 +720,7 @@ pub struct PeerSummary {
     user_id: i64,
     username: Option<String>,
     assigned_ip: String,
+    region_id: String,
     sync_status: PeerSyncStatus,
     protocol: Protocol,
     download_bytes: i64,
@@ -750,7 +753,7 @@ pub(super) async fn list_peers(
         r#"
         SELECT p.id, p.user_id, COALESCE(u.username, CONCAT_WS(' ', u.first_name, u.last_name)) AS username,
                p.assigned_ip, p.sync_status AS "sync_status: PeerSyncStatus",
-               p.protocol AS "protocol: Protocol", p.last_handshake,
+               p.protocol AS "protocol: Protocol", p.region_id, p.last_handshake,
                ai.device_name, ai.device_id AS "device_id?", ai.app_version AS client_version,
                (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) AS plan_name,
                (u.vless_uuid IS NOT NULL) AS "has_vless!"
@@ -778,6 +781,7 @@ pub(super) async fn list_peers(
                 user_id: r.user_id,
                 username: r.username,
                 assigned_ip: r.assigned_ip,
+                region_id: r.region_id,
                 sync_status: r.sync_status,
                 protocol: r.protocol,
                 download_bytes: download,

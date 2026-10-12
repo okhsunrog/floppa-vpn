@@ -429,12 +429,12 @@ async function doRegenerateVless() {
         <!-- Peers grid -->
         <div
           v-if="peers?.length"
-          class="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-4"
+          class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,300px),1fr))] gap-4"
         >
           <UCard v-for="peer in peers" :key="peer.id">
-            <div class="flex justify-between items-center mb-2">
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
               <span class="font-mono text-lg font-semibold">{{ peer.assigned_ip }}</span>
-              <div class="flex items-center gap-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <UBadge color="neutral" variant="subtle" size="sm">
                   {{ t(`vpn.${peer.protocol}`) }}
                 </UBadge>

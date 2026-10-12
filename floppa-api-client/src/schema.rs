@@ -1344,6 +1344,7 @@ pub struct MySubscription {
 ///    "id",
 ///    "protocol",
 ///    "public_key",
+///    "region_id",
 ///    "sync_status",
 ///    "upload_bytes"
 ///  ],
@@ -1384,6 +1385,9 @@ pub struct MySubscription {
 ///    "public_key": {
 ///      "type": "string"
 ///    },
+///    "region_id": {
+///      "type": "string"
+///    },
 ///    "sync_status": {
 ///      "$ref": "#/definitions/PeerSyncStatus"
 ///    },
@@ -1408,6 +1412,7 @@ pub struct PeerDetail {
     pub last_handshake: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
     pub protocol: Protocol,
     pub public_key: ::std::string::String,
+    pub region_id: ::std::string::String,
     pub sync_status: PeerSyncStatus,
     pub upload_bytes: i64,
 }
@@ -1424,6 +1429,7 @@ pub struct PeerDetail {
 ///    "has_vless",
 ///    "id",
 ///    "protocol",
+///    "region_id",
 ///    "sync_status",
 ///    "upload_bytes",
 ///    "user_id"
@@ -1477,6 +1483,9 @@ pub struct PeerDetail {
 ///    "protocol": {
 ///      "$ref": "#/definitions/Protocol"
 ///    },
+///    "region_id": {
+///      "type": "string"
+///    },
 ///    "sync_status": {
 ///      "$ref": "#/definitions/PeerSyncStatus"
 ///    },
@@ -1515,6 +1524,7 @@ pub struct PeerSummary {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub plan_name: ::std::option::Option<::std::string::String>,
     pub protocol: Protocol,
+    pub region_id: ::std::string::String,
     pub sync_status: PeerSyncStatus,
     pub upload_bytes: i64,
     pub user_id: i64,

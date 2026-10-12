@@ -51,7 +51,14 @@ const {
   pageSize,
 } = useAdminList(
   peers,
-  (p) => [p.assigned_ip, p.username, p.device_name, p.device_id],
+  (p) => [
+    p.assigned_ip,
+    p.username,
+    p.device_name,
+    p.device_id,
+    p.region_id,
+    t(`vpn.regions.${p.region_id}`, p.region_id),
+  ],
   props.embedded ? 10 : 100,
 )
 
@@ -84,6 +91,7 @@ function openUser(peer: PeerSummary) {
 
 const allColumns = computed<TableColumn<PeerSummary>[]>(() => [
   { accessorKey: 'assigned_ip', header: t('adminPeers.ip') },
+  { accessorKey: 'region_id', header: t('adminPeers.region') },
   { accessorKey: 'protocol', header: t('adminPeers.protocol') },
   { accessorKey: 'username', header: t('adminPeers.user') },
   { accessorKey: 'device_name', header: t('adminPeers.device') },
@@ -100,9 +108,14 @@ const columns = computed(() =>
     ? allColumns.value.filter(
         (c) =>
           ('accessorKey' in c &&
-            ['assigned_ip', 'protocol', 'username', 'device_name', 'last_handshake'].includes(
-              String(c.accessorKey),
-            )) ||
+            [
+              'assigned_ip',
+              'region_id',
+              'protocol',
+              'username',
+              'device_name',
+              'last_handshake',
+            ].includes(String(c.accessorKey))) ||
           ('id' in c && c.id === 'actions'),
       )
     : allColumns.value,
@@ -128,6 +141,9 @@ const columns = computed(() =>
   >
     <template #assigned_ip-cell="{ row }">
       <span class="font-mono font-medium">{{ row.original.assigned_ip }}</span>
+    </template>
+    <template #region_id-cell="{ row }">
+      {{ t(`vpn.regions.${row.original.region_id}`, row.original.region_id) }}
     </template>
     <template #protocol-cell="{ row }">
       <UBadge color="neutral" variant="subtle" size="sm">
@@ -205,6 +221,10 @@ const columns = computed(() =>
           @click.stop="confirmDeletePeer(peer.id, peer.assigned_ip)"
         />
       </div>
+      <p class="flex items-center gap-1.5 mt-2 text-sm text-muted">
+        <UIcon name="i-lucide-map-pin" class="size-4 shrink-0" />
+        {{ t('adminPeers.region') }}: {{ t(`vpn.regions.${peer.region_id}`, peer.region_id) }}
+      </p>
       <div
         v-if="peer.device_name || peer.client_version"
         class="flex items-center gap-3 mt-1.5 text-sm text-[var(--ui-text-muted)]"

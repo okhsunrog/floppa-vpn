@@ -529,10 +529,10 @@ async function doRemovePeer() {
         </template>
         <div
           v-if="user.peers.length"
-          class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4"
+          class="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4"
         >
           <UCard v-for="peer in user.peers" :key="peer.id" class="bg-[var(--ui-bg-elevated)]">
-            <div class="flex justify-between items-center mb-2">
+            <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
               <span class="font-mono font-semibold">{{ peer.assigned_ip }}</span>
               <div class="flex items-center gap-2">
                 <UBadge color="neutral" variant="subtle" size="sm">
@@ -541,6 +541,10 @@ async function doRemovePeer() {
                 <StatusBadge :status="peer.sync_status" />
               </div>
             </div>
+            <p class="flex items-center gap-1.5 mb-2 text-sm text-muted">
+              <UIcon name="i-lucide-map-pin" class="size-4 shrink-0" />
+              {{ t('adminPeers.region') }}: {{ t(`vpn.regions.${peer.region_id}`, peer.region_id) }}
+            </p>
             <div
               v-if="peer.device_name"
               class="flex items-center gap-1.5 mb-2 text-sm text-[var(--ui-text-muted)]"

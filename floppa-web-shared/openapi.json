@@ -3867,6 +3867,7 @@
           "id",
           "public_key",
           "assigned_ip",
+          "region_id",
           "sync_status",
           "protocol",
           "download_bytes",
@@ -3909,6 +3910,9 @@
           "public_key": {
             "type": "string"
           },
+          "region_id": {
+            "type": "string"
+          },
           "sync_status": {
             "$ref": "#/components/schemas/PeerSyncStatus"
           },
@@ -3924,6 +3928,7 @@
           "id",
           "user_id",
           "assigned_ip",
+          "region_id",
           "sync_status",
           "protocol",
           "download_bytes",
@@ -3978,6 +3983,9 @@
           },
           "protocol": {
             "$ref": "#/components/schemas/Protocol"
+          },
+          "region_id": {
+            "type": "string"
           },
           "sync_status": {
             "$ref": "#/components/schemas/PeerSyncStatus"

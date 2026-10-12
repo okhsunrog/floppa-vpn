@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != $2\n        ORDER BY p.created_at DESC\n        ",
+  "query": "\n        SELECT p.id, p.public_key, p.assigned_ip, p.sync_status AS \"sync_status: PeerSyncStatus\",\n               p.protocol AS \"protocol: Protocol\", p.region_id, p.last_handshake,\n               ai.device_name, ai.device_id AS \"device_id?\"\n        FROM peers p\n        LEFT JOIN app_installations ai ON p.installation_id = ai.id\n        WHERE p.user_id = $1 AND p.sync_status != $2\n        ORDER BY p.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -60,6 +60,17 @@
       },
       {
         "ordinal": 5,
+        "name": "region_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "peers",
+            "name": "region_id"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
         "name": "last_handshake",
         "type_info": "Timestamptz",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "device_name",
         "type_info": "Text",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "device_id?",
         "type_info": "Text",
         "origin": {
@@ -104,10 +115,11 @@
       false,
       false,
       false,
+      false,
       true,
       true,
       false
     ]
   },
-  "hash": "dcf1bb3edfb52450254a787982f012bbb3c870226684219c869de9d2476319b1"
+  "hash": "60f34771adf59a05931643de0d16aff16069478637bc9b266de837e795258e24"
 }

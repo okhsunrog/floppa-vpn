@@ -129,3 +129,23 @@ test('admin navigation switches without duplication at the desktop breakpoint', 
   await expect(page.getByRole('button', { name: 'Open menu' })).not.toBeVisible()
   await expect(sections).toBeVisible()
 })
+
+for (const mobile of [false, true]) {
+  test(`peer regions appear in lists and user details (${mobile ? 'mobile' : 'desktop'})`, async ({
+    page,
+  }) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 })
+    await login(page)
+    await page.goto('/admin/peers')
+    await page
+      .getByRole('textbox', { name: 'Search by IP, user, device, region...' })
+      .fill('Frankfurt')
+    const peer = mobile
+      ? page.getByRole('button').filter({ hasText: 'Region: Frankfurt' }).first()
+      : page.getByRole('table').getByRole('button').filter({ hasText: 'Frankfurt' }).first()
+    await expect(peer).toBeVisible()
+    await peer.click()
+    await expect(page).toHaveURL(/\/admin\/users\/\d+/)
+    await expect(page.getByText('Region: Frankfurt', { exact: true }).first()).toBeVisible()
+  })
+}

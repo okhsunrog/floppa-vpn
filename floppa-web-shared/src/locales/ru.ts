@@ -197,7 +197,7 @@ export default {
   },
   adminPeers: {
     title: 'Все пиры',
-    searchPlaceholder: 'Поиск по IP, пользователю, устройству...',
+    searchPlaceholder: 'Поиск по IP, пользователю, устройству, региону...',
     ip: 'IP',
     protocol: 'Протокол',
     region: 'Регион',

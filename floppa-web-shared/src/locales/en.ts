@@ -197,7 +197,7 @@ export default {
   },
   adminPeers: {
     title: 'All Peers',
-    searchPlaceholder: 'Search by IP, user, device...',
+    searchPlaceholder: 'Search by IP, user, device, region...',
     ip: 'IP',
     protocol: 'Protocol',
     region: 'Region',

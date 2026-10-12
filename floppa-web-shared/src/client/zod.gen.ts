@@ -231,6 +231,7 @@ export const zPeerDetail = z.object({
     last_handshake: z.iso.datetime({ offset: true }).nullish(),
     protocol: zProtocol,
     public_key: z.string(),
+    region_id: z.string(),
     sync_status: zPeerSyncStatus,
     upload_bytes: z.int()
 });
@@ -246,6 +247,7 @@ export const zPeerSummary = z.object({
     last_handshake: z.iso.datetime({ offset: true }).nullish(),
     plan_name: z.string().nullish(),
     protocol: zProtocol,
+    region_id: z.string(),
     sync_status: zPeerSyncStatus,
     upload_bytes: z.int(),
     user_id: z.int(),
