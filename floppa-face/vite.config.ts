@@ -17,6 +17,7 @@ export default defineConfig({
       build: {
         command: 'vp build',
         cache: true,
+        env: ['FLOPPA_LOCAL_DEV'],
         dependsOn: ['typecheck', { task: 'typecheck', from: ['dependencies', 'devDependencies'] }],
         input: [
           { auto: true },
@@ -46,7 +47,6 @@ export default defineConfig({
         ? [
             {
               name: 'local-development',
-              apply: 'serve' as const,
               transformIndexHtml: (html: string) =>
                 html.replace(/<script src="https:\/\/telegram.org[^>]+><\/script>/, ''),
             },

@@ -84,7 +84,8 @@ just frontend-e2e
 ```
 
 Playwright starts a separate **real** stack (`e2e` instance, web 5177, API 3117,
-PostgreSQL 54339) and logs in normally. It exercises plan CRUD and permissions.
+PostgreSQL 54339) and logs in normally. It serves the built frontend with `vp preview`
+and exercises plan CRUD, subscription filters and permissions.
 It does not intercept API responses. Test entities use unique names and are
 removed after each run. The regular dev database is untouched. To remove the test
 container after the suite:

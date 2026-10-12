@@ -22,6 +22,7 @@ export default defineConfig({
       FLOPPA_DEV_WEB_PORT: '5177',
       FLOPPA_DEV_API_PORT: '3117',
       FLOPPA_DEV_DB_PORT: '54339',
+      FLOPPA_DEV_PREVIEW: '1',
     },
     reuseExistingServer: false,
     timeout: 600_000,

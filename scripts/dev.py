@@ -124,6 +124,9 @@ def wait_http(url, child):
 
 def check_port(port):
     with socket.socket() as sock:
+        # A previous test server may have closed connections still in TIME_WAIT.
+        # Match the server's bind behavior while continuing to reject live listeners.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
         except OSError as error:
@@ -151,7 +154,7 @@ def serve(api_only):
             web = subprocess.Popen(
                 [
                     "vp",
-                    "dev",
+                    "preview" if os.environ.get("FLOPPA_DEV_PREVIEW") == "1" else "dev",
                     "--host",
                     "127.0.0.1",
                     "--port",

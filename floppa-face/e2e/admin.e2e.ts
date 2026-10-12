@@ -88,3 +88,26 @@ test('real authentication enforces the admin boundary', async ({ page, request }
   await page.goto('/admin/plans')
   await expect(page).not.toHaveURL(/\/admin/)
 })
+
+for (const mobile of [false, true]) {
+  test(`subscription filters survive reload and reset keeps the overview section (${mobile ? 'mobile' : 'desktop'})`, async ({
+    page,
+  }) => {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 })
+    await login(page)
+    await page.goto('/admin/subscriptions?subscription=expired')
+    await expect(page.getByRole('heading', { name: 'Subscriptions', exact: true })).toBeVisible()
+    await expect(page.getByText('Expired', { exact: true }).first()).toBeVisible()
+    await page.reload()
+    await expect(page).toHaveURL(/subscription=expired/)
+    await expect(page.getByText('Expired', { exact: true }).first()).toBeVisible()
+    await page.goto('/admin?view=subscriptions&subscription=expired&q=test-user')
+    await page.getByRole('button', { name: 'Reset', exact: true }).click()
+    await expect(page).toHaveURL(/\/admin\?view=subscriptions$/)
+    await expect(page.getByRole('textbox', { name: 'Search users...' })).toHaveValue('')
+    await page.screenshot({
+      path: `test-results/subscriptions-${mobile ? 'mobile' : 'desktop'}.png`,
+      fullPage: true,
+    })
+  })
+}
