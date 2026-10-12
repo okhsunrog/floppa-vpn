@@ -240,6 +240,42 @@ mod tests {
         assert_eq!(probe(&path).await, ServiceAccess::Absent);
     }
 
+    #[tokio::test]
+    async fn packaged_directory_allows_missing_socket_detection_but_not_service_access() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let rule = include_str!("../../floppa/resources/tmpfiles.d/floppa-vpn.conf")
+            .lines()
+            .find(|line| line.starts_with("d /run/floppa-vpn "))
+            .unwrap();
+        let mode = u32::from_str_radix(rule.split_whitespace().nth(2).unwrap(), 8).unwrap();
+        assert_ne!(
+            mode & 0o001,
+            0,
+            "non-members must be able to traverse the directory"
+        );
+        assert_eq!(mode & 0o022, 0, "clients must not replace the socket");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("vpn.sock");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        assert_eq!(reach(&path).await, ServiceAccess::Absent);
+        assert_eq!(probe(&path).await, ServiceAccess::Absent);
+
+        let _listener = tokio::net::UnixListener::bind(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(matches!(
+                reach(&path).await,
+                ServiceAccess::Forbidden { .. }
+            ));
+            assert!(matches!(
+                probe(&path).await,
+                ServiceAccess::Forbidden { .. }
+            ));
+        }
+    }
+
     /// Something is listening but never answers. A client must not hang on it, and must not
     /// mistake it for a service it can drive.
     #[tokio::test]
