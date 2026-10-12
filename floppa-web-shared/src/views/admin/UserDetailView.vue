@@ -6,6 +6,8 @@ import { useQuery, useMutation } from '@pinia/colada'
 import {
   getUserQuery,
   getUserQueryKey,
+  listUsersQueryKey,
+  getStatsQueryKey,
   listPlansQuery,
   setSubscriptionMutation,
   deleteSubscriptionMutation,
@@ -113,7 +115,12 @@ const error = computed(() => userError.value || plansError.value)
 
 // Every change to this user refetches the detail (and any other cached getUser entry).
 const invalidate = useInvalidateQueries()
-const invalidateUser = () => invalidate(getUserQueryKey({ path: { id: userId.value } }))
+const invalidateUser = () =>
+  invalidate(
+    getUserQueryKey({ path: { id: userId.value } }),
+    listUsersQueryKey(),
+    getStatsQueryKey(),
+  )
 const setSubMut = useMutation({ ...setSubscriptionMutation(), onSettled: invalidateUser })
 const deleteSubMut = useMutation({ ...deleteSubscriptionMutation(), onSettled: invalidateUser })
 const deletePeerMut = useMutation({ ...deleteAdminPeerMutation(), onSettled: invalidateUser })
@@ -284,11 +291,31 @@ function openSetSubDialog() {
     subPlanId.value = activeSubscription.value.plan_id
     subPermanent.value = !activeSubscription.value.expires_at
   } else {
+    subPlanId.value =
+      plans.value?.find((plan) => plan.name === 'standard')?.id ?? plans.value?.[0]?.id
     subPermanent.value = false
   }
   subDays.value = 30
   subDialog.value = true
 }
+
+const recipientName = computed(
+  () =>
+    [user.value?.first_name, user.value?.last_name].filter(Boolean).join(' ') ||
+    user.value?.username ||
+    `ID ${userId.value}`,
+)
+watch(
+  [user, plans, () => route.query.action],
+  () => {
+    if (route.query.action !== 'subscription' || user.value?.id !== userId.value || !plans.value)
+      return
+    openSetSubDialog()
+    const { action: _action, ...query } = route.query
+    void router.replace({ query })
+  },
+  { immediate: true },
+)
 
 async function setSubscription() {
   if (!user.value || !subPlanId.value || !subValid.value) return
@@ -839,25 +866,36 @@ async function doRemovePeer() {
           ? t('adminUserDetail.changeSubscription')
           : t('adminUserDetail.createSubscription')
       "
+      :description="t('adminUsers.subscriptionRecipient', { name: recipientName, id: userId })"
     >
       <template #body>
         <div class="flex flex-col gap-4">
+          <p class="text-sm text-muted">
+            {{
+              t(
+                activeSubscription
+                  ? 'adminUsers.replacesSubscription'
+                  : 'adminUsers.startsImmediately',
+              )
+            }}
+          </p>
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUserDetail.plan') }}</label>
             <USelect
               v-model="subPlanId"
               :items="planItems"
+              :aria-label="t('adminUserDetail.plan')"
               :placeholder="t('adminUserDetail.selectPlan')"
             />
           </div>
           <div class="flex items-center gap-2">
-            <UCheckbox v-model="subPermanent" />
-            <label class="text-sm font-medium">{{ t('adminUserDetail.permanent') }}</label>
+            <UCheckbox v-model="subPermanent" :label="t('adminUserDetail.permanent')" />
           </div>
           <div v-if="!subPermanent" class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUserDetail.days') }}</label>
             <UInput
               type="number"
+              :aria-label="t('adminUserDetail.days')"
               :model-value="subDays ?? undefined"
               @update:model-value="(v: string | number) => (subDays = toIntOrNull(v))"
               :min="1"

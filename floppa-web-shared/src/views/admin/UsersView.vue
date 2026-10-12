@@ -226,9 +226,36 @@ const sortItems = computed(() =>
     })),
 )
 
-// Add User dialog
+// Grant subscriptions to existing users, independently of the list's active filters.
+const recipientDialog = ref(false)
+const recipientSearch = ref('')
+const recipients = computed(() => {
+  const query = recipientSearch.value.trim().toLocaleLowerCase()
+  return (allUsers.value ?? []).filter((user) =>
+    [displayName(user), user.username, user.id, user.telegram_id].some((value) =>
+      String(value ?? '')
+        .toLocaleLowerCase()
+        .includes(query),
+    ),
+  )
+})
+function openRecipientDialog() {
+  recipientSearch.value = ''
+  recipientDialog.value = true
+}
+function selectRecipient(user: UserSummary) {
+  recipientDialog.value = false
+  void router.push({ path: `/admin/users/${user.id}`, query: { action: 'subscription' } })
+}
+
+// Pre-register a user who has not signed in yet.
 const addUserDialog = ref(false)
-const addUserTelegramId = ref<number | null>(null)
+const addUserTelegramId = ref('')
+const telegramId = computed(() => {
+  const value = addUserTelegramId.value.trim()
+  const id = Number(value)
+  return /^\d+$/.test(value) && Number.isSafeInteger(id) && id > 0 ? id : null
+})
 const addUserName = ref('')
 const addUserPlanId = ref<number | undefined>(undefined)
 const addUserDays = ref<number | null>(30)
@@ -236,8 +263,7 @@ const addUserPermanent = ref(false)
 
 const addUserValid = computed(
   () =>
-    addUserTelegramId.value !== null &&
-    addUserTelegramId.value > 0 &&
+    telegramId.value !== null &&
     addUserPlanId.value !== undefined &&
     (addUserPermanent.value || (addUserDays.value !== null && addUserDays.value >= 1)),
 )
@@ -271,19 +297,21 @@ watch(addUserPlanId, (planId) => {
 })
 
 function openAddUserDialog() {
-  addUserTelegramId.value = null
+  addUserTelegramId.value = ''
   addUserName.value = ''
+  addUserPlanId.value =
+    plans.value?.find((plan) => plan.name === 'standard')?.id ?? plans.value?.[0]?.id
   addUserDays.value = 30
   addUserPermanent.value = false
   addUserDialog.value = true
 }
 
 async function addUser() {
-  if (!addUserValid.value || addUserTelegramId.value === null || !addUserPlanId.value) return
+  if (!addUserValid.value || telegramId.value === null || !addUserPlanId.value) return
   try {
     await addUserMut.mutateAsync({
       body: {
-        telegram_id: addUserTelegramId.value,
+        telegram_id: telegramId.value,
         first_name: addUserName.value || undefined,
         plan_id: addUserPlanId.value,
         days: addUserPermanent.value ? undefined : (addUserDays.value ?? undefined),
@@ -326,10 +354,10 @@ async function addUser() {
   >
     <template #header-actions>
       <UButton
-        :label="t('adminUsers.addUser')"
-        icon="i-lucide-user-plus"
+        :label="t(activeOnly ? 'adminUsers.grantSubscription' : 'adminUsers.addUser')"
+        :icon="activeOnly ? 'i-lucide-ticket-plus' : 'i-lucide-user-plus'"
         size="lg"
-        @click="openAddUserDialog"
+        @click="activeOnly ? openRecipientDialog() : openAddUserDialog()"
       />
     </template>
 
@@ -498,16 +526,60 @@ async function addUser() {
       </div>
     </template>
 
-    <!-- Add User Dialog -->
-    <UModal v-model:open="addUserDialog" :title="t('adminUsers.addUserTitle')">
+    <UModal
+      v-model:open="recipientDialog"
+      :title="t('adminUsers.grantSubscription')"
+      :description="t('adminUsers.chooseRecipient')"
+    >
+      <template #body>
+        <UInput
+          v-model="recipientSearch"
+          :placeholder="t('adminUsers.recipientSearch')"
+          :aria-label="t('adminUsers.recipientSearch')"
+          icon="i-lucide-search"
+          autofocus
+          size="lg"
+          class="w-full mb-4"
+        />
+        <div class="max-h-72 overflow-y-auto -mx-2">
+          <button
+            v-for="recipient in recipients.slice(0, 20)"
+            :key="recipient.id"
+            type="button"
+            class="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left hover:bg-elevated focus-visible:outline-2 focus-visible:outline-primary"
+            @click="selectRecipient(recipient)"
+          >
+            <span class="min-w-0 flex-1">
+              <span class="block truncate font-medium">{{ displayName(recipient) }}</span>
+              <span class="block truncate text-sm text-muted">
+                {{ recipient.username ? `@${recipient.username} · ` : '' }}ID {{ recipient.id }}
+                {{ recipient.telegram_id ? ` · Telegram ${recipient.telegram_id}` : '' }}
+              </span>
+            </span>
+            <UIcon name="i-lucide-chevron-right" class="size-4 shrink-0 text-muted" />
+          </button>
+          <p v-if="!recipients.length" class="p-3 text-muted">{{ t('adminUsers.noUsers') }}</p>
+        </div>
+        <p v-if="recipients.length > 20" class="mt-3 text-sm text-muted">
+          {{ t('adminUsers.refineSearch') }}
+        </p>
+      </template>
+    </UModal>
+
+    <UModal
+      v-model:open="addUserDialog"
+      :title="t('adminUsers.addUserTitle')"
+      :description="t('adminUsers.preRegisterDescription')"
+    >
       <template #body>
         <div class="flex flex-col gap-4">
           <div class="flex flex-col gap-1.5">
             <label class="text-sm font-medium">{{ t('adminUsers.telegramId') }} *</label>
             <UInput
-              type="number"
-              :model-value="addUserTelegramId ?? undefined"
-              @update:model-value="(v: string | number) => (addUserTelegramId = toIntOrNull(v))"
+              v-model="addUserTelegramId"
+              type="text"
+              inputmode="numeric"
+              :aria-label="t('adminUsers.telegramId')"
               placeholder="123456789"
             />
           </div>
