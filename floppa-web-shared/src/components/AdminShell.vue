@@ -1,0 +1,66 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { ADMIN_NAVIGATION, useAdminNavigation } from '../composables/adminNavigation'
+const route = useRoute()
+const router = useRouter()
+const { t } = useI18n()
+const items = useAdminNavigation()
+const active = computed(
+  () =>
+    items.value.find((item) => item.to !== '/admin' && route.path.startsWith(item.to))?.to ??
+    '/admin',
+)
+const options = computed(() => items.value.map((item) => ({ ...item, value: item.to })))
+function navigate(value: string) {
+  void router.push(value)
+}
+</script>
+
+<template>
+  <div
+    :class="
+      ADMIN_NAVIGATION === 'sidebar' ? 'lg:grid lg:grid-cols-[12rem_minmax(0,1fr)] lg:gap-8' : ''
+    "
+  >
+    <template v-if="ADMIN_NAVIGATION !== 'overview'">
+      <div class="lg:hidden mb-6">
+        <UFormField :label="t('adminWorkspace.sections')">
+          <USelect
+            :model-value="active"
+            :items="options"
+            :aria-label="t('adminWorkspace.sections')"
+            class="w-full"
+            size="xl"
+            @update:model-value="navigate"
+          />
+        </UFormField>
+      </div>
+      <nav
+        :aria-label="t('adminWorkspace.sections')"
+        :class="
+          ADMIN_NAVIGATION === 'sidebar'
+            ? 'hidden lg:flex lg:flex-col self-start sticky top-20 gap-1 border-r border-[var(--ui-border)] pr-4'
+            : 'hidden lg:flex flex-wrap gap-1 mb-7 border-b border-[var(--ui-border)] pb-2'
+        "
+      >
+        <RouterLink
+          v-for="item in items"
+          :key="item.to"
+          :to="item.to"
+          :aria-current="active === item.to ? 'page' : undefined"
+          class="flex items-center gap-2 rounded-lg px-3 py-3 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-[var(--ui-primary)]"
+          :class="
+            active === item.to
+              ? 'bg-[var(--ui-bg-elevated)] text-[var(--ui-text-highlighted)]'
+              : 'text-[var(--ui-text-muted)] hover:bg-[var(--ui-bg-elevated)] hover:text-[var(--ui-text)]'
+          "
+        >
+          <UIcon :name="item.icon" class="size-4 shrink-0" />{{ item.label }}
+        </RouterLink>
+      </nav>
+    </template>
+    <div class="min-w-0"><slot /></div>
+  </div>
+</template>

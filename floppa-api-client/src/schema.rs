@@ -2710,7 +2710,8 @@ pub struct UserDetail {
 ///    "has_vless",
 ///    "id",
 ///    "is_admin",
-///    "peer_count"
+///    "peer_count",
+///    "subscription_active"
 ///  ],
 ///  "properties": {
 ///    "active_plan": {
@@ -2728,6 +2729,20 @@ pub struct UserDetail {
 ///    "created_at": {
 ///      "type": "string",
 ///      "format": "date-time"
+///    },
+///    "current_plan": {
+///      "type": [
+///        "string",
+///        "null"
+///      ]
+///    },
+///    "current_plan_id": {
+///      "description": "Current subscription, including an expired one; absent for users without a subscription.",
+///      "type": [
+///        "integer",
+///        "null"
+///      ],
+///      "format": "int32"
 ///    },
 ///    "first_name": {
 ///      "type": [
@@ -2761,6 +2776,16 @@ pub struct UserDetail {
 ///        "null"
 ///      ]
 ///    },
+///    "subscription_active": {
+///      "type": "boolean"
+///    },
+///    "subscription_expires_at": {
+///      "type": [
+///        "string",
+///        "null"
+///      ],
+///      "format": "date-time"
+///    },
 ///    "telegram_id": {
 ///      "type": [
 ///        "integer",
@@ -2786,6 +2811,11 @@ pub struct UserSummary {
     pub client_version: ::std::option::Option<::std::string::String>,
     pub created_at: ::chrono::DateTime<::chrono::offset::Utc>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub current_plan: ::std::option::Option<::std::string::String>,
+    ///Current subscription, including an expired one; absent for users without a subscription.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub current_plan_id: ::std::option::Option<i32>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub first_name: ::std::option::Option<::std::string::String>,
     pub has_vless: bool,
     pub id: i64,
@@ -2795,6 +2825,9 @@ pub struct UserSummary {
     pub peer_count: i64,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub photo_url: ::std::option::Option<::std::string::String>,
+    pub subscription_active: bool,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub subscription_expires_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub telegram_id: ::std::option::Option<i64>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]

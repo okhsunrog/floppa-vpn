@@ -116,6 +116,11 @@ pub struct UserSummary {
     is_admin: bool,
     created_at: chrono::DateTime<Utc>,
     active_plan: Option<String>,
+    /// Current subscription, including an expired one; absent for users without a subscription.
+    current_plan_id: Option<i32>,
+    current_plan: Option<String>,
+    subscription_expires_at: Option<chrono::DateTime<Utc>>,
+    subscription_active: bool,
     peer_count: i64,
     client_version: Option<String>,
     has_vless: bool,
@@ -149,11 +154,16 @@ pub(super) async fn list_users(
             u.photo_url,
             u.is_admin,
             u.created_at,
-            (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) as active_plan,
+            CASE WHEN cs.is_active THEN cs.plan_display_name END as active_plan,
+            cs.plan_id as "current_plan_id?",
+            cs.plan_display_name as "current_plan?",
+            cs.expires_at as "subscription_expires_at?",
+            COALESCE(cs.is_active, false) as "subscription_active!",
             (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as "peer_count!",
             latest_ai.app_version as client_version,
             (u.vless_uuid IS NOT NULL) as "has_vless!"
         FROM users u
+        LEFT JOIN current_subscriptions cs ON cs.user_id = u.id
         LEFT JOIN LATERAL (
             SELECT ai.app_version
             FROM app_installations ai

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            (SELECT cs.plan_display_name FROM current_subscriptions cs WHERE cs.user_id = u.id AND cs.is_active) as active_plan,\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            latest_ai.app_version as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        LEFT JOIN LATERAL (\n            SELECT ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        ORDER BY u.created_at DESC\n        ",
+  "query": "\n        SELECT\n            u.id,\n            u.telegram_id,\n            u.username,\n            u.first_name,\n            u.last_name,\n            u.photo_url,\n            u.is_admin,\n            u.created_at,\n            CASE WHEN cs.is_active THEN cs.plan_display_name END as active_plan,\n            cs.plan_id as \"current_plan_id?\",\n            cs.plan_display_name as \"current_plan?\",\n            cs.expires_at as \"subscription_expires_at?\",\n            COALESCE(cs.is_active, false) as \"subscription_active!\",\n            (SELECT COUNT(*) FROM peers p WHERE p.user_id = u.id AND p.sync_status != 'removed') as \"peer_count!\",\n            latest_ai.app_version as client_version,\n            (u.vless_uuid IS NOT NULL) as \"has_vless!\"\n        FROM users u\n        LEFT JOIN current_subscriptions cs ON cs.user_id = u.id\n        LEFT JOIN LATERAL (\n            SELECT ai.app_version\n            FROM app_installations ai\n            WHERE ai.user_id = u.id\n            ORDER BY ai.last_seen_at DESC\n            LIMIT 1\n        ) latest_ai ON true\n        ORDER BY u.created_at DESC\n        ",
   "describe": {
     "columns": [
       {
@@ -99,12 +99,51 @@
       },
       {
         "ordinal": 9,
+        "name": "current_plan_id?",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "current_subscriptions",
+            "name": "plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "current_plan?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "current_subscriptions",
+            "name": "plan_display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "subscription_expires_at?",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "current_subscriptions",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "subscription_active!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
         "name": "peer_count!",
         "type_info": "Int8",
         "origin": "Expression"
       },
       {
-        "ordinal": 10,
+        "ordinal": 14,
         "name": "client_version",
         "type_info": "Text",
         "origin": {
@@ -115,7 +154,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 15,
         "name": "has_vless!",
         "type_info": "Bool",
         "origin": "Expression"
@@ -134,10 +173,14 @@
       false,
       false,
       null,
+      true,
+      true,
+      true,
+      null,
       null,
       true,
       null
     ]
   },
-  "hash": "55f40c31b00e721a9a4fa43917074cc33415d90e6c564663bf3b056c08807c4e"
+  "hash": "f99d24b6a5a9abcb4996b32f1b341756c424aa02e841bca5147be296eaa84f91"
 }

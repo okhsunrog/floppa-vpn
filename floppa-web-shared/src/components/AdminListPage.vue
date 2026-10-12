@@ -44,6 +44,7 @@ const emit = defineEmits<{
 defineSlots<{
   /** Rendered next to the search box. */
   'header-actions'?: () => unknown
+  filters?: () => unknown
   /** One row on a narrow screen. */
   card: (props: { row: T }) => unknown
   /** Dialogs and anything else that belongs to the page but not to the list. */
@@ -70,16 +71,20 @@ const showPagination = computed(() => props.total > props.pageSize)
         :class="headingTag === 'h1' ? 'text-2xl font-bold' : 'text-xl font-semibold'"
         >{{ title }}</component
       >
-      <div class="flex items-center gap-2 w-full sm:w-auto">
+      <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto min-w-0">
         <UInput
           v-model="search"
           :placeholder="searchPlaceholder"
+          :aria-label="searchPlaceholder"
           icon="i-lucide-search"
-          class="flex-1 sm:w-64"
+          class="min-w-0 flex-1 sm:w-64"
+          size="lg"
         />
         <slot name="header-actions" />
       </div>
     </div>
+
+    <div v-if="$slots.filters" class="mb-5"><slot name="filters" /></div>
 
     <div v-if="status === 'pending'" class="flex justify-center py-12">
       <div class="animate-spin i-lucide-loader-2 size-8 text-[var(--ui-primary)]" />
@@ -92,6 +97,7 @@ const showPagination = computed(() => props.total > props.pageSize)
           :data="rows"
           :columns="columns"
           class="[&_tbody_tr]:cursor-pointer"
+          :sorting-options="{ manualSorting: true }"
           @select="(_e: Event, row: TableRow<T>) => emit('select', row.original)"
         >
           <template v-for="name in cellSlots" :key="name" #[name]="cellProps">
@@ -113,7 +119,11 @@ const showPagination = computed(() => props.total > props.pageSize)
         <UCard
           v-for="row in rows"
           :key="rowKey(row)"
-          class="cursor-pointer active:scale-[0.98] transition-transform"
+          class="cursor-pointer focus-visible:outline-2 focus-visible:outline-[var(--ui-primary)]"
+          role="button"
+          tabindex="0"
+          @keydown.enter="emit('select', row)"
+          @keydown.space.prevent="emit('select', row)"
           @click="() => emit('select', row)"
         >
           <slot name="card" :row="row" />
@@ -121,7 +131,13 @@ const showPagination = computed(() => props.total > props.pageSize)
       </div>
 
       <div v-if="showPagination" class="flex justify-center mt-4">
-        <UPagination v-model:page="page" :total="total" :items-per-page="pageSize" />
+        <UPagination
+          v-model:page="page"
+          :total="total"
+          :items-per-page="pageSize"
+          :sibling-count="0"
+          :show-edges="false"
+        />
       </div>
     </template>
 

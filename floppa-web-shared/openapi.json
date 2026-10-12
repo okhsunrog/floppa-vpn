@@ -4516,6 +4516,7 @@
           "id",
           "is_admin",
           "created_at",
+          "subscription_active",
           "peer_count",
           "has_vless"
         ],
@@ -4535,6 +4536,20 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "current_plan": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_plan_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Current subscription, including an expired one; absent for users without a subscription."
           },
           "first_name": {
             "type": [
@@ -4567,6 +4582,16 @@
               "string",
               "null"
             ]
+          },
+          "subscription_active": {
+            "type": "boolean"
+          },
+          "subscription_expires_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
           },
           "telegram_id": {
             "type": [
