@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ADMIN_NAVIGATION, useAdminNavigation } from '../composables/adminNavigation'
 const route = useRoute()
-const router = useRouter()
 const { t } = useI18n()
 const items = useAdminNavigation()
 const active = computed(
@@ -12,10 +11,6 @@ const active = computed(
     items.value.find((item) => item.to !== '/admin' && route.path.startsWith(item.to))?.to ??
     '/admin',
 )
-const options = computed(() => items.value.map((item) => ({ ...item, value: item.to })))
-function navigate(value: string) {
-  void router.push(value)
-}
 </script>
 
 <template>
@@ -25,18 +20,6 @@ function navigate(value: string) {
     "
   >
     <template v-if="ADMIN_NAVIGATION !== 'overview'">
-      <div class="lg:hidden mb-6">
-        <UFormField :label="t('adminWorkspace.sections')">
-          <USelect
-            :model-value="active"
-            :items="options"
-            :aria-label="t('adminWorkspace.sections')"
-            class="w-full"
-            size="xl"
-            @update:model-value="navigate"
-          />
-        </UFormField>
-      </div>
       <nav
         :aria-label="t('adminWorkspace.sections')"
         :class="

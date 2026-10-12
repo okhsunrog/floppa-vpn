@@ -126,12 +126,6 @@ const adminSections = useAdminNavigation()
 const adminNavItems = computed(() =>
   auth.isAuthenticated && auth.isAdmin ? adminSections.value : [],
 )
-const mobileAdminItems = computed(() =>
-  ADMIN_NAVIGATION === 'overview'
-    ? adminNavItems.value
-    : [{ label: t('nav.admin'), icon: 'i-lucide-settings', to: '/admin' }],
-)
-
 // Desktop: admin links nested under a single "Admin" entry.
 const navItems = computed(() => {
   if (!auth.isAuthenticated) return []
@@ -221,7 +215,7 @@ const navItems = computed(() => {
           <nav class="flex flex-col gap-1">
             <template
               v-for="section in (adminNavItems.length
-                ? [{ items: baseNavItems }, { label: t('nav.admin'), items: mobileAdminItems }]
+                ? [{ items: baseNavItems }, { label: t('nav.admin'), items: adminNavItems }]
                 : [{ items: baseNavItems }]) as {
                 label?: string
                 items: typeof baseNavItems
