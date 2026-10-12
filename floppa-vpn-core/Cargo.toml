@@ -31,6 +31,8 @@ tokio-util = { version = "0.7.18", features = ["rt"] }
 # resolve to the same crate the app's `tauri-specta` uses — two speccas and the export breaks.
 specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 tokio-serde = { version = "0.9.0", features = ["json"] }
+floppa-net = { version = "0.1.0", path = "../floppa-net" }
+sha2.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Only for `geteuid`: whether the helper needs polkit or can just be run.

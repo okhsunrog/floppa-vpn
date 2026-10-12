@@ -24,6 +24,7 @@ static APP_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 /// Initialize the config directory from Tauri's path resolver.
 /// Must be called during app setup.
 pub fn init_config_dir(path: PathBuf) {
+    floppa_net::init(path.join("endpoint-cache.json"));
     let _ = APP_CONFIG_DIR.set(path);
 }
 

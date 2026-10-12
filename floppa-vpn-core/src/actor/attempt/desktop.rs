@@ -32,6 +32,7 @@ macro_rules! bail_if_cancelled {
 pub(super) async fn ladder(
     ctx: &AttemptCtx,
     stack: &mut RollbackStack,
+    endpoint: std::net::SocketAddr,
 ) -> Result<UpStatus, AttemptError> {
     let iface = ctx.iface.clone();
 
@@ -44,17 +45,6 @@ pub(super) async fn ladder(
         .map_err(|e| platform_error(StepKind::PrepareLink, e))?;
 
     let endpoint_str = ctx.config.endpoint_str();
-    let endpoint = tokio::net::lookup_host(&endpoint_str)
-        .await
-        .map_err(|e| AttemptError::ResolveFailed {
-            host: endpoint_str.clone(),
-            detail: e.to_string(),
-        })?
-        .next()
-        .ok_or_else(|| AttemptError::ResolveFailed {
-            host: endpoint_str.clone(),
-            detail: "resolved to no addresses".into(),
-        })?;
     let endpoint_ip = endpoint.ip();
 
     // 1. Link -----------------------------------------------------------------------------

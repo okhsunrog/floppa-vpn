@@ -120,10 +120,10 @@ pub async fn run_immediate_failure(
         .await;
 }
 
-async fn run_inner(ctx: AttemptCtx) -> AttemptResult {
+async fn run_inner(mut ctx: AttemptCtx) -> AttemptResult {
     let mut stack = RollbackStack::new(ctx.journal.clone());
 
-    match ladder(&ctx, &mut stack).await {
+    match ladder(&mut ctx, &mut stack).await {
         Ok(view) => {
             info!(protocol = %ctx.protocol, "attempt established");
             AttemptResult::Established { view, stack }
@@ -159,11 +159,121 @@ async fn run_inner(ctx: AttemptCtx) -> AttemptResult {
     }
 }
 
-#[cfg(not(target_os = "android"))]
-use desktop::ladder;
+async fn ladder(
+    ctx: &mut AttemptCtx,
+    stack: &mut RollbackStack,
+) -> Result<super::types::UpStatus, AttemptError> {
+    let endpoint = ctx.config.endpoint_str();
+    let (host, _port) = floppa_net::split_endpoint(&endpoint)
+        .map_err(|detail| AttemptError::InvalidConfig { detail })?;
+    let resolver = floppa_net::resolver();
+    let identity = ctx.config.endpoint_cache_identity();
+    let candidates = resolver.candidates_for(&host, &identity);
+    #[cfg(target_os = "android")]
+    if candidates.borrow().is_empty()
+        && let Some(known) = crate::autostart::known_endpoint(&endpoint)
+    {
+        // Preserve offline/lockdown starts across upgrades from the old Android cache.
+        resolver.observe(&identity, vec![known.ip()], 60);
+    }
+    #[cfg(target_os = "android")]
+    if host.parse::<std::net::IpAddr>().is_err() {
+        let service = ctx.host.clone();
+        let resolver = resolver.clone();
+        let host = host.clone();
+        let identity = identity.clone();
+        tokio::spawn(async move {
+            if let Ok(Ok(addresses)) =
+                tokio::time::timeout(std::time::Duration::from_secs(4), service.resolve(&host))
+                    .await
+            {
+                resolver.observe(&identity, addresses, 60);
+            }
+        });
+    }
+
+    connect_candidates(ctx, stack, resolver, candidates).await
+}
+
+pub(super) async fn connect_candidates(
+    ctx: &mut AttemptCtx,
+    stack: &mut RollbackStack,
+    resolver: Arc<floppa_net::Resolver>,
+    mut candidates: tokio::sync::watch::Receiver<Vec<std::net::IpAddr>>,
+) -> Result<super::types::UpStatus, AttemptError> {
+    let (host, port) = floppa_net::split_endpoint(&ctx.config.endpoint_str())
+        .map_err(|detail| AttemptError::InvalidConfig { detail })?;
+    let identity = ctx.config.endpoint_cache_identity();
+    #[cfg(target_os = "android")]
+    let mut generations = crate::autostart::ServiceGenerations::new();
+    let mut tried = Vec::new();
+    let mut refreshed_after_failure = false;
+    let mut last_error = AttemptError::ResolveFailed {
+        host: host.clone(),
+        detail: "no usable addresses from DNS or cache".into(),
+    };
+    loop {
+        let addresses = candidates.borrow_and_update().clone();
+        for ip in addresses {
+            if tried.contains(&ip) {
+                continue;
+            }
+            tried.push(ip);
+            if ctx.cancelled() {
+                return Err(AttemptError::Cancelled);
+            }
+            let result = platform_ladder(ctx, stack, std::net::SocketAddr::new(ip, port)).await;
+            match result {
+                Ok(view) => {
+                    if host.parse::<std::net::IpAddr>().is_err() {
+                        resolver.remember(&identity, ip).await;
+                    }
+                    return Ok(view);
+                }
+                Err(error) => {
+                    // Retrying a different address cannot repair permission, configuration or
+                    // platform errors. Only a connection verification failure merits a rebuild.
+                    if !matches!(error, AttemptError::VerifyFailed) {
+                        return Err(error);
+                    }
+                    resolver.failed(&identity, ip);
+                    let report = unwind(
+                        stack,
+                        None,
+                        ctx.platform.as_ref(),
+                        ctx.backend.as_ref(),
+                        ctx.policy.undo_retries,
+                    )
+                    .await;
+                    if !report.is_clean() {
+                        return Err(error);
+                    }
+                    #[cfg(target_os = "android")]
+                    {
+                        ctx.generation = generations.mint();
+                    }
+                    last_error = error;
+                }
+            }
+        }
+        tokio::select! {
+            _ = ctx.cancel.cancelled() => return Err(AttemptError::Cancelled),
+            changed = candidates.changed() => if changed.is_err() {
+                // Desktop DNS/DoH can have run while a failed TUN owned the routes. Once
+                // rollback restored the underlay, allow one fresh discovery before giving up.
+                if !tried.is_empty() && !refreshed_after_failure {
+                    refreshed_after_failure = true;
+                    candidates = resolver.refresh_for(&host, &identity);
+                } else { return Err(last_error); }
+            }
+        }
+    }
+}
 
 #[cfg(target_os = "android")]
-use android::ladder;
+use android::ladder as platform_ladder;
+#[cfg(not(target_os = "android"))]
+use desktop::ladder as platform_ladder;
 
 /// Verification, shared by both ladders.
 ///

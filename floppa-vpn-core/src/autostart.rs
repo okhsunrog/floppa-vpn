@@ -420,6 +420,14 @@ pub fn remember_endpoint(host: &str, addr: SocketAddr) {
 /// The last known address for `host`, for a start that cannot resolve one.
 pub fn known_endpoint(host: &str) -> Option<SocketAddr> {
     let dir = super::config::config_dir().ok()?;
+    // The legacy cache had no timestamps per entry. Bound migration/fallback by file age.
+    let modified = std::fs::metadata(endpoints_path(&dir))
+        .ok()?
+        .modified()
+        .ok()?;
+    if modified.elapsed().ok()? > std::time::Duration::from_secs(7 * 24 * 3600) {
+        return None;
+    }
     read_endpoints(&dir).get(host).copied()
 }
 

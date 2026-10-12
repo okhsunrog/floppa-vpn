@@ -8,6 +8,7 @@ description = "The client side of the Floppa VPN server API: generated types, on
 [dependencies]
 async-trait = "0.1.92"
 chrono = { workspace = true, features = ["serde"] }
+floppa-net = { version = "0.1.0", path = "../floppa-net" }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "http2", "query", "charset"] }
 rustls = { version = "0.23.43", default-features = false, features = ["std", "aws-lc-rs"] }
 serde = { workspace = true, features = ["derive"] }

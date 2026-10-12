@@ -1,0 +1,24 @@
+[package]
+name = "floppa-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dirs = "7.0.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "http2", "stream"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "aws-lc-rs"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tempfile = "3.27.0"
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+webpki-roots = "1.0.9"
+
+[target.'cfg(target_os = "android")'.dependencies]
+futures-util = "0.3.34"
+http = "1.5.0"
+
+[dev-dependencies]
+rcgen = "0.14.10"
+tokio-rustls = "0.26.6"

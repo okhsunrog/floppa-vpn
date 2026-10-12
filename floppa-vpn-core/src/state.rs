@@ -406,6 +406,23 @@ impl ProtocolConfig {
         }
     }
 
+    /// Scope successful addresses to the endpoint, protocol and server authentication key.
+    pub fn endpoint_cache_identity(&self) -> String {
+        use sha2::Digest;
+        let public_key = match self {
+            Self::WireGuard(wg) => wg.0.peer.public_key.to_string(),
+            Self::AmneziaWg(awg) => awg.wg.0.peer.public_key.to_string(),
+            Self::Vless(vless) => format!("{}:{}", vless.server_name, vless.reality_public_key),
+        };
+        let hash = sha2::Sha256::digest(public_key.as_bytes());
+        format!(
+            "vpn:{:?}:{}:{:x}",
+            self.protocol(),
+            self.endpoint_str(),
+            hash
+        )
+    }
+
     /// Local tunnel address with its prefix (e.g. "10.0.0.2/32").
     pub fn address(&self) -> String {
         match self {

@@ -134,15 +134,16 @@ impl GotatunTunnel {
     #[cfg(target_os = "android")]
     async fn resolve_endpoint(config: &TunnelConfig) -> Result<std::net::SocketAddr, BackendError> {
         let endpoint = &config.peer.endpoint;
-        tokio::net::lookup_host(endpoint.to_string())
-            .await
-            .map_err(|e| BackendError::Engine {
-                detail: format!("Failed to resolve endpoint '{endpoint}': {e}"),
-            })?
-            .next()
-            .ok_or_else(|| BackendError::Engine {
-                detail: format!("Endpoint '{endpoint}' resolved to no addresses"),
-            })
+        let (host, port) = floppa_net::split_endpoint(&endpoint.to_string())
+            .map_err(|detail| BackendError::Engine { detail })?;
+        let addresses =
+            floppa_net::resolver()
+                .resolve(&host)
+                .await
+                .map_err(|e| BackendError::Engine {
+                    detail: format!("Failed to resolve endpoint '{endpoint}': {e}"),
+                })?;
+        Ok(std::net::SocketAddr::new(addresses[0], port))
     }
 
     /// Create a new tunnel from a WireGuard or AmneziaWG config (desktop platforms).

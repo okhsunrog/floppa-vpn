@@ -37,17 +37,7 @@ use crate::schema::{
 /// about what it trusts — including a corporate middlebox, which for a VPN client is not a
 /// feature.
 fn tls_config() -> rustls::ClientConfig {
-    static CONFIG: std::sync::OnceLock<rustls::ClientConfig> = std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            let roots = rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            };
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth()
-        })
-        .clone()
+    floppa_net::tls_config()
 }
 
 /// How long any one call may take before it counts as no answer.
@@ -245,11 +235,13 @@ impl ApiClient {
     /// it and something else when a proxy did, and a body that does not parse must not be reported
     /// as unreachable — the server plainly answered.
     async fn send(&self, req: reqwest::RequestBuilder) -> Result<String, ApiFailure> {
-        let response = req
+        let request = req
             .bearer_auth(&self.token)
-            .send()
-            .await
+            .build()
             .map_err(|e| ApiFailure::Unreachable(e.to_string()))?;
+        let response = floppa_net::execute(request)
+            .await
+            .map_err(ApiFailure::Unreachable)?;
         read(response).await
     }
 
@@ -290,12 +282,14 @@ impl ApiClient {
             .build()
             .map_err(|e| ApiFailure::Unreachable(format!("could not build an HTTP client: {e}")))?;
         let url = format!("{}/auth/telegram/exchange-code", base.trim_end_matches('/'));
-        let response = client
+        let request = client
             .post(url)
             .json(&serde_json::json!({ "code": code }))
-            .send()
-            .await
+            .build()
             .map_err(|e| ApiFailure::Unreachable(e.to_string()))?;
+        let response = floppa_net::execute(request)
+            .await
+            .map_err(ApiFailure::Unreachable)?;
         parse(&read(response).await?)
     }
 

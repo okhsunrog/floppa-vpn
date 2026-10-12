@@ -48,6 +48,7 @@ struct FakeBackend {
     stops: AtomicUsize,
     /// Refuse every start, as a peer that was deleted server-side would look from here.
     refuse_starts: AtomicBool,
+    first_address_silent: AtomicBool,
     /// What the owner would say about how long the far side has been quiet. `None` until a test
     /// makes the tunnel go silent, which reads as "nothing to report" rather than "silent".
     silent_secs: std::sync::Mutex<Option<i64>>,
@@ -134,7 +135,13 @@ impl VpnBackend for FakeBackend {
                 start_error: None,
                 raw_stats: Some(RawStats::default()),
                 // A handshake straight away, so verification passes without waiting.
-                last_packet_secs: Some(0),
+                last_packet_secs: if self.first_address_silent.load(Ordering::SeqCst)
+                    && self.starts.load(Ordering::SeqCst) == 1
+                {
+                    None
+                } else {
+                    Some(0)
+                },
             }),
         }
     }
@@ -976,4 +983,48 @@ async fn a_process_that_died_with_changes_applied_undoes_them_before_anything_el
     // And the actor is usable afterwards rather than stuck in the recovery teardown.
     let epoch = h.connect().await;
     assert!(epoch > IntentEpoch(0));
+}
+
+#[tokio::test(start_paused = true)]
+async fn endpoint_failover_unwinds_before_starting_the_next_address() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.first_address_silent.store(true, Ordering::SeqCst);
+    let platform = Arc::new(FakePlatform::new());
+    let (tx, _rx) = mpsc::channel(64);
+    let mut ctx = super::attempt::AttemptCtx {
+        epoch: IntentEpoch(1),
+        index: 0,
+        protocol: Protocol::WireGuard,
+        config: ProtocolConfig::WireGuard(WgConfig::from_config_str(WG_CONFIG).unwrap()),
+        iface: Default::default(),
+        manage_dns: true,
+        params: TunnelParams::default(),
+        backend: backend.clone(),
+        platform: platform.clone(),
+        journal: None,
+        policy: policy(),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        tx,
+    };
+    let resolver = floppa_net::Resolver::new(None);
+    let candidates = watch::channel(vec![
+        "127.0.0.1".parse().unwrap(),
+        "127.0.0.2".parse().unwrap(),
+    ])
+    .1;
+    let mut stack = crate::rollback::RollbackStack::new(None);
+    super::attempt::connect_candidates(&mut ctx, &mut stack, resolver, candidates)
+        .await
+        .unwrap();
+    assert_eq!(backend.starts.load(Ordering::SeqCst), 2);
+    assert_eq!(backend.stops(), 1, "the first tunnel was rolled back");
+    assert_eq!(
+        platform.dns_restores.load(Ordering::SeqCst),
+        1,
+        "original DNS was restored before retrying"
+    );
+    assert_eq!(backend.running().unwrap().endpoint, "127.0.0.2:51820");
+    let report =
+        crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1).await;
+    assert!(report.is_clean());
 }

@@ -454,6 +454,7 @@ impl TunnelActor {
                 if self.link == link {
                     return Reconcile::No;
                 }
+                floppa_net::network_changed();
                 info!(?link, "the network under the tunnel changed");
                 self.link = link;
                 Reconcile::Yes

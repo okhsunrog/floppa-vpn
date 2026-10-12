@@ -11,6 +11,7 @@ members = [
     "floppa-vpn-core",
     "floppa-provision",
     "xtask",
+    "floppa-net",
 ]
 exclude = [
     "floppa-client/src-tauri",
