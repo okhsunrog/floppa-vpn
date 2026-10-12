@@ -2,7 +2,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 // Each comparison worktree selects its own navigation; all use the real admin pages.
-export const ADMIN_NAVIGATION: 'overview' | 'tabs' | 'sidebar' = 'overview'
+export const ADMIN_NAVIGATION: 'overview' | 'tabs' | 'sidebar' = 'sidebar'
 
 export function useAdminNavigation() {
   const { t } = useI18n()
