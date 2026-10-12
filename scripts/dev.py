@@ -215,8 +215,17 @@ def main():
             prepare()
 
 
+def shutdown(*_):
+    # Supervisors can signal both the process group and the wrapper. A second
+    # signal must not interrupt the finally block while it joins child processes.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    raise SystemExit(0)
+
+
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
     try:
         main()
     except KeyboardInterrupt:
