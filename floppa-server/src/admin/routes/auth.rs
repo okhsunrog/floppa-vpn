@@ -144,6 +144,39 @@ fn html_escape_attr(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+// Store only coarse, recognized browser/OS names, never the full User-Agent.
+// Native clients bind their installation name after login instead.
+fn browser_session_label(headers: &HeaderMap) -> Option<String> {
+    let ua = headers.get(axum::http::header::USER_AGENT)?.to_str().ok()?;
+    let browser = if ua.contains("Edg/") || ua.contains("EdgA/") || ua.contains("EdgiOS/") {
+        "Edge"
+    } else if ua.contains("OPR/") {
+        "Opera"
+    } else if ua.contains("Firefox/") || ua.contains("FxiOS/") {
+        "Firefox"
+    } else if ua.contains("Chrome/") || ua.contains("CriOS/") {
+        "Chrome"
+    } else if ua.contains("Safari/") {
+        "Safari"
+    } else {
+        return None;
+    };
+    let os = if ua.contains("Android") {
+        Some("Android")
+    } else if ua.contains("iPhone") || ua.contains("iPad") {
+        Some("iOS")
+    } else if ua.contains("Windows") {
+        Some("Windows")
+    } else if ua.contains("Macintosh") {
+        Some("macOS")
+    } else if ua.contains("Linux") {
+        Some("Linux")
+    } else {
+        None
+    };
+    Some(os.map_or_else(|| browser.to_owned(), |os| format!("{browser} · {os}")))
+}
+
 /// Open a session for an already-resolved user and sign the JWT that names it. Single point
 /// that issues tokens: every login path (Telegram widget, Mini App, deep link, credential)
 /// converges here, so every token is revocable through its session.
@@ -151,8 +184,22 @@ async fn build_auth_response(
     state: &AppState,
     user: AuthUserInfo,
     kind: SessionKind,
+    headers: Option<&HeaderMap>,
 ) -> Result<AuthResponse, ApiError> {
     let session_id = services::create_session(&state.pool, user.id, kind).await?;
+    if let Some(mut label) = headers.and_then(browser_session_label) {
+        if matches!(kind, SessionKind::MiniApp) {
+            label = match label.split_once(" · ") {
+                Some((_, os)) => format!("Telegram Mini App · {os}"),
+                None => "Telegram Mini App".to_owned(),
+            };
+        }
+        sqlx::query("UPDATE sessions SET label = $2 WHERE id = $1")
+            .bind(session_id)
+            .bind(label)
+            .execute(&state.pool)
+            .await?;
+    }
     let token = create_jwt(
         user.id,
         user.is_admin,
@@ -502,7 +549,8 @@ pub(super) async fn exchange_telegram_login_code(
         Some((_, auth_response)) => auth_response.clone(),
         None => {
             let auth_response =
-                build_auth_response(&state, pending.user.clone(), SessionKind::DeepLink).await?;
+                build_auth_response(&state, pending.user.clone(), SessionKind::DeepLink, None)
+                    .await?;
             pending.exchanged = Some((now, auth_response.clone()));
             auth_response
         }
@@ -525,11 +573,12 @@ pub(super) async fn exchange_telegram_login_code(
 )]
 pub(super) async fn telegram_login(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(auth_data): Json<TelegramAuthData>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     let user = authenticate_telegram_user(&state, auth_data).await?;
     Ok(Json(
-        build_auth_response(&state, user, SessionKind::TelegramWidget).await?,
+        build_auth_response(&state, user, SessionKind::TelegramWidget, Some(&headers)).await?,
     ))
 }
 
@@ -547,6 +596,7 @@ pub(super) async fn telegram_login(
 )]
 pub(super) async fn telegram_mini_app_auth(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(request): Json<MiniAppAuthRequest>,
 ) -> Result<Json<AuthResponse>, ApiError> {
     let bot_token = state
@@ -573,7 +623,7 @@ pub(super) async fn telegram_mini_app_auth(
     .await?;
 
     Ok(Json(
-        build_auth_response(&state, user, SessionKind::MiniApp).await?,
+        build_auth_response(&state, user, SessionKind::MiniApp, Some(&headers)).await?,
     ))
 }
 
@@ -632,7 +682,7 @@ pub(super) async fn register_account(
     let result = services::create_credential_user(&state.pool, &req.login, &req.password).await?;
     let user = AuthUserInfo::from_upsert(result, None);
     Ok(Json(
-        build_auth_response(&state, user, SessionKind::Credential).await?,
+        build_auth_response(&state, user, SessionKind::Credential, Some(&headers)).await?,
     ))
 }
 
@@ -673,7 +723,7 @@ pub(super) async fn login_account(
     let user_id = services::find_user_by_credential(&state.pool, &req.login, &req.password).await?;
     let user = fetch_auth_user_info(&state, user_id).await?;
     Ok(Json(
-        build_auth_response(&state, user, SessionKind::Credential).await?,
+        build_auth_response(&state, user, SessionKind::Credential, Some(&headers)).await?,
     ))
 }
 
@@ -717,5 +767,38 @@ mod tests {
         assert!(format!("link_{code}").len() <= 64);
         assert!(format!("link_merge:{code}").len() <= 64);
         assert!(code.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
+
+#[cfg(test)]
+mod browser_label_tests {
+    use super::*;
+
+    #[test]
+    fn recognized_browser_labels_are_coarse_and_native_clients_are_not_browsers() {
+        for (ua, expected) in [
+            (
+                "Mozilla/5.0 (X11; Linux x86_64) Firefox/143.0",
+                Some("Firefox · Linux"),
+            ),
+            (
+                "Mozilla/5.0 (Windows NT 10.0) Chrome/140 Safari/537 Edg/140",
+                Some("Edge · Windows"),
+            ),
+            (
+                "Mozilla/5.0 (Linux; Android 16) Chrome/140 Safari/537",
+                Some("Chrome · Android"),
+            ),
+            (
+                "Mozilla/5.0 (iPhone) FxiOS/140 Safari/605",
+                Some("Firefox · iOS"),
+            ),
+            ("floppa-client/0.6.6", None),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert(axum::http::header::USER_AGENT, ua.parse().unwrap());
+            assert_eq!(browser_session_label(&headers).as_deref(), expected);
+        }
+        assert_eq!(browser_session_label(&HeaderMap::new()), None);
     }
 }

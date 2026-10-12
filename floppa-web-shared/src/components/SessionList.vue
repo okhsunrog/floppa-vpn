@@ -37,7 +37,16 @@ const { t, locale } = useI18n()
         <div class="flex flex-col gap-0.5 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <span class="font-medium truncate">
-              {{ sessionTitle(session, t('sessions.unnamedDevice')) }}
+              {{
+                sessionTitle(
+                  session,
+                  session.kind === 'mini_app'
+                    ? t('sessions.kindMiniApp')
+                    : session.kind === 'telegram_widget'
+                      ? t('sessions.browserSession')
+                      : t('sessions.unnamedDevice'),
+                )
+              }}
             </span>
             <UBadge
               v-if="session.current"
