@@ -271,6 +271,25 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
             .unwrap(),
         request
     );
+    // Failed device preparation must not revoke the currently forwarding generation.
+    // The factory has no device left for this candidate.
+    let failed = TunnelManager::default();
+    let (device, _input, _output) = packets(Arc::new(AtomicUsize::new(0)));
+    assert!(
+        failed
+            .start_foldfin_packets(&config, endpoint, device, None)
+            .await
+            .is_err()
+    );
+    successor.probe().await.unwrap();
+    successor_input.send(request.clone()).await.unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(3), successor_server_output.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        request
+    );
     registry.revoke("installation-1/eu");
     timeout(Duration::from_secs(3), async {
         while successor.probe().await.is_ok() {

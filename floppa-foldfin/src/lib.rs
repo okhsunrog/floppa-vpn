@@ -53,14 +53,12 @@ struct Entry {
     device_id: String,
     grant: AccessGrant,
     revoke: watch::Sender<LeaseState>,
-    admission: Arc<tokio::sync::Mutex<Option<watch::Sender<LeaseState>>>>,
 }
 #[derive(Default)]
 struct RegistryState {
     entries: HashMap<TokenDigest, Entry>,
     // Keep the VPN slot across rotation/revoke until every old session has released it.
     device_slots: HashMap<String, Weak<Semaphore>>,
-    admissions: HashMap<String, Arc<tokio::sync::Mutex<Option<watch::Sender<LeaseState>>>>>,
 }
 #[derive(Default)]
 pub struct DeviceRegistry(RwLock<RegistryState>);
@@ -75,6 +73,8 @@ impl DeviceRegistry {
         if let Some(vpn) = &device.vpn {
             vpn.policy.validate().map_err(|e| e.to_string())?;
         }
+        let peer =
+            foldfin::admission::PeerId::new(device.device_id.clone()).map_err(|e| e.to_string())?;
         let mut state = self.0.write().unwrap();
         let slot = state
             .device_slots
@@ -84,11 +84,6 @@ impl DeviceRegistry {
         state
             .device_slots
             .insert(device.device_id.clone(), Arc::downgrade(&slot));
-        let admission = state
-            .admissions
-            .entry(device.device_id.clone())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
-            .clone();
         let entries = &mut state.entries;
         if entries
             .get(&device.token_digest)
@@ -110,6 +105,7 @@ impl DeviceRegistry {
             Entry {
                 device_id: device.device_id,
                 grant: AccessGrant {
+                    peer: Some(peer),
                     proxy: device.proxy,
                     allow_private: device.allow_private_proxy,
                     vpn: device.vpn,
@@ -118,7 +114,6 @@ impl DeviceRegistry {
                     session: None,
                 },
                 revoke,
-                admission,
             },
         );
         Ok(())
@@ -158,8 +153,6 @@ impl DeviceRegistry {
         let mut state = self.0.write().unwrap();
         state.entries.retain(|_, entry| entry.grant.valid());
         state.device_slots.retain(|_, slot| slot.strong_count() > 0);
-        let active: std::collections::HashSet<_> = state.device_slots.keys().cloned().collect();
-        state.admissions.retain(|key, _| active.contains(key));
     }
 
     /// The host supplies prepared TLS, listener, packet devices and shutdown.
@@ -201,34 +194,9 @@ impl Authorizer for DeviceRegistry {
                                 RequestedMode::Ip => entry.grant.vpn.is_some(),
                             }
                     })
-                    .map(|entry| (entry.grant.clone(), entry.admission.clone()))
+                    .map(|entry| entry.grant.clone())
             };
-            let Some((mut grant, admission)) = selected else {
-                return Ok(None);
-            };
-            if matches!(request.mode, RequestedMode::Ip) {
-                // An authenticated device may replace its own VPN session after roaming.
-                // Cancel the old session, then wait for its packet ownership to be released.
-                let mut admission = admission.lock().await;
-                if let Some(old) = admission.take() {
-                    old.send_replace(LeaseState::Revoked);
-                }
-                let permit = tokio::time::timeout(
-                    foldfin::DEADLINE,
-                    grant.vpn_slots.clone().acquire_owned(),
-                )
-                .await
-                .map_err(|_| foldfin::error::Error::Timeout("previous VPN session teardown"))?
-                .map_err(|_| foldfin::error::Error::Closed)?;
-                if !grant.valid() {
-                    return Ok(None);
-                }
-                let (owner, session) = AccessLease::new(None);
-                *admission = Some(owner);
-                grant.session = Some(session);
-                drop(permit); // The server takes this same slot before opening packet IO.
-            }
-            Ok(Some(grant))
+            Ok(selected)
         })
     }
 }
