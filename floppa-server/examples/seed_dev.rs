@@ -79,6 +79,37 @@ async fn main() -> Result<()> {
         };
         services::grant_subscription(&mut tx, user_id, plans[i as usize % plans.len()], expires)
             .await?;
+        // Deterministic purchase histories for the real analytics API. These are local
+        // fixtures, not synthetic responses in the frontend. Keep manual grants distinct.
+        let source = match i % 6 {
+            0 => "admin_grant",
+            1 => "trial",
+            2 => "taster",
+            _ => "purchase",
+        };
+        let at = Utc::now() - Duration::days(i64::from(i % 28));
+        let plan = if source == "purchase" {
+            plans[1 + (i as usize % 2)]
+        } else {
+            plans[i as usize % plans.len()]
+        };
+        let subscription: i64 = sqlx::query_scalar("UPDATE subscriptions SET source=$2, starts_at=$3, plan_id=$4 WHERE user_id=$1 AND is_current RETURNING id")
+            .bind(user_id).bind(source).bind(at).bind(plan).fetch_one(&mut *tx).await?;
+        if source == "purchase" {
+            if i % 2 == 0 {
+                let old_at = at - Duration::days(35);
+                let old_sub: i64 = sqlx::query_scalar("INSERT INTO subscriptions (user_id,plan_id,source,starts_at,expires_at,is_current) VALUES ($1,$2,'purchase',$3,$4,false) RETURNING id")
+                    .bind(user_id).bind(plan).bind(old_at).bind(at).fetch_one(&mut *tx).await?;
+                sqlx::query("INSERT INTO payments (user_id,plan_id,subscription_id,amount,invoice_payload,status,completed_at) VALUES ($1,$2,$3,150,'dev-first','completed',$4)")
+                    .bind(user_id).bind(plan).bind(old_sub).bind(old_at).execute(&mut *tx).await?;
+            }
+            sqlx::query("INSERT INTO payments (user_id,plan_id,subscription_id,amount,invoice_payload,status,completed_at) VALUES ($1,$2,$3,$4,'dev-paid','completed',$5)")
+                .bind(user_id).bind(plan).bind(subscription).bind(if i % 2 == 0 {150_i32} else {300_i32}).bind(at).execute(&mut *tx).await?;
+            if i % 5 == 0 {
+                sqlx::query("INSERT INTO payments (user_id,plan_id,subscription_id,amount,credit_amount,invoice_payload,status,completed_at) VALUES ($1,$2,$3,0,150,'dev-credit','completed',$4)")
+                    .bind(user_id).bind(plan).bind(subscription).bind(at + Duration::hours(1)).execute(&mut *tx).await?;
+            }
+        }
         let installation_id: i64 = sqlx::query_scalar("INSERT INTO app_installations (user_id, device_id, device_name, platform, app_version) VALUES ($1, $2, $3, $4, '0.6.4') RETURNING id")
             .bind(user_id).bind(format!("dev-device-{i}")).bind(if i % 2 == 0 { "Телефон" } else { "Ноутбук" }).bind(if i % 2 == 0 { "android" } else { "linux" }).fetch_one(&mut *tx).await?;
         let (private, public) = wg_keys::generate_keypair()?;

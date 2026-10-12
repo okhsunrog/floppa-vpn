@@ -6,6 +6,83 @@
     "version": "0.1.0"
   },
   "paths": {
+    "/analytics": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "get_analytics",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive UTC calendar date.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Inclusive UTC calendar date, no later than today.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Analytics"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
     "/auth/account/login": {
       "post": {
         "tags": [
@@ -3011,6 +3088,128 @@
           },
           "is_active": {
             "type": "boolean"
+          }
+        }
+      },
+      "Analytics": {
+        "type": "object",
+        "required": [
+          "events",
+          "access"
+        ],
+        "properties": {
+          "access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsAccess"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsEvent"
+            }
+          },
+          "usage": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AnalyticsUsage"
+            },
+            "description": "None means telemetry is unavailable (including an empty metrics store), not zero use."
+          }
+        }
+      },
+      "AnalyticsAccess": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Source of the currently active subscription; null means no active subscription."
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnalyticsEvent": {
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "plan",
+          "at",
+          "kind",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int32",
+            "description": "New Stars received; proration credit is excluded."
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "first, repeat, credit, admin_grant, trial, or taster."
+          },
+          "name": {
+            "type": "string"
+          },
+          "plan": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AnalyticsUsage": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "download",
+          "upload"
+        ],
+        "properties": {
+          "download": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "upload": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_id": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
