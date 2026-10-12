@@ -1481,7 +1481,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "webpki-roots",
 ]
 
 [[package]]
