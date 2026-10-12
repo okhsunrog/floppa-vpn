@@ -83,7 +83,9 @@ Read-only live discovery:
 cargo run -p floppa-net --example resolve -- floppa.okhsunrog.dev
 ```
 
-Compiler and unit-test success do not establish availability on a filtered ISP. Device checks
-still need real Android roaming/lockdown, desktop reconnect after network loss, and a complete
-Telegram browser login. DoH can itself be blocked; cached/bootstrap IPs cannot overcome blocking
-of every server address.
+On 2026-10-12, release APK 0.6.4 from this branch was installed on a Pixel 8 Pro over 0.6.3,
+preserving application data. The user confirmed that the app works and Telegram login succeeds.
+
+Compiler, unit-test and basic device success do not establish availability on a filtered ISP.
+Device checks still need real Android roaming/lockdown and desktop reconnect after network loss.
+DoH can itself be blocked; cached/bootstrap IPs cannot overcome blocking of every server address.
