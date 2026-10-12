@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, h } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useQuery, useMutation } from '@pinia/colada'
 import {
@@ -17,6 +17,7 @@ import { describeError, formatDate, isApiError, toIntOrNull } from '../../utils'
 import { useAdminList } from '../../composables/adminList'
 import { useInvalidateQueries } from '../../composables/invalidate'
 import AdminListPage from '../../components/AdminListPage.vue'
+import { selectAdminUsers, type SubscriptionFilter } from '../../composables/adminUsers'
 
 const props = withDefaults(defineProps<{ embedded?: boolean; activeOnly?: boolean }>(), {
   embedded: false,
@@ -24,10 +25,83 @@ const props = withDefaults(defineProps<{ embedded?: boolean; activeOnly?: boolea
 })
 
 const router = useRouter()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const route = useRoute()
 const toast = useToast()
 const { data: allUsers, status, error } = useQuery(listUsersQuery())
-const users = computed(() => allUsers.value?.filter((u) => !props.activeOnly || !!u.active_plan))
+function queryValue(key: string, fallback: string) {
+  return typeof route.query[key] === 'string' ? (route.query[key] as string) : fallback
+}
+function setQuery(key: string, value: string) {
+  if (queryValue(key, '') === value) return
+  void router.replace({ query: { ...route.query, [key]: value || undefined } })
+}
+const planFilter = computed({
+  get: () => queryValue('plan', 'all'),
+  set: (v: string) => setQuery('plan', v),
+})
+const subscriptionFilter = computed({
+  get: (): SubscriptionFilter => {
+    const value = queryValue('subscription', props.activeOnly ? 'active' : 'all')
+    return ['all', 'active', 'expired', 'none'].includes(value)
+      ? (value as SubscriptionFilter)
+      : 'all'
+  },
+  set: (v: SubscriptionFilter) => setQuery('subscription', v),
+})
+const sortKey = computed({
+  get: () => queryValue('sort', props.activeOnly ? 'subscription_expires_at' : 'created_at'),
+  set: (v: string) => setQuery('sort', v),
+})
+const descending = computed(() => queryValue('order', props.activeOnly ? 'asc' : 'desc') === 'desc')
+const expiring = computed(() => route.query.expires === 'week')
+const users = computed(() =>
+  selectAdminUsers(allUsers.value ?? [], {
+    plan: planFilter.value,
+    subscription: subscriptionFilter.value,
+    expiring: expiring.value,
+    sort: sortKey.value,
+    descending: descending.value,
+    now: Date.now(),
+    locale: locale.value,
+  }),
+)
+const filterPlanItems = computed(() => [
+  { label: t('adminWorkspace.allPlans'), value: 'all' },
+  ...(plans.value ?? []).map((p) => ({ label: p.display_name, value: String(p.id) })),
+])
+const statusItems = computed(() =>
+  ['all', 'active', 'expired', 'none'].map((value) => ({
+    value,
+    label: t(`adminWorkspace.${value}`),
+  })),
+)
+function changeSort(key: string) {
+  void router.replace({
+    query: {
+      ...route.query,
+      sort: key,
+      order: sortKey.value === key && !descending.value ? 'desc' : 'asc',
+    },
+  })
+}
+function clearFilters() {
+  const query = { ...route.query }
+  for (const key of ['q', 'plan', 'subscription', 'expires', 'sort', 'order']) delete query[key]
+  void router.replace({ query })
+}
+function subscriptionLabel(user: UserSummary) {
+  return t(
+    `adminWorkspace.${user.current_plan_id == null ? 'none' : user.subscription_active ? 'active' : 'expired'}`,
+  )
+}
+function expiryLabel(user: UserSummary) {
+  return user.current_plan_id == null
+    ? '—'
+    : user.subscription_expires_at
+      ? formatDate(user.subscription_expires_at)
+      : t('adminPlans.permanent')
+}
 const invalidate = useInvalidateQueries()
 const { data: plans } = useQuery(listPlansQuery())
 
@@ -40,8 +114,20 @@ const {
 } = useAdminList(
   users,
   (u) => [u.username, u.first_name, u.last_name, u.telegram_id],
-  props.embedded ? 10 : 100,
+  props.embedded ? 10 : 20,
 )
+
+search.value = queryValue('q', '')
+watch(search, (value) => setQuery('q', value))
+watch(
+  () => route.query.q,
+  () => {
+    search.value = queryValue('q', '')
+  },
+)
+watch([planFilter, subscriptionFilter, sortKey, descending, expiring], () => {
+  page.value = 1
+})
 
 function openUser(user: UserSummary) {
   void router.push(`/admin/users/${user.id}`)
@@ -83,7 +169,8 @@ const allColumns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'id', header: t('adminUsers.id') },
   { accessorKey: 'username', header: t('adminUsers.username') },
   { accessorKey: 'telegram_id', header: t('adminUsers.telegramId') },
-  { accessorKey: 'active_plan', header: t('adminUsers.plan') },
+  { accessorKey: 'current_plan', header: t('adminUsers.plan') },
+  { accessorKey: 'subscription_expires_at', header: t('adminWorkspace.expires') },
   { accessorKey: 'peer_count', header: t('adminUsers.peers') },
   { accessorKey: 'has_vless', header: 'VLESS' },
   { accessorKey: 'client_version', header: t('adminUsers.version') },
@@ -91,16 +178,51 @@ const allColumns = computed<TableColumn<UserSummary>[]>(() => [
   { accessorKey: 'created_at', header: t('adminUsers.created') },
 ])
 
-const columns = computed(() =>
+const visibleColumns = computed(() =>
   props.embedded
     ? allColumns.value.filter(
         (c) =>
           'accessorKey' in c &&
-          ['username', 'active_plan', 'peer_count', 'client_version'].includes(
-            String(c.accessorKey),
-          ),
+          [
+            'username',
+            'current_plan',
+            'subscription_expires_at',
+            'peer_count',
+            'client_version',
+          ].includes(String(c.accessorKey)),
       )
     : allColumns.value,
+)
+
+const columns = computed<TableColumn<UserSummary>[]>(() =>
+  visibleColumns.value.map((column) => {
+    if (!('accessorKey' in column)) return column
+    const key = String(column.accessorKey)
+    return {
+      ...column,
+      header: () =>
+        h(
+          'button',
+          {
+            type: 'button',
+            class:
+              'inline-flex items-center gap-2 py-2 text-left font-medium hover:text-[var(--ui-text)] focus-visible:outline-2',
+            'aria-label': `${t('adminWorkspace.sort')}: ${column.header}`,
+            'aria-pressed': sortKey.value === key,
+            onClick: () => changeSort(key),
+          },
+          `${column.header} ${sortKey.value === key ? (descending.value ? '↓' : '↑') : '↕'}`,
+        ),
+    }
+  }),
+)
+const sortItems = computed(() =>
+  allColumns.value
+    .filter((c) => 'accessorKey' in c)
+    .map((c) => ({
+      label: String(c.header),
+      value: String('accessorKey' in c ? c.accessorKey : ''),
+    })),
 )
 
 // Add User dialog
@@ -187,7 +309,7 @@ async function addUser() {
   <AdminListPage
     v-model:search="search"
     v-model:page="page"
-    :title="t(activeOnly ? 'adminDashboard.currentSubscriptions' : 'adminUsers.title')"
+    :title="t(activeOnly ? 'adminWorkspace.subscriptions' : 'adminUsers.title')"
     :heading-tag="embedded ? 'h2' : 'h1'"
     :status="status"
     :error="error"
@@ -209,8 +331,65 @@ async function addUser() {
       />
     </template>
 
+    <template #filters>
+      <div class="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center">
+        <UFormField :label="t('adminUsers.plan')" class="min-w-0 sm:w-48">
+          <USelect
+            v-model="planFilter"
+            :items="filterPlanItems"
+            :aria-label="t('adminUsers.plan')"
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField :label="t('adminWorkspace.status')" class="min-w-0 sm:w-44">
+          <USelect
+            v-model="subscriptionFilter"
+            :items="statusItems"
+            :aria-label="t('adminWorkspace.status')"
+            class="w-full"
+          />
+        </UFormField>
+        <UButton
+          v-if="
+            planFilter !== 'all' ||
+            expiring ||
+            search ||
+            subscriptionFilter !== (activeOnly ? 'active' : 'all')
+          "
+          :label="t('adminWorkspace.clear')"
+          icon="i-lucide-x"
+          variant="ghost"
+          color="neutral"
+          class="self-end"
+          @click="clearFilters"
+        />
+      </div>
+      <div class="flex flex-wrap justify-between gap-2 mt-3 text-sm text-[var(--ui-text-muted)]">
+        <span aria-live="polite">{{
+          t('adminWorkspace.found', { count: filteredUsers.length })
+        }}</span>
+        <span v-if="expiring">{{ t('adminWorkspace.expiring') }}</span>
+      </div>
+      <div class="flex items-end gap-2 mt-3 md:hidden">
+        <UFormField :label="t('adminWorkspace.sort')" class="min-w-0 flex-1"
+          ><USelect
+            v-model="sortKey"
+            :items="sortItems"
+            class="w-full"
+            :aria-label="t('adminWorkspace.sort')"
+        /></UFormField>
+        <UButton
+          :icon="descending ? 'i-lucide-arrow-down-wide-narrow' : 'i-lucide-arrow-up-narrow-wide'"
+          color="neutral"
+          variant="outline"
+          :aria-label="t('adminWorkspace.reverseSort')"
+          @click="setQuery('order', descending ? 'asc' : 'desc')"
+        />
+      </div>
+    </template>
+
     <template #username-cell="{ row }">
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 min-w-0">
         <UAvatar
           :src="avatars[String(row.original.id)] ?? undefined"
           :alt="displayName(row.original)"
@@ -227,15 +406,11 @@ async function addUser() {
         </div>
       </div>
     </template>
-    <template #active_plan-cell="{ row }">
-      <UBadge
-        v-if="row.original.active_plan"
-        color="success"
-        :label="row.original.active_plan"
-        variant="subtle"
-      />
-      <span v-else class="text-[var(--ui-text-muted)]">&mdash;</span>
+    <template #current_plan-cell="{ row }">
+      <span class="block font-medium">{{ row.original.current_plan ?? '—' }}</span>
+      <span class="text-xs text-[var(--ui-text-muted)]">{{ subscriptionLabel(row.original) }}</span>
     </template>
+    <template #subscription_expires_at-cell="{ row }">{{ expiryLabel(row.original) }}</template>
     <template #has_vless-cell="{ row }">
       <UIcon
         :name="row.original.has_vless ? 'i-lucide-check' : 'i-lucide-x'"
@@ -262,15 +437,15 @@ async function addUser() {
     </template>
 
     <template #card="{ row: user }">
-      <div class="flex justify-between items-start">
-        <div class="flex items-center gap-2">
+      <div class="flex justify-between items-start gap-3">
+        <div class="flex items-center gap-2 min-w-0">
           <UAvatar
             :src="avatars[String(user.id)] ?? undefined"
             :alt="displayName(user)"
             icon="i-lucide-user"
             size="2xs"
           />
-          <div>
+          <div class="min-w-0 break-words">
             <span class="font-medium">{{ displayName(user) }}</span>
             <span
               v-if="user.first_name && user.username"
@@ -282,7 +457,7 @@ async function addUser() {
             }}</span>
           </div>
         </div>
-        <div class="flex gap-1">
+        <div class="flex flex-col items-end gap-1 shrink-0">
           <UBadge
             v-if="user.is_admin"
             color="info"
@@ -300,7 +475,13 @@ async function addUser() {
           <span v-else class="text-xs text-[var(--ui-text-muted)]">&mdash;</span>
         </div>
       </div>
-      <div class="flex gap-4 mt-2 text-xs text-[var(--ui-text-muted)] items-center">
+      <p class="mt-3 text-sm text-[var(--ui-text-muted)]">
+        {{ subscriptionLabel(user)
+        }}<span v-if="user.current_plan_id != null"> · {{ expiryLabel(user) }}</span>
+      </p>
+      <div
+        class="flex flex-wrap gap-x-4 gap-y-2 mt-2 text-xs text-[var(--ui-text-muted)] items-center"
+      >
         <span>{{ t('adminUsers.peers') }}: {{ user.peer_count }}</span>
         <span v-if="!embedded" class="flex items-center gap-1">
           VLESS
@@ -340,7 +521,7 @@ async function addUser() {
               :placeholder="t('adminUserDetail.selectPlan')"
             />
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 min-w-0">
             <UCheckbox v-model="addUserPermanent" />
             <label class="text-sm font-medium">{{ t('adminUserDetail.permanent') }}</label>
           </div>

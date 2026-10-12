@@ -52,7 +52,7 @@ const cards = computed(() => [
   },
 ])
 function selectView(id: string) {
-  void router.push({ query: { ...route.query, view: id === 'users' ? undefined : id } })
+  void router.push({ query: { view: id === 'users' ? undefined : id } })
 }
 </script>
 
@@ -123,7 +123,7 @@ function selectView(id: string) {
           :label="
             t(
               view === 'subscriptions'
-                ? 'adminDashboard.subscriptionFilter'
+                ? 'adminWorkspace.subscriptions'
                 : 'adminDashboard.configFilter',
             )
           "

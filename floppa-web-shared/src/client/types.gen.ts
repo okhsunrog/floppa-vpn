@@ -473,6 +473,11 @@ export type UserSummary = {
     active_plan?: string | null;
     client_version?: string | null;
     created_at: string;
+    current_plan?: string | null;
+    /**
+     * Current subscription, including an expired one; absent for users without a subscription.
+     */
+    current_plan_id?: number | null;
     first_name?: string | null;
     has_vless: boolean;
     id: number;
@@ -480,6 +485,8 @@ export type UserSummary = {
     last_name?: string | null;
     peer_count: number;
     photo_url?: string | null;
+    subscription_active: boolean;
+    subscription_expires_at?: string | null;
     telegram_id?: number | null;
     username?: string | null;
 };

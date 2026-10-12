@@ -50,6 +50,13 @@ export function createAppRoutes(): RouteRecordRaw[] {
       meta: { requiresAuth: true, requiresAdmin: true },
     },
     {
+      path: '/admin/subscriptions',
+      name: 'admin-subscriptions',
+      component: () => import('../views/admin/UsersView.vue'),
+      props: { activeOnly: true },
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
+    {
       path: '/admin/peers',
       name: 'admin-peers',
       component: () => import('../views/admin/PeersView.vue'),
