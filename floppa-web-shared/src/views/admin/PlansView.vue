@@ -246,7 +246,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
 
 <template>
   <div class="max-w-5xl mx-auto">
-    <div class="flex justify-between items-center mb-6">
+    <div class="flex justify-between items-center flex-wrap gap-3 mb-6">
       <h1 class="text-2xl font-bold">{{ t('adminPlans.title') }}</h1>
       <UButton :label="t('adminPlans.addPlan')" icon="i-lucide-plus" @click="openNewPlanDialog" />
     </div>

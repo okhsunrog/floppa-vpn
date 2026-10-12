@@ -18,6 +18,35 @@ export const zAdminRegion = z.object({
     is_active: z.boolean()
 });
 
+export const zAnalyticsAccess = z.object({
+    name: z.string(),
+    plan: z.string().nullish(),
+    source: z.string().nullish(),
+    user_id: z.int()
+});
+
+export const zAnalyticsEvent = z.object({
+    amount: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
+    at: z.iso.datetime({ offset: true }),
+    id: z.string(),
+    kind: z.string(),
+    name: z.string(),
+    plan: z.string(),
+    user_id: z.int()
+});
+
+export const zAnalyticsUsage = z.object({
+    download: z.int(),
+    upload: z.int(),
+    user_id: z.int()
+});
+
+export const zAnalytics = z.object({
+    access: z.array(zAnalyticsAccess),
+    events: z.array(zAnalyticsEvent),
+    usage: z.array(zAnalyticsUsage).nullish()
+});
+
 /**
  * The JSON error body every failing endpoint returns.
  *
@@ -467,6 +496,13 @@ export const zVlessPeerSummary = z.object({
     user_id: z.int(),
     username: z.string().nullish()
 });
+
+export const zGetAnalyticsQuery = z.object({
+    from: z.iso.date(),
+    to: z.iso.date()
+});
+
+export const zGetAnalyticsResponse = zAnalytics;
 
 export const zLoginAccountBody = zAccountLoginRequest;
 

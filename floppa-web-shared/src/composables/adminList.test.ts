@@ -4,6 +4,19 @@ import { nextTick, ref } from 'vue'
 import { useAdminList, useClientPagination, useConfirmAction, useSearchFilter } from './adminList'
 
 describe('useClientPagination', () => {
+  test('clamps the page after a refreshed list shrinks', async () => {
+    const items = ref([1, 2, 3, 4, 5])
+    const { page, paginated } = useClientPagination(items, ref(''), 2)
+    page.value = 3
+    items.value = [1, 2, 3]
+    await nextTick()
+    expect(page.value).toBe(2)
+    expect(paginated.value).toEqual([3])
+    items.value = []
+    await nextTick()
+    expect(page.value).toBe(1)
+  })
+
   test('slices the current page and resets to page 1 when the reset source changes', async () => {
     const items = ref(Array.from({ length: 7 }, (_, i) => i + 1))
     const search = ref('')

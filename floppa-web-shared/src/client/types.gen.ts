@@ -20,6 +20,47 @@ export type AdminRegion = {
     is_active: boolean;
 };
 
+export type Analytics = {
+    access: Array<AnalyticsAccess>;
+    events: Array<AnalyticsEvent>;
+    /**
+     * None means telemetry is unavailable (including an empty metrics store), not zero use.
+     */
+    usage?: Array<AnalyticsUsage> | null;
+};
+
+export type AnalyticsAccess = {
+    name: string;
+    plan?: string | null;
+    /**
+     * Source of the currently active subscription; null means no active subscription.
+     */
+    source?: string | null;
+    user_id: number;
+};
+
+export type AnalyticsEvent = {
+    /**
+     * New Stars received; proration credit is excluded.
+     */
+    amount: number;
+    at: string;
+    id: string;
+    /**
+     * first, repeat, credit, admin_grant, trial, or taster.
+     */
+    kind: string;
+    name: string;
+    plan: string;
+    user_id: number;
+};
+
+export type AnalyticsUsage = {
+    download: number;
+    upload: number;
+    user_id: number;
+};
+
 /**
  * The JSON error body every failing endpoint returns.
  *
@@ -526,6 +567,36 @@ export type VlessPeerSummary = {
     user_id: number;
     username?: string | null;
 };
+
+export type GetAnalyticsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Inclusive UTC calendar date.
+         */
+        from: string;
+        /**
+         * Inclusive UTC calendar date, no later than today.
+         */
+        to: string;
+    };
+    url: '/analytics';
+};
+
+export type GetAnalyticsErrors = {
+    400: ApiError;
+    401: ApiError;
+    403: ApiError;
+};
+
+export type GetAnalyticsError = GetAnalyticsErrors[keyof GetAnalyticsErrors];
+
+export type GetAnalyticsResponses = {
+    200: Analytics;
+};
+
+export type GetAnalyticsResponse = GetAnalyticsResponses[keyof GetAnalyticsResponses];
 
 export type LoginAccountData = {
     body: AccountLoginRequest;

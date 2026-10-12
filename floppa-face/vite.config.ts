@@ -48,7 +48,12 @@ export default defineConfig({
             {
               name: 'local-development',
               transformIndexHtml: (html: string) =>
-                html.replace(/<script src="https:\/\/telegram.org[^>]+><\/script>/, ''),
+                html
+                  .replace(/<script src="https:\/\/telegram.org[^>]+><\/script>/, '')
+                  .replace(
+                    '<title>Floppa VPN</title>',
+                    `<title>Floppa VPN · ${(process.env.FLOPPA_DEV_LABEL || 'Local').replace(/[&<>"']/g, '')}</title>`,
+                  ),
             },
           ]
         : []),

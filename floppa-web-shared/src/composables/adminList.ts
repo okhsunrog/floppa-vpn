@@ -41,6 +41,12 @@ export function useClientPagination<T>(
   watch(resetOn, () => {
     page.value = 1
   })
+  watch(
+    () => filtered.value.length,
+    (length) => {
+      page.value = Math.min(page.value, Math.max(1, Math.ceil(length / pageSize)))
+    },
+  )
   return { page, paginated, pageSize }
 }
 

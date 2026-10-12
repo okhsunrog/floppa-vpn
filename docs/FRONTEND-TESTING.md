@@ -108,3 +108,32 @@ migrations and exits. Default server behaviour is unchanged.
 `FLOPPA_METRICS_LISTEN` overrides the metrics listener (default `127.0.0.1:9102`).
 The dev supervisor supplies explicit local config/secrets paths and loopback
 listeners, and terminates its child process groups on exit.
+
+## Persistent preview worktrees (Linux)
+
+Run `just dev-background` to keep the real frontend/API running as a user systemd
+service after closing a terminal or finishing a browser review. It runs the same
+`just dev` preparation, migrations and seed. No root access or boot autostart.
+Use distinct ports and instances in each worktree, for example:
+
+```sh
+FLOPPA_DEV_INSTANCE=tabs FLOPPA_DEV_LABEL=Tabs \
+FLOPPA_DEV_WEB_PORT=5182 FLOPPA_DEV_API_PORT=3102 FLOPPA_DEV_DB_PORT=54332 \
+just dev-background
+
+# In the other worktree:
+FLOPPA_DEV_INSTANCE=sidebar FLOPPA_DEV_LABEL=Sidebar \
+FLOPPA_DEV_WEB_PORT=5183 FLOPPA_DEV_API_PORT=3103 FLOPPA_DEV_DB_PORT=54333 \
+just dev-background
+```
+
+`FLOPPA_DEV_INSTANCE=tabs just dev-status` shows status and
+`FLOPPA_DEV_INSTANCE=tabs just dev-stop` stops its API/frontend. Run these in the
+same worktree used to start the preview. The printed service name also works
+with `journalctl --user -u NAME -f`. PostgreSQL data persists after stopping;
+`FLOPPA_DEV_INSTANCE=tabs just dev-down` stops its database container.
+
+Fresh databases contain first payments, repeat payments, credit-funded changes,
+manual grants and trials. Existing data is preserved. Analytics query the real
+local database. Traffic metrics are unavailable unless VictoriaMetrics is supplied;
+the UI shows unavailable data rather than fabricated activity.

@@ -3,11 +3,13 @@ import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { useColorMode } from '@vueuse/core'
+import { useColorMode, useMediaQuery } from '@vueuse/core'
 import { useQuery } from '@pinia/colada'
 import { getMeQuery } from '../client/@pinia/colada.gen'
 import { useAuthStore } from '../stores'
 import ColorModeButton from './ColorModeButton.vue'
+import AdminShell from './AdminShell.vue'
+import { ADMIN_NAVIGATION, useAdminNavigation } from '../composables/adminNavigation'
 import { isMiniApp as detectMiniApp } from '../utils/telegram'
 import { useLocaleSwitch } from '../composables/localeSwitch'
 
@@ -42,6 +44,10 @@ const showBackupNudge = computed(
 
 const isMiniApp = detectMiniApp()
 const mobileMenuOpen = ref(false)
+const desktopNavigation = useMediaQuery('(min-width: 1280px)')
+watch(desktopNavigation, (desktop) => {
+  if (desktop) mobileMenuOpen.value = false
+})
 
 // Android back button support for sidebar via history API.
 //
@@ -120,25 +126,10 @@ const baseNavItems = computed(() =>
     : [],
 )
 
-// Admin section links (empty for non-admins). Rendered nested on desktop, flat on mobile —
-// both views derive from this single list, so adding/removing a link can't desync them.
+const adminSections = useAdminNavigation()
 const adminNavItems = computed(() =>
-  auth.isAuthenticated && auth.isAdmin
-    ? [
-        { label: t('nav.overview'), icon: 'i-lucide-bar-chart-3', to: '/admin' },
-        { label: t('nav.peers'), icon: 'i-lucide-link', to: '/admin/peers' },
-        { label: t('nav.vless'), icon: 'i-lucide-globe', to: '/admin/vless' },
-        {
-          label: t('nav.installations'),
-          icon: 'i-lucide-monitor-smartphone',
-          to: '/admin/installations',
-        },
-        { label: t('nav.users'), icon: 'i-lucide-users', to: '/admin/users' },
-        { label: t('nav.plans'), icon: 'i-lucide-list', to: '/admin/plans' },
-      ]
-    : [],
+  auth.isAuthenticated && auth.isAdmin ? adminSections.value : [],
 )
-
 // Desktop: admin links nested under a single "Admin" entry.
 const navItems = computed(() => {
   if (!auth.isAuthenticated) return []
@@ -149,7 +140,11 @@ const navItems = computed(() => {
     children?: { label: string; icon: string; to: string }[]
   }[] = [...baseNavItems.value]
   if (adminNavItems.value.length) {
-    items.push({ label: t('nav.admin'), icon: 'i-lucide-settings', children: adminNavItems.value })
+    items.push(
+      ADMIN_NAVIGATION === 'overview'
+        ? { label: t('nav.admin'), icon: 'i-lucide-settings', children: adminNavItems.value }
+        : { label: t('nav.admin'), icon: 'i-lucide-settings', to: '/admin' },
+    )
   }
   return items
 })
@@ -166,23 +161,23 @@ const navItems = computed(() => {
         <div class="flex items-center gap-2 md:gap-4">
           <!-- Mobile hamburger -->
           <UButton
-            class="md:hidden"
+            class="xl:hidden"
             icon="i-lucide-menu"
             :aria-label="t('nav.openMenu')"
             color="neutral"
             variant="ghost"
-            size="sm"
+            size="lg"
             @click="() => void (mobileMenuOpen = true)"
           />
           <span class="font-bold text-lg text-[var(--ui-primary)]">Floppa VPN</span>
           <!-- Desktop nav -->
-          <nav class="hidden md:flex">
+          <nav class="hidden xl:flex">
             <UNavigationMenu :items="navItems" />
           </nav>
         </div>
-        <div class="hidden md:flex items-center gap-2">
+        <div class="hidden xl:flex items-center gap-2">
           <UAvatar :src="auth.avatarUrl" :alt="navLabel" icon="i-lucide-user" size="xs" />
-          <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
+          <span class="text-sm text-[var(--ui-text-muted)] max-w-36 truncate">{{ navLabel }}</span>
           <ColorModeButton />
           <UButton
             :label="toggleLabel"
@@ -282,7 +277,9 @@ const navItems = computed(() => {
             </UFieldGroup>
             <div class="flex items-center gap-2">
               <UAvatar :src="auth.avatarUrl" :alt="navLabel" icon="i-lucide-user" size="2xs" />
-              <span class="text-sm text-[var(--ui-text-muted)]">{{ navLabel }}</span>
+              <span class="text-sm text-[var(--ui-text-muted)] max-w-36 truncate">{{
+                navLabel
+              }}</span>
               <UButton
                 v-if="!isMiniApp"
                 icon="i-lucide-log-out"
@@ -319,7 +316,8 @@ const navItems = computed(() => {
         ]"
         class="mb-4"
       />
-      <slot />
+      <AdminShell v-if="route.meta.requiresAdmin"><slot /></AdminShell>
+      <slot v-else />
     </main>
   </UApp>
 </template>

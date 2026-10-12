@@ -195,6 +195,26 @@ impl VmClient {
         self.traffic_by_label("user_id", &download, &upload).await
     }
 
+    /// Explicit historical window, evaluated at its end rather than at query time.
+    pub async fn traffic_between(
+        &self,
+        metric: TrafficMetric,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Result<HashMap<i64, Traffic>> {
+        let seconds = (to - from).num_seconds().max(1);
+        let end = to.timestamp();
+        let download = format!(
+            "sum by (user_id) (increase({}[{seconds}s] @ {end}))",
+            metric.tx()
+        );
+        let upload = format!(
+            "sum by (user_id) (increase({}[{seconds}s] @ {end}))",
+            metric.rx()
+        );
+        self.traffic_by_label("user_id", &download, &upload).await
+    }
+
     /// System-wide total traffic (WG + VLESS) over the last `days`.
     pub async fn system_traffic(&self, days: u32) -> Result<Traffic> {
         let (wg, vless) = (TrafficMetric::Wg, TrafficMetric::Vless);

@@ -1,4 +1,5 @@
 mod admin;
+mod analytics;
 mod auth;
 pub(crate) mod avatar;
 mod plans;
@@ -236,6 +237,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     ))
     // Admin endpoints
     .routes(routes!(admin::get_stats))
+    .routes(routes!(analytics::get_analytics))
     .routes(routes!(admin::list_users, admin::create_user))
     .routes(routes!(admin::get_user))
     .routes(routes!(admin::set_user_credential))

@@ -117,6 +117,192 @@ pub struct AdminRegion {
     pub id: ::std::string::String,
     pub is_active: bool,
 }
+///`Analytics`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "access",
+///    "events"
+///  ],
+///  "properties": {
+///    "access": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/definitions/AnalyticsAccess"
+///      }
+///    },
+///    "events": {
+///      "type": "array",
+///      "items": {
+///        "$ref": "#/definitions/AnalyticsEvent"
+///      }
+///    },
+///    "usage": {
+///      "description": "None means telemetry is unavailable (including an empty metrics store), not zero use.",
+///      "type": [
+///        "array",
+///        "null"
+///      ],
+///      "items": {
+///        "$ref": "#/definitions/AnalyticsUsage"
+///      }
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct Analytics {
+    pub access: ::std::vec::Vec<AnalyticsAccess>,
+    pub events: ::std::vec::Vec<AnalyticsEvent>,
+    ///None means telemetry is unavailable (including an empty metrics store), not zero use.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub usage: ::std::option::Option<::std::vec::Vec<AnalyticsUsage>>,
+}
+///`AnalyticsAccess`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "name",
+///    "user_id"
+///  ],
+///  "properties": {
+///    "name": {
+///      "type": "string"
+///    },
+///    "plan": {
+///      "type": [
+///        "string",
+///        "null"
+///      ]
+///    },
+///    "source": {
+///      "description": "Source of the currently active subscription; null means no active subscription.",
+///      "type": [
+///        "string",
+///        "null"
+///      ]
+///    },
+///    "user_id": {
+///      "type": "integer",
+///      "format": "int64"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AnalyticsAccess {
+    pub name: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub plan: ::std::option::Option<::std::string::String>,
+    ///Source of the currently active subscription; null means no active subscription.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub source: ::std::option::Option<::std::string::String>,
+    pub user_id: i64,
+}
+///`AnalyticsEvent`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "amount",
+///    "at",
+///    "id",
+///    "kind",
+///    "name",
+///    "plan",
+///    "user_id"
+///  ],
+///  "properties": {
+///    "amount": {
+///      "description": "New Stars received; proration credit is excluded.",
+///      "type": "integer",
+///      "format": "int32"
+///    },
+///    "at": {
+///      "type": "string",
+///      "format": "date-time"
+///    },
+///    "id": {
+///      "type": "string"
+///    },
+///    "kind": {
+///      "description": "first, repeat, credit, admin_grant, trial, or taster.",
+///      "type": "string"
+///    },
+///    "name": {
+///      "type": "string"
+///    },
+///    "plan": {
+///      "type": "string"
+///    },
+///    "user_id": {
+///      "type": "integer",
+///      "format": "int64"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AnalyticsEvent {
+    ///New Stars received; proration credit is excluded.
+    pub amount: i32,
+    pub at: ::chrono::DateTime<::chrono::offset::Utc>,
+    pub id: ::std::string::String,
+    ///first, repeat, credit, admin_grant, trial, or taster.
+    pub kind: ::std::string::String,
+    pub name: ::std::string::String,
+    pub plan: ::std::string::String,
+    pub user_id: i64,
+}
+///`AnalyticsUsage`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "download",
+///    "upload",
+///    "user_id"
+///  ],
+///  "properties": {
+///    "download": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "upload": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "user_id": {
+///      "type": "integer",
+///      "format": "int64"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct AnalyticsUsage {
+    pub download: i64,
+    pub upload: i64,
+    pub user_id: i64,
+}
 /**The JSON error body every failing endpoint returns.
 
 4xx messages are meant for the client and may describe the problem. 5xx messages are fixed
