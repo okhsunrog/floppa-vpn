@@ -27,4 +27,3 @@ chrono.workspace = true
 # shoes-lite = { path = "../../rust/shoes-lite" }
 
 [features]
-foldfin-chrome = ["floppa-vpn-core/foldfin-chrome"]

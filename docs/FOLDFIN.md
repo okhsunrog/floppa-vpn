@@ -11,7 +11,7 @@ before connect, aborts on protection failure, and gives Foldfin an owned CLOEXEC
 duplicate of the nonblocking Kotlin descriptor. SNI and HTTP authority are kept
 separate from the resolved dial address. Foldfin is not implemented on Windows or
 macOS yet. Host Rustls and Android builds use certificate/name verification;
-Chrome's measured Linux profile is optional via `foldfin-chrome`.
+TLS uses rustls. The former Chrome/BoringSSL backend has been removed.
 
 ## Import and run
 
@@ -37,8 +37,7 @@ it contains a device bearer credential. The token below is a dummy example.
     "peer": "198.18.77.1",
     "routes": ["198.18.77.1/32", "198.19.77.0/24"],
     "dns": [],
-    "mtu": 1280,
-    "chrome_tls": false
+    "mtu": 1280
   }
 }
 ```

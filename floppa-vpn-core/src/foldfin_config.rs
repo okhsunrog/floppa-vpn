@@ -1,8 +1,5 @@
 //! Versioned Foldfin provisioning document. Validated at import and persistence boundaries.
-use foldfin::{
-    client::{ClientConfig, TlsProfile},
-    credential::Credential,
-};
+use foldfin::{client::ClientConfig, credential::Credential};
 use ipnet::IpNet;
 use ipnetwork::IpNetwork;
 use serde::{Deserialize, Serialize};
@@ -26,8 +23,6 @@ struct Document {
     routes: Vec<IpNet>,
     #[serde(default = "default_mtu")]
     mtu: u16,
-    #[serde(default)]
-    chrome_tls: bool,
     #[serde(default)]
     additional_ca_pem: Option<String>,
 }
@@ -122,11 +117,6 @@ impl FoldfinVpnConfig {
                 .additional_ca_pem
                 .as_ref()
                 .map(|s| s.as_bytes().to_vec()),
-            tls_profile: if self.0.chrome_tls {
-                TlsProfile::Chrome154Linux
-            } else {
-                TlsProfile::Rustls
-            },
         })
     }
 }

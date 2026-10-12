@@ -83,7 +83,7 @@ fn packet(source: [u8; 4], dest: [u8; 4]) -> Vec<u8> {
 fn document(endpoint: &str, ca: &str) -> String {
     serde_json::json!({"protocol":"foldfin", "config": {"version":1,"endpoint":endpoint,
         "server_name":"localhost","token":TOKEN,"address":"192.0.2.2/32","peer":"192.0.2.1",
-        "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280,"chrome_tls":cfg!(feature = "foldfin-chrome"),"additional_ca_pem":ca}})
+        "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280,"additional_ca_pem":ca}})
     .to_string()
 }
 
@@ -272,7 +272,7 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
 #[tokio::test]
 async fn backend_checks_each_connect_rotation_expiry_and_mode() {
     use foldfin::{
-        client::{Client, ClientConfig, TlsProfile},
+        client::{Client, ClientConfig},
         credential::Credential,
     };
     use tokio::{io::AsyncReadExt, net::TcpStream};
@@ -307,7 +307,6 @@ async fn backend_checks_each_connect_rotation_expiry_and_mode() {
         server_name: "localhost".into(),
         credential: Credential::bearer(token).unwrap(),
         additional_ca_pem: Some(ca.as_bytes().to_vec()),
-        tls_profile: TlsProfile::Rustls,
     };
     let client = Client::connect_over(dial(TOKEN), TcpStream::connect(address).await.unwrap())
         .await
