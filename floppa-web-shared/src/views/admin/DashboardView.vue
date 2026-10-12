@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AdminUserIdentity from '../../components/AdminUserIdentity.vue'
+import { useAdminAvatars } from '../../composables/adminAvatars'
 import { computed, ref, watch } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
@@ -248,6 +250,7 @@ function changeSort(key: 'date' | 'name' | 'amount') {
   descending.value = sort.value === key ? !descending.value : key !== 'name'
   sort.value = key
 }
+const avatars = useAdminAvatars(() => visible.value.map((row) => row.user))
 </script>
 
 <template>
@@ -576,7 +579,9 @@ function changeSort(key: 'date' | 'name' | 'amount') {
                   <RouterLink
                     :to="`/admin/users/${row.user}`"
                     class="font-medium underline underline-offset-4"
-                    >{{ row.name }}</RouterLink
+                    ><AdminUserIdentity
+                      :name="row.name"
+                      :avatar="avatars[String(row.user)]" /></RouterLink
                   ><span class="block text-xs text-muted mt-1">ID {{ row.user }}</span>
                 </td>
                 <td class="py-4 pr-3">{{ row.plan }}</td>
@@ -599,8 +604,8 @@ function changeSort(key: 'date' | 'name' | 'amount') {
               <RouterLink
                 :to="`/admin/users/${row.user}`"
                 class="font-medium underline underline-offset-4 break-words"
-                >{{ row.name }}</RouterLink
-              >
+                ><AdminUserIdentity :name="row.name" :avatar="avatars[String(row.user)]"
+              /></RouterLink>
               <p class="text-xs text-muted mt-1">ID {{ row.user }} · {{ row.plan }}</p>
               <div class="flex flex-wrap justify-between gap-2 mt-2 text-sm">
                 <span>{{ sourceLabel(row.kind) }}</span

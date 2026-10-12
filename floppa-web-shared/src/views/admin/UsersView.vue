@@ -10,7 +10,7 @@ import {
   listPlansQuery,
   createUserMutation,
 } from '../../client/@pinia/colada.gen'
-import { getAvatarsBatch } from '../../client/sdk.gen'
+import { useAdminAvatars } from '../../composables/adminAvatars'
 import type { UserSummary } from '../../client/types.gen'
 import type { TableColumn } from '@nuxt/ui'
 import { describeError, formatDate, isApiError, toIntOrNull } from '../../utils'
@@ -141,31 +141,12 @@ function displayName(u: UserSummary): string {
   return u.username || '-'
 }
 
-// Server-cached avatars as data URLs, keyed by user id (Telegram CDN is unreachable from clients).
-// Fetched in one batch when the user list loads.
-const avatars = ref<Record<string, string>>({})
-// Fetch avatars only for the currently visible page (and only those not already cached), so the
-// base64 payload stays bounded regardless of total user count.
+const avatars = useAdminAvatars(() => paginatedUsers.value.map((user) => user.id))
 watch(
   () => props.activeOnly,
   () => {
     page.value = 1
   },
-)
-
-watch(
-  paginatedUsers,
-  async (list) => {
-    const missing = list.filter((u) => !(String(u.id) in avatars.value)).map((u) => u.id)
-    if (!missing.length) return
-    try {
-      const { data } = await getAvatarsBatch({ body: { user_ids: missing } })
-      if (data) avatars.value = { ...avatars.value, ...data }
-    } catch {
-      // best-effort
-    }
-  },
-  { immediate: true },
 )
 
 const allColumns = computed<TableColumn<UserSummary>[]>(() => [

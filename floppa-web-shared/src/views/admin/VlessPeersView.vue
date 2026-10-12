@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AdminUserIdentity from '../../components/AdminUserIdentity.vue'
+import { useAdminAvatars } from '../../composables/adminAvatars'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -78,6 +80,7 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
   { accessorKey: 'has_wg', header: 'WG' },
   { id: 'actions', header: '' },
 ])
+const avatars = useAdminAvatars(() => paginatedPeers.value.map((row) => row.user_id))
 </script>
 
 <template>
@@ -97,7 +100,10 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
     @select="openUser"
   >
     <template #username-cell="{ row }">
-      {{ row.original.username || '-' }}
+      <AdminUserIdentity
+        :name="row.original.username || '-'"
+        :avatar="avatars[String(row.original.user_id)]"
+      />
     </template>
     <template #device_name-cell="{ row }">
       <span
@@ -149,7 +155,11 @@ const columns = computed<TableColumn<VlessPeerSummary>[]>(() => [
     <template #card="{ row: peer }">
       <div class="flex justify-between items-start">
         <div>
-          <span class="font-medium">{{ peer.username || '-' }}</span>
+          <span class="font-medium"
+            ><AdminUserIdentity
+              :name="peer.username || '-'"
+              :avatar="avatars[String(peer.user_id)]"
+          /></span>
           <span
             v-if="peer.device_name"
             class="flex items-center gap-1.5 text-sm text-[var(--ui-text-muted)] mt-0.5"

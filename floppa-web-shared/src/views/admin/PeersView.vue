@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AdminUserIdentity from '../../components/AdminUserIdentity.vue'
+import { useAdminAvatars } from '../../composables/adminAvatars'
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
@@ -120,6 +122,7 @@ const columns = computed(() =>
       )
     : allColumns.value,
 )
+const avatars = useAdminAvatars(() => paginatedPeers.value.map((row) => row.user_id))
 </script>
 
 <template>
@@ -151,7 +154,10 @@ const columns = computed(() =>
       </UBadge>
     </template>
     <template #username-cell="{ row }">
-      {{ row.original.username || '-' }}
+      <AdminUserIdentity
+        :name="row.original.username || '-'"
+        :avatar="avatars[String(row.original.user_id)]"
+      />
     </template>
     <template #device_name-cell="{ row }">
       <span
@@ -210,7 +216,11 @@ const columns = computed(() =>
       <div class="flex justify-between items-start">
         <div>
           <span class="font-mono font-medium">{{ peer.assigned_ip }}</span>
-          <span class="block text-sm">{{ peer.username || '-' }}</span>
+          <span class="block text-sm"
+            ><AdminUserIdentity
+              :name="peer.username || '-'"
+              :avatar="avatars[String(peer.user_id)]"
+          /></span>
         </div>
         <UButton
           icon="i-lucide-trash-2"
