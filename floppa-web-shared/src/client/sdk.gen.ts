@@ -3,6 +3,7 @@
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
 import type { CreateMyPeerData, CreateMyPeerErrors, CreateMyPeerResponses, CreatePlanData, CreatePlanErrors, CreatePlanResponses, CreateUserData, CreateUserErrors, CreateUserResponses, DeleteAdminPeerData, DeleteAdminPeerErrors, DeleteAdminPeerResponses, DeleteInstallationData, DeleteInstallationErrors, DeleteInstallationResponses, DeleteMyPeerData, DeleteMyPeerErrors, DeleteMyPeerResponses, DeleteMySessionData, DeleteMySessionErrors, DeleteMySessionResponses, DeletePlanData, DeletePlanErrors, DeletePlanResponses, DeleteSubscriptionData, DeleteSubscriptionErrors, DeleteSubscriptionResponses, DeleteUserSessionData, DeleteUserSessionErrors, DeleteUserSessionResponses, ExchangeTelegramLoginCodeData, ExchangeTelegramLoginCodeErrors, ExchangeTelegramLoginCodeResponses, GetAvatarsBatchData, GetAvatarsBatchErrors, GetAvatarsBatchResponses, GetMeData, GetMeErrors, GetMeResponses, GetMyAvatarData, GetMyAvatarErrors, GetMyAvatarResponses, GetMyPeerByDeviceData, GetMyPeerByDeviceErrors, GetMyPeerByDeviceResponses, GetMyPeerConfigData, GetMyPeerConfigErrors, GetMyPeerConfigResponses, GetMyPeersData, GetMyPeersErrors, GetMyPeersResponses, GetMyPrivateNetworksData, GetMyPrivateNetworksErrors, GetMyPrivateNetworksResponses, GetMyRegionsData, GetMyRegionsErrors, GetMyRegionsResponses, GetMySessionsData, GetMySessionsErrors, GetMySessionsResponses, GetMyVlessConfigData, GetMyVlessConfigErrors, GetMyVlessConfigResponses, GetPublicConfigData, GetPublicConfigResponses, GetStatsData, GetStatsErrors, GetStatsResponses, GetUserAvatarData, GetUserAvatarErrors, GetUserAvatarResponses, GetUserData, GetUserErrors, GetUserResponses, GetVersionData, GetVersionResponses, ListInstallationsData, ListInstallationsErrors, ListInstallationsResponses, ListPeersData, ListPeersErrors, ListPeersResponses, ListPlansData, ListPlansErrors, ListPlansResponses, ListPublicPlansData, ListPublicPlansResponses, ListRegionsData, ListRegionsErrors, ListRegionsResponses, ListUsersData, ListUsersErrors, ListUserSessionsData, ListUserSessionsErrors, ListUserSessionsResponses, ListUsersResponses, ListVlessPeersData, ListVlessPeersErrors, ListVlessPeersResponses, LoginAccountData, LoginAccountErrors, LoginAccountResponses, PollTelegramLinkData, PollTelegramLinkErrors, PollTelegramLinkResponses, RegenerateAdminVlessConfigData, RegenerateAdminVlessConfigErrors, RegenerateAdminVlessConfigResponses, RegenerateMyVlessConfigData, RegenerateMyVlessConfigErrors, RegenerateMyVlessConfigResponses, RegisterAccountData, RegisterAccountErrors, RegisterAccountResponses, RemovePeerData, RemovePeerErrors, RemovePeerResponses, RevokeAllMySessionsData, RevokeAllMySessionsErrors, RevokeAllMySessionsResponses, RevokeAllUserSessionsData, RevokeAllUserSessionsErrors, RevokeAllUserSessionsResponses, SendMyPeerConfigData, SendMyPeerConfigErrors, SendMyPeerConfigResponses, SetMyCredentialData, SetMyCredentialErrors, SetMyCredentialResponses, SetMyRegionData, SetMyRegionErrors, SetMyRegionResponses, SetSubscriptionData, SetSubscriptionErrors, SetSubscriptionResponses, SetUserCredentialData, SetUserCredentialErrors, SetUserCredentialResponses, StartTelegramDeepLinkLoginData, StartTelegramDeepLinkLoginErrors, StartTelegramDeepLinkLoginResponses, StartTelegramLinkData, StartTelegramLinkErrors, StartTelegramLinkResponses, TelegramDeepLinkCallbackData, TelegramDeepLinkCallbackErrors, TelegramDeepLinkCallbackResponses, TelegramLoginData, TelegramLoginErrors, TelegramLoginResponses, TelegramMiniAppAuthData, TelegramMiniAppAuthErrors, TelegramMiniAppAuthResponses, UpdatePlanData, UpdatePlanErrors, UpdatePlanResponses, UpsertMyInstallationData, UpsertMyInstallationErrors, UpsertMyInstallationResponses } from './types.gen';
+import { zCreateMyPeerResponse, zCreatePlanResponse, zCreateUserResponse2, zDeleteMySessionResponse, zDeletePlanResponse, zDeleteUserSessionResponse, zExchangeTelegramLoginCodeResponse, zGetAvatarsBatchResponse, zGetMeResponse, zGetMyPeerByDeviceResponse, zGetMyPeerConfigResponse, zGetMyPeersResponse, zGetMyPrivateNetworksResponse, zGetMyRegionsResponse, zGetMySessionsResponse, zGetMyVlessConfigResponse, zGetPublicConfigResponse, zGetStatsResponse, zGetUserResponse, zGetVersionResponse, zListInstallationsResponse, zListPeersResponse, zListPlansResponse, zListPublicPlansResponse, zListRegionsResponse, zListUserSessionsResponse, zListUsersResponse, zListVlessPeersResponse, zLoginAccountResponse, zPollTelegramLinkResponse, zRegenerateMyVlessConfigResponse, zRegisterAccountResponse, zRevokeAllMySessionsResponse, zRevokeAllUserSessionsResponse, zSetMyCredentialResponse, zSetMyRegionResponse, zSetUserCredentialResponse, zStartTelegramLinkResponse, zTelegramLoginResponse, zTelegramMiniAppAuthResponse, zUpdatePlanResponse, zUpsertMyInstallationResponse } from './zod.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -22,6 +23,7 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
  * Log in with a login + password.
  */
 export const loginAccount = <ThrowOnError extends boolean = false>(options: Options<LoginAccountData, ThrowOnError>): RequestResult<LoginAccountResponses, LoginAccountErrors, ThrowOnError> => (options.client ?? client).post<LoginAccountResponses, LoginAccountErrors, ThrowOnError>({
+    responseValidator: async (data) => await zLoginAccountResponse.parseAsync(data),
     url: '/auth/account/login',
     ...options,
     headers: {
@@ -35,6 +37,7 @@ export const loginAccount = <ThrowOnError extends boolean = false>(options: Opti
  * (duration comes from the 'taster' plan's `trial_minutes`).
  */
 export const registerAccount = <ThrowOnError extends boolean = false>(options: Options<RegisterAccountData, ThrowOnError>): RequestResult<RegisterAccountResponses, RegisterAccountErrors, ThrowOnError> => (options.client ?? client).post<RegisterAccountResponses, RegisterAccountErrors, ThrowOnError>({
+    responseValidator: async (data) => await zRegisterAccountResponse.parseAsync(data),
     url: '/auth/account/register',
     ...options,
     headers: {
@@ -47,6 +50,7 @@ export const registerAccount = <ThrowOnError extends boolean = false>(options: O
  * Authenticate via Telegram Login Widget
  */
 export const telegramLogin = <ThrowOnError extends boolean = false>(options: Options<TelegramLoginData, ThrowOnError>): RequestResult<TelegramLoginResponses, TelegramLoginErrors, ThrowOnError> => (options.client ?? client).post<TelegramLoginResponses, TelegramLoginErrors, ThrowOnError>({
+    responseValidator: async (data) => await zTelegramLoginResponse.parseAsync(data),
     url: '/auth/telegram',
     ...options,
     headers: {
@@ -66,6 +70,7 @@ export const telegramDeepLinkCallback = <ThrowOnError extends boolean = false>(o
  * Exchange one-time login code for JWT + user payload.
  */
 export const exchangeTelegramLoginCode = <ThrowOnError extends boolean = false>(options: Options<ExchangeTelegramLoginCodeData, ThrowOnError>): RequestResult<ExchangeTelegramLoginCodeResponses, ExchangeTelegramLoginCodeErrors, ThrowOnError> => (options.client ?? client).post<ExchangeTelegramLoginCodeResponses, ExchangeTelegramLoginCodeErrors, ThrowOnError>({
+    responseValidator: async (data) => await zExchangeTelegramLoginCodeResponse.parseAsync(data),
     url: '/auth/telegram/exchange-code',
     ...options,
     headers: {
@@ -78,6 +83,7 @@ export const exchangeTelegramLoginCode = <ThrowOnError extends boolean = false>(
  * Authenticate via Telegram Mini App initData
  */
 export const telegramMiniAppAuth = <ThrowOnError extends boolean = false>(options: Options<TelegramMiniAppAuthData, ThrowOnError>): RequestResult<TelegramMiniAppAuthResponses, TelegramMiniAppAuthErrors, ThrowOnError> => (options.client ?? client).post<TelegramMiniAppAuthResponses, TelegramMiniAppAuthErrors, ThrowOnError>({
+    responseValidator: async (data) => await zTelegramMiniAppAuthResponse.parseAsync(data),
     url: '/auth/telegram/mini-app',
     ...options,
     headers: {
@@ -96,6 +102,7 @@ export const startTelegramDeepLinkLogin = <ThrowOnError extends boolean = false>
  * keyed by user id (string). Avoids one request per row in the admin user list.
  */
 export const getAvatarsBatch = <ThrowOnError extends boolean = false>(options: Options<GetAvatarsBatchData, ThrowOnError>): RequestResult<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError> => (options.client ?? client).post<GetAvatarsBatchResponses, GetAvatarsBatchErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetAvatarsBatchResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/avatars',
     ...options,
@@ -108,12 +115,17 @@ export const getAvatarsBatch = <ThrowOnError extends boolean = false>(options: O
 /**
  * Get public configuration
  */
-export const getPublicConfig = <ThrowOnError extends boolean = false>(options?: Options<GetPublicConfigData, ThrowOnError>): RequestResult<GetPublicConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetPublicConfigResponses, unknown, ThrowOnError>({ url: '/config', ...options });
+export const getPublicConfig = <ThrowOnError extends boolean = false>(options?: Options<GetPublicConfigData, ThrowOnError>): RequestResult<GetPublicConfigResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetPublicConfigResponses, unknown, ThrowOnError>({
+    responseValidator: async (data) => await zGetPublicConfigResponse.parseAsync(data),
+    url: '/config',
+    ...options
+});
 
 /**
  * List all app installations (admin only)
  */
 export const listInstallations = <ThrowOnError extends boolean = false>(options?: Options<ListInstallationsData, ThrowOnError>): RequestResult<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError> => (options?.client ?? client).get<ListInstallationsResponses, ListInstallationsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListInstallationsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/installations',
     ...options
@@ -134,6 +146,7 @@ export const deleteInstallation = <ThrowOnError extends boolean = false>(options
  * Get current authenticated user info
  */
 export const getMe = <ThrowOnError extends boolean = false>(options?: Options<GetMeData, ThrowOnError>): RequestResult<GetMeResponses, GetMeErrors, ThrowOnError> => (options?.client ?? client).get<GetMeResponses, GetMeErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMeResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me',
     ...options
@@ -152,6 +165,7 @@ export const getMyAvatar = <ThrowOnError extends boolean = false>(options?: Opti
  * Set or change the login + password (backup access) for the current account.
  */
 export const setMyCredential = <ThrowOnError extends boolean = false>(options: Options<SetMyCredentialData, ThrowOnError>): RequestResult<SetMyCredentialResponses, SetMyCredentialErrors, ThrowOnError> => (options.client ?? client).post<SetMyCredentialResponses, SetMyCredentialErrors, ThrowOnError>({
+    responseValidator: async (data) => await zSetMyCredentialResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/credentials',
     ...options,
@@ -165,6 +179,7 @@ export const setMyCredential = <ThrowOnError extends boolean = false>(options: O
  * Upsert an app installation (device registration)
  */
 export const upsertMyInstallation = <ThrowOnError extends boolean = false>(options: Options<UpsertMyInstallationData, ThrowOnError>): RequestResult<UpsertMyInstallationResponses, UpsertMyInstallationErrors, ThrowOnError> => (options.client ?? client).post<UpsertMyInstallationResponses, UpsertMyInstallationErrors, ThrowOnError>({
+    responseValidator: async (data) => await zUpsertMyInstallationResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/installations',
     ...options,
@@ -178,6 +193,7 @@ export const upsertMyInstallation = <ThrowOnError extends boolean = false>(optio
  * Poll whether the Telegram link has completed (the app calls this after opening the deep link).
  */
 export const pollTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<PollTelegramLinkData, ThrowOnError>): RequestResult<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).get<PollTelegramLinkResponses, PollTelegramLinkErrors, ThrowOnError>({
+    responseValidator: async (data) => await zPollTelegramLinkResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/link/telegram/poll',
     ...options
@@ -187,6 +203,7 @@ export const pollTelegramLink = <ThrowOnError extends boolean = false>(options?:
  * Start linking a Telegram account to the current account (returns a bot deep link + code).
  */
 export const startTelegramLink = <ThrowOnError extends boolean = false>(options?: Options<StartTelegramLinkData, ThrowOnError>): RequestResult<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError> => (options?.client ?? client).post<StartTelegramLinkResponses, StartTelegramLinkErrors, ThrowOnError>({
+    responseValidator: async (data) => await zStartTelegramLinkResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/link/telegram/start',
     ...options
@@ -196,6 +213,7 @@ export const startTelegramLink = <ThrowOnError extends boolean = false>(options?
  * List current user's peers and VLESS info
  */
 export const getMyPeers = <ThrowOnError extends boolean = false>(options?: Options<GetMyPeersData, ThrowOnError>): RequestResult<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError> => (options?.client ?? client).get<GetMyPeersResponses, GetMyPeersErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyPeersResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers',
     ...options
@@ -205,6 +223,7 @@ export const getMyPeers = <ThrowOnError extends boolean = false>(options?: Optio
  * Create a new WireGuard peer for the current user
  */
 export const createMyPeer = <ThrowOnError extends boolean = false>(options?: Options<CreateMyPeerData, ThrowOnError>): RequestResult<CreateMyPeerResponses, CreateMyPeerErrors, ThrowOnError> => (options?.client ?? client).post<CreateMyPeerResponses, CreateMyPeerErrors, ThrowOnError>({
+    responseValidator: async (data) => await zCreateMyPeerResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers',
     ...options,
@@ -218,6 +237,7 @@ export const createMyPeer = <ThrowOnError extends boolean = false>(options?: Opt
  * Get a peer by device_id (+ protocol) for the current user
  */
 export const getMyPeerByDevice = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerByDeviceData, ThrowOnError>): RequestResult<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerByDeviceResponses, GetMyPeerByDeviceErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyPeerByDeviceResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers/by-device/{device_id}',
     ...options
@@ -236,6 +256,7 @@ export const deleteMyPeer = <ThrowOnError extends boolean = false>(options: Opti
  * Get WireGuard config for a peer owned by the current user
  */
 export const getMyPeerConfig = <ThrowOnError extends boolean = false>(options: Options<GetMyPeerConfigData, ThrowOnError>): RequestResult<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError> => (options.client ?? client).get<GetMyPeerConfigResponses, GetMyPeerConfigErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyPeerConfigResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/peers/{id}/config',
     ...options
@@ -256,6 +277,7 @@ export const sendMyPeerConfig = <ThrowOnError extends boolean = false>(options: 
  * grants on the server side, so this list only decides routes, never access.
  */
 export const getMyPrivateNetworks = <ThrowOnError extends boolean = false>(options?: Options<GetMyPrivateNetworksData, ThrowOnError>): RequestResult<GetMyPrivateNetworksResponses, GetMyPrivateNetworksErrors, ThrowOnError> => (options?.client ?? client).get<GetMyPrivateNetworksResponses, GetMyPrivateNetworksErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyPrivateNetworksResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/private-networks',
     ...options
@@ -265,6 +287,7 @@ export const getMyPrivateNetworks = <ThrowOnError extends boolean = false>(optio
  * Select the exit region for every WireGuard-family peer on this device.
  */
 export const setMyRegion = <ThrowOnError extends boolean = false>(options: Options<SetMyRegionData, ThrowOnError>): RequestResult<SetMyRegionResponses, SetMyRegionErrors, ThrowOnError> => (options.client ?? client).put<SetMyRegionResponses, SetMyRegionErrors, ThrowOnError>({
+    responseValidator: async (data) => await zSetMyRegionResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/region',
     ...options,
@@ -278,6 +301,7 @@ export const setMyRegion = <ThrowOnError extends boolean = false>(options: Optio
  * List exit regions for this device, including regions hidden by its current plan.
  */
 export const getMyRegions = <ThrowOnError extends boolean = false>(options?: Options<GetMyRegionsData, ThrowOnError>): RequestResult<GetMyRegionsResponses, GetMyRegionsErrors, ThrowOnError> => (options?.client ?? client).get<GetMyRegionsResponses, GetMyRegionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyRegionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/regions',
     ...options
@@ -287,6 +311,7 @@ export const getMyRegions = <ThrowOnError extends boolean = false>(options?: Opt
  * List the current user's live sessions (devices), most recently seen first.
  */
 export const getMySessions = <ThrowOnError extends boolean = false>(options?: Options<GetMySessionsData, ThrowOnError>): RequestResult<GetMySessionsResponses, GetMySessionsErrors, ThrowOnError> => (options?.client ?? client).get<GetMySessionsResponses, GetMySessionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMySessionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/sessions',
     ...options
@@ -297,6 +322,7 @@ export const getMySessions = <ThrowOnError extends boolean = false>(options?: Op
  * and tokens issued before sessions existed stop working too.
  */
 export const revokeAllMySessions = <ThrowOnError extends boolean = false>(options?: Options<RevokeAllMySessionsData, ThrowOnError>): RequestResult<RevokeAllMySessionsResponses, RevokeAllMySessionsErrors, ThrowOnError> => (options?.client ?? client).post<RevokeAllMySessionsResponses, RevokeAllMySessionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zRevokeAllMySessionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/sessions/revoke-all',
     ...options
@@ -307,6 +333,7 @@ export const revokeAllMySessions = <ThrowOnError extends boolean = false>(option
  * next request with that token gets a 401.
  */
 export const deleteMySession = <ThrowOnError extends boolean = false>(options: Options<DeleteMySessionData, ThrowOnError>): RequestResult<DeleteMySessionResponses, DeleteMySessionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMySessionResponses, DeleteMySessionErrors, ThrowOnError>({
+    responseValidator: async (data) => await zDeleteMySessionResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/sessions/{id}',
     ...options
@@ -316,6 +343,7 @@ export const deleteMySession = <ThrowOnError extends boolean = false>(options: O
  * Get VLESS config for the current user (generates UUID on first call)
  */
 export const getMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<GetMyVlessConfigData, ThrowOnError>): RequestResult<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).get<GetMyVlessConfigResponses, GetMyVlessConfigErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetMyVlessConfigResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/vless-config',
     ...options
@@ -325,6 +353,7 @@ export const getMyVlessConfig = <ThrowOnError extends boolean = false>(options?:
  * Regenerate VLESS UUID for the current user (old UUID stops working immediately)
  */
 export const regenerateMyVlessConfig = <ThrowOnError extends boolean = false>(options?: Options<RegenerateMyVlessConfigData, ThrowOnError>): RequestResult<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError> => (options?.client ?? client).post<RegenerateMyVlessConfigResponses, RegenerateMyVlessConfigErrors, ThrowOnError>({
+    responseValidator: async (data) => await zRegenerateMyVlessConfigResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/me/vless-config/regenerate',
     ...options
@@ -334,6 +363,7 @@ export const regenerateMyVlessConfig = <ThrowOnError extends boolean = false>(op
  * List all peers (admin only)
  */
 export const listPeers = <ThrowOnError extends boolean = false>(options?: Options<ListPeersData, ThrowOnError>): RequestResult<ListPeersResponses, ListPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListPeersResponses, ListPeersErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListPeersResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/peers',
     ...options
@@ -352,6 +382,7 @@ export const deleteAdminPeer = <ThrowOnError extends boolean = false>(options: O
  * List all plans (admin only)
  */
 export const listPlans = <ThrowOnError extends boolean = false>(options?: Options<ListPlansData, ThrowOnError>): RequestResult<ListPlansResponses, ListPlansErrors, ThrowOnError> => (options?.client ?? client).get<ListPlansResponses, ListPlansErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListPlansResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans',
     ...options
@@ -361,6 +392,7 @@ export const listPlans = <ThrowOnError extends boolean = false>(options?: Option
  * Create a new plan (admin only)
  */
 export const createPlan = <ThrowOnError extends boolean = false>(options: Options<CreatePlanData, ThrowOnError>): RequestResult<CreatePlanResponses, CreatePlanErrors, ThrowOnError> => (options.client ?? client).post<CreatePlanResponses, CreatePlanErrors, ThrowOnError>({
+    responseValidator: async (data) => await zCreatePlanResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans',
     ...options,
@@ -374,12 +406,17 @@ export const createPlan = <ThrowOnError extends boolean = false>(options: Option
  * List public plans (no auth) — only plans flagged `is_public`. Used by the landing page
  * and the in-app Info tab to display tariffs.
  */
-export const listPublicPlans = <ThrowOnError extends boolean = false>(options?: Options<ListPublicPlansData, ThrowOnError>): RequestResult<ListPublicPlansResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListPublicPlansResponses, unknown, ThrowOnError>({ url: '/plans/public', ...options });
+export const listPublicPlans = <ThrowOnError extends boolean = false>(options?: Options<ListPublicPlansData, ThrowOnError>): RequestResult<ListPublicPlansResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListPublicPlansResponses, unknown, ThrowOnError>({
+    responseValidator: async (data) => await zListPublicPlansResponse.parseAsync(data),
+    url: '/plans/public',
+    ...options
+});
 
 /**
  * Delete a plan (admin only). Fails if plan has subscriptions.
  */
 export const deletePlan = <ThrowOnError extends boolean = false>(options: Options<DeletePlanData, ThrowOnError>): RequestResult<DeletePlanResponses, DeletePlanErrors, ThrowOnError> => (options.client ?? client).delete<DeletePlanResponses, DeletePlanErrors, ThrowOnError>({
+    responseValidator: async (data) => await zDeletePlanResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans/{id}',
     ...options
@@ -389,6 +426,7 @@ export const deletePlan = <ThrowOnError extends boolean = false>(options: Option
  * Update a plan (admin only)
  */
 export const updatePlan = <ThrowOnError extends boolean = false>(options: Options<UpdatePlanData, ThrowOnError>): RequestResult<UpdatePlanResponses, UpdatePlanErrors, ThrowOnError> => (options.client ?? client).patch<UpdatePlanResponses, UpdatePlanErrors, ThrowOnError>({
+    responseValidator: async (data) => await zUpdatePlanResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/plans/{id}',
     ...options,
@@ -399,6 +437,7 @@ export const updatePlan = <ThrowOnError extends boolean = false>(options: Option
 });
 
 export const listRegions = <ThrowOnError extends boolean = false>(options?: Options<ListRegionsData, ThrowOnError>): RequestResult<ListRegionsResponses, ListRegionsErrors, ThrowOnError> => (options?.client ?? client).get<ListRegionsResponses, ListRegionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListRegionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/regions',
     ...options
@@ -408,6 +447,7 @@ export const listRegions = <ThrowOnError extends boolean = false>(options?: Opti
  * Get system statistics (admin only)
  */
 export const getStats = <ThrowOnError extends boolean = false>(options?: Options<GetStatsData, ThrowOnError>): RequestResult<GetStatsResponses, GetStatsErrors, ThrowOnError> => (options?.client ?? client).get<GetStatsResponses, GetStatsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetStatsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/stats',
     ...options
@@ -417,6 +457,7 @@ export const getStats = <ThrowOnError extends boolean = false>(options?: Options
  * List all users (admin only)
  */
 export const listUsers = <ThrowOnError extends boolean = false>(options?: Options<ListUsersData, ThrowOnError>): RequestResult<ListUsersResponses, ListUsersErrors, ThrowOnError> => (options?.client ?? client).get<ListUsersResponses, ListUsersErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListUsersResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users',
     ...options
@@ -427,6 +468,7 @@ export const listUsers = <ThrowOnError extends boolean = false>(options?: Option
  * When the user later authenticates via Telegram, their account and subscription will be waiting.
  */
 export const createUser = <ThrowOnError extends boolean = false>(options: Options<CreateUserData, ThrowOnError>): RequestResult<CreateUserResponses, CreateUserErrors, ThrowOnError> => (options.client ?? client).post<CreateUserResponses, CreateUserErrors, ThrowOnError>({
+    responseValidator: async (data) => await zCreateUserResponse2.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users',
     ...options,
@@ -440,6 +482,7 @@ export const createUser = <ThrowOnError extends boolean = false>(options: Option
  * Get user details (admin only)
  */
 export const getUser = <ThrowOnError extends boolean = false>(options: Options<GetUserData, ThrowOnError>): RequestResult<GetUserResponses, GetUserErrors, ThrowOnError> => (options.client ?? client).get<GetUserResponses, GetUserErrors, ThrowOnError>({
+    responseValidator: async (data) => await zGetUserResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}',
     ...options
@@ -458,6 +501,7 @@ export const getUserAvatar = <ThrowOnError extends boolean = false>(options: Opt
  * Set (or reset) a login + password for a user — admin-issued recovery access.
  */
 export const setUserCredential = <ThrowOnError extends boolean = false>(options: Options<SetUserCredentialData, ThrowOnError>): RequestResult<SetUserCredentialResponses, SetUserCredentialErrors, ThrowOnError> => (options.client ?? client).post<SetUserCredentialResponses, SetUserCredentialErrors, ThrowOnError>({
+    responseValidator: async (data) => await zSetUserCredentialResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/credential',
     ...options,
@@ -481,6 +525,7 @@ export const removePeer = <ThrowOnError extends boolean = false>(options: Option
  * about the user's tokens, not the admin's.
  */
 export const listUserSessions = <ThrowOnError extends boolean = false>(options: Options<ListUserSessionsData, ThrowOnError>): RequestResult<ListUserSessionsResponses, ListUserSessionsErrors, ThrowOnError> => (options.client ?? client).get<ListUserSessionsResponses, ListUserSessionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListUserSessionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/sessions',
     ...options
@@ -491,6 +536,7 @@ export const listUserSessions = <ThrowOnError extends boolean = false>(options: 
  * sessions existed stop working too.
  */
 export const revokeAllUserSessions = <ThrowOnError extends boolean = false>(options: Options<RevokeAllUserSessionsData, ThrowOnError>): RequestResult<RevokeAllUserSessionsResponses, RevokeAllUserSessionsErrors, ThrowOnError> => (options.client ?? client).post<RevokeAllUserSessionsResponses, RevokeAllUserSessionsErrors, ThrowOnError>({
+    responseValidator: async (data) => await zRevokeAllUserSessionsResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/sessions/revoke-all',
     ...options
@@ -500,6 +546,7 @@ export const revokeAllUserSessions = <ThrowOnError extends boolean = false>(opti
  * Revoke one of a user's sessions (admin only).
  */
 export const deleteUserSession = <ThrowOnError extends boolean = false>(options: Options<DeleteUserSessionData, ThrowOnError>): RequestResult<DeleteUserSessionResponses, DeleteUserSessionErrors, ThrowOnError> => (options.client ?? client).delete<DeleteUserSessionResponses, DeleteUserSessionErrors, ThrowOnError>({
+    responseValidator: async (data) => await zDeleteUserSessionResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/users/{id}/sessions/{sid}',
     ...options
@@ -537,12 +584,17 @@ export const regenerateAdminVlessConfig = <ThrowOnError extends boolean = false>
     ...options
 });
 
-export const getVersion = <ThrowOnError extends boolean = false>(options?: Options<GetVersionData, ThrowOnError>): RequestResult<GetVersionResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetVersionResponses, unknown, ThrowOnError>({ url: '/version', ...options });
+export const getVersion = <ThrowOnError extends boolean = false>(options?: Options<GetVersionData, ThrowOnError>): RequestResult<GetVersionResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetVersionResponses, unknown, ThrowOnError>({
+    responseValidator: async (data) => await zGetVersionResponse.parseAsync(data),
+    url: '/version',
+    ...options
+});
 
 /**
  * List all users with VLESS configs (admin only)
  */
 export const listVlessPeers = <ThrowOnError extends boolean = false>(options?: Options<ListVlessPeersData, ThrowOnError>): RequestResult<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError> => (options?.client ?? client).get<ListVlessPeersResponses, ListVlessPeersErrors, ThrowOnError>({
+    responseValidator: async (data) => await zListVlessPeersResponse.parseAsync(data),
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/vless-peers',
     ...options
