@@ -19,6 +19,7 @@ android {
     compileSdk = 37
     namespace = "dev.okhsunrog.floppa_vpn"
     defaultConfig {
+        resValue("string", "floppa_launcher_name", "Floppa VPN")
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "dev.okhsunrog.floppa_vpn"
         minSdk = 24
@@ -32,15 +33,19 @@ android {
             val keystoreProperties = Properties()
             if (keystorePropertiesFile.exists()) {
                 keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["password"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["password"] as String
             }
-            keyAlias = keystoreProperties["keyAlias"] as String
-            keyPassword = keystoreProperties["password"] as String
-            storeFile = file(keystoreProperties["storeFile"] as String)
-            storePassword = keystoreProperties["password"] as String
         }
     }
     buildTypes {
         getByName("debug") {
+            if (providers.gradleProperty("floppaPerfTest").orNull == "true") {
+                applicationIdSuffix = ".perftest"
+                resValue("string", "floppa_launcher_name", "Floppa PerfTest")
+            }
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
@@ -83,6 +88,7 @@ android {
     }
     buildFeatures {
         buildConfig = true
+        resValues = true
     }
 }
 
