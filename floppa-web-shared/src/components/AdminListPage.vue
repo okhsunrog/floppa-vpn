@@ -68,20 +68,24 @@ const showPagination = computed(() => props.total > props.pageSize)
     <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
       <component
         :is="headingTag"
-        :class="headingTag === 'h1' ? 'text-2xl font-bold' : 'text-xl font-semibold'"
+        :class="
+          headingTag === 'h1'
+            ? 'mr-auto text-xl sm:text-2xl font-bold'
+            : 'mr-auto text-xl font-semibold'
+        "
         >{{ title }}</component
       >
-      <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto min-w-0">
+      <div class="order-last sm:order-none w-full sm:w-64 min-w-0">
         <UInput
           v-model="search"
           :placeholder="searchPlaceholder"
           :aria-label="searchPlaceholder"
           icon="i-lucide-search"
-          class="min-w-0 flex-1 sm:w-64"
+          class="w-full"
           size="lg"
         />
-        <slot name="header-actions" />
       </div>
+      <div v-if="$slots['header-actions']" class="shrink-0"><slot name="header-actions" /></div>
     </div>
 
     <div v-if="$slots.filters" class="mb-5"><slot name="filters" /></div>

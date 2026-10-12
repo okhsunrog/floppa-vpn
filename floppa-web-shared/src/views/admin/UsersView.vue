@@ -334,7 +334,9 @@ async function addUser() {
     </template>
 
     <template #filters>
-      <div class="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center">
+      <div
+        class="grid grid-cols-1 min-[360px]:grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center"
+      >
         <UFormField :label="t('adminUsers.plan')" class="min-w-0 sm:w-48">
           <USelect
             v-model="planFilter"
