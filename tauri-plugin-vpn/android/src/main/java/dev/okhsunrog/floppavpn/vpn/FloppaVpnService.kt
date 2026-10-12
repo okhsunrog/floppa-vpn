@@ -325,6 +325,7 @@ class FloppaVpnService : VpnService() {
         logDir.mkdirs()
         try {
             // Boots the actor on the first instance; refreshes the callback reference on every one.
+            NetworkTransport.start(this)
             nativeInit(logDir.absolutePath, applicationInfo.dataDir)
             Log.i(TAG, "the VPN process is up")
             // After the actor exists, so its first report has somewhere to land.

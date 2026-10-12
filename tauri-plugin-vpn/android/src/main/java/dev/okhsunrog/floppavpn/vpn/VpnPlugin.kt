@@ -82,6 +82,7 @@ class VpnPlugin(private val activity: Activity) : Plugin(activity) {
         }
 
     override fun load(webView: WebView) {
+        NetworkTransport.start(activity)
         // The actor and the tunnel live in `:vpn`; this process only talks to them.
         try {
             activity.bindService(

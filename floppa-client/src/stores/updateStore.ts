@@ -1,3 +1,4 @@
+import { nativeFetch } from '../utils/nativeFetch'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { platform } from '@tauri-apps/plugin-os'
@@ -108,7 +109,7 @@ let changelogCache: ChangelogData | null = null
 async function fetchLatestChangelog(): Promise<ChangelogData | null> {
   if (changelogCache) return changelogCache
   try {
-    const res = await fetch(`${DOWNLOADS_BASE}/changelog.json`, { cache: 'no-cache' })
+    const res = await nativeFetch(`${DOWNLOADS_BASE}/changelog.json`, { cache: 'no-cache' })
     if (!res.ok) return null
     const body: unknown = await res.json()
     if (!isChangelogData(body)) {
@@ -158,7 +159,7 @@ export const useUpdateStore = defineStore('update', () => {
 
   async function checkForUpdates() {
     try {
-      const res = await fetch(`${DOWNLOADS_BASE}/latest.json`, { cache: 'no-cache' })
+      const res = await nativeFetch(`${DOWNLOADS_BASE}/latest.json`, { cache: 'no-cache' })
       if (!res.ok) return
 
       const latest = (await res.json()) as LatestJson

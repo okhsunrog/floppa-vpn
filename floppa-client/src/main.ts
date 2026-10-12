@@ -1,3 +1,4 @@
+import { nativeFetch } from './utils/nativeFetch'
 import { createApp, watch } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
@@ -96,7 +97,7 @@ app.use(ui)
 const authStore = useAuthStore()
 const updateStore = useUpdateStore()
 
-client.setConfig({ baseUrl: API_URL })
+client.setConfig({ baseUrl: API_URL, fetch: nativeFetch })
 installApiInterceptors(client, authStore, {
   clientVersion: __APP_VERSION__,
   onUpgradeRequired: (body) =>

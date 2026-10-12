@@ -3,6 +3,7 @@
 pub mod logging {
     pub use floppa_vpn_core::logging::*;
 }
+mod network;
 pub mod provision;
 pub mod tray;
 pub mod vpn;
@@ -32,6 +33,9 @@ struct SingleInstancePayload {
 pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(tauri_specta::collect_commands![
+            network::configure_http,
+            network::native_http,
+            network::cancel_http,
             vpn::commands::get_device_id,
             vpn::commands::get_device_name,
             vpn::commands::tunnel_set_intent_up,
@@ -139,7 +143,7 @@ pub fn run() {
     let backend = create_backend();
 
     #[allow(unused_mut)]
-    let mut builder = tauri::Builder::default();
+    let mut builder = tauri::Builder::default().manage(network::NetworkState::default());
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {

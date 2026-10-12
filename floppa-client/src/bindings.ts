@@ -7,6 +7,9 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 
 /** Commands */
 export const commands = {
+	configureHttp: (base: string) => typedError<null, string>(__TAURI_INVOKE("configure_http", { base })),
+	nativeHttp: (request: HttpRequest) => typedError<HttpResponse, string>(__TAURI_INVOKE("native_http", { request })),
+	cancelHttp: (id: string) => __TAURI_INVOKE<void>("cancel_http", { id }),
 	/**
 	 *  Get the persistent device ID.
 	 *  Android: ANDROID_ID (stable across reinstalls, per signing key).
@@ -324,6 +327,20 @@ failures: AttemptFailure[] } |
 { outcome: "cancelled" } | 
 /**  An explicit Down reached terminal Down. */
 { outcome: "down" };
+
+export type HttpRequest = {
+	id: string,
+	url: string,
+	method: string,
+	headers: ([string, string])[],
+	body: number[] | null,
+};
+
+export type HttpResponse = {
+	status: number,
+	headers: ([string, string])[],
+	body: number[],
+};
 
 /**  Why the tunnel ended up in this process on a platform that has a service. */
 export type InProcessReason = 

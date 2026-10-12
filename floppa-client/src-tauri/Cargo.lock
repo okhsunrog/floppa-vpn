@@ -1110,6 +1110,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dirs"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs-sys"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1458,6 +1467,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "floppa-net",
  "reqwest",
  "rustls",
  "serde",
@@ -1474,9 +1484,11 @@ version = "0.6.4"
 dependencies = [
  "async-trait",
  "floppa-api-client",
+ "floppa-net",
  "floppa-provision",
  "floppa-vpn-core",
  "jni 0.22.4",
+ "reqwest",
  "serde",
  "serde_json",
  "shoes-lite",
@@ -1498,6 +1510,23 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "floppa-net"
+version = "0.1.0"
+dependencies = [
+ "dirs 7.0.0",
+ "futures-util",
+ "http",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -1531,8 +1560,9 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
- "dirs",
+ "dirs 6.0.0",
  "flate2",
+ "floppa-net",
  "floppa-tunnel-config",
  "futures",
  "gotatun",
@@ -1542,6 +1572,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "sha2",
  "shoes-lite",
  "specta",
  "tar",
@@ -4599,11 +4630,11 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reqwest"
-version = "0.13.4"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "219c5811de6525e5416c7d5d53bb656d3afdbc6c5af816e0802bcfa42dbdc1c3"
+checksum = "16a1cfa75cc186dd73d5818e510e042e40927bccc9c236b061cea97e1eb08029"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "encoding_rs",
  "futures-core",
@@ -4741,9 +4772,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.43"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0283386ce02abc0151e1761d08802dfe86c173b0b494af5cbc086574e453da06"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -5670,7 +5701,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cookie",
- "dirs",
+ "dirs 6.0.0",
  "dunce",
  "embed_plist",
  "getrandom 0.3.4",
@@ -5721,7 +5752,7 @@ source = "git+https://github.com/tauri-apps/tauri?rev=cb2ecac53a505b974ef24f0d4f
 dependencies = [
  "anyhow",
  "cargo_toml",
- "dirs",
+ "dirs 6.0.0",
  "glob",
  "heck 0.5.0",
  "json-patch",
@@ -6569,7 +6600,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "045979e3f037cd18ad1cb2a419dfda133c5c29c9f3453370079f2255d46c257e"
 dependencies = [
  "crossbeam-channel",
- "dirs",
+ "dirs 6.0.0",
  "libappindicator",
  "muda",
  "objc2 0.6.4",
@@ -7546,7 +7577,7 @@ dependencies = [
  "block2 0.6.2",
  "cookie",
  "crossbeam-channel",
- "dirs",
+ "dirs 6.0.0",
  "dom_query",
  "dpi",
  "dunce",

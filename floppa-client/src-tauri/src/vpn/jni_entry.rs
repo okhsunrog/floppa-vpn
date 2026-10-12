@@ -724,3 +724,13 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeReques
     });
     log_outcome("nativeRequestStop", outcome.into_outcome());
 }
+
+/// Receives the non-VPN Network handle separately in each process.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_okhsunrog_floppavpn_vpn_NetworkTransport_nativeSetNetwork(
+    _env: EnvUnowned<'_>,
+    _class: jni::objects::JObject,
+    handle: jni::sys::jlong,
+) {
+    floppa_net::android::set_network(handle as u64);
+}
