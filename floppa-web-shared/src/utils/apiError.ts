@@ -1,3 +1,5 @@
+import { ZodError } from 'zod'
+
 /**
  * `error` codes the server puts in its error body (`floppa-server/src/admin/error.rs`).
  * A union rather than `string` so that comparing against a misspelled code is a type error
@@ -72,6 +74,11 @@ export type TranslateKey = (key: string) => string
  * of the server's English message.
  */
 export function describeError(e: unknown, fallback: string, t?: TranslateKey): string {
+  if (e instanceof ZodError) {
+    return t
+      ? t('apiErrors.invalidResponse')
+      : 'The server returned an incompatible response. Update the app and try again.'
+  }
   if (!isApiError(e)) return fallback
   const key = t && API_ERROR_MESSAGE_KEYS[e.error]
   return key ? t(key) : e.message

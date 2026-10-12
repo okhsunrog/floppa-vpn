@@ -1,6 +1,8 @@
+import { installApiInterceptors } from '../../../floppa-web-shared/src/api/interceptors'
+import { zLinkStartResponse } from 'floppa-web-shared/client/zod.gen'
 import { describe, expect, it } from 'vite-plus/test'
 import { createClient } from 'floppa-web-shared/client/client'
-import { exchangeTelegramLoginCode } from 'floppa-web-shared/client/sdk.gen'
+import { exchangeTelegramLoginCode, deleteMySession } from 'floppa-web-shared/client/sdk.gen'
 function api(body: unknown) {
   return createClient({
     baseUrl: 'https://example.test/api',
@@ -28,4 +30,36 @@ describe('generated response validation', () => {
       exchangeTelegramLoginCode({ client: api(body), body: { code: 'code' }, throwOnError: true }),
     ).rejects.toBeDefined()
   })
+})
+
+it('accepts RFC3339 offsets permitted by OpenAPI date-time', () => {
+  expect(
+    zLinkStartResponse.safeParse({
+      code: 'code',
+      deep_link: 'tg://test',
+      expires_at: '2026-10-12T15:00:00+03:00',
+    }).success,
+  ).toBe(true)
+  expect(
+    zLinkStartResponse.safeParse({ code: 'code', deep_link: 'tg://test', expires_at: 'yesterday' })
+      .success,
+  ).toBe(false)
+})
+
+it('rejects missing login payloads but accepts documented empty responses', async () => {
+  const client = createClient({
+    baseUrl: 'https://example.test/api',
+    fetch: async () => new Response(null, { status: 204 }),
+  })
+  installApiInterceptors(client, { getToken: () => null, replaceToken: () => {}, logout: () => {} })
+  await expect(
+    exchangeTelegramLoginCode({ client, body: { code: 'code' }, throwOnError: true }),
+  ).rejects.toBeDefined()
+  await expect(
+    deleteMySession({
+      client,
+      path: { id: '00000000-0000-4000-8000-000000000000' },
+      throwOnError: true,
+    }),
+  ).resolves.toBeDefined()
 })

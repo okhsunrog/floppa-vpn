@@ -47,7 +47,15 @@ export function installApiInterceptors(
     return request
   })
 
-  client.interceptors.response.use(async (response, request) => {
+  client.interceptors.response.use(async (response, request, options) => {
+    // The generated fetch client returns early for empty responses. Validate those too:
+    // an empty login response is invalid, whereas an explicitly void DELETE is valid.
+    if (
+      response.ok &&
+      (response.status === 204 || response.headers.get('content-length') === '0')
+    ) {
+      await options.responseValidator?.(undefined)
+    }
     // Sliding session: the server attaches a fresh JWT once the current one is a day old.
     const refreshed = response.headers.get('x-refreshed-token')
     if (refreshed) auth.replaceToken(refreshed)

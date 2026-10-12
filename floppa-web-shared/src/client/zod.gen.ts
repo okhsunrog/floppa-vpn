@@ -90,24 +90,24 @@ export const zExchangeTelegramLoginCodeRequest = z.object({
 
 export const zInstallationResponse = z.object({
     app_version: z.string().nullish(),
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     device_id: z.string(),
     device_name: z.string().nullish(),
     id: z.int(),
-    last_seen_at: z.iso.datetime(),
+    last_seen_at: z.iso.datetime({ offset: true }),
     platform: z.string().nullish(),
     region_id: z.string()
 });
 
 export const zInstallationSummary = z.object({
     app_version: z.string().nullish(),
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     device_id: z.string(),
     device_name: z.string().nullish(),
     has_vless: z.boolean(),
     has_wg: z.boolean(),
     id: z.int(),
-    last_seen_at: z.iso.datetime(),
+    last_seen_at: z.iso.datetime({ offset: true }),
     platform: z.string().nullish(),
     user_id: z.int(),
     username: z.string().nullish()
@@ -120,7 +120,7 @@ export const zLinkPollResponse = z.object({
 export const zLinkStartResponse = z.object({
     code: z.string(),
     deep_link: z.string(),
-    expires_at: z.iso.datetime()
+    expires_at: z.iso.datetime({ offset: true })
 });
 
 export const zMiniAppAuthRequest = z.object({
@@ -181,12 +181,12 @@ export const zCreatePeerRequest = z.object({
 
 export const zMyPeer = z.object({
     assigned_ip: z.string(),
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     device_id: z.string().nullish(),
     device_name: z.string().nullish(),
     download_bytes: z.int(),
     id: z.int(),
-    last_handshake: z.iso.datetime().nullish(),
+    last_handshake: z.iso.datetime({ offset: true }).nullish(),
     protocol: zProtocol,
     region_id: z.string(),
     sync_status: zPeerSyncStatus,
@@ -199,7 +199,7 @@ export const zPeerDetail = z.object({
     device_name: z.string().nullish(),
     download_bytes: z.int(),
     id: z.int(),
-    last_handshake: z.iso.datetime().nullish(),
+    last_handshake: z.iso.datetime({ offset: true }).nullish(),
     protocol: zProtocol,
     public_key: z.string(),
     sync_status: zPeerSyncStatus,
@@ -214,7 +214,7 @@ export const zPeerSummary = z.object({
     download_bytes: z.int(),
     has_vless: z.boolean(),
     id: z.int(),
-    last_handshake: z.iso.datetime().nullish(),
+    last_handshake: z.iso.datetime({ offset: true }).nullish(),
     plan_name: z.string().nullish(),
     protocol: zProtocol,
     sync_status: zPeerSyncStatus,
@@ -267,14 +267,14 @@ export const zSessionKind = z.enum([
  * One live login of a user, as shown in "Devices & sessions".
  */
 export const zSessionInfo = z.object({
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     current: z.boolean(),
     device_name: z.string().nullish(),
     id: z.uuid(),
     installation_id: z.int().nullish(),
     kind: zSessionKind,
     label: z.string().nullish(),
-    last_seen_at: z.iso.datetime(),
+    last_seen_at: z.iso.datetime({ offset: true }),
     platform: z.string().nullish()
 });
 
@@ -321,13 +321,13 @@ export const zSubscriptionSource = z.enum([
 ]);
 
 export const zMySubscription = z.object({
-    expires_at: z.iso.datetime().nullish(),
+    expires_at: z.iso.datetime({ offset: true }).nullish(),
     max_peers: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
     plan_display_name: z.string(),
     plan_name: z.string(),
     source: zSubscriptionSource,
     speed_limit_mbps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
-    starts_at: z.iso.datetime()
+    starts_at: z.iso.datetime({ offset: true })
 });
 
 export const zMeResponse = z.object({
@@ -344,7 +344,7 @@ export const zMeResponse = z.object({
 });
 
 export const zSubscriptionDetail = z.object({
-    expires_at: z.iso.datetime().nullish(),
+    expires_at: z.iso.datetime({ offset: true }).nullish(),
     id: z.int(),
     is_active: z.boolean(),
     max_peers: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }),
@@ -353,7 +353,7 @@ export const zSubscriptionDetail = z.object({
     plan_name: z.string(),
     source: zSubscriptionSource,
     speed_limit_mbps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
-    starts_at: z.iso.datetime()
+    starts_at: z.iso.datetime({ offset: true })
 });
 
 /**
@@ -394,7 +394,7 @@ export const zUpsertInstallationRequest = z.object({
 export const zUserSummary = z.object({
     active_plan: z.string().nullish(),
     client_version: z.string().nullish(),
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     current_plan: z.string().nullish(),
     current_plan_id: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
     first_name: z.string().nullish(),
@@ -405,7 +405,7 @@ export const zUserSummary = z.object({
     peer_count: z.int(),
     photo_url: z.string().nullish(),
     subscription_active: z.boolean(),
-    subscription_expires_at: z.iso.datetime().nullish(),
+    subscription_expires_at: z.iso.datetime({ offset: true }).nullish(),
     telegram_id: z.int().nullish(),
     username: z.string().nullish()
 });
@@ -423,7 +423,7 @@ export const zVlessAdminInfo = z.object({
 });
 
 export const zUserDetail = z.object({
-    created_at: z.iso.datetime(),
+    created_at: z.iso.datetime({ offset: true }),
     first_name: z.string().nullish(),
     id: z.int(),
     is_admin: z.boolean(),

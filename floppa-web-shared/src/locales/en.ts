@@ -109,6 +109,7 @@ export default {
     loginTaken: 'This login is already taken.',
   },
   apiErrors: {
+    invalidResponse: 'The server returned an incompatible response. Update the app and try again.',
     forbidden: 'You do not have permission to do that.',
     unauthorized: 'Your session has expired. Please sign in again.',
     tooManyRequests: 'Too many requests. Please wait a moment and try again.',
