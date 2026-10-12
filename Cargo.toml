@@ -70,3 +70,7 @@ shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "4cf98c602
 # Shared crates
 floppa-core = { path = "floppa-core" }
 floppa-tunnel-config = { path = "floppa-tunnel-config" }
+
+[patch.crates-io]
+h3 = { path = "../rust/foldfin/vendor/h3" }
+h3-datagram = { path = "../rust/foldfin/vendor/h3-datagram" }

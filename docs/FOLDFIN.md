@@ -6,7 +6,7 @@ connection actor. Routes, DNS, rollback, reconnection and platform consent remai
 owned by Floppa. No extra VPN process or reconnect loop is introduced.
 
 Linux opens the persistent TUN prepared by the existing helper, applies MTU before
-routes, and marks outer TCP before connect when permitted. Android protects TCP
+routes, and marks outer TCP/UDP before connect when permitted. Android protects TCP/UDP
 before connect, aborts on protection failure, and gives Foldfin an owned CLOEXEC
 duplicate of the nonblocking Kotlin descriptor. SNI and HTTP authority are kept
 separate from the resolved dial address. Foldfin is not implemented on Windows or
@@ -53,9 +53,15 @@ The cached network plan carries both address families, canonical routes, explici
 exclusions, DNS and an MTU of 1280. Android derives routes from this plan instead
 of unconditionally capturing all traffic. Desktop setup records each address
 separately in rollback. Android owns "block connections without VPN" behavior.
-`auto` currently uses H2 because the H3 VPN bridge is still being integrated;
-`h3_only` fails explicitly. The first endpoint is used until underlay candidate
-selection lands.
+`auto` gives H3 a two-second candidate budget, then tries H2 on network or
+capability failure within a shared 15-second deadline. Certificate, authorization
+and malformed-protocol failures never trigger transport fallback. `h2_only` and
+`h3_only` force their respective transport. Both use the same persistent packet
+session; network changes replace its carrier while retaining the device.
+The first endpoint is used until session-scoped underlay candidate selection lands.
+H3 requires path capacity for a 1280-byte IP packet plus HTTP/QUIC overhead.
+The workspace and Tauri workspace patch h3/h3-datagram from Foldfin's vendor
+folder; those patches are required for CONNECT-IP and nonzero request IDs.
 
 Arbitrary host/LAN routes in the GUI do
 not grant access: the server's grant must permit them as well. Full internet

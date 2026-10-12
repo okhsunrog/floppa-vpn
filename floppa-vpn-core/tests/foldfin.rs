@@ -81,7 +81,7 @@ fn packet(source: [u8; 4], dest: [u8; 4]) -> Vec<u8> {
     bytes
 }
 fn document(endpoint: &str, ca: &str) -> String {
-    serde_json::json!({"protocol":"foldfin", "config": {"version":2,"endpoints":[endpoint],
+    serde_json::json!({"protocol":"foldfin", "config": {"version":2,"endpoints":[endpoint],"transport":"h2_only",
         "server_name":"localhost","token":TOKEN,"network":{"revision":1,"addresses":["192.0.2.2/32"],"peers":["192.0.2.1"],
         "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280},"additional_ca_pem":ca}})
     .to_string()
@@ -154,6 +154,17 @@ fn import_persistence_validation_and_secret_redaction() {
 
 #[tokio::test]
 async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
+    manager_lifecycle("h2_only", false).await;
+}
+#[tokio::test]
+async fn h3_manager_recovers_and_revokes_without_recreating_device() {
+    manager_lifecycle("h3_only", true).await;
+}
+#[tokio::test]
+async fn auto_falls_back_when_udp_is_unresponsive() {
+    manager_lifecycle("auto", false).await;
+}
+async fn manager_lifecycle(transport: &str, h3: bool) {
     let (tls, ca) = tls();
     let server_drops = Arc::new(AtomicUsize::new(0));
     let client_drops = Arc::new(AtomicUsize::new(0));
@@ -185,17 +196,28 @@ async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
     let server = registry.server(tls).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = listener.local_addr().unwrap();
+    // Bound but unread UDP models a path blackhole, without relying on ICMP.
+    let udp = std::net::UdpSocket::bind(endpoint).unwrap();
     let (shutdown, stopped) = oneshot::channel();
     let server_task = tokio::spawn(async move {
+        if h3 {
+            return server
+                .serve_h3(udp, async {
+                    let _ = stopped.await;
+                })
+                .await;
+        }
+        let _blackhole = udp;
         server
             .serve(listener, async {
                 let _ = stopped.await;
             })
             .await
     });
-    let ProtocolConfig::Foldfin(config) =
-        ProtocolConfig::parse(&document(&endpoint.to_string(), &ca)).unwrap()
-    else {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&document(&endpoint.to_string(), &ca)).unwrap();
+    raw["config"]["transport"] = serde_json::json!(transport);
+    let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap() else {
         panic!("wrong protocol")
     };
     let (device, input, mut output) = packets(client_drops.clone());
@@ -460,4 +482,47 @@ fn v2_bootstrap_plan_preserves_dual_stack_routes_and_exclusions() {
             .to_string()
             .contains("reissue")
     );
+}
+
+#[tokio::test]
+async fn auto_does_not_try_h2_after_h3_certificate_failure() {
+    let (server_tls, _) = tls();
+    let (_, unrelated_ca) = tls();
+    let server = Arc::new(DeviceRegistry::default())
+        .server(server_tls)
+        .unwrap();
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = tcp.local_addr().unwrap();
+    let udp = std::net::UdpSocket::bind(endpoint).unwrap();
+    let (stop, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(async move {
+        server
+            .serve_h3(udp, async {
+                let _ = stopped.await;
+            })
+            .await
+    });
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&document(&endpoint.to_string(), &unrelated_ca)).unwrap();
+    raw["config"]["transport"] = serde_json::json!("auto");
+    let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap() else {
+        panic!("wrong protocol")
+    };
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (device, _input, _output) = packets(dropped.clone());
+    let manager = TunnelManager::default();
+    let error = manager
+        .start_foldfin_packets(&config, endpoint, device, None)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("TLS"), "{error}");
+    assert!(
+        timeout(Duration::from_millis(100), tcp.accept())
+            .await
+            .is_err(),
+        "certificate failure must not attempt H2"
+    );
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    stop.send(()).unwrap();
+    server_task.await.unwrap().unwrap();
 }

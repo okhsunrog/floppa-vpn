@@ -33,7 +33,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 tokio-serde = { version = "0.9.0", features = ["json"] }
 floppa-net = { version = "0.1.0", path = "../floppa-net" }
 sha2.workspace = true
-foldfin = { version = "0.1.0", path = "../../rust/foldfin", default-features = false, features = ["client"] }
+foldfin = { version = "0.1.0", path = "../../rust/foldfin", default-features = false, features = ["client", "h3"] }
 ipnet = { version = "2.12.2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -33,9 +33,8 @@ impl FoldfinTunnel {
         device: PacketDevice,
         fwmark: Option<u32>,
     ) -> Result<Self, BackendError> {
-        let client = Self::dial(config, endpoint, fwmark).await?;
         let mut session = Session::new(config.policy(), device).map_err(error)?;
-        session.recover(client).await.map_err(error)?;
+        Self::attach(&mut session, config, endpoint, fwmark).await?;
         Ok(Self {
             session,
             config: config.clone(),
@@ -46,27 +45,71 @@ impl FoldfinTunnel {
         })
     }
 
-    async fn dial(
+    async fn attach(
+        session: &mut Session,
         config: &FoldfinVpnConfig,
         endpoint: SocketAddr,
         fwmark: Option<u32>,
-    ) -> Result<Client, BackendError> {
-        if config.transport() == crate::foldfin_config::TransportPolicy::H3Only {
-            return Err(error("H3 VPN bridge is not available in this build"));
-        }
-        let socket = if endpoint.is_ipv4() {
-            TcpSocket::new_v4()
-        } else {
-            TcpSocket::new_v6()
-        }
-        .map_err(error)?;
+    ) -> Result<(), BackendError> {
+        use crate::foldfin_config::TransportPolicy;
+        tokio::time::timeout(foldfin::DEADLINE, async {
+            if config.transport() != TransportPolicy::H2Only {
+                // Prepare/protect the UDP socket before Quinn can transmit anything.
+                let bind = if endpoint.is_ipv4() {
+                    "0.0.0.0:0"
+                } else {
+                    "[::]:0"
+                };
+                let socket = std::net::UdpSocket::bind(bind).map_err(error)?;
+                socket.set_nonblocking(true).map_err(error)?;
+                #[cfg(unix)]
+                {
+                    use std::os::fd::AsRawFd;
+                    Self::prepare_fd(socket.as_raw_fd(), fwmark)?;
+                }
+                let attempt = async {
+                    let client = foldfin::h3_client::Client::connect_over(
+                        config.client_config()?,
+                        socket,
+                        endpoint,
+                    )
+                    .await?;
+                    session.recover(client).await
+                };
+                let budget = if config.transport() == TransportPolicy::Auto {
+                    Duration::from_secs(2)
+                } else {
+                    foldfin::DEADLINE
+                };
+                let result = tokio::time::timeout(budget, attempt)
+                    .await
+                    .unwrap_or(Err(foldfin::error::Error::Timeout("H3 candidate")));
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(cause)
+                        if config.transport() == TransportPolicy::Auto
+                            && cause.permits_transport_fallback() =>
+                    {
+                        session.underlay_changed().await;
+                    }
+                    Err(cause) => return Err(error(cause)),
+                }
+            }
+            let client = Self::dial(config, endpoint, fwmark).await?;
+            session.recover(client).await.map_err(error)
+        })
+        .await
+        .map_err(error)?
+    }
+
+    #[cfg(unix)]
+    fn prepare_fd(fd: std::os::fd::RawFd, fwmark: Option<u32>) -> Result<(), BackendError> {
         #[cfg(target_os = "linux")]
         if let Some(mark) = fwmark {
-            use std::os::fd::AsRawFd;
-            // SAFETY: socket and mark are live and the option expects a u32.
+            // SAFETY: the caller retains a live socket and SO_MARK expects a u32.
             if unsafe {
                 libc::setsockopt(
-                    socket.as_raw_fd(),
+                    fd,
                     libc::SOL_SOCKET,
                     libc::SO_MARK,
                     (&mark as *const u32).cast(),
@@ -74,23 +117,33 @@ impl FoldfinTunnel {
                 )
             } != 0
             {
-                let cause = std::io::Error::last_os_error();
-                return Err(if cause.kind() == std::io::ErrorKind::PermissionDenied {
-                    BackendError::PermissionDenied {
-                        detail: cause.to_string(),
-                    }
-                } else {
-                    error(cause)
-                });
+                return Err(error(std::io::Error::last_os_error()));
             }
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = fwmark;
         #[cfg(target_os = "android")]
+        crate::tunnel::protect_tcp_socket(fd)?;
+        let _ = (fd, fwmark);
+        Ok(())
+    }
+
+    async fn dial(
+        config: &FoldfinVpnConfig,
+        endpoint: SocketAddr,
+        fwmark: Option<u32>,
+    ) -> Result<Client, BackendError> {
+        let socket = if endpoint.is_ipv4() {
+            TcpSocket::new_v4()
+        } else {
+            TcpSocket::new_v6()
+        }
+        .map_err(error)?;
+        #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
-            crate::tunnel::protect_tcp_socket(socket.as_raw_fd())?;
+            Self::prepare_fd(socket.as_raw_fd(), fwmark)?;
         }
+        #[cfg(not(unix))]
+        let _ = fwmark;
         let tcp = tokio::time::timeout(foldfin::DEADLINE, socket.connect(endpoint))
             .await
             .map_err(error)?
@@ -104,8 +157,7 @@ impl FoldfinTunnel {
     pub(crate) async fn network_changed(&mut self) -> Result<(), BackendError> {
         self.session.underlay_changed().await;
         *self.last_probe.lock().unwrap() = None;
-        let client = Self::dial(&self.config, self.endpoint, self.fwmark).await?;
-        self.session.recover(client).await.map_err(error)?;
+        Self::attach(&mut self.session, &self.config, self.endpoint, self.fwmark).await?;
         self.probe().await
     }
 
