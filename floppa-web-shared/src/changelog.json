@@ -1,43 +1,57 @@
 {
-  "version": "0.6.5",
+  "version": "0.6.6",
   "sections": [
-    {
-      "type": "added",
-      "items": [
-        {
-          "en": "Android now supports a themed app icon that follows your launcher colors.",
-          "ru": "На Android появилась тематическая иконка приложения, которая подстраивается под цвета лаунчера."
-        },
-        {
-          "en": "The admin overview separates subscription purchases and renewals from subscriptions granted manually. Subscription lists support plan filters and sorting, and peer lists and user details show the VPN exit region.",
-          "ru": "Обзор админки отдельно показывает покупки и продления подписок и ручные выдачи. В списке подписок доступны фильтры по тарифу и сортировка, а в списках пиров и карточке пользователя виден регион выхода VPN."
-        }
-      ]
-    },
-    {
-      "type": "changed",
-      "items": [
-        {
-          "en": "Admin sections use a sidebar on desktop and the navigation drawer on mobile.",
-          "ru": "Разделы админки доступны в боковой панели на компьютере и в меню навигации на телефоне."
-        }
-      ]
-    },
     {
       "type": "fixed",
       "items": [
         {
-          "en": "The app can use cached addresses and alternative DNS resolvers when the system resolver fails. API requests use the same native network transport, and VPN connections can try another resolved server address when an endpoint is unreachable.",
-          "ru": "При сбое системного DNS приложение может использовать сохранённые адреса и резервные DNS-серверы. Запросы к API используют общий сетевой транспорт приложения, а при недоступности VPN-сервера подключение может попробовать другой найденный адрес."
-        },
-        {
-          "en": "Empty or incompatible API responses now produce an explicit error instead of being accepted as valid data.",
-          "ru": "Пустые или несовместимые ответы API теперь дают понятную ошибку вместо того, чтобы восприниматься как корректные данные."
+          "en": "On Linux, installing the package could leave the app stuck on Checking when the optional system VPN service was disabled and the user was not in the floppa group. The app can now detect that no service socket exists and run its own tunnel. Access to an enabled service remains restricted to authorized users.",
+          "ru": "На Linux после установки пакета приложение могло зависнуть на «Проверка», если необязательный системный VPN-сервис был выключен, а пользователь не входил в группу floppa. Теперь приложение может определить, что сокета сервиса нет, и запустить собственный туннель. Доступ к включённому сервису по-прежнему ограничен правами пользователя."
         }
       ]
     }
   ],
   "history": [
+    {
+      "version": "0.6.5",
+      "sections": [
+        {
+          "type": "added",
+          "items": [
+            {
+              "en": "Android now supports a themed app icon that follows your launcher colors.",
+              "ru": "На Android появилась тематическая иконка приложения, которая подстраивается под цвета лаунчера."
+            },
+            {
+              "en": "The admin overview separates subscription purchases and renewals from subscriptions granted manually. Subscription lists support plan filters and sorting, and peer lists and user details show the VPN exit region.",
+              "ru": "Обзор админки отдельно показывает покупки и продления подписок и ручные выдачи. В списке подписок доступны фильтры по тарифу и сортировка, а в списках пиров и карточке пользователя виден регион выхода VPN."
+            }
+          ]
+        },
+        {
+          "type": "changed",
+          "items": [
+            {
+              "en": "Admin sections use a sidebar on desktop and the navigation drawer on mobile.",
+              "ru": "Разделы админки доступны в боковой панели на компьютере и в меню навигации на телефоне."
+            }
+          ]
+        },
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "The app can use cached addresses and alternative DNS resolvers when the system resolver fails. API requests use the same native network transport, and VPN connections can try another resolved server address when an endpoint is unreachable.",
+              "ru": "При сбое системного DNS приложение может использовать сохранённые адреса и резервные DNS-серверы. Запросы к API используют общий сетевой транспорт приложения, а при недоступности VPN-сервера подключение может попробовать другой найденный адрес."
+            },
+            {
+              "en": "Empty or incompatible API responses now produce an explicit error instead of being accepted as valid data.",
+              "ru": "Пустые или несовместимые ответы API теперь дают понятную ошибку вместо того, чтобы восприниматься как корректные данные."
+            }
+          ]
+        }
+      ]
+    },
     {
       "version": "0.6.4",
       "sections": [
