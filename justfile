@@ -195,6 +195,16 @@ build-frontend:
 dev:
     uv run --no-project python scripts/dev.py up
 
+# Persistent local preview (Linux user systemd); uses the same port/instance env as dev.
+dev-background:
+    uv run --no-project python scripts/dev.py background
+
+dev-stop:
+    uv run --no-project python scripts/dev.py stop
+
+dev-status:
+    uv run --no-project python scripts/dev.py status
+
 # Real API + database, for multiple frontend worktrees or browser tests.
 dev-api:
     uv run --no-project python scripts/dev.py api

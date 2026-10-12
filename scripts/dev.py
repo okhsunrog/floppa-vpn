@@ -124,6 +124,9 @@ def wait_http(url, child):
 
 def check_port(port):
     with socket.socket() as sock:
+        # A just-stopped dev server may leave connections in TIME_WAIT. Match server
+        # socket reuse without allowing a second listener on an occupied port.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("127.0.0.1", port))
         except OSError as error:
@@ -190,8 +193,32 @@ def serve(api_only):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["up", "api", "prepare", "down", "reset"])
+    parser.add_argument("command", choices=["up", "api", "prepare", "down", "reset", "background", "stop", "status"])
     args = parser.parse_args()
+    if args.command in ("background", "stop", "status"):
+        # A user service outlives terminal/chat sessions, with a predictable per-checkout name.
+        # No enable/boot persistence and no elevated privileges. Database volumes are retained.
+        unit = f"{PROJECT}.service"
+        service_env = dict(os.environ)
+        runtime = service_env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+        service_env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime}/bus")
+        if args.command == "background":
+            command = ["systemd-run", "--user", f"--unit={unit}", "--collect",
+                       "--property=Restart=on-failure", "--property=RestartSec=5",
+                       f"--working-directory={ROOT}"]
+            for key, value in {
+                "PATH": os.environ["PATH"], "FLOPPA_DEV_INSTANCE": INSTANCE,
+                "FLOPPA_DEV_API_PORT": str(API_PORT), "FLOPPA_DEV_WEB_PORT": str(WEB_PORT),
+                "FLOPPA_DEV_DB_PORT": str(DB_PORT), "FLOPPA_DEV_CONTAINER": ENGINE,
+                "FLOPPA_DEV_LABEL": os.environ.get("FLOPPA_DEV_LABEL", INSTANCE),
+            }.items():
+                command.append(f"--setenv={key}={value}")
+            command += [shutil.which("just") or "just", "dev"]
+        else:
+            command = ["systemctl", "--user", args.command, unit]
+        subprocess.run(command, env=service_env, check=True)
+        print(f"Service: {unit}; logs: journalctl --user -u {unit} -f")
+        return
     STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (STATE / "session.lock").open("w") as lock:
         try:
