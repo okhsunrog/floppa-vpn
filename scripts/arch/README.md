@@ -34,6 +34,41 @@ makepkg -p PKGBUILD-local -si
 `floppa-vpn.install` applies `CAP_NET_ADMIN` to `/usr/bin/floppa-client` on install/upgrade
 so Linux `fwmark` can work without runtime fallback.
 
+## Tunnel service and boot autostart
+
+The package includes the GUI (`floppa-client`), CLI (`floppa`), and systemd units.
+Arch installation does not enable the units or add users to the `floppa` group.
+
+```bash
+sudo usermod -aG floppa "$USER"
+sudo systemctl enable --now floppa-vpn.socket
+```
+
+Log out and back in to apply group membership, then reopen the GUI and connect, or run
+`floppa login` followed by `floppa connect`. The system service keeps the tunnel running
+after the client closes.
+
+After the first successful connection, enable boot autostart:
+
+```bash
+sudo systemctl enable floppa-vpn-autostart.service
+floppa autostart on
+```
+
+On systems using NetworkManager, also enable network startup waiting:
+
+```bash
+sudo systemctl enable NetworkManager-wait-online.service
+```
+
+Use the matching wait-online service for other network managers. The boot unit retries failed
+connection attempts every five seconds if the network is still unavailable. It restores the last
+successful connection without launching the GUI. `floppa autostart off` disables boot connection;
+`floppa disconnect` stops the current tunnel.
+
+See [the desktop tunnel service guide](../../docs/DESKTOP-TUNNEL-SERVICE.md#connecting-on-boot)
+for status commands and boot logs.
+
 Dependency references:
 
 - Tauri AUR packaging docs: https://v2.tauri.app/distribute/aur/

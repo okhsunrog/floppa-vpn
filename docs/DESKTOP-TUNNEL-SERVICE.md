@@ -78,7 +78,7 @@ reached only through the socket.
 |---|---|
 | `/usr/lib/systemd/system/floppa-vpn.socket` | owns the socket, so the program does not have to. A unit states `SocketGroup` and `SocketMode` and the file exists with them *before* the service starts; a program that binds and then widens its own socket has a window where it is listening and reachable by the wrong people |
 | `/usr/lib/systemd/system/floppa-vpn.service` | the tunnel process. No `RuntimeDirectory=`, deliberately: systemd removes one when the service stops, and it would take the socket out from under the unit that outlives it |
-| `/usr/lib/systemd/system/floppa-vpn-autostart.service` | connecting on boot. Not enabled by anything; enabling it *is* the setting |
+| `/usr/lib/systemd/system/floppa-vpn-autostart.service` | asks the service to restore the last successful connection on boot when `floppa autostart` is `on`; enabled during Debian installation, explicitly by the administrator on Arch |
 | `/usr/lib/tmpfiles.d/floppa-vpn.conf` | `/run/floppa-vpn` as `0750 root:floppa`, so a user outside the group cannot reach the path at all, whatever the socket inside it says |
 | `/usr/lib/sysusers.d/floppa-vpn.conf` | the `floppa` group, created empty |
 
@@ -124,12 +124,40 @@ service in it, which is another reason the flag decides rather than a mode switc
 ## Connecting on boot
 
 ```bash
+sudo systemctl enable floppa-vpn-autostart.service  # required on Arch; Debian enables it during installation
 floppa autostart on      # or the switch in the app's settings
 floppa autostart         # prints on/off
 ```
 
-`floppa-vpn-autostart.service` is a `oneshot` running `floppa resume --if-enabled`, and the package
-enables it. **Its enabled-ness is not the setting** — it stays on and does nothing until asked.
+First enable the socket and apply group membership as described above, then connect successfully
+through the GUI or `floppa connect`. The boot unit restores that connection without opening the GUI.
+
+`floppa-vpn-autostart.service` is a `oneshot` running `floppa resume --if-enabled`.
+Both the unit and the stored preference must be enabled. Once the unit is enabled, use
+`floppa autostart off` to stop connecting on boot; this does not disconnect a running tunnel.
+
+The unit runs after `network-online.target`, which only waits for network setup when the
+network manager's matching wait-online service is enabled. On a NetworkManager system:
+
+```bash
+sudo systemctl enable NetworkManager-wait-online.service
+```
+
+For another network manager, use its wait-online service instead. Package installation does not
+enable one because it cannot assume which network manager the machine uses. NetworkManager can
+still finish startup without a usable connection, for example when Wi-Fi credentials become
+available only after login. If a connection attempt fails, the boot unit retries every five
+seconds until it succeeds, even after the wait-online timeout. A disabled preference or no previous
+successful connection exits normally without retries.
+
+To check setup and diagnose a boot failure:
+
+```bash
+systemctl is-enabled floppa-vpn.socket floppa-vpn-autostart.service
+floppa autostart
+floppa status
+sudo journalctl -b -u floppa-vpn-autostart.service -u floppa-vpn.service
+```
 
 That is not the shape anyone would pick. `systemctl is-enabled` is exactly where a person would
 look, and this deliberately does not answer there. The reason is a limit in systemd, verified

@@ -2,8 +2,9 @@
 #
 #   floppa autostart on
 #
-# The setting is *not* whether this unit is enabled; the package enables it and it stays enabled,
-# doing nothing until asked. That is not the shape anyone would choose — `systemctl is-enabled`
+# The setting is *not* whether this unit is enabled. Debian enables it during installation;
+# on Arch, the administrator enables it explicitly. It then does nothing until asked.
+# That is not the shape anyone would choose — `systemctl is-enabled`
 # would be the obvious place to look — and the reason is a limit in systemd: it hands polkit the
 # unit's name for `manage-units` (start, stop) but not for `manage-unit-files` (enable, disable),
 # verified against polkit 127. So no rule can let the `floppa` group enable *this one* unit without
@@ -30,11 +31,15 @@ Documentation=https://github.com/okhsunrog/floppa-vpn
 Requires=floppa-vpn.socket
 After=floppa-vpn.socket network-online.target
 Wants=network-online.target
+# Retry even if the network takes longer than the wait-online timeout to appear.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/floppa resume --if-enabled
 RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
