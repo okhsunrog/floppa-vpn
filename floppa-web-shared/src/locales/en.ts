@@ -3,7 +3,7 @@ export default {
     title: 'Destination routing',
     description:
       'Choose how IPv4 addresses and networks leave this computer. More specific networks win.',
-    direct: 'Direct via physical network',
+    direct: 'Direct via external network',
     tunnel: 'Through Floppa VPN',
     system: 'Use system routes',
     name: 'Name (optional)',
@@ -13,7 +13,7 @@ export default {
     remove: 'Remove',
     invalid: 'Enter a valid IPv4 address or CIDR, such as 194.186.63.0/24.',
     duplicate: 'This network already has a rule, or the 64-rule limit was reached.',
-    hint: 'Saved for the next connection and automatic reconnects. Direct routes require a physical Ethernet or Wi-Fi uplink. DNS is configured separately.',
+    hint: 'Saved for the next connection and automatic reconnects. The external network is selected automatically by the lowest route metric (Ethernet, Wi-Fi or USB tethering). DNS is configured separately.',
     apply: 'Reconnect to apply',
   },
   status: {

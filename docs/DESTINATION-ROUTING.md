@@ -7,8 +7,8 @@ private networks or the Android application split-tunnel list.
 In **Settings → Destination routing**, add a name (optional), an address or CIDR,
 and one of:
 
-- **Direct via physical network**: use the lowest-metric physical default uplink
-  (Ethernet or Wi-Fi), even when another VPN has more specific routes in `main`.
+- **Direct via external network**: use the lowest-metric physical default uplink
+  (Ethernet, Wi-Fi or USB tethering), even when another VPN has more specific routes in `main`.
 - **Through Floppa VPN**: use the Floppa interface, even when another VPN has routes
   covering that destination. The VPN peer must permit the destination.
 - **Use system routes**: use Linux's `main` table, including any routes installed
