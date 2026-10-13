@@ -10,6 +10,7 @@ import DiagnosticsCard from '../components/settings/DiagnosticsCard.vue'
 import AboutCard from '../components/settings/AboutCard.vue'
 import WindowCloseCard from '../components/settings/WindowCloseCard.vue'
 import TunnelServiceCard from '../components/settings/TunnelServiceCard.vue'
+import DestinationRulesCard from '../components/settings/DestinationRulesCard.vue'
 import LocalNetworkCard from '../components/settings/LocalNetworkCard.vue'
 import ConnectionDisplayCard from '../components/settings/ConnectionDisplayCard.vue'
 
@@ -59,6 +60,7 @@ function openProtocolModal() {
     </UCard>
 
     <LocalNetworkCard />
+    <DestinationRulesCard />
     <ConnectionDisplayCard />
 
     <template v-if="vpn.isAndroid">

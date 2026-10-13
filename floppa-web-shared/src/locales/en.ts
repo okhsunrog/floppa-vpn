@@ -1,4 +1,21 @@
 export default {
+  routing: {
+    title: 'Destination routing',
+    description:
+      'Choose how IPv4 addresses and networks leave this computer. More specific networks win.',
+    direct: 'Direct via physical network',
+    tunnel: 'Through Floppa VPN',
+    system: 'Use system routes',
+    name: 'Name (optional)',
+    destination: 'IPv4 address or network',
+    target: 'Route through',
+    add: 'Add rule',
+    remove: 'Remove',
+    invalid: 'Enter a valid IPv4 address or CIDR, such as 194.186.63.0/24.',
+    duplicate: 'This network already has a rule, or the 64-rule limit was reached.',
+    hint: 'Saved for the next connection and automatic reconnects. Direct routes require a physical Ethernet or Wi-Fi uplink. DNS is configured separately.',
+    apply: 'Reconnect to apply',
+  },
   status: {
     active: 'Active',
     pending: 'Pending',
@@ -730,6 +747,7 @@ export default {
     vless: 'VLESS',
     server: 'Server',
     errors: {
+      invalidRouting: 'Invalid routing policy: {detail}',
       emptyOrder: 'No protocol selected to connect with.',
       noUsableConfig:
         'No config for the selected protocol. Server connection is needed to set it up.',
@@ -767,6 +785,7 @@ export default {
         unsupported: 'the operation is not supported on this platform',
       },
       step: {
+        destinationRule: 'destination routing',
         prepareLink: 'network interface',
         startBackend: 'tunnel engine',
         address: 'tunnel address',

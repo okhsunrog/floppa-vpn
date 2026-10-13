@@ -114,6 +114,7 @@ pub async fn connect(
     remote: &RemoteActor,
     config_str: &str,
     private_routes: Vec<String>,
+    destination_rules: Vec<floppa_vpn_core::routing::RouteRule>,
 ) -> Result<()> {
     let protocol = remote
         .import_config(config_str.to_string())
@@ -123,10 +124,10 @@ pub async fn connect(
     let accepted = remote
         .set_intent(IntentRequest::Up {
             order: vec![protocol],
-            // Split tunnelling is an Android affair; on a desktop everything goes through, plus
-            // the private networks the plan grants.
+            // Server-granted private networks and local destination policy are independent.
             params: TunnelParams::new(SplitMode::All, Vec::new())
-                .with_private_routes(private_routes),
+                .with_private_routes(private_routes)
+                .with_destination_rules(destination_rules),
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -187,12 +188,27 @@ pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
 ///
 /// Restore the last successful request, including its routing parameters. If no
 /// connection has succeeded yet, try the available configs with default parameters.
-pub async fn connect_stored(remote: &RemoteActor) -> Result<()> {
+pub async fn connect_stored(
+    remote: &RemoteActor,
+    rules: Option<Vec<floppa_vpn_core::routing::RouteRule>>,
+) -> Result<()> {
     // A successful connection already has the full parameter set persisted by
     // the service. Reuse it, including private routes and LAN preferences.
-    let accepted = if let Some(accepted) =
-        remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))?
-    {
+    let accepted = if let Some(rules) = rules {
+        let state = first_state(remote).await?;
+        let params = state.intent_params.or(state.params).unwrap_or_default();
+        remote
+            .set_intent(IntentRequest::Up {
+                order: if state.intent_order.is_empty() {
+                    state.configs.available
+                } else {
+                    state.intent_order
+                },
+                params: params.with_destination_rules(rules),
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?
+    } else if let Some(accepted) = remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))? {
         accepted
     } else {
         let order = first_state(remote).await?.configs.available;

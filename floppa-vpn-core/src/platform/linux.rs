@@ -355,6 +355,127 @@ impl Default for LinuxPlatform {
 
 #[async_trait]
 impl Platform for LinuxPlatform {
+    async fn plan_destination_rules(
+        &self,
+        iface: &InterfaceName,
+        rules: &[crate::routing::RouteRule],
+        endpoint: IpAddr,
+    ) -> Result<Vec<crate::routing::AppliedRule>, PlatformError> {
+        use crate::routing::{AppliedRule, RouteTarget};
+        let rules = crate::routing::validate(rules).map_err(PlatformError::Failed)?;
+        if rules.is_empty() {
+            return Ok(Vec::new());
+        }
+        if !endpoint.is_ipv4() {
+            return Err(PlatformError::Unavailable(
+                "destination rules require an IPv4 endpoint".into(),
+            ));
+        }
+        let mut uplink = None;
+        if rules.iter().any(|r| r.target == RouteTarget::Direct) {
+            let output = tokio::process::Command::new("ip")
+                .args(["-j", "-4", "route", "show", "default"])
+                .output()
+                .await
+                .map_err(|e| PlatformError::Failed(e.to_string()))?;
+            let routes: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
+                .map_err(|e| PlatformError::Failed(e.to_string()))?;
+            let mut candidates = routes
+                .into_iter()
+                .filter(|r| {
+                    r["dev"].as_str().is_some_and(|dev| {
+                        std::path::Path::new("/sys/class/net")
+                            .join(dev)
+                            .join("device")
+                            .exists()
+                    })
+                })
+                .collect::<Vec<_>>();
+            candidates.sort_by_key(|r| r["metric"].as_u64().unwrap_or(0));
+            if let Some(r) = candidates.first() {
+                let dev = r["dev"].as_str().unwrap().to_owned();
+                let gateway = r["gateway"].as_str().map(str::to_owned);
+                uplink = Some((dev, gateway));
+            } else {
+                return Err(PlatformError::Unavailable(
+                    "no physical default uplink for direct destination rules".into(),
+                ));
+            }
+        }
+        // Table space is reserved only while these explicit rules are active. Never overwrite
+        // someone else's table, even if they happen to use the same numeric allocation.
+        let mut planned = vec![AppliedRule {
+            destination: format!("{endpoint}/32"),
+            table: 254,
+            device: None,
+            gateway: None,
+            priority: 89,
+        }];
+        for (i, r) in rules.iter().enumerate() {
+            let (table, device, gateway) = match r.target {
+                RouteTarget::System => (254, None, None),
+                RouteTarget::Tunnel => (52600 + i as u32, Some(iface.to_string()), None),
+                RouteTarget::Direct => {
+                    let (d, g) = uplink.as_ref().unwrap();
+                    (52600 + i as u32, Some(d.clone()), g.clone())
+                }
+            };
+            planned.push(AppliedRule {
+                destination: r.destination.clone(),
+                table,
+                device,
+                gateway,
+                priority: 90 + i as u32,
+            });
+        }
+        for r in &planned {
+            self.run_helper(
+                &[
+                    "check-policy",
+                    &r.table.to_string(),
+                    &r.priority.to_string(),
+                ],
+                None,
+            )
+            .await?;
+        }
+        Ok(planned)
+    }
+    async fn apply_destination_rule(
+        &self,
+        rule: &crate::routing::AppliedRule,
+    ) -> Result<(), PlatformError> {
+        self.run_helper(
+            &[
+                "add-policy",
+                &rule.destination,
+                &rule.table.to_string(),
+                &rule.priority.to_string(),
+                rule.device.as_deref().unwrap_or("-"),
+                rule.gateway.as_deref().unwrap_or("-"),
+            ],
+            None,
+        )
+        .await
+    }
+    async fn remove_destination_rule(
+        &self,
+        rule: &crate::routing::AppliedRule,
+    ) -> Result<(), PlatformError> {
+        self.run_helper(
+            &[
+                "del-policy",
+                &rule.destination,
+                &rule.table.to_string(),
+                &rule.priority.to_string(),
+                rule.device.as_deref().unwrap_or("-"),
+                rule.gateway.as_deref().unwrap_or("-"),
+            ],
+            Some(UNDO_TIMEOUT),
+        )
+        .await
+    }
+
     fn tun_params(&self) -> TunParams {
         let fwmark = if Self::has_cap_net_admin() {
             Some(FWMARK)

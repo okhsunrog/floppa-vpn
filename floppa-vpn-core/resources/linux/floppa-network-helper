@@ -43,7 +43,57 @@ validate_link_target() {
     fi
 }
 
+# Undo may legitimately find an object already removed with its interface. Other failures
+# must reach the durable journal so cleanup is retried rather than silently forgotten.
+remove_policy_object() {
+    local output
+    if output=$(LC_ALL=C "$@" 2>&1); then return 0; fi
+    case "$output" in
+        *"No such file or directory"*|*"No such process"*|*"FIB table does not exist"*|*"Cannot find device"*) return 0 ;;
+        *) echo "$output" >&2; return 1 ;;
+    esac
+}
+
 case "${1:-}" in
+    check-policy)
+        [[ $# -eq 3 && "$2" =~ ^[0-9]+$ && "$3" =~ ^[0-9]+$ && "$3" -ge 89 && "$3" -le 153 ]] || exit 1
+        table="$2"
+        [[ "$table" == 254 || ( "$table" -ge 52600 && "$table" -le 52663 ) ]] || exit 1
+        if ip -4 rule show | grep -qE "^${3}:"; then
+            echo "Policy priority $3 is already occupied" >&2; exit 1
+        fi
+        if [[ "$table" != 254 ]] && [[ -n "$(ip -4 route show table "$table" 2>/dev/null || true)" ]]; then
+            echo "Routing table $table is already occupied" >&2; exit 1
+        fi
+        ;;
+    add-policy|del-policy)
+        [[ $# -eq 6 ]] || exit 1
+        operation="$1"; dest="$2"; table="$3"; priority="$4"; dev="$5"; gateway="$6"
+        validate_ip "$dest"
+        [[ "$table" =~ ^[0-9]+$ && "$priority" =~ ^[0-9]+$ && "$priority" -ge 89 && "$priority" -le 153 ]] || exit 1
+        [[ "$table" == 254 || ( "$table" -ge 52600 && "$table" -le 52663 ) ]] || exit 1
+        route_args=()
+        if [[ "$table" != 254 ]]; then
+            [[ "$dev" =~ ^[a-zA-Z0-9_.:-]{1,15}$ ]] || exit 1
+            if [[ "$gateway" != - ]]; then validate_ip "$gateway"; route_args+=(via "$gateway"); fi
+            route_args+=(dev "$dev" proto 186)
+        fi
+        if [[ "$operation" == add-policy ]]; then
+            if [[ "$table" != 254 ]]; then
+                ip -4 route add table "$table" default "${route_args[@]}"
+                # Keep a vanished uplink from falling through into another VPN.
+                ip -4 route add table "$table" unreachable default metric 42760 proto 186
+            fi
+            ip -4 rule add priority "$priority" to "$dest" table "$table" protocol 186
+        else
+            # Only exact owned objects; never flush a table or delete another client's rule.
+            remove_policy_object ip -4 rule del priority "$priority" to "$dest" table "$table" protocol 186
+            if [[ "$table" != 254 ]]; then
+                remove_policy_object ip -4 route del table "$table" default "${route_args[@]}"
+                remove_policy_object ip -4 route del table "$table" unreachable default metric 42760 proto 186
+            fi
+        fi
+        ;;
     ensure-tun)
         # Usage: ensure-tun <iface> <uid>
         #

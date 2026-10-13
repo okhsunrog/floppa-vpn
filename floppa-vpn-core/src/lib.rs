@@ -68,3 +68,5 @@ pub use backend::create_backend;
 pub use platform::{Platform, PlatformImpl, get_platform};
 pub use protocol::{InterfaceName, Preference, Protocol};
 pub use state::ProtocolConfig;
+
+pub mod routing;
