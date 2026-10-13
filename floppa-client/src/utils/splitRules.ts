@@ -40,6 +40,8 @@ export function splitBanner(args: {
 /** The actor's own "same tunnel" test, on the shape the snapshot publishes. */
 export function sameParams(a: TunnelParams, b: TunnelParams): boolean {
   return (
+    (a.excluded_routes ?? []).length === (b.excluded_routes ?? []).length &&
+    (a.excluded_routes ?? []).every((route, i) => route === (b.excluded_routes ?? [])[i]) &&
     a.split_mode === b.split_mode &&
     (a.allow_lan ?? false) === (b.allow_lan ?? false) &&
     a.apps.length === b.apps.length &&

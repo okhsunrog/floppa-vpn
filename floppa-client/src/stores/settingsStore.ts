@@ -24,6 +24,7 @@ export const useSettingsStore = defineStore(
   () => {
     const splitMode = ref<SplitMode>('all')
     const selectedApps = ref<string[]>([])
+    const excludedRoutes = ref<string[]>([])
     const allowLan = ref(false)
     const showConnectionDetails = ref(false)
 
@@ -94,6 +95,7 @@ export const useSettingsStore = defineStore(
       splitMode,
       selectedApps,
       allowLan,
+      excludedRoutes,
       showConnectionDetails,
       autoSelect,
       protocolOrder,
@@ -114,6 +116,7 @@ export const useSettingsStore = defineStore(
         'splitMode',
         'selectedApps',
         'allowLan',
+        'excludedRoutes',
         'showConnectionDetails',
         'autoSelect',
         'protocolOrder',

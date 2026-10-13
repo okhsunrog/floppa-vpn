@@ -34,6 +34,7 @@ export type VpnErrorKind = VpnError['kind']
 
 /** Locale key for each error kind; `{detail}` is interpolated where the kind carries one. */
 export const VPN_ERROR_KEYS: Record<Exclude<VpnErrorKind, 'attempt_failed'>, string> = {
+  invalid_routing: 'routing.error',
   empty_order: 'vpn.errors.emptyOrder',
   no_usable_config: 'vpn.errors.noUsableConfig',
   actor_gone: 'vpn.errors.actorGone',

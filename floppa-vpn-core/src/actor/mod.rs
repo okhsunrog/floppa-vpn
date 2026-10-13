@@ -512,7 +512,15 @@ impl TunnelActor {
 
         let intent = match request {
             IntentRequest::Down => Intent::Down { epoch },
-            IntentRequest::Up { order, params } => {
+            IntentRequest::Up { order, mut params } => {
+                params.excluded_routes =
+                    crate::routing::validate_exclusions(&params.excluded_routes)
+                        .map_err(|detail| IntentError::InvalidRouting { detail })?;
+                if !cfg!(target_os = "linux") && !params.excluded_routes.is_empty() {
+                    return Err(IntentError::InvalidRouting {
+                        detail: "route exclusions are currently supported on Linux only".into(),
+                    });
+                }
                 if order.is_empty() {
                     return Err(IntentError::EmptyOrder);
                 }

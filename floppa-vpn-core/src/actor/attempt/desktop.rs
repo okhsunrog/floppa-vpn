@@ -155,6 +155,14 @@ pub(super) async fn ladder(
         routes,
         &ctx.params.private_route_networks(),
     );
+    let routes = floppa_tunnel_config::route::exclude_networks(
+        routes,
+        &ctx.params
+            .excluded_routes
+            .iter()
+            .map(|r| r.parse().expect("validated exclusion"))
+            .collect::<Vec<_>>(),
+    );
     stack.push(Step::Routes {
         iface: iface.clone(),
         routes: routes.clone(),

@@ -47,8 +47,9 @@ use crate::store::ConfigError;
 ///
 /// One is the shape that shipped in 0.6.x, before the version was carried at all. Two added
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
-/// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference. Six adds route exclusions
+/// and saved settings reads; five was the withdrawn destination-policy implementation.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Why a session could not be handed over.
 ///
@@ -208,6 +209,9 @@ pub trait VpnRpc {
     /// Not needed on Android, where the UI and `:vpn` are one uid and share the file directly —
     /// there this answers [`SessionError::NotKept`].
     async fn set_session(session: Option<String>) -> Result<(), SessionError>;
+
+    /// Last successful request, containing settings and protocol order, never credentials.
+    async fn saved_intent() -> Option<crate::actor::handle::IntentRequest>;
 
     /// Raise the tunnel that last connected, if there is one recorded.
     ///

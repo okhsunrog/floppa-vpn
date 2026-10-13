@@ -113,6 +113,23 @@ pub fn with_extra_routes(mut routes: Vec<IpNetwork>, extra: &[IpNetwork]) -> Vec
     routes
 }
 
+/// Remove user exclusions after all positive routes have been assembled.
+/// This affects host routes only, not the peer's cryptographic AllowedIPs.
+pub fn exclude_networks(mut routes: Vec<IpNetwork>, excluded: &[IpNetwork]) -> Vec<IpNetwork> {
+    if excluded.is_empty() {
+        return routes;
+    }
+    for &network in excluded {
+        routes = routes
+            .into_iter()
+            .flat_map(|route| subtract_network(route, network))
+            .collect();
+    }
+    routes.sort_by_key(|n| (n.ip(), n.prefix()));
+    routes.dedup();
+    routes
+}
+
 fn subtract_network(route: IpNetwork, excluded: IpNetwork) -> Vec<IpNetwork> {
     match (route, excluded) {
         (IpNetwork::V4(route), IpNetwork::V4(excluded)) => subtract_v4(route, excluded)

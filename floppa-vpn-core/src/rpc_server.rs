@@ -177,6 +177,10 @@ impl VpnRpc for ActorServer {
             .map_err(|detail| SessionError::Failed { detail })
     }
 
+    async fn saved_intent(self, _ctx: Context) -> Option<crate::actor::handle::IntentRequest> {
+        crate::autostart::last_intent()
+    }
+
     async fn resume(self, _ctx: Context) -> Result<Option<IntentAccepted>, IntentError> {
         // Read here rather than remembered in this struct: it is written by whichever cycle last
         // connected, which may well be a cycle that happened after this server started.

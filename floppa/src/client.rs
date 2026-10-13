@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use floppa_vpn_core::actor::Spawn;
 use floppa_vpn_core::actor::handle::{IntentRequest, TunnelControl};
-use floppa_vpn_core::actor::types::{CycleOutcome, Phase, SplitMode, TunnelParams, TunnelState};
+use floppa_vpn_core::actor::types::{CycleOutcome, Phase, TunnelParams, TunnelState};
 use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_remote, system_socket};
 use floppa_vpn_core::protocol::Protocol;
 use floppa_vpn_core::remote::RemoteActor;
@@ -114,7 +114,13 @@ pub async fn connect(
     remote: &RemoteActor,
     config_str: &str,
     private_routes: Vec<String>,
+    excluded_routes: Option<Vec<String>>,
 ) -> Result<()> {
+    let (_, mut params) = connection_preferences(remote).await?;
+    params = params.with_private_routes(private_routes);
+    if let Some(routes) = excluded_routes {
+        params.excluded_routes = routes;
+    }
     let protocol = remote
         .import_config(config_str.to_string())
         .await
@@ -123,10 +129,8 @@ pub async fn connect(
     let accepted = remote
         .set_intent(IntentRequest::Up {
             order: vec![protocol],
-            // Split tunnelling is an Android affair; on a desktop everything goes through, plus
-            // the private networks the plan grants.
-            params: TunnelParams::new(SplitMode::All, Vec::new())
-                .with_private_routes(private_routes),
+            // Preserve local preferences while refreshing the server-granted routes.
+            params,
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -187,26 +191,43 @@ pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
 ///
 /// Restore the last successful request, including its routing parameters. If no
 /// connection has succeeded yet, try the available configs with default parameters.
-pub async fn connect_stored(remote: &RemoteActor) -> Result<()> {
-    // A successful connection already has the full parameter set persisted by
-    // the service. Reuse it, including private routes and LAN preferences.
-    let accepted = if let Some(accepted) =
-        remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))?
+async fn connection_preferences(
+    remote: &RemoteActor,
+) -> Result<(Vec<floppa_vpn_core::protocol::Protocol>, TunnelParams)> {
+    let state = first_state(remote).await?;
+    if let Some(params) = state.intent_params.or(state.params) {
+        let order = if state.intent_order.is_empty() {
+            state.configs.available
+        } else {
+            state.intent_order
+        };
+        return Ok((order, params));
+    }
+    if let Some(IntentRequest::Up { order, params }) = remote
+        .saved_intent()
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
     {
-        accepted
-    } else {
-        let order = first_state(remote).await?.configs.available;
-        if order.is_empty() {
-            bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
-        }
-        remote
-            .set_intent(IntentRequest::Up {
-                order,
-                params: TunnelParams::default(),
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-    };
+        return Ok((order, params));
+    }
+    Ok((state.configs.available, TunnelParams::default()))
+}
+
+pub async fn connect_stored(
+    remote: &RemoteActor,
+    excluded_routes: Option<Vec<String>>,
+) -> Result<()> {
+    let (order, mut params) = connection_preferences(remote).await?;
+    if order.is_empty() {
+        bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
+    }
+    if let Some(routes) = excluded_routes {
+        params.excluded_routes = routes;
+    }
+    let accepted = remote
+        .set_intent(IntentRequest::Up { order, params })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     eprintln!("Connecting with the config the service already holds...");
     match remote

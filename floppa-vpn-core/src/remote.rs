@@ -186,6 +186,19 @@ impl RemoteActor {
         .map_err(|detail| crate::rpc::SessionError::Failed { detail })?
     }
 
+    /// Read last-successful settings without starting the tunnel.
+    pub async fn saved_intent(
+        &self,
+    ) -> Result<Option<crate::actor::handle::IntentRequest>, IntentError> {
+        self.call("saved_intent", |client| async move {
+            client
+                .saved_intent(RemoteActor::deadline(CALL_DEADLINE))
+                .await
+        })
+        .await
+        .map_err(|_| IntentError::ActorGone)
+    }
+
     /// Ask the process holding the actor to bring back whatever it last had up.
     ///
     /// `Ok(None)` is "nothing has ever connected there", which is an answer and not a failure.

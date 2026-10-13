@@ -50,6 +50,9 @@ pub struct TunnelParams {
     /// [`Self::with_private_routes`].
     #[serde(default)]
     pub private_routes: Vec<String>,
+    /// Local destination exclusions, applied after server-granted routes.
+    #[serde(default)]
+    pub excluded_routes: Vec<String>,
 }
 
 impl TunnelParams {
@@ -61,6 +64,7 @@ impl TunnelParams {
             apps,
             allow_lan: false,
             private_routes: Vec::new(),
+            excluded_routes: Vec::new(),
         }
     }
 

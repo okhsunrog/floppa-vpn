@@ -271,6 +271,7 @@ export const useVpnStore = defineStore(
         split_mode: settings.splitMode,
         apps,
         allow_lan: settings.allowLan,
+        excluded_routes: platform() === 'linux' ? settings.excludedRoutes : [],
         private_routes: usePrivateNetworksStore().routes,
       }
     }

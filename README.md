@@ -8,6 +8,9 @@
 
 [![CI](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml)
 
+Linux clients support [route exclusions](docs/ROUTE-EXCLUSIONS.md) in Settings
+or with `floppa connect --routes routing.json`.
+
 ## Architecture
 
 Three tunnel protocols, two VPS regions:

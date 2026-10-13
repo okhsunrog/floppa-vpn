@@ -1,4 +1,17 @@
 export default {
+  routing: {
+    error: 'Invalid route exclusions: {detail}',
+    title: 'Exclude from Floppa VPN',
+    description:
+      'Floppa does not install routes covering these addresses. The system chooses the outbound path.',
+    destination: 'IPv4 address or network',
+    add: 'Add',
+    remove: 'Remove',
+    invalid: 'Enter a valid IPv4 address or network, such as 194.186.63.0/24.',
+    duplicate: 'This network is already listed, or the 64-exclusion limit was reached.',
+    hint: 'Changes apply on the next connection. DNS is configured separately.',
+    apply: 'Reconnect',
+  },
   status: {
     active: 'Active',
     pending: 'Pending',

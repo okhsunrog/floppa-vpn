@@ -1028,3 +1028,25 @@ async fn endpoint_failover_unwinds_before_starting_the_next_address() {
         crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1).await;
     assert!(report.is_clean());
 }
+
+#[tokio::test(start_paused = true)]
+async fn invalid_exclusions_leave_the_running_tunnel_untouched() {
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+    let before = h.states.borrow().intent_params.clone();
+    let params = TunnelParams {
+        excluded_routes: vec!["not-a-network".into()],
+        ..TunnelParams::default()
+    };
+    let result = h
+        .handle
+        .set_intent(IntentRequest::Up {
+            order: vec![Protocol::WireGuard],
+            params,
+        })
+        .await;
+    assert!(matches!(result, Err(IntentError::InvalidRouting { .. })));
+    assert_eq!(h.states.borrow().intent_params, before);
+    assert!(h.backend.running().is_some());
+    assert_eq!(h.backend.stops(), 0);
+}

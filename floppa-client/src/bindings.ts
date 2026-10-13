@@ -360,7 +360,7 @@ export type IntentAccepted = {
  */
 export type IntentEpoch = number;
 
-export type IntentError = { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } | 
+export type IntentError = { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } | 
 /**
  *  The wait for a cycle's ending gave up before the cycle did. **Not a failure of anything.**
  * 
@@ -599,6 +599,8 @@ export type TunnelParams = {
 	 *  [`Self::with_private_routes`].
 	 */
 	private_routes?: string[],
+	/**  Local destination exclusions, applied after server-granted routes. */
+	excluded_routes?: string[],
 };
 
 /**  Everything the UI can know about the tunnel, in one value. */

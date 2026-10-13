@@ -30,6 +30,7 @@ pub async fn run(
     no_dns: bool,
     config_dir: &std::path::Path,
     private_routes: Vec<String>,
+    excluded_routes: Vec<String>,
 ) -> Result<()> {
     let iface = InterfaceName::new(interface)
         .map_err(|e| anyhow::anyhow!("{interface} is not a usable interface name: {}", e.0))?;
@@ -61,13 +62,15 @@ pub async fn run(
         .map_err(|e| anyhow::anyhow!("{e}"))
         .context("the config is not one this client can use")?;
 
+    let mut params =
+        TunnelParams::new(SplitMode::All, Vec::new()).with_private_routes(private_routes);
+    params.excluded_routes = excluded_routes;
     let accepted = handle
         .set_intent(IntentRequest::Up {
             order: vec![protocol],
             // Split tunnelling is an Android affair; on a desktop everything goes through, plus
             // the private networks the plan grants.
-            params: TunnelParams::new(SplitMode::All, Vec::new())
-                .with_private_routes(private_routes),
+            params,
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

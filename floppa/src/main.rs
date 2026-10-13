@@ -53,6 +53,9 @@ enum Command {
     /// this command. With --config it builds one here instead, from the file, and holds it until
     /// interrupted — that run needs root and never touches the service.
     Connect {
+        /// JSON file containing {"excluded_routes": ["194.186.63.0/24"]}
+        #[arg(long)]
+        routes: Option<std::path::PathBuf>,
         /// Config file (.conf) or VLESS URI file. Implies a tunnel run by this command, not by the
         /// service
         #[arg(long)]
@@ -163,12 +166,22 @@ async fn main() -> Result<()> {
             auth::login(&api_url, &tokens).await?;
         }
         Command::Connect {
+            routes,
             config,
             protocol,
             interface,
             no_dns,
             api_url,
         } => {
+            let excluded_routes = routes
+                .as_ref()
+                .map(|path| -> Result<_> {
+                    let config: floppa_vpn_core::routing::RoutingConfig =
+                        serde_json::from_slice(&std::fs::read(path)?)?;
+                    floppa_vpn_core::routing::validate_exclusions(&config.excluded_routes)
+                        .map_err(anyhow::Error::msg)
+                })
+                .transpose()?;
             // A config on the command line is a tunnel for this run to build and hold, so it is
             // also the choice between the two shapes of `connect`. Given one, nothing here looks
             // for a service; given none, the machine's tunnel is the service's to raise.
@@ -181,6 +194,7 @@ async fn main() -> Result<()> {
                     no_dns,
                     &auth::config_dir()?,
                     Vec::new(),
+                    excluded_routes.unwrap_or_default(),
                 )
                 .await?;
                 return Ok(());
@@ -194,7 +208,7 @@ async fn main() -> Result<()> {
             if tokens.load()?.is_none() {
                 let remote = client::reach().await?;
                 if client::has_config(&remote).await {
-                    return client::connect_stored(&remote).await;
+                    return client::connect_stored(&remote, excluded_routes).await;
                 }
                 return Err(anyhow::anyhow!(
                     "Not logged in, and the tunnel service holds no config.\n\
@@ -239,7 +253,7 @@ async fn main() -> Result<()> {
                 // terminal, to replace a peer that has been deleted. Handing the session over is
                 // how it can: the credentials are this user's and the store is root's.
                 client::seed_session(&remote, &api_url, &token, &identity).await;
-                client::connect(&remote, &config_str, private_routes).await?;
+                client::connect(&remote, &config_str, private_routes, excluded_routes).await?;
             }
             #[cfg(not(target_os = "linux"))]
             connect::run(
@@ -248,6 +262,7 @@ async fn main() -> Result<()> {
                 no_dns,
                 &auth::config_dir()?,
                 private_routes,
+                excluded_routes.unwrap_or_default(),
             )
             .await?;
         }

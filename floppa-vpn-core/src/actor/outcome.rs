@@ -116,6 +116,8 @@ pub enum CycleOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IntentError {
+    #[error("invalid route exclusions: {detail}")]
+    InvalidRouting { detail: String },
     #[error("probe order is empty")]
     EmptyOrder,
     #[error("no stored config for any of the requested protocols")]
