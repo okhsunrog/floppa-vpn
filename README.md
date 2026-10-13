@@ -8,9 +8,6 @@
 
 [![CI](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml/badge.svg)](https://github.com/okhsunrog/floppa-vpn/actions/workflows/ci.yml)
 
-Linux clients support [local destination routing](docs/DESTINATION-ROUTING.md): direct uplink,
-Floppa tunnel or system routes per IPv4 network, configured in Settings or with `floppa connect --routes`.
-
 ## Architecture
 
 Three tunnel protocols, two VPS regions:

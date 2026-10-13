@@ -272,7 +272,6 @@ export const useVpnStore = defineStore(
         apps,
         allow_lan: settings.allowLan,
         private_routes: usePrivateNetworksStore().routes,
-        destination_rules: platform() === 'linux' ? settings.destinationRules : [],
       }
     }
 

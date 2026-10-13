@@ -128,37 +128,6 @@ pub struct TunParams {
 /// express.
 #[async_trait]
 pub trait Platform: Send + Sync {
-    async fn plan_destination_rules(
-        &self,
-        _iface: &InterfaceName,
-        rules: &[crate::routing::RouteRule],
-        _endpoint: IpAddr,
-    ) -> Result<Vec<crate::routing::AppliedRule>, PlatformError> {
-        if rules.is_empty() {
-            Ok(Vec::new())
-        } else {
-            Err(PlatformError::Unavailable(
-                "destination rules require Linux".into(),
-            ))
-        }
-    }
-    async fn apply_destination_rule(
-        &self,
-        _rule: &crate::routing::AppliedRule,
-    ) -> Result<(), PlatformError> {
-        Err(PlatformError::Unavailable(
-            "destination rules require Linux".into(),
-        ))
-    }
-    async fn remove_destination_rule(
-        &self,
-        _rule: &crate::routing::AppliedRule,
-    ) -> Result<(), PlatformError> {
-        Err(PlatformError::Unavailable(
-            "destination rules require Linux".into(),
-        ))
-    }
-
     /// Return platform-specific TUN creation parameters.
     fn tun_params(&self) -> TunParams;
 

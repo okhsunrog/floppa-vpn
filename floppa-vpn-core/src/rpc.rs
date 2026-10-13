@@ -47,9 +47,8 @@ use crate::store::ConfigError;
 ///
 /// One is the shape that shipped in 0.6.x, before the version was carried at all. Two added
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
-/// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference. Five added Linux
-/// destination policy: older services must not silently ignore these routing parameters.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference.
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Why a session could not be handed over.
 ///

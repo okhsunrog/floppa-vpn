@@ -30,7 +30,6 @@ pub async fn run(
     no_dns: bool,
     config_dir: &std::path::Path,
     private_routes: Vec<String>,
-    destination_rules: Vec<floppa_vpn_core::routing::RouteRule>,
 ) -> Result<()> {
     let iface = InterfaceName::new(interface)
         .map_err(|e| anyhow::anyhow!("{interface} is not a usable interface name: {}", e.0))?;
@@ -68,8 +67,7 @@ pub async fn run(
             // Split tunnelling is an Android affair; on a desktop everything goes through, plus
             // the private networks the plan grants.
             params: TunnelParams::new(SplitMode::All, Vec::new())
-                .with_private_routes(private_routes)
-                .with_destination_rules(destination_rules),
+                .with_private_routes(private_routes),
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

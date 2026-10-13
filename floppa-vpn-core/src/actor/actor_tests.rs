@@ -1028,27 +1028,3 @@ async fn endpoint_failover_unwinds_before_starting_the_next_address() {
         crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1).await;
     assert!(report.is_clean());
 }
-
-#[tokio::test(start_paused = true)]
-async fn invalid_destination_rules_do_not_replace_a_running_intent() {
-    let mut h = Harness::spawn(policy());
-    h.connect().await;
-    let before = h.states.borrow().intent_params.clone();
-    let result = h
-        .handle
-        .set_intent(IntentRequest::Up {
-            order: vec![Protocol::WireGuard],
-            params: TunnelParams::default().with_destination_rules(vec![
-                crate::routing::RouteRule {
-                    name: String::new(),
-                    destination: "not-a-network".into(),
-                    target: crate::routing::RouteTarget::Direct,
-                },
-            ]),
-        })
-        .await;
-    assert!(matches!(result, Err(IntentError::InvalidRouting { .. })));
-    assert_eq!(h.states.borrow().intent_params, before);
-    assert!(h.backend.running().is_some());
-    assert_eq!(h.backend.stops(), 0);
-}

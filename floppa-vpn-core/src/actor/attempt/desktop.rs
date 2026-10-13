@@ -47,13 +47,6 @@ pub(super) async fn ladder(
     let endpoint_str = ctx.config.endpoint_str();
     let endpoint_ip = endpoint.ip();
 
-    // Resolve physical uplink and reject occupied policy tables before mutations.
-    let destination_rules = ctx
-        .platform
-        .plan_destination_rules(&iface, &ctx.params.destination_rules, endpoint_ip)
-        .await
-        .map_err(|e| platform_error(StepKind::DestinationRule, e))?;
-
     // 1. Link -----------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     stack.push(Step::PrepareLink {
@@ -141,16 +134,6 @@ pub(super) async fn ladder(
         endpoint: endpoint_ip,
         gateway,
     });
-
-    for rule in destination_rules {
-        bail_if_cancelled!(ctx);
-        stack.push(Step::DestinationRule { rule: rule.clone() });
-        ctx.platform
-            .apply_destination_rule(&rule)
-            .await
-            .map_err(|e| platform_error(StepKind::DestinationRule, e))?;
-        stack.confirm_top(Step::DestinationRule { rule });
-    }
 
     // 5. Routes ---------------------------------------------------------------------------
     bail_if_cancelled!(ctx);

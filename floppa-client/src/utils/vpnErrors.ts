@@ -34,7 +34,6 @@ export type VpnErrorKind = VpnError['kind']
 
 /** Locale key for each error kind; `{detail}` is interpolated where the kind carries one. */
 export const VPN_ERROR_KEYS: Record<Exclude<VpnErrorKind, 'attempt_failed'>, string> = {
-  invalid_routing: 'vpn.errors.invalidRouting',
   empty_order: 'vpn.errors.emptyOrder',
   no_usable_config: 'vpn.errors.noUsableConfig',
   actor_gone: 'vpn.errors.actorGone',
@@ -76,7 +75,6 @@ export const BACKEND_ERROR_KEYS: Record<BackendError['kind'], string> = {
 
 /** The platform step that failed, for `AttemptError` of kind `platform`. */
 export const STEP_KEYS: Record<StepKind, string> = {
-  destination_rule: 'vpn.errors.step.destinationRule',
   prepare_link: 'vpn.errors.step.prepareLink',
   start_backend: 'vpn.errors.step.startBackend',
   address: 'vpn.errors.step.address',

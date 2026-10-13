@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { commands, type AppInfo, type Protocol, type SplitMode, type RouteRule } from '../bindings'
+import { commands, type AppInfo, type Protocol, type SplitMode } from '../bindings'
 import { DEFAULT_PROTOCOL_ORDER, isProtocol, sanitizeProtocolOrder } from '../utils/protocolOrder'
 
 /**
@@ -24,7 +24,6 @@ export const useSettingsStore = defineStore(
   () => {
     const splitMode = ref<SplitMode>('all')
     const selectedApps = ref<string[]>([])
-    const destinationRules = ref<RouteRule[]>([])
     const allowLan = ref(false)
     const showConnectionDetails = ref(false)
 
@@ -95,7 +94,6 @@ export const useSettingsStore = defineStore(
       splitMode,
       selectedApps,
       allowLan,
-      destinationRules,
       showConnectionDetails,
       autoSelect,
       protocolOrder,
@@ -116,7 +114,6 @@ export const useSettingsStore = defineStore(
         'splitMode',
         'selectedApps',
         'allowLan',
-        'destinationRules',
         'showConnectionDetails',
         'autoSelect',
         'protocolOrder',

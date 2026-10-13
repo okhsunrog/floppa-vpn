@@ -315,26 +315,26 @@ fn judge_silence(
     }
     match u.probing_since {
         // 17a
-        None => Silence::Decided(Box::new(
+        None => Silence::Decided(
             Decision::to(Status::Up(UpStatus {
                 probing_since: Some(now),
                 dark_since: None,
                 ..u.clone()
             }))
             .with(Effect::Probe),
-        )),
+        ),
         // 17b
         Some(since) if now.saturating_duration_since(since) <= policy.probe_grace => {
             Silence::Awaiting
         }
         // 17c
-        Some(_) => Silence::Decided(Box::new(
+        Some(_) => Silence::Decided(
             Decision::to(unwinding(
                 Cycle::reconnect(up, policy),
                 UnwindReason::PeerSilent,
             ))
             .with(Effect::Unwind { extra: undo_for(u) }),
-        )),
+        ),
     }
 }
 
@@ -346,7 +346,7 @@ enum Silence {
     /// A probe is out and its grace has not run out. The clock stands.
     Awaiting,
     /// Silence has changed the status.
-    Decided(Box<Decision>),
+    Decided(Decision),
 }
 
 /// The main table.
@@ -513,7 +513,7 @@ pub fn reconcile(
                     judge_silence(u, up, rt, now, policy)
                 };
                 if let Silence::Decided(decision) = silence {
-                    return *decision;
+                    return decision;
                 }
                 let mut next = u.clone();
                 next.dark_since = None;

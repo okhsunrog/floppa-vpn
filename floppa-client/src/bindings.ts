@@ -360,7 +360,7 @@ export type IntentAccepted = {
  */
 export type IntentEpoch = number;
 
-export type IntentError = { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } | 
+export type IntentError = { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } | 
 /**
  *  The wait for a cycle's ending gave up before the cycle did. **Not a failure of anything.**
  * 
@@ -451,14 +451,6 @@ export type RetryProgress = {
 	resume_in_ms: number,
 };
 
-export type RouteRule = {
-	name?: string,
-	destination: string,
-	target: RouteTarget,
-};
-
-export type RouteTarget = "direct" | "tunnel" | "system";
-
 /**  Safe area insets (status bar, nav bar) in dp */
 export type SafeAreaInsets = {
 	top: number | null,
@@ -469,7 +461,7 @@ export type ServiceProblem = { kind: "not_permitted" } | { kind: "wrong_version"
 
 export type SplitMode = "all" | "include" | "exclude";
 
-export type StepKind = "destination_rule" | "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
+export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
 
 /**  Why a sync was refused. */
 export type SyncFailure = { kind: "no_subscription" } | { kind: "peer_limit_reached" } | 
@@ -607,7 +599,6 @@ export type TunnelParams = {
 	 *  [`Self::with_private_routes`].
 	 */
 	private_routes?: string[],
-	destination_rules?: RouteRule[],
 };
 
 /**  Everything the UI can know about the tunnel, in one value. */

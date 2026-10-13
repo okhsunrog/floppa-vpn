@@ -50,8 +50,6 @@ pub struct TunnelParams {
     /// [`Self::with_private_routes`].
     #[serde(default)]
     pub private_routes: Vec<String>,
-    #[serde(default)]
-    pub destination_rules: Vec<crate::routing::RouteRule>,
 }
 
 impl TunnelParams {
@@ -63,13 +61,7 @@ impl TunnelParams {
             apps,
             allow_lan: false,
             private_routes: Vec::new(),
-            destination_rules: Vec::new(),
         }
-    }
-
-    pub fn with_destination_rules(mut self, rules: Vec<crate::routing::RouteRule>) -> Self {
-        self.destination_rules = rules;
-        self
     }
 
     pub fn with_allow_lan(mut self, allow_lan: bool) -> Self {

@@ -37,18 +37,11 @@ pub use journal::{Journal, StackId};
 /// One reversible mutation of the machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Step {
-    DestinationRule {
-        rule: crate::routing::AppliedRule,
-    },
     /// Linux: the persistent TUN created by the helper. Windows: reaping a stale Wintun adapter.
-    PrepareLink {
-        iface: InterfaceName,
-    },
+    PrepareLink { iface: InterfaceName },
     /// The tunnel itself. Undo is `backend.stop()`, which the caller supplies as an
     /// [`ExtraUndo::StopBackend`] because the stack has no handle on the backend.
-    StartBackend {
-        iface: InterfaceName,
-    },
+    StartBackend { iface: InterfaceName },
     Address {
         iface: InterfaceName,
         addr: IpNetwork,
@@ -79,9 +72,7 @@ pub enum Step {
     /// Its undo is cross-process, and the OS can also perform it unilaterally — revoked consent, a
     /// low-memory kill — so "undo returned Ok" is not the same as "it is gone". The caller
     /// re-observes rather than trusting the return value.
-    AndroidService {
-        generation: u64,
-    },
+    AndroidService { generation: u64 },
 }
 
 #[derive(
@@ -98,7 +89,6 @@ pub enum Step {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum StepKind {
-    DestinationRule,
     PrepareLink,
     StartBackend,
     Address,
@@ -111,7 +101,6 @@ pub enum StepKind {
 impl Step {
     pub const fn kind(&self) -> StepKind {
         match self {
-            Self::DestinationRule { .. } => StepKind::DestinationRule,
             Self::PrepareLink { .. } => StepKind::PrepareLink,
             Self::StartBackend { .. } => StepKind::StartBackend,
             Self::Address { .. } => StepKind::Address,
@@ -134,10 +123,7 @@ impl Step {
     pub const fn durable(&self) -> bool {
         matches!(
             self,
-            Self::DestinationRule { .. }
-                | Self::EndpointRoute { .. }
-                | Self::Routes { .. }
-                | Self::Dns { .. }
+            Self::EndpointRoute { .. } | Self::Routes { .. } | Self::Dns { .. }
         )
     }
 }
@@ -379,10 +365,6 @@ async fn undo_step(
     backend: &dyn VpnBackend,
 ) -> Result<(), String> {
     match step {
-        Step::DestinationRule { rule } => platform
-            .remove_destination_rule(rule)
-            .await
-            .map_err(|e| e.to_string()),
         Step::PrepareLink { iface } => platform
             .release_link(iface)
             .await
@@ -429,30 +411,6 @@ mod tests {
         s.parse().unwrap()
     }
 
-    #[tokio::test]
-    async fn attempted_destination_rule_survives_failed_cleanup() {
-        let dir = tempfile::tempdir().unwrap();
-        let journal = Journal::new(Journal::default_path(dir.path()));
-        let mut stack = RollbackStack::new(Some(journal.clone()));
-        let step = Step::DestinationRule {
-            rule: crate::routing::AppliedRule {
-                destination: "192.0.2.0/24".into(),
-                table: 52600,
-                device: Some("eth0".into()),
-                gateway: Some("192.0.2.1".into()),
-                priority: 90,
-            },
-        };
-        stack.push(step.clone());
-        assert!(step.durable());
-        assert_eq!(journal.read_orphaned()[0].step, step);
-        // This platform cannot undo policy rules; a failed or interrupted application must
-        // remain recoverable, including the exact original interface and gateway.
-        let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
-        assert_eq!(report.residual[0].0, StepKind::DestinationRule);
-        assert_eq!(journal.read_orphaned()[0].step, step);
-    }
-
     #[test]
     fn push_records_the_step_as_attempted_before_it_is_applied() {
         let mut stack = RollbackStack::default();
@@ -486,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn routing_and_dns_steps_survive_process_death() {
+    fn only_routes_dns_and_the_endpoint_route_survive_process_death() {
         assert!(
             Step::EndpointRoute {
                 endpoint: "1.2.3.4".parse().unwrap(),

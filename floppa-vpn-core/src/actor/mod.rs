@@ -512,14 +512,7 @@ impl TunnelActor {
 
         let intent = match request {
             IntentRequest::Down => Intent::Down { epoch },
-            IntentRequest::Up { order, mut params } => {
-                params.destination_rules = crate::routing::validate(&params.destination_rules)
-                    .map_err(|detail| IntentError::InvalidRouting { detail })?;
-                if !cfg!(target_os = "linux") && !params.destination_rules.is_empty() {
-                    return Err(IntentError::InvalidRouting {
-                        detail: "destination rules are supported on Linux only".into(),
-                    });
-                }
+            IntentRequest::Up { order, params } => {
                 if order.is_empty() {
                     return Err(IntentError::EmptyOrder);
                 }
