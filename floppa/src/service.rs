@@ -36,6 +36,7 @@ pub async fn run() -> Result<()> {
         );
     }
 
+    eprintln!("Mode: system service (tunnel owner)");
     let state_dir = std::path::Path::new(SYSTEM_STATE_DIR);
     create_private_dir(state_dir)?;
     floppa_vpn_core::config::init_config_dir(state_dir.to_path_buf());

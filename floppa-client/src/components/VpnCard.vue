@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { onMounted, computed, watch } from 'vue'
+import { platform } from '@tauri-apps/plugin-os'
+import TunnelModeBadge from './TunnelModeBadge.vue'
 import vpnConnectedImg from '../assets/vpn-connected.png?inline'
 import vpnDisconnectedImg from '../assets/vpn-disconnected.png?inline'
 import { useI18n } from 'vue-i18n'
@@ -15,6 +17,7 @@ import { needsAttention } from '../utils/outcomes'
 import { useRegionStore } from '../stores/regionStore'
 import { usePrivateNetworksStore } from '../stores/privateNetworksStore'
 
+const isLinux = platform() === 'linux'
 const { t } = useI18n()
 const toast = useToast()
 const vpn = useVpnStore()
@@ -236,6 +239,7 @@ const healthDotClass = computed(() => {
   <!-- Connection Card -->
   <UCard class="mb-4">
     <div class="flex flex-col items-center text-center gap-3">
+      <TunnelModeBadge v-if="isLinux" />
       <!--
         No device identity: `getDeviceId` failed, so there is no peer to provision and the
         Connect button is disabled with nothing on screen explaining why. Reachable on desktop

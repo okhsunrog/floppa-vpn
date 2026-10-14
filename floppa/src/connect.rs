@@ -32,6 +32,7 @@ pub async fn run(
     private_routes: Vec<String>,
     excluded_routes: Vec<String>,
 ) -> Result<()> {
+    eprintln!("Mode: standalone (this process owns the tunnel)");
     let iface = InterfaceName::new(interface)
         .map_err(|e| anyhow::anyhow!("{interface} is not a usable interface name: {}", e.0))?;
 

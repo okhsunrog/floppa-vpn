@@ -604,6 +604,9 @@ export default {
     connectOnBoot: 'Подключать при загрузке',
     connectOnBootDetail:
       'Поднимать последний работавший туннель при старте машины, не дожидаясь, пока кто-нибудь войдёт в систему.',
+    modeService: 'Режим: systemd service',
+    modeServiceUnavailable: 'Режим: systemd service — недоступен',
+    modeStandalone: 'Режим: standalone',
     serviceActive: 'Туннель держит системная служба',
     serviceActiveDetail:
       'Закрытие окна и выход из приложения оставляют VPN подключённым. Отключить можно кнопкой в приложении или командой `floppa disconnect`.',

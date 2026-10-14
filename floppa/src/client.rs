@@ -49,6 +49,7 @@ pub async fn reach() -> Result<Arc<RemoteActor>> {
     let spawn: Spawn = Arc::new(|fut| {
         tokio::spawn(fut);
     });
+    eprintln!("Mode: systemd service");
     Ok(system_remote(&spawn))
 }
 
