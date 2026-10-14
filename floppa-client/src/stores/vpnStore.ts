@@ -136,13 +136,13 @@ export const useVpnStore = defineStore(
         : availableProtocols.value[0]
     })
     /**
-     * What a manual-mode connect would use: the user's pick from the switcher when we still hold
-     * a config for it, else whatever `activeProtocol` says. Read by the switcher's highlight and
+     * What a manual-mode connect would use: the user's explicit pick, even when its config
+     * is unavailable. The owner reports that error rather than switching protocols. Read by the switcher's highlight and
      * by `connect()`, so the card can never show one protocol and request another.
      */
     const manualProtocol = computed(() => {
       const picked = useSettingsStore().manualProtocol
-      return picked && availableProtocols.value.includes(picked) ? picked : activeProtocol.value
+      return picked ?? activeProtocol.value
     })
     /**
      * Which entry the manual switcher highlights.
@@ -244,6 +244,11 @@ export const useVpnStore = defineStore(
       initialising ??= (async () => {
         await initPlatform()
         try {
+          await useSettingsStore().loadOwnerSettings()
+        } catch (e) {
+          console.error('[settings] failed to load owner settings:', e)
+        }
+        try {
           // The subscription lives as long as the app: the store is never disposed, so the
           // unlisten handle has no caller and is not kept.
           await events.tunnelStateChanged.listen((e) => apply(e.payload))
@@ -304,18 +309,15 @@ export const useVpnStore = defineStore(
     /**
      * Ask for a tunnel, and wait for the request to reach a terminal outcome.
      *
-     * In auto-select mode the order sent is the user's priority list as-is. Narrowing it to
-     * protocols we actually hold a config for, and moving whichever one last worked to the front,
-     * is the actor's job — it is the side that knows both. In manual mode it is exactly the one
-     * protocol the switcher shows.
+     * The owner derives the initial order from saved preferences and available credentials.
+     * Recovery starts with the last successful allowed protocol; a new user request
+     * starts with the saved priority again.
      */
     async function connect(): Promise<CycleOutcome | null> {
-      const settings = useSettingsStore()
-      const order = settings.autoSelect
-        ? settings.protocolOrder.filter((protocol) => availableProtocols.value.includes(protocol))
-        : [manualProtocol.value].filter((p): p is Protocol => !!p)
-
-      return await request(() => commands.tunnelSetIntentUp(order, params()))
+      return await request(async () => {
+        await useSettingsStore().flushSettings()
+        return commands.tunnelConnectConfigured(params().private_routes ?? [])
+      })
     }
 
     /**
@@ -513,6 +515,8 @@ function emptyState(): TunnelState {
     adopted: false,
     attempt: null,
     retry: null,
+    recovery_failures: [],
+    temporary_profile: false,
     server_endpoint: null,
     assigned_ip: null,
     connected_at: null,

@@ -44,6 +44,21 @@ validate_link_target() {
 }
 
 case "${1:-}" in
+    prepare-ownership)
+        [[ $# -eq 1 ]] || exit 1
+        # /run is root-owned. Never replace an existing lock inode, including during upgrades.
+        [[ ! -L /run/floppa-vpn ]] || exit 1
+        [[ -d /run/floppa-vpn ]] || install -d -o root -g root -m 0755 /run/floppa-vpn
+        [[ $(stat -c %u /run/floppa-vpn) == 0 ]] || exit 1
+        owner_dir_mode=$(stat -c %a /run/floppa-vpn)
+        (( (8#$owner_dir_mode & 8#022) == 0 )) || exit 1
+        [[ ! -L /run/floppa-vpn/tunnel.lock ]] || exit 1
+        ( set -o noclobber; : > /run/floppa-vpn/tunnel.lock ) 2>/dev/null || true
+        [[ -f /run/floppa-vpn/tunnel.lock ]] || exit 1
+        [[ $(stat -c %h /run/floppa-vpn/tunnel.lock) == 1 ]] || exit 1
+        chown root:root /run/floppa-vpn/tunnel.lock
+        chmod 0444 /run/floppa-vpn/tunnel.lock
+        ;;
     ensure-tun)
         # Usage: ensure-tun <iface> <uid>
         #

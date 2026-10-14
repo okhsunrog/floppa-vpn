@@ -15,6 +15,7 @@ pub use super::rpc_listener::RpcServerHandle;
 use crate::actor::handle::{IntentRequest, TunnelHandle};
 use crate::actor::types::{CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelState};
 use crate::protocol::Protocol;
+use crate::settings::{Settings, SettingsFault, SettingsState};
 use crate::store::ConfigError;
 use futures::StreamExt;
 use std::sync::Arc;
@@ -76,6 +77,20 @@ impl ActorServer {
 }
 
 impl VpnRpc for ActorServer {
+    async fn get_settings(self, _ctx: Context) -> Result<SettingsState, SettingsFault> {
+        self.handle.get_settings().await
+    }
+    async fn update_settings(
+        self,
+        _ctx: Context,
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault> {
+        self.handle
+            .update_settings(expected_revision, settings)
+            .await
+    }
+
     async fn state_since(self, _ctx: Context, boot: u64, seq: u64) -> Published {
         let mut states = self.handle.states();
         // A caller from a previous run knows nothing about this one, whatever its seq says.
@@ -162,19 +177,29 @@ impl VpnRpc for ActorServer {
     }
 
     async fn resume_on_boot(self, _ctx: Context) -> bool {
-        match crate::config::config_dir() {
-            Ok(dir) => crate::autostart::resume_on_boot(&dir),
-            Err(e) => {
-                warn!("cannot tell whether this machine resumes on boot: {e}");
-                false
-            }
-        }
+        self.handle
+            .get_settings()
+            .await
+            .map(|state| state.document.settings.startup.connect_on_boot)
+            .unwrap_or(false)
     }
 
     async fn set_resume_on_boot(self, _ctx: Context, enabled: bool) -> Result<(), SessionError> {
-        let dir = crate::config::config_dir().map_err(|e| SessionError::Failed { detail: e })?;
-        crate::autostart::set_resume_on_boot(&dir, enabled)
-            .map_err(|detail| SessionError::Failed { detail })
+        let mut state = self
+            .handle
+            .get_settings()
+            .await
+            .map_err(|e| SessionError::Failed {
+                detail: e.to_string(),
+            })?;
+        state.document.settings.startup.connect_on_boot = enabled;
+        self.handle
+            .update_settings(state.document.revision, state.document.settings)
+            .await
+            .map(|_| ())
+            .map_err(|e| SessionError::Failed {
+                detail: e.to_string(),
+            })
     }
 
     async fn saved_intent(self, _ctx: Context) -> Option<crate::actor::handle::IntentRequest> {
@@ -188,7 +213,16 @@ impl VpnRpc for ActorServer {
             debug!("asked to resume, and nothing has ever connected here");
             return Ok(None);
         };
-        self.handle.set_intent(request).await.map(Some)
+        let private_routes = match request {
+            crate::actor::handle::IntentRequest::Up { params, .. } => params.private_routes,
+            crate::actor::handle::IntentRequest::Configured { private_routes } => private_routes,
+            crate::actor::handle::IntentRequest::Down
+            | crate::actor::handle::IntentRequest::Temporary { .. } => return Ok(None),
+        };
+        self.handle
+            .set_intent(crate::actor::handle::IntentRequest::Configured { private_routes })
+            .await
+            .map(Some)
     }
 
     async fn set_session(self, _ctx: Context, session: Option<String>) -> Result<(), SessionError> {
@@ -315,6 +349,20 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::actor::handle::TunnelControl for FakeActor {
+        async fn get_settings(&self) -> Result<SettingsState, SettingsFault> {
+            Ok(SettingsState {
+                document: crate::settings::SettingsDocument::defaults(),
+                intent_revision: None,
+            })
+        }
+        async fn update_settings(
+            &self,
+            _: u32,
+            _: Settings,
+        ) -> Result<SettingsState, SettingsFault> {
+            Err(SettingsFault::Unavailable)
+        }
+
         fn snapshot(&self) -> TunnelState {
             self.state.borrow().clone()
         }

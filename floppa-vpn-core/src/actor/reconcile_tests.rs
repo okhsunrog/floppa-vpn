@@ -16,6 +16,7 @@ const VLESS: Protocol = Protocol::Vless;
 fn policy() -> Policy {
     Policy {
         dark_grace: Duration::from_secs(6),
+        reconnect_passes: Some(3),
         ..Policy::default()
     }
 }
@@ -104,7 +105,7 @@ fn reconnect_cycle(epoch: u64, order: &[Protocol], policy: &Policy) -> Cycle {
     Cycle {
         born_from_loss: true,
         passes_allowed: policy.reconnect_passes,
-        ..cycle(epoch, order, policy.reconnect_passes)
+        ..cycle(epoch, order, policy.reconnect_passes.unwrap())
     }
 }
 
@@ -115,7 +116,7 @@ fn cycle(epoch: u64, order: &[Protocol], passes_allowed: u32) -> Cycle {
         params: TunnelParams::default(),
         index: 0,
         pass: 0,
-        passes_allowed,
+        passes_allowed: Some(passes_allowed),
         born_from_loss: false,
         failures: Vec::new(),
     }
@@ -1468,7 +1469,7 @@ fn a_lost_tunnel_with_budget_left_retries_rather_than_giving_up() {
 fn a_lost_tunnel_out_of_budget_reports_that_it_gave_up() {
     let now = t0();
     let mut c = reconnect_cycle(1, &[AWG], &policy());
-    c.pass = 2;
+    c.pass = 3; // all three rounds have actually been spent
     let d = unwind_done(
         &unwinding_status(UnwindReason::TunnelDied, Some(c), 0),
         &up_intent(1, &[AWG], params()),
@@ -1511,7 +1512,7 @@ fn a_dropped_tunnel_that_never_comes_back_gives_up_at_the_default_policy() {
     };
 
     // Three passes actually run, and only then does it give up.
-    for expected_pass in 0..policy.reconnect_passes {
+    for expected_pass in 0..policy.reconnect_passes.unwrap() {
         assert_eq!(cycle.pass, expected_pass);
         let status = Status::Connecting {
             cycle: cycle.clone(),
@@ -1530,19 +1531,19 @@ fn a_dropped_tunnel_that_never_comes_back_gives_up_at_the_default_policy() {
                 resume_at,
             } => {
                 assert!(
-                    expected_pass + 1 < policy.reconnect_passes,
+                    expected_pass + 1 < policy.reconnect_passes.unwrap(),
                     "gave up a pass early"
                 );
                 now = resume_at;
                 cycle = next;
             }
             Status::Idle => {
-                assert_eq!(expected_pass + 1, policy.reconnect_passes);
+                assert_eq!(Some(expected_pass + 1), policy.reconnect_passes);
                 assert!(has_demote(&d));
                 match outcome(&d) {
                     Some(CycleOutcome::LostGaveUp { protocol, passes }) => {
                         assert_eq!(*protocol, AWG);
-                        assert_eq!(*passes, policy.reconnect_passes);
+                        assert_eq!(Some(*passes), policy.reconnect_passes);
                     }
                     other => panic!("expected LostGaveUp, got {other:?}"),
                 }
@@ -2002,7 +2003,11 @@ fn a_failure_that_lands_after_the_network_dies_parks_the_cycle_rather_than_walki
     );
     match &d.next {
         Status::Retrying { cycle, .. } => {
-            assert_eq!(cycle.protocol(), WG, "it advanced, as it always does");
+            assert_eq!(
+                cycle.protocol(),
+                AWG,
+                "offline failures preserve the protocol cursor"
+            );
             assert_eq!(
                 cycle.failures.len(),
                 1,
@@ -2047,7 +2052,7 @@ fn a_budget_that_ran_out_across_an_outage_waits_rather_than_giving_up() {
     // gate removes, reached by a different road.
     let now = t0();
     let mut spent = reconnect_cycle(1, &[AWG], &policy());
-    spent.pass = policy().reconnect_passes - 1;
+    spent.pass = policy().reconnect_passes.unwrap() - 1;
     assert!(!spent.has_budget(), "the premise: there is nothing left");
 
     let d = attempt_done_link(
@@ -2089,4 +2094,75 @@ fn a_budget_that_ran_out_across_an_outage_waits_rather_than_giving_up() {
         resolved(&d),
         Some((IntentEpoch(1), CycleOutcome::LostGaveUp { .. }))
     ));
+}
+
+#[test]
+fn persistent_recovery_has_bounded_history_and_never_exhausts() {
+    let policy = Policy::default();
+    let Intent::Up(up) = up_intent(1, &[AWG, WG], params()) else {
+        unreachable!()
+    };
+    let mut cycle = Cycle::reconnect(&up, &policy).unwrap();
+    for _ in 0..1000 {
+        assert!(cycle.has_budget());
+        cycle.record_failure(AttemptFailure {
+            protocol: cycle.protocol(),
+            error: AttemptError::VerifyFailed,
+            pass: cycle.pass,
+        });
+        cycle.advance();
+    }
+    assert_eq!(cycle.failures.len(), 32);
+    cycle.pass = u32::MAX;
+    cycle.advance();
+    assert!(cycle.has_budget());
+}
+
+#[test]
+fn offline_cancels_attempt_without_spending_its_protocol_or_round() {
+    let now = t0();
+    let intent = up_intent(1, &[AWG, WG], params());
+    let state = Status::Connecting {
+        cycle: reconnect_cycle(1, &[AWG, WG], &policy()),
+        phase: AttemptPhase::Starting,
+        deadline: now + Duration::from_secs(30),
+    };
+    let d = super::reconcile(
+        &state,
+        &intent,
+        &World::Clear,
+        Link::Offline,
+        now,
+        0,
+        &policy(),
+    );
+    assert!(d.effects.iter().any(|e| matches!(e, Effect::CancelAttempt)));
+    let Status::Unwinding {
+        cycle: Some(cycle),
+        reason: UnwindReason::NetworkLost,
+        ..
+    } = d.next
+    else {
+        panic!("must unwind first")
+    };
+    assert_eq!(cycle.protocol(), AWG);
+    assert_eq!(cycle.pass, 0);
+    assert!(cycle.failures.is_empty());
+}
+
+#[test]
+fn changed_underlay_stops_adopted_backend_and_does_not_resurrect_down_intent() {
+    let mut running = up_status(1, WG, params());
+    running.adopted = true;
+    let status = Status::Up(running);
+    let d = super::network_changed(&status, &up_intent(1, &[WG], params()), &policy());
+    assert!(d.effects.iter().any(|e| matches!(
+        e,
+        Effect::Unwind {
+            extra: Some(ExtraUndo::StopBackend)
+        }
+    )));
+    let stopped = super::network_changed(&Status::Idle, &down(2), &policy());
+    assert!(matches!(stopped.next, Status::Idle));
+    assert!(stopped.effects.is_empty());
 }

@@ -29,6 +29,7 @@
 use crate::actor::handle::IntentRequest;
 use crate::actor::types::{CycleOutcome, IntentAccepted, IntentEpoch, IntentError, TunnelState};
 use crate::protocol::Protocol;
+use crate::settings::{Settings, SettingsFault, SettingsState};
 use crate::store::ConfigError;
 
 /// The version of everything else in this module.
@@ -49,7 +50,7 @@ use crate::store::ConfigError;
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
 /// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference. Six adds route exclusions
 /// and saved settings reads; five was the withdrawn destination-policy implementation.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Why a session could not be handed over.
 ///
@@ -149,6 +150,11 @@ pub const SYSTEM_STATE_DIR: &str = "/var/lib/floppa-vpn";
 /// actor replies through. Typed methods are the honest spelling.
 #[tarpc::service]
 pub trait VpnRpc {
+    async fn get_settings() -> Result<SettingsState, SettingsFault>;
+    async fn update_settings(
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault>;
     /// The first published state newer than what the caller holds.
     ///
     /// `boot` and `seq` are what the caller last saw. A `boot` that is not this run's is answered
@@ -413,7 +419,7 @@ mod tests {
             retrying.phase = Phase::Retrying;
             retrying.retry = Some(RetryProgress {
                 pass: 2,
-                max: 3,
+                max: Some(3),
                 resume_in_ms: 4_000,
             });
             retrying.last_outcome = Some(outcomes()[3].clone());
@@ -424,7 +430,7 @@ mod tests {
             parked.link = Link::Offline;
             parked.retry = Some(RetryProgress {
                 pass: 1,
-                max: 3,
+                max: Some(3),
                 resume_in_ms: 0,
             });
 
@@ -673,6 +679,48 @@ mod tests {
         assert!(
             serde_json::from_str::<[f64; 1]>(&encoded).is_err(),
             "if this ever passes, JSON has learned about infinities and the guard above can go"
+        );
+    }
+}
+
+#[cfg(test)]
+mod settings_wire_tests {
+    use super::*;
+    #[test]
+    fn settings_and_configured_request_survive_json_transport() {
+        let state = SettingsState {
+            document: crate::settings::SettingsDocument::defaults(),
+            intent_revision: None,
+        };
+        let raw = serde_json::to_vec(&state).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<SettingsState>(&raw).unwrap(),
+            state
+        );
+        for error in [
+            SettingsFault::Busy,
+            SettingsFault::Unavailable,
+            SettingsFault::Conflict {
+                expected: 1,
+                actual: 2,
+            },
+            SettingsFault::Failed {
+                detail: "disk".into(),
+            },
+        ] {
+            assert_eq!(
+                serde_json::from_slice::<SettingsFault>(&serde_json::to_vec(&error).unwrap())
+                    .unwrap(),
+                error
+            );
+        }
+        let request = IntentRequest::Configured {
+            private_routes: vec![],
+        };
+        assert_eq!(
+            serde_json::from_slice::<IntentRequest>(&serde_json::to_vec(&request).unwrap())
+                .unwrap(),
+            request
         );
     }
 }

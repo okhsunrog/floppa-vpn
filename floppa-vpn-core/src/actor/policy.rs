@@ -44,10 +44,8 @@ pub struct Policy {
     pub probe_grace: Duration,
     pub verify_wg: Duration,
     pub verify_vless: Duration,
-    /// Passes over the order for a cold, user-initiated connect. One means fail fast.
-    pub cold_passes: u32,
-    /// Passes over the order after a tunnel that was up died.
-    pub reconnect_passes: u32,
+    /// Full protocol rounds per connection cycle; None retries until cancelled.
+    pub reconnect_passes: Option<u32>,
     pub backoff_base: Duration,
     pub backoff_max: Duration,
     /// How many times an unwind is re-run while the world still reports a running tunnel.
@@ -71,8 +69,7 @@ impl Default for Policy {
             probe_grace: Duration::from_secs(20),
             verify_wg: Duration::from_secs(5),
             verify_vless: Duration::from_secs(10),
-            cold_passes: 1,
-            reconnect_passes: 3,
+            reconnect_passes: None,
             backoff_base: Duration::from_secs(1),
             backoff_max: Duration::from_secs(30),
             unwind_tries: 3,

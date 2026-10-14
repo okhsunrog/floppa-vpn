@@ -537,6 +537,7 @@ export default {
     vlessRegenerateFailed: 'Failed to regenerate VLESS config',
   },
   settings: {
+    reloadSettings: 'Reload settings',
     title: 'Settings',
     protocolSelection: 'Protocol',
     autoSelectProtocol: 'Auto-select protocol',

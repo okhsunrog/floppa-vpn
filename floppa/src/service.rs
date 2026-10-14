@@ -58,8 +58,13 @@ pub async fn run() -> Result<()> {
         spawn.clone(),
         // `Persisted`, unlike a one-shot `floppa connect`: this process is what a machine has
         // instead of a logged-in user, so what it is told to keep, it keeps.
-        Deployment::default(),
-    );
+        Deployment {
+            system_service: true,
+            ..Deployment::default()
+        },
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
 
     floppa_provision::watcher::watch(handle.clone(), spawn.clone(), env!("CARGO_PKG_VERSION"));
     remember_what_connects(handle.clone(), &spawn);
@@ -84,8 +89,7 @@ pub async fn run() -> Result<()> {
 /// the actor has no opinion about systemd — so it is done from outside, off the published state,
 /// which carries everything the record needs.
 ///
-/// The winner leads the order: it is the protocol that actually carried a tunnel on this network,
-/// and trying it first is what makes a resume fast rather than a fresh walk down the ladder.
+/// Store the winner and server grants; resume resolves preferences from current owner settings.
 ///
 /// Written only when it changes. The state publishes on every traffic sample, and a file rewritten
 /// once a second for the life of a connection would be a great deal of writing to say the same
@@ -101,6 +105,9 @@ fn remember_what_connects(handle: TunnelHandle, spawn: &Spawn) {
         while states.changed().await.is_ok() {
             let state = states.borrow_and_update().clone();
             if state.phase != Phase::Connected || state.intent != IntentView::Up {
+                continue;
+            }
+            if state.temporary_profile {
                 continue;
             }
             let (Some(winner), Some(params)) = (state.protocol, state.params.clone()) else {

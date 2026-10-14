@@ -1,23 +1,7 @@
-//! What a start with nobody watching rebuilds from, and what a TUN is built from.
-//!
-//! Android starts the VPN service without any UI for always-on VPN, at boot, and to restore a
-//! lockdown ("block connections without VPN") session. The Linux system service also
-//! restores a recorded request at boot or when a client asks to resume. A system start carries no
-//! configuration, so the actor can only honour it from something written down earlier. That is
-//! [`LastIntent`]: the order and split rules of the last connect that actually worked. The configs
-//! themselves are not here — the actor owns the store, in the same process — which is what shrank
-//! this file from a whole rebuilt tunnel to a single request.
-//!
-//! It is rewritten on every successful connect (winner first), removed when the configs are
-//! forgotten, and *kept* on an explicit Disconnect: always-on means the OS restarts the service,
-//! and whether that should happen is the system toggle's decision, not ours.
-//!
-//! Protection at rest matches `vpn-config.json`: a `0600` file in the app's private data
-//! directory, written atomically (see [`private_file`](super::private_file)) — a file caught
-//! half-written is one that does not parse, and the reader's only recourse is to stop, which under
-//! lockdown is a device with no network until somebody opens the app. Persistence is shared
-//! with the Linux system service; Android-specific TUN derivation stays separate from
-//! desktop routing. The persistence and derivation tests run on the host.
+//! TUN specification derivation and a small last-successful runtime record.
+//! Preferences are read from settings.json by the actor. runtime.json stores only
+//! the last successful protocol, server-granted routes and a timestamp. It contains
+//! neither credentials nor copies of routing/protocol/recovery preferences.
 
 use super::actor::types::{SplitMode, TunnelParams};
 use super::private_file::write_private;
@@ -30,13 +14,13 @@ use tracing::{debug, info, warn};
 /// Bumped whenever the on-disk shape changes incompatibly. A file of another version is not
 /// migrated, it is ignored: the next connect writes a fresh one, and a system start that finds
 /// nothing usable stops rather than guessing.
-pub const BUNDLE_VERSION: u32 = 2;
+pub const BUNDLE_VERSION: u32 = 3;
 
-/// Also spelled out as `AUTOSTART_FILENAME` in `BootRetry.kt` on the Kotlin side: the Quick
+/// Also spelled out as `AUTOSTART_FILENAME` in `BackgroundStart.kt` on the Kotlin side: the Quick
 /// Settings tile and the boot retry have to know whether there is anything to start *before*
 /// starting anything, and the presence of this file is the only evidence of that available
 /// without booting the actor.
-pub const BUNDLE_FILENAME: &str = "autostart.json";
+pub const BUNDLE_FILENAME: &str = "runtime.json";
 
 /// What `VpnService.Builder` needs, derived from the config and the split rules once, at connect
 /// time — so nothing downstream ever parses a protocol config to build a TUN.
@@ -140,16 +124,14 @@ pub struct TunPlan {
 /// The last thing that was successfully connected: what to rebuild when the system asks for a
 /// tunnel with nobody watching.
 ///
-/// Only the *request* is persisted, not the tunnel. The actor has the configs — it owns the store
-/// — so what it is missing when the system starts it cold is which protocols to try and what split
-/// rules to build with, and that is all this is. The previous shape held a whole rebuilt tunnel
-/// (a config, a TUN spec, a resolved endpoint) because the process reading it had no actor in it.
+/// Successful connection metadata needed for system resume. User preferences are
+/// resolved from the owner settings when resume is requested.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastIntent {
     pub version: u32,
-    /// The order the last successful connect used, winner first.
-    pub order: Vec<super::protocol::Protocol>,
-    pub params: TunnelParams,
+    pub last_successful: Option<super::protocol::Protocol>,
+    /// Server grants are runtime data. User routing/preferences live only in settings.json.
+    pub private_routes: Vec<String>,
     /// Unix seconds; informational.
     pub saved_at: i64,
 }
@@ -158,8 +140,8 @@ impl LastIntent {
     pub fn new(order: Vec<super::protocol::Protocol>, params: TunnelParams, saved_at: i64) -> Self {
         Self {
             version: BUNDLE_VERSION,
-            order,
-            params,
+            last_successful: order.first().copied(),
+            private_routes: params.private_routes,
             saved_at,
         }
     }
@@ -167,10 +149,11 @@ impl LastIntent {
     /// The request to raise when the system asks. An empty order is not one — the actor would
     /// refuse it, and stopping outright says so more clearly than a refusal in a log.
     pub fn request(self) -> Option<crate::actor::handle::IntentRequest> {
-        (!self.order.is_empty()).then_some(crate::actor::handle::IntentRequest::Up {
-            order: self.order,
-            params: self.params,
-        })
+        self.last_successful
+            .is_some()
+            .then_some(crate::actor::handle::IntentRequest::Configured {
+                private_routes: self.private_routes,
+            })
     }
 }
 
@@ -186,16 +169,16 @@ pub fn save(dir: &Path, intent: &LastIntent) -> Result<(), String> {
     let json = serde_json::to_string(intent).map_err(|e| format!("serialize: {e}"))?;
     let path = bundle_path(dir);
     write_private(&path, json.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
-    debug!(order = ?intent.order, "the last-good intent was written to {}", path.display());
+    debug!(winner = ?intent.last_successful, "the last-good intent was written to {}", path.display());
     Ok(())
 }
 
 /// Serial writer for successful connections. Traffic samples do not rewrite the
-/// record, but changes to any connection parameters do. Failed writes remain
+/// record; changes to the winner or server grants do. Failed writes remain
 /// retryable on the next sample.
 pub struct IntentRecorder {
     dir: PathBuf,
-    written: Option<(Vec<super::protocol::Protocol>, TunnelParams)>,
+    written: Option<(Option<super::protocol::Protocol>, Vec<String>)>,
 }
 
 impl IntentRecorder {
@@ -204,7 +187,7 @@ impl IntentRecorder {
     }
 
     pub fn record(&mut self, intent: LastIntent) -> Result<(), String> {
-        let key = (intent.order.clone(), intent.params.clone());
+        let key = (intent.last_successful, intent.private_routes.clone());
         if self.written.as_ref() == Some(&key) && bundle_path(&self.dir).exists() {
             return Ok(());
         }
@@ -285,55 +268,6 @@ pub fn remove(dir: &Path) {
             path.display()
         ),
     }
-}
-
-/// Whether this machine should bring its tunnel back when it boots.
-///
-/// A marker file, present or absent, in the same directory as everything else the tunnel process
-/// keeps. Presence rather than a value inside a file because the only two states are the two
-/// states, and creating or removing a file is atomic in a way that rewriting one is not.
-///
-/// Kept apart from [`LastIntent`] deliberately, although both are about starting with nobody
-/// watching. That one is *what* to bring back and is rewritten by every successful connect; this
-/// one is *whether* to, and is a decision a person made once. Folding them together would mean a
-/// connect could silently change a preference.
-///
-/// # Why this is a file here and not `systemctl enable`
-///
-/// Because enabling a unit cannot be granted to the group that is allowed to drive this VPN.
-/// systemd hands polkit the unit's name for `manage-units` (start, stop) but **not** for
-/// `manage-unit-files` (enable, disable) — verified against polkit 127 — so a rule that let the
-/// `floppa` group enable *this* unit without a prompt cannot be written. Only one that lets it
-/// enable any unit at all, which is root by another name.
-///
-/// So the unit is always enabled, and this is what it reads. `floppa-vpn-autostart.service` runs
-/// `floppa resume --if-enabled`, which asks the service for this and does nothing when it is off.
-const RESUME_ON_BOOT: &str = "resume-on-boot";
-
-fn resume_marker(dir: &Path) -> PathBuf {
-    dir.join(RESUME_ON_BOOT)
-}
-
-/// Whether a boot should reconnect. `false` unless somebody has said otherwise.
-pub fn resume_on_boot(dir: &Path) -> bool {
-    resume_marker(dir).exists()
-}
-
-/// Turn reconnect-on-boot on or off.
-pub fn set_resume_on_boot(dir: &Path, enabled: bool) -> Result<(), String> {
-    let path = resume_marker(dir);
-    if enabled {
-        // Empty on purpose: what is being recorded is that the file is there.
-        write_private(&path, b"").map_err(|e| format!("write {}: {e}", path.display()))?;
-        info!("this machine will reconnect its tunnel on boot");
-        return Ok(());
-    }
-    match std::fs::remove_file(&path) {
-        Ok(()) => info!("this machine will no longer reconnect its tunnel on boot"),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(format!("remove {}: {e}", path.display())),
-    }
-    Ok(())
 }
 
 /// The identity of one Android service start, minted by the UI process.
@@ -596,18 +530,14 @@ AllowedIPs = 0.0.0.0/0
 
         let loaded = load(dir.path()).expect("it is readable");
         assert_eq!(loaded.version, BUNDLE_VERSION);
-        assert_eq!(loaded.order, vec![Protocol::AmneziaWg, Protocol::WireGuard]);
-        assert_eq!(loaded.params, params);
+        assert_eq!(loaded.last_successful, Some(Protocol::AmneziaWg));
+        assert_eq!(loaded.private_routes, params.private_routes);
         assert_eq!(loaded.saved_at, 1_700_000_000);
 
         // And it becomes exactly the request a system-issued start raises.
         match loaded.request().expect("an order means a request") {
-            crate::actor::handle::IntentRequest::Up {
-                order,
-                params: rules,
-            } => {
-                assert_eq!(order, vec![Protocol::AmneziaWg, Protocol::WireGuard]);
-                assert_eq!(rules, params);
+            crate::actor::handle::IntentRequest::Configured { private_routes } => {
+                assert_eq!(private_routes, params.private_routes);
             }
             other => panic!("expected an Up, got {other:?}"),
         }
@@ -623,10 +553,7 @@ AllowedIPs = 0.0.0.0/0
         recorder.record(first.clone()).unwrap();
         assert_eq!(load(dir.path()).unwrap().saved_at, first.saved_at - 1);
 
-        first.params = first
-            .params
-            .with_allow_lan(true)
-            .with_private_routes(["10.66.66.0/24".into()]);
+        first.private_routes = vec!["10.66.66.0/24".into()];
         recorder.record(first.clone()).unwrap();
         assert_eq!(load(dir.path()).unwrap(), first);
     }

@@ -46,27 +46,22 @@ mod tests {
         );
     }
     #[test]
-    fn exclusions_survive_saved_connection_reload() {
-        use crate::actor::types::TunnelParams;
-        use crate::autostart::{LastIntent, load, save};
+    fn runtime_record_does_not_duplicate_user_routing_settings() {
         let dir = tempfile::tempdir().unwrap();
-        let params = TunnelParams {
+        let params = crate::actor::types::TunnelParams {
             excluded_routes: vec!["194.186.63.0/24".into()],
-            ..TunnelParams::default()
+            ..Default::default()
         };
-        let intent = LastIntent::new(
+        let record = crate::autostart::LastIntent::new(
             vec![crate::protocol::Protocol::WireGuard],
-            params.clone(),
+            params,
             0,
         );
-        save(dir.path(), &intent).unwrap();
-        let loaded = load(dir.path()).unwrap();
-        assert_eq!(loaded.params, params);
-        assert!(
-            matches!(loaded.request(), Some(crate::actor::handle::IntentRequest::Up { params: restored, .. }) if restored == params)
-        );
-        let old: TunnelParams = serde_json::from_str(r#"{"split_mode":"all","apps":[]}"#).unwrap();
-        assert!(old.excluded_routes.is_empty());
+        crate::autostart::save(dir.path(), &record).unwrap();
+        let raw =
+            std::fs::read_to_string(dir.path().join(crate::autostart::BUNDLE_FILENAME)).unwrap();
+        assert!(!raw.contains("excluded_routes"));
+        assert!(!raw.contains("194.186.63"));
     }
 
     #[test]

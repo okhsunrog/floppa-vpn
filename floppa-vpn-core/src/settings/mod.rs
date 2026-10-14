@@ -179,3 +179,78 @@ impl ProtocolSettings {
 
 #[cfg(test)]
 mod tests;
+
+/// Public settings API errors, independent of a filesystem or transport implementation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SettingsFault {
+    #[error("settings conflict: expected {expected}, current {actual}")]
+    Conflict { expected: u32, actual: u32 },
+    #[error("settings write is already in progress; read again and retry")]
+    Busy,
+    #[error("settings owner is unavailable")]
+    Unavailable,
+    #[error("{detail}")]
+    Failed { detail: String },
+}
+impl From<SettingsError> for SettingsFault {
+    fn from(error: SettingsError) -> Self {
+        match error {
+            SettingsError::Conflict { expected, actual } => Self::Conflict { expected, actual },
+            other => Self::Failed {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct SettingsState {
+    pub document: SettingsDocument,
+    /// Revision used to construct the current intent, not a claim that the tunnel is connected.
+    /// None for Down, bootstrap adoption, or a temporary explicit connection.
+    pub intent_revision: Option<u32>,
+}
+
+impl SettingsDocument {
+    pub fn defaults() -> Self {
+        Self {
+            schema_version: 1,
+            revision: 0,
+            settings: Settings::default(),
+        }
+    }
+}
+
+impl Settings {
+    pub fn tunnel_params(&self, private_routes: Vec<String>) -> crate::actor::intent::TunnelParams {
+        let mut params = crate::actor::intent::TunnelParams::new(
+            self.routing.apps.mode,
+            self.routing.apps.items.clone(),
+        )
+        .with_allow_lan(self.routing.allow_lan)
+        .with_private_routes(private_routes);
+        params.excluded_routes = self.routing.excluded_routes.clone();
+        params
+    }
+}
+
+/// Preferences have one location per deployment. No legacy configuration is imported.
+pub fn path(system_service: bool) -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "linux")]
+    if system_service {
+        return Ok(std::path::Path::new(crate::rpc::SYSTEM_STATE_DIR).join("settings.json"));
+    }
+    let _ = system_service;
+    #[cfg(target_os = "android")]
+    let dir = crate::config::config_dir()?;
+    #[cfg(target_os = "windows")]
+    let dir = dirs::data_local_dir()
+        .ok_or("local data directory unavailable")?
+        .join("FloppaVPN");
+    #[cfg(not(any(target_os = "android", target_os = "windows")))]
+    let dir = dirs::config_dir()
+        .ok_or("config directory unavailable")?
+        .join("floppa-vpn");
+    Ok(dir.join("settings.json"))
+}

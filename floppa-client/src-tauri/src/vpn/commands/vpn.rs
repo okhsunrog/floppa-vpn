@@ -88,3 +88,32 @@ pub async fn clear_configs(tunnel: State<'_, TunnelHandle>) -> Result<(), Intent
 pub async fn forget_preferred_protocol(tunnel: State<'_, TunnelHandle>) -> Result<(), IntentError> {
     tunnel.forget_preferred().await
 }
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tunnel_get_settings(
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<floppa_vpn_core::settings::SettingsState, floppa_vpn_core::settings::SettingsFault> {
+    tunnel.get_settings().await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tunnel_update_settings(
+    expected_revision: u32,
+    settings: floppa_vpn_core::settings::Settings,
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<floppa_vpn_core::settings::SettingsState, floppa_vpn_core::settings::SettingsFault> {
+    tunnel.update_settings(expected_revision, settings).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn tunnel_connect_configured(
+    private_routes: Vec<String>,
+    tunnel: State<'_, TunnelHandle>,
+) -> Result<IntentAccepted, IntentError> {
+    tunnel
+        .set_intent(IntentRequest::Configured { private_routes })
+        .await
+}

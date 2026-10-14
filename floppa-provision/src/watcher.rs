@@ -31,13 +31,16 @@
 //! taking turns making peers until the plan's limit stopped them.
 
 use floppa_api_client::{PeerProtocol, RepairOutcome, repair_peer};
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use crate::outcome::{OutcomePlan, plan_outcome};
+use crate::outcome::{OutcomePlan, peer_protocol, plan_outcome};
 use crate::server::{self, ActorSink};
 use floppa_vpn_core::actor::Spawn;
 use floppa_vpn_core::actor::handle::{IntentRequest, TunnelHandle};
-use floppa_vpn_core::actor::types::{IntentView, TunnelParams, TunnelState};
+use floppa_vpn_core::actor::types::{
+    AttemptError, IntentEpoch, IntentView, TunnelParams, TunnelState,
+};
 use floppa_vpn_core::protocol::Protocol;
 
 /// Start watching. Returns at once; the work happens on `spawn`.
@@ -73,6 +76,7 @@ async fn run(handle: TunnelHandle, app_version: &str) {
     let mut handled: Option<u64> = None;
     let mut just_reprovisioned = false;
     let mut live: Option<LiveIntent> = None;
+    let mut progress_checks = ProgressChecks::default();
 
     loop {
         if states.changed().await.is_err() {
@@ -80,6 +84,26 @@ async fn run(handle: TunnelHandle, app_version: &str) {
             return;
         }
         let state: TunnelState = states.borrow_and_update().clone();
+
+        if state.temporary_profile {
+            live = None;
+            handled = Some(state.outcome_serial);
+            continue;
+        }
+        // A persistent cycle has no terminal failure. Repair credentials without issuing
+        // another Up: the existing ladder will read them on its next allowed attempt.
+        if let Some(protocol) = progress_checks.candidate(&state, Instant::now())
+            && matches!(
+                repair(&handle, protocol, app_version).await,
+                Some(RepairOutcome::Recreated)
+            )
+        {
+            progress_checks.recreated.push(protocol);
+        }
+
+        if handle.snapshot().epoch != state.epoch {
+            continue; // a user command superseded this sample while the lookup was in flight
+        }
 
         if let Some(seen) = live_intent(&state) {
             live = Some(seen);
@@ -137,6 +161,42 @@ async fn run(handle: TunnelHandle, app_version: &str) {
     }
 }
 
+/// Rate limit peer lookups per cycle; a recreated peer is not recreated again in that cycle.
+#[derive(Default)]
+struct ProgressChecks {
+    cycle: Option<(IntentEpoch, u64)>,
+    checked: Vec<(PeerProtocol, Instant)>,
+    recreated: Vec<PeerProtocol>,
+}
+impl ProgressChecks {
+    fn candidate(&mut self, state: &TunnelState, now: Instant) -> Option<PeerProtocol> {
+        let cycle = (state.epoch, state.outcome_serial);
+        if self.cycle != Some(cycle) {
+            self.cycle = Some(cycle);
+            self.checked.clear();
+            self.recreated.clear();
+        }
+        if state.temporary_profile || state.link.is_offline() || state.intent != IntentView::Up {
+            return None;
+        }
+        let protocol = state
+            .recovery_failures
+            .iter()
+            .filter(|failure| matches!(failure.error, AttemptError::VerifyFailed))
+            .filter_map(|failure| peer_protocol(failure.protocol))
+            .find(|protocol| {
+                !self.recreated.contains(protocol)
+                    && !self.checked.iter().any(|(p, at)| {
+                        p == protocol
+                            && now.saturating_duration_since(*at) < Duration::from_secs(30)
+                    })
+            })?;
+        self.checked.retain(|(p, _)| *p != protocol);
+        self.checked.push((protocol, now));
+        Some(protocol)
+    }
+}
+
 /// The order and parameters of a live Up intent, if this state shows one.
 fn live_intent(state: &TunnelState) -> Option<LiveIntent> {
     if state.intent != IntentView::Up || state.intent_order.is_empty() {
@@ -185,4 +245,51 @@ async fn repair(
     let outcome = repair_peer(&api, &ActorSink(handle.clone()), &identity, protocol).await;
     debug!(%protocol, ?outcome, "the peer was looked at");
     Some(outcome)
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    use floppa_vpn_core::actor::types::{AttemptFailure, Link};
+
+    #[test]
+    fn persistent_recovery_checks_each_failed_peer_with_a_bound_and_excludes_temporary_profiles() {
+        let mut state = TunnelState::initial();
+        state.intent = IntentView::Up;
+        state.link = Link::Online;
+        state.recovery_failures = vec![Protocol::AmneziaWg, Protocol::WireGuard]
+            .into_iter()
+            .map(|protocol| AttemptFailure {
+                protocol,
+                error: AttemptError::VerifyFailed,
+                pass: 0,
+            })
+            .collect();
+        let now = Instant::now();
+        let mut checks = ProgressChecks::default();
+        state.temporary_profile = true;
+        assert_eq!(checks.candidate(&state, now), None);
+        state.temporary_profile = false;
+        state.link = Link::Offline;
+        assert_eq!(checks.candidate(&state, now), None);
+        state.link = Link::Online;
+        assert_eq!(checks.candidate(&state, now), Some(PeerProtocol::Amneziawg));
+        assert_eq!(checks.candidate(&state, now), Some(PeerProtocol::Wireguard));
+        assert_eq!(checks.candidate(&state, now), None);
+        checks.recreated.push(PeerProtocol::Amneziawg);
+        assert_eq!(
+            checks.candidate(&state, now + Duration::from_secs(31)),
+            Some(PeerProtocol::Wireguard)
+        );
+        state.epoch = IntentEpoch(2);
+        assert_eq!(
+            checks.candidate(&state, now + Duration::from_secs(32)),
+            Some(PeerProtocol::Amneziawg)
+        );
+        state.intent = IntentView::Down;
+        assert_eq!(
+            checks.candidate(&state, now + Duration::from_secs(64)),
+            None
+        );
+    }
 }

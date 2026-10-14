@@ -24,6 +24,7 @@ use crate::actor::types::{
     CycleOutcome, IntentAccepted, IntentEpoch, IntentError, Link, SystemVpnMode, TunnelState,
 };
 use crate::protocol::Protocol;
+use crate::settings::{Settings, SettingsFault, SettingsState};
 use crate::store::ConfigError;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -309,6 +310,35 @@ async fn mirror(remote: Arc<RemoteActor>, state_tx: watch::Sender<TunnelState>) 
 
 #[async_trait::async_trait]
 impl TunnelControl for RemoteActor {
+    async fn get_settings(&self) -> Result<SettingsState, SettingsFault> {
+        self.process
+            .ensure_running()
+            .await
+            .map_err(|_| SettingsFault::Unavailable)?;
+        self.call("get_settings", |client| async move {
+            client.get_settings(Self::deadline(CALL_DEADLINE)).await
+        })
+        .await
+        .map_err(|_| SettingsFault::Unavailable)?
+    }
+    async fn update_settings(
+        &self,
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault> {
+        self.process
+            .ensure_running()
+            .await
+            .map_err(|_| SettingsFault::Unavailable)?;
+        self.call("update_settings", |client| async move {
+            client
+                .update_settings(Self::deadline(CALL_DEADLINE), expected_revision, settings)
+                .await
+        })
+        .await
+        .map_err(|_| SettingsFault::Unavailable)?
+    }
+
     fn snapshot(&self) -> TunnelState {
         self.state.borrow().clone()
     }
@@ -320,7 +350,7 @@ impl TunnelControl for RemoteActor {
     async fn set_intent(&self, intent: IntentRequest) -> Result<IntentAccepted, IntentError> {
         // Only an intent that wants a tunnel needs the process to exist; a Down is meaningless
         // when there is nothing running, and starting a service to hear that would be absurd.
-        if matches!(intent, IntentRequest::Up { .. }) {
+        if !matches!(intent, IntentRequest::Down) {
             self.process.ensure_running().await.map_err(|e| {
                 warn!("the tunnel process could not be started: {e}");
                 IntentError::ActorGone

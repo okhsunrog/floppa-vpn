@@ -35,7 +35,7 @@ pub enum SettingsError {
 /// An owner-scoped store, not a concurrent file editing API. The caller must
 /// hold the ownership guard for its lifetime and serialize commands to it.
 /// Construction never changes files; creating defaults is an explicit operation.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SettingsStore {
     path: PathBuf,
     capabilities: SettingsCapabilities,

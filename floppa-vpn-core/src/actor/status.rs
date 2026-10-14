@@ -29,10 +29,9 @@ pub struct Cycle {
     pub index: usize,
     /// How many complete passes over `order` have already been burnt.
     pub pass: u32,
-    /// How many passes this cycle may use. A cold connect gets one — walk the order once, then
-    /// fail fast. A cycle born from a tunnel that *died* gets the full reconnect budget.
-    pub passes_allowed: u32,
-    /// One entry per failed probe, across passes. This is what lets the caller find which
+    /// Maximum complete passes for both initial connection and recovery; None retries until stopped.
+    pub passes_allowed: Option<u32>,
+    /// The most recent failed probes, across passes. This lets the caller find which
     /// protocol reported `verify_failed` — rather than assuming it was the last one tried.
     pub failures: Vec<AttemptFailure>,
     /// Whether this cycle exists because a tunnel that was up went away.
@@ -57,16 +56,15 @@ impl Cycle {
             params,
             index: 0,
             pass: 0,
-            passes_allowed: policy.cold_passes,
+            passes_allowed: policy.reconnect_passes,
             failures: Vec::new(),
             born_from_loss: false,
         })
     }
 
-    /// Born from a lost tunnel, so it gets the reconnect budget rather than the cold one.
+    /// Same policy, but report a lost connection if the recovery budget is exhausted.
     pub fn reconnect(up: &UpIntent, policy: &Policy) -> Option<Self> {
         Self::start(up, policy).map(|cycle| Self {
-            passes_allowed: policy.reconnect_passes,
             born_from_loss: true,
             ..cycle
         })
@@ -82,7 +80,8 @@ impl Cycle {
 
     /// Is there a pass left after the one `pass` counts as burnt?
     pub fn has_budget(&self) -> bool {
-        self.pass + 1 < self.passes_allowed
+        self.passes_allowed
+            .is_none_or(|limit| self.pass.saturating_add(1) < limit)
     }
 
     /// How this cycle ends when its budget is gone.
@@ -93,7 +92,7 @@ impl Cycle {
         if self.born_from_loss {
             super::outcome::CycleOutcome::LostGaveUp {
                 protocol: self.protocol(),
-                passes: self.pass + 1,
+                passes: self.pass.saturating_add(1),
             }
         } else {
             super::outcome::CycleOutcome::Exhausted {
@@ -103,10 +102,18 @@ impl Cycle {
     }
 
     /// Advance to the next protocol, wrapping to the next pass at the end of the order.
+    pub fn record_failure(&mut self, failure: AttemptFailure) {
+        // Persistent recovery must not grow memory or RPC snapshots without bound.
+        if self.failures.len() == 32 {
+            self.failures.remove(0);
+        }
+        self.failures.push(failure);
+    }
+
     pub fn advance(&mut self) {
         if self.is_last_probe() {
             self.index = 0;
-            self.pass += 1;
+            self.pass = self.pass.saturating_add(1);
         } else {
             self.index += 1;
         }
@@ -160,6 +167,8 @@ pub enum UnwindReason {
     IntentDown,
     IntentChanged,
     AttemptTimedOut,
+    /// Lost the underlying network during an attempt; retry the same cursor without spending budget.
+    NetworkLost,
     /// The attempt task died without reporting, so it never unwound its own ladder. Whatever the
     /// journal recorded is undone here, and the cycle ends: a crash is a bug, not a bad peer.
     AttemptCrashed,
@@ -267,14 +276,14 @@ mod tests {
     }
 
     #[test]
-    fn a_cold_connect_gets_one_pass_and_a_reconnect_gets_the_full_budget() {
+    fn new_connections_and_recovery_use_the_same_persistent_policy() {
         let policy = Policy::default();
         let intent = up(&[Protocol::AmneziaWg], Some(TunnelParams::default()));
         let cold = Cycle::start(&intent, &policy).unwrap();
         let reconnect = Cycle::reconnect(&intent, &policy).unwrap();
-        assert_eq!(cold.passes_allowed, 1);
+        assert_eq!(cold.passes_allowed, None);
         assert_eq!(reconnect.passes_allowed, policy.reconnect_passes);
-        assert!(!cold.has_budget());
+        assert!(cold.has_budget());
         assert!(reconnect.has_budget());
         assert!(!cold.born_from_loss);
         assert!(reconnect.born_from_loss);

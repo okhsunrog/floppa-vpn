@@ -8,7 +8,7 @@ use super::intent::{IntentEpoch, TunnelParams};
 // `bindings.ts` by specta, so it must stay a bare link rather than name the module.
 #[cfg(doc)]
 use super::intent::UpIntent;
-use super::outcome::CycleOutcome;
+use super::outcome::{AttemptFailure, CycleOutcome};
 use super::world::{Link, SystemVpnMode};
 use crate::protocol::Protocol;
 use serde::{Deserialize, Serialize};
@@ -78,7 +78,8 @@ pub struct AttemptProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
 pub struct RetryProgress {
     pub pass: u32,
-    pub max: u32,
+    /// None means persistent recovery.
+    pub max: Option<u32>,
     pub resume_in_ms: u32,
 }
 
@@ -163,6 +164,10 @@ pub struct TunnelState {
     pub adopted: bool,
     pub attempt: Option<AttemptProgress>,
     pub retry: Option<RetryProgress>,
+    /// Recent failures in an unfinished cycle, including persistent recovery.
+    pub recovery_failures: Vec<AttemptFailure>,
+    /// An explicit --config profile must never trigger server-side peer provisioning.
+    pub temporary_profile: bool,
     pub server_endpoint: Option<String>,
     pub assigned_ip: Option<String>,
     pub connected_at: Option<i64>,
@@ -188,8 +193,7 @@ pub struct TunnelState {
     /// nothing). A phase cannot say either of those, and inventing one for each combination is how
     /// a state machine acquires a state per adjective.
     ///
-    /// [`Link::Unknown`] on every platform without a watcher, which is every platform but Android
-    /// — so a consumer must treat it as "do not mention the network", never as bad news.
+    /// [`Link::Unknown`] when the platform cannot observe the network; this is not bad news.
     pub link: Link,
     /// How the system is running this VPN — always-on, lockdown, neither, or not knowable.
     ///
@@ -220,6 +224,8 @@ impl TunnelState {
             adopted,
             attempt,
             retry,
+            recovery_failures,
+            temporary_profile,
             server_endpoint,
             assigned_ip,
             connected_at,
@@ -244,6 +250,8 @@ impl TunnelState {
             && *adopted == other.adopted
             && *attempt == other.attempt
             && *retry == other.retry
+            && *recovery_failures == other.recovery_failures
+            && *temporary_profile == other.temporary_profile
             && *server_endpoint == other.server_endpoint
             && *assigned_ip == other.assigned_ip
             && *connected_at == other.connected_at
@@ -274,6 +282,8 @@ impl TunnelState {
             adopted: false,
             attempt: None,
             retry: None,
+            recovery_failures: Vec::new(),
+            temporary_profile: false,
             server_endpoint: None,
             assigned_ip: None,
             connected_at: None,

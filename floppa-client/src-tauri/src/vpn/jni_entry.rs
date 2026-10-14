@@ -53,6 +53,8 @@ enum EntryError {
     Poisoned,
     #[error("failed to start the actor's socket: {0}")]
     ServerStart(String),
+    #[error("failed to initialize tunnel owner: {0}")]
+    ActorStart(String),
     #[error("the :vpn process has not been initialised")]
     NotBooted,
     #[error("generation {0} is not the one being served")]
@@ -333,14 +335,16 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
             })
         };
 
-        let actor = crate::vpn::actor::TunnelActor::spawn(
-            backend,
-            platform,
-            journal,
-            spawn.clone(),
-            crate::vpn::actor::deployment::Deployment::default(),
-            host.clone(),
-        );
+        let actor = runtime
+            .block_on(crate::vpn::actor::TunnelActor::spawn(
+                backend,
+                platform,
+                journal,
+                spawn.clone(),
+                crate::vpn::actor::deployment::Deployment::default(),
+                host.clone(),
+            ))
+            .map_err(EntryError::ActorStart)?;
 
         // This process is the one that can reach the server with the app closed, so it is the one
         // that repairs a peer the server has deleted. Started here and nowhere else: the UI holds
@@ -647,21 +651,31 @@ fn raise_last_intent(who: &'static str, params: Option<TunnelParams>) -> Result<
         stop_vpn_service();
         return Ok(());
     };
-    if let (
-        Some(params),
-        IntentRequest::Up {
-            params: current, ..
-        },
-    ) = (params, &mut request)
-    {
-        info!(
-            ?params,
-            "{who} asked for a tunnel with split rules of its own"
-        );
-        *current = params;
-    }
     info!("{who} asked for a tunnel; raising the intent");
     runtime().spawn(async move {
+        if let Some(params) = params {
+            let state = match actor.get_settings().await {
+                Ok(state) => state,
+                Err(e) => {
+                    error!("settings unavailable: {e}");
+                    stop_vpn_service();
+                    return;
+                }
+            };
+            let order = match state.document.settings.protocols.plan(
+                &actor.snapshot().configs.available,
+                crate::vpn::settings::ConnectReason::User,
+            ) {
+                Ok(order) => order,
+                Err(e) => {
+                    error!("no usable configuration: {e}");
+                    stop_vpn_service();
+                    return;
+                }
+            };
+            request = IntentRequest::Up { order, params };
+        }
+
         match actor.set_intent(request).await {
             Ok(accepted) => info!(epoch = %accepted.epoch, "{who}'s request was accepted"),
             Err(e) => {

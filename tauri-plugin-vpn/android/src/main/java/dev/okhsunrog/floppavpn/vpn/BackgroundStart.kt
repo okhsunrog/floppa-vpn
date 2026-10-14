@@ -9,7 +9,7 @@ import java.io.File
  * existence is the cheapest possible answer to "has anything ever connected on this device", which
  * is all a start made with no UI needs from it.
  */
-internal const val AUTOSTART_FILENAME = "autostart.json"
+internal const val AUTOSTART_FILENAME = "runtime.json"
 
 /**
  * What stands between a start made with no UI and a tunnel.

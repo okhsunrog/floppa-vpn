@@ -10,20 +10,27 @@
 //! to the CLI too, and it means the actor gets exercised on a desktop by every integration test
 //! run rather than only by hand on a phone.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
+#[cfg(not(target_os = "linux"))]
 use std::sync::Arc;
 use tokio::sync::watch;
 
+#[cfg(not(target_os = "linux"))]
 use floppa_vpn_core::actor::deployment::{ConfigSource, Deployment};
 use floppa_vpn_core::actor::handle::IntentRequest;
-use floppa_vpn_core::actor::types::{CycleOutcome, SplitMode, TunnelParams, TunnelState};
+use floppa_vpn_core::actor::types::{CycleOutcome, TunnelState};
+#[cfg(not(target_os = "linux"))]
 use floppa_vpn_core::actor::{Spawn, TunnelActor};
+#[cfg(not(target_os = "linux"))]
 use floppa_vpn_core::protocol::InterfaceName;
+#[cfg(not(target_os = "linux"))]
 use floppa_vpn_core::rollback::Journal;
+#[cfg(not(target_os = "linux"))]
 use floppa_vpn_core::{create_backend, get_platform};
 
 /// Bring up `config_str` and stay up until a signal says otherwise. `private_routes` are the
 /// plan's private networks (empty for a config from a file), routed on top of everything else.
+#[cfg(not(target_os = "linux"))]
 pub async fn run(
     config_str: &str,
     interface: &str,
@@ -42,6 +49,7 @@ pub async fn run(
         // A run is handed its config, from a file or from the server. Persisting it would leave a
         // private key in the keyring of whoever the CLI is running as — under `sudo`, root's.
         configs: ConfigSource::Ephemeral,
+        system_service: false,
     };
 
     let spawn: Spawn = Arc::new(|fut| {
@@ -55,33 +63,33 @@ pub async fn run(
         Some(Journal::new(Journal::default_path(config_dir))),
         spawn,
         deployment,
-    );
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
 
-    let protocol = handle
-        .import_config(config_str.to_string())
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
-        .context("the config is not one this client can use")?;
-
-    let mut params =
-        TunnelParams::new(SplitMode::All, Vec::new()).with_private_routes(private_routes);
-    params.excluded_routes = excluded_routes;
+    if !excluded_routes.is_empty() {
+        bail!("destination exclusions are supported on Linux only");
+    }
     let accepted = handle
-        .set_intent(IntentRequest::Up {
-            order: vec![protocol],
-            // Split tunnelling is an Android affair; on a desktop everything goes through, plus
-            // the private networks the plan grants.
-            params,
+        .set_intent(IntentRequest::Temporary {
+            config: config_str.to_owned(),
+            private_routes,
         })
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .await?;
 
-    eprintln!("Connecting over {protocol}...");
-    match handle
-        .await_cycle(accepted.epoch)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
+    hold(&handle, accepted).await
+}
+
+pub async fn hold(
+    handle: &floppa_vpn_core::actor::handle::TunnelHandle,
+    accepted: floppa_vpn_core::actor::types::IntentAccepted,
+) -> Result<()> {
+    eprintln!("Connecting; Ctrl+C cancels, including while waiting for a network...");
+    let outcome = tokio::select! {
+        result = handle.await_cycle(accepted.epoch) => result.map_err(anyhow::Error::msg)?,
+        _ = tokio::signal::ctrl_c() => { return take_down(handle).await; }
+    };
+    match outcome {
         CycleOutcome::Connected { protocol, .. } => {
             report(&handle.snapshot());
             // The integration harness waits for this exact line on stdout. Everything else the
@@ -98,6 +106,10 @@ pub async fn run(
     let signal = watch_until_stopped(handle.states()).await?;
     eprintln!("\n{signal}, disconnecting...");
 
+    take_down(handle).await
+}
+
+async fn take_down(handle: &floppa_vpn_core::actor::handle::TunnelHandle) -> Result<()> {
     let down = handle
         .set_intent(IntentRequest::Down)
         .await

@@ -1,24 +1,13 @@
-//! Driving the tunnel that the system service is holding.
-//!
-//! The other half of `connect`. Where [`crate::connect`] builds an actor in this process and holds
-//! it for as long as the command runs, this asks one that is already running and then gets out of
-//! the way: the tunnel is not this program's, and ending it is not what leaving the terminal
-//! means any more.
-//!
-//! That difference is why `connect` has two shapes rather than a flag. A run given `--config` is
-//! handed a tunnel to build out of a file and must not touch the machine's long-lived one; a run
-//! given nothing is asking for the machine's tunnel, which is the service's. Deciding by what the
-//! caller supplied rather than by a switch keeps `--config` meaning exactly what it always meant,
-//! and keeps the integration harness — which runs in a container with no service at all — working
-//! unchanged.
+//! Select one owner: an available system service, otherwise this standalone process.
+//! An inaccessible or incompatible service is an error, never permission to start another owner.
 
 use anyhow::{Result, bail};
 use std::sync::Arc;
 use std::time::Duration;
 
 use floppa_vpn_core::actor::Spawn;
-use floppa_vpn_core::actor::handle::{IntentRequest, TunnelControl};
-use floppa_vpn_core::actor::types::{CycleOutcome, Phase, TunnelParams, TunnelState};
+use floppa_vpn_core::actor::handle::{IntentRequest, TunnelHandle};
+use floppa_vpn_core::actor::types::{CycleOutcome, Phase, TunnelState};
 use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_remote, system_socket};
 use floppa_vpn_core::protocol::Protocol;
 use floppa_vpn_core::remote::RemoteActor;
@@ -32,25 +21,121 @@ use floppa_vpn_core::remote::RemoteActor;
 const FIRST_STATE: Duration = Duration::from_secs(10);
 
 /// Reach the service, or say why not in terms the person can act on.
-pub async fn reach() -> Result<Arc<RemoteActor>> {
-    let socket = system_socket();
-    match probe(&socket).await {
-        ServiceAccess::Available => {}
-        ServiceAccess::Absent => bail!(
-            "no tunnel service is running.\n\
-             Start it with `systemctl start floppa-vpn.service`, or connect from a config file \
-             with `sudo floppa connect --config <file>`."
-        ),
-        // Both of these have something specific to say, and saying it is the entire reason this
-        // is not a boolean.
-        other => bail!("{}", other.explain().expect("not a usable answer")),
+pub struct ClientOwner {
+    handle: TunnelHandle,
+    remote: Option<Arc<RemoteActor>>,
+}
+impl std::ops::Deref for ClientOwner {
+    type Target = TunnelHandle;
+    fn deref(&self) -> &TunnelHandle {
+        &self.handle
     }
+}
+impl ClientOwner {
+    async fn set_session(&self, payload: Option<String>) -> Result<(), String> {
+        if let Some(remote) = &self.remote {
+            return remote.set_session(payload).await.map_err(|e| e.to_string());
+        }
+        let session = payload
+            .map(|p| serde_json::from_str(&p))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        floppa_provision::session::store(&floppa_vpn_core::config::config_dir()?, session)
+    }
+    async fn resume_on_boot(&self) -> Result<bool> {
+        Ok(self
+            .get_settings()
+            .await?
+            .document
+            .settings
+            .startup
+            .connect_on_boot)
+    }
+}
 
+pub async fn reach() -> Result<ClientOwner> {
+    reach_for_connect(floppa_vpn_core::protocol::InterfaceName::DEFAULT, false).await
+}
+
+pub async fn reach_for_connect(interface: &str, no_dns: bool) -> Result<ClientOwner> {
     let spawn: Spawn = Arc::new(|fut| {
         tokio::spawn(fut);
     });
-    eprintln!("Mode: systemd service");
-    Ok(system_remote(&spawn))
+    match probe(&system_socket()).await {
+        ServiceAccess::Available => {
+            if no_dns || interface != floppa_vpn_core::protocol::InterfaceName::DEFAULT {
+                bail!("--interface and --no-dns cannot override the system service deployment");
+            }
+            eprintln!("Mode: systemd service");
+            let remote = system_remote(&spawn);
+            Ok(ClientOwner {
+                handle: TunnelHandle::remote(remote.clone()),
+                remote: Some(remote),
+            })
+        }
+        ServiceAccess::Absent => {
+            eprintln!("Mode: standalone (this process owns the tunnel)");
+            let dir = floppa_vpn_core::config::config_dir().map_err(anyhow::Error::msg)?;
+            let handle = floppa_vpn_core::actor::TunnelActor::spawn(
+                floppa_vpn_core::create_backend(),
+                Arc::new(floppa_vpn_core::get_platform()),
+                Some(floppa_vpn_core::rollback::Journal::new(
+                    floppa_vpn_core::rollback::Journal::default_path(&dir),
+                )),
+                spawn.clone(),
+                floppa_vpn_core::actor::deployment::Deployment {
+                    iface: floppa_vpn_core::protocol::InterfaceName::new(interface)
+                        .map_err(|e| anyhow::anyhow!("{}", e.0))?,
+                    manage_dns: !no_dns,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            floppa_provision::watcher::watch(handle.clone(), spawn, env!("CARGO_PKG_VERSION"));
+            Ok(ClientOwner {
+                handle,
+                remote: None,
+            })
+        }
+        other => bail!("{}", other.explain().expect("not a usable answer")),
+    }
+}
+
+async fn finish_connect(
+    owner: &ClientOwner,
+    accepted: floppa_vpn_core::actor::types::IntentAccepted,
+) -> Result<()> {
+    if owner.remote.is_none() {
+        return crate::connect::hold(&owner.handle, accepted).await;
+    }
+    match owner.await_cycle(accepted.epoch).await {
+        Ok(CycleOutcome::Connected { protocol, .. }) => {
+            println!("READY");
+            eprintln!(
+                "Connected over {protocol}. The service keeps it up; `floppa disconnect` stops it."
+            );
+            Ok(())
+        }
+        Err(floppa_vpn_core::actor::types::IntentError::CycleStillRunning) => {
+            eprintln!(
+                "The service is still connecting or waiting for a network; use `floppa status`."
+            );
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+        Ok(other) => bail!("could not connect: {}", crate::connect::describe(&other)),
+    }
+}
+
+pub async fn connect_temporary(owner: &ClientOwner, raw: String) -> Result<()> {
+    let accepted = owner
+        .set_intent(IntentRequest::Temporary {
+            config: raw,
+            private_routes: vec![],
+        })
+        .await?;
+    finish_connect(owner, accepted).await
 }
 
 /// Give the service the credentials it will need when nobody is at this terminal.
@@ -66,7 +151,7 @@ pub async fn reach() -> Result<Arc<RemoteActor>> {
 /// be repaired *later*; the tunnel is what was asked for, and a service that ends up without a
 /// session merely goes back to how it behaved before this existed.
 pub async fn seed_session(
-    remote: &RemoteActor,
+    remote: &ClientOwner,
     base_url: &str,
     token: &str,
     identity: &floppa_api_client::DeviceIdentity,
@@ -93,7 +178,7 @@ pub async fn seed_session(
 }
 
 /// Wait for the mirror to hold something other than "nothing has been heard".
-async fn first_state(remote: &RemoteActor) -> Result<TunnelState> {
+async fn first_state(remote: &ClientOwner) -> Result<TunnelState> {
     let deadline = std::time::Instant::now() + FIRST_STATE;
     loop {
         let state = remote.snapshot();
@@ -112,50 +197,32 @@ async fn first_state(remote: &RemoteActor) -> Result<TunnelState> {
 /// Returns rather than waits: the tunnel outlives this command, which is the whole point of there
 /// being a service. A caller who wants to watch it has `floppa status`.
 pub async fn connect(
-    remote: &RemoteActor,
+    remote: &ClientOwner,
     config_str: &str,
     private_routes: Vec<String>,
     excluded_routes: Option<Vec<String>>,
 ) -> Result<()> {
-    let (_, mut params) = connection_preferences(remote).await?;
-    params = params.with_private_routes(private_routes);
     if let Some(routes) = excluded_routes {
-        params.excluded_routes = routes;
+        update_routes(remote, routes).await?;
     }
-    let protocol = remote
-        .import_config(config_str.to_string())
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
+    remote.import_config(config_str.to_string()).await?;
     let accepted = remote
-        .set_intent(IntentRequest::Up {
-            order: vec![protocol],
-            // Preserve local preferences while refreshing the server-granted routes.
-            params,
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        .set_intent(IntentRequest::Configured { private_routes })
+        .await?;
+    finish_connect(remote, accepted).await
+}
 
-    eprintln!("Connecting over {protocol}...");
-    match remote
-        .await_cycle(accepted.epoch)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        CycleOutcome::Connected { protocol, .. } => {
-            report(&remote.snapshot());
-            println!("READY");
-            eprintln!(
-                "Connected over {protocol}. The service keeps it up; `floppa disconnect` stops it."
-            );
-            Ok(())
-        }
-        other => bail!("could not connect: {}", crate::connect::describe(&other)),
-    }
+async fn update_routes(owner: &ClientOwner, routes: Vec<String>) -> Result<()> {
+    let mut state = owner.get_settings().await?;
+    state.document.settings.routing.excluded_routes = routes;
+    owner
+        .update_settings(state.document.revision, state.document.settings)
+        .await?;
+    Ok(())
 }
 
 /// Take the tunnel down and wait for the machine to be back as it was.
-pub async fn disconnect(remote: &RemoteActor) -> Result<()> {
+pub async fn disconnect(remote: &ClientOwner) -> Result<()> {
     let state = first_state(remote).await?;
     if state.phase == Phase::Disconnected {
         eprintln!("No tunnel is up.");
@@ -173,13 +240,8 @@ pub async fn disconnect(remote: &RemoteActor) -> Result<()> {
     Ok(())
 }
 
-/// Put a config into the service's store, without connecting.
-///
-/// The gap this fills: `--config` means "build a tunnel here, out of this file", which is the one
-/// shape that must not touch the machine's long-lived tunnel — so a person holding a `.conf` had
-/// no way to hand it to the service at all, and `connect` would have sent them to the server for
-/// one they already had. The store is root's, so this is the only way in.
-pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
+/// Persist credentials in the selected owner, without connecting.
+pub async fn import(remote: &ClientOwner, config_str: &str) -> Result<()> {
     let protocol = remote
         .import_config(config_str.to_string())
         .await
@@ -188,75 +250,38 @@ pub async fn import(remote: &RemoteActor, config_str: &str) -> Result<()> {
     Ok(())
 }
 
-/// Connect with whatever the service already holds.
-///
-/// Restore the last successful request, including its routing parameters. If no
-/// connection has succeeded yet, try the available configs with default parameters.
-async fn connection_preferences(
-    remote: &RemoteActor,
-) -> Result<(Vec<floppa_vpn_core::protocol::Protocol>, TunnelParams)> {
-    let state = first_state(remote).await?;
-    if let Some(params) = state.intent_params.or(state.params) {
-        let order = if state.intent_order.is_empty() {
-            state.configs.available
-        } else {
-            state.intent_order
-        };
-        return Ok((order, params));
-    }
-    if let Some(IntentRequest::Up { order, params }) = remote
-        .saved_intent()
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        return Ok((order, params));
-    }
-    Ok((state.configs.available, TunnelParams::default()))
-}
-
+/// Connect using owner settings and stored credentials.
 pub async fn connect_stored(
-    remote: &RemoteActor,
+    remote: &ClientOwner,
     excluded_routes: Option<Vec<String>>,
 ) -> Result<()> {
-    let (order, mut params) = connection_preferences(remote).await?;
-    if order.is_empty() {
-        bail!("the tunnel service holds no config; hand it one with `floppa import <file>`");
-    }
     if let Some(routes) = excluded_routes {
-        params.excluded_routes = routes;
+        update_routes(remote, routes).await?;
     }
+    let saved = match &remote.remote {
+        Some(service) => service.saved_intent().await?,
+        None => floppa_vpn_core::autostart::last_intent(),
+    };
+    let private_routes = match saved {
+        Some(IntentRequest::Configured { private_routes }) => private_routes,
+        _ => vec![],
+    };
     let accepted = remote
-        .set_intent(IntentRequest::Up { order, params })
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    eprintln!("Connecting with the config the service already holds...");
-    match remote
-        .await_cycle(accepted.epoch)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        CycleOutcome::Connected { protocol, .. } => {
-            report(&remote.snapshot());
-            println!("READY");
-            eprintln!(
-                "Connected over {protocol}. The service keeps it up; `floppa disconnect` stops it."
-            );
-            Ok(())
-        }
-        other => bail!("could not connect: {}", crate::connect::describe(&other)),
-    }
+        .set_intent(IntentRequest::Configured { private_routes })
+        .await?;
+    finish_connect(remote, accepted).await
 }
 
 /// Show or change whether this machine reconnects its tunnel on boot.
-pub async fn autostart(remote: &RemoteActor, set: Option<bool>) -> Result<()> {
+pub async fn autostart(remote: &ClientOwner, set: Option<bool>) -> Result<()> {
     if let Some(enabled) = set {
+        let mut state = remote.get_settings().await?;
+        state.document.settings.startup.connect_on_boot = enabled;
         remote
-            .set_resume_on_boot(enabled)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .update_settings(state.document.revision, state.document.settings)
+            .await?;
     }
-    let on = remote.resume_on_boot().await;
+    let on = remote.resume_on_boot().await?;
     println!("{}", if on { "on" } else { "off" });
     if on && set == Some(true) {
         eprintln!("The tunnel that last connected will be brought back at boot.");
@@ -265,7 +290,7 @@ pub async fn autostart(remote: &RemoteActor, set: Option<bool>) -> Result<()> {
 }
 
 /// Whether the service already holds something it could connect with.
-pub async fn has_config(remote: &RemoteActor) -> bool {
+pub async fn has_config(remote: &ClientOwner) -> bool {
     match first_state(remote).await {
         Ok(state) => !state.configs.available.is_empty(),
         Err(_) => false,
@@ -278,32 +303,23 @@ pub async fn has_config(remote: &RemoteActor) -> bool {
 /// than something the service does for itself: the service is started by its socket too, and every
 /// `floppa status` would otherwise reconnect a VPN somebody had turned off. Being asked is
 /// different from being started, and only a caller can tell the two apart.
-pub async fn resume(remote: &RemoteActor, only_if_enabled: bool) -> Result<()> {
-    // Asked of the service rather than read here: the preference lives beside the configs, in a
-    // directory only root can read, for the same reason everything else about this does.
-    if only_if_enabled && !remote.resume_on_boot().await {
+pub async fn resume(remote: &ClientOwner, only_if_enabled: bool) -> Result<()> {
+    if only_if_enabled && !remote.resume_on_boot().await? {
         return Ok(());
     }
-    let Some(accepted) = remote.resume().await.map_err(|e| anyhow::anyhow!("{e}"))? else {
-        eprintln!("Nothing has connected on this machine yet; there is nothing to bring back.");
-        return Ok(());
-    };
-
-    match remote
-        .await_cycle(accepted.epoch)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-    {
-        CycleOutcome::Connected { protocol, .. } => {
-            eprintln!("Connected over {protocol}.");
-            Ok(())
-        }
-        other => bail!("could not connect: {}", crate::connect::describe(&other)),
+    if let Some(service) = &remote.remote {
+        let Some(accepted) = service.resume().await? else {
+            eprintln!("No saved connection.");
+            return Ok(());
+        };
+        finish_connect(remote, accepted).await
+    } else {
+        connect_stored(remote, None).await
     }
 }
 
 /// What the service says the tunnel is doing.
-pub async fn status(remote: &RemoteActor) -> Result<()> {
+pub async fn status(remote: &ClientOwner) -> Result<()> {
     let state = first_state(remote).await?;
     match state.phase {
         Phase::Connected => {

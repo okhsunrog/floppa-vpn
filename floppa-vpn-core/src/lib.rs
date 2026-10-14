@@ -36,6 +36,9 @@ pub mod config;
 #[cfg(target_os = "android")]
 pub mod host;
 pub mod logging;
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+mod network;
+pub mod ownership;
 pub mod platform;
 pub mod private_file;
 pub mod protocol;

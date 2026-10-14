@@ -35,6 +35,8 @@ pub struct Deployment {
     /// a test harness, or a user who has arranged their own.
     pub manage_dns: bool,
     pub configs: ConfigSource,
+    /// A system owner may promise boot startup; standalone processes cannot.
+    pub system_service: bool,
 }
 
 impl Default for Deployment {
@@ -43,6 +45,7 @@ impl Default for Deployment {
             iface: InterfaceName::default(),
             manage_dns: true,
             configs: ConfigSource::default(),
+            system_service: false,
         }
     }
 }

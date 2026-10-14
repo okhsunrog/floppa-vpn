@@ -42,7 +42,6 @@ use self::types::{
 };
 use crate::backend::VpnBackend;
 use crate::platform::{Platform, PlatformImpl};
-use crate::protocol::Protocol;
 use crate::rollback::{Journal, RollbackStack, UnwindReport, unwind};
 use crate::state::SpeedTracker;
 use crate::store::ConfigStore;
@@ -82,6 +81,12 @@ enum Reconcile {
 }
 
 pub struct TunnelActor {
+    owner_guard: Option<Arc<crate::ownership::OwnerGuard>>,
+    settings_store: Option<crate::settings::SettingsStore>,
+    settings: crate::settings::SettingsState,
+    settings_writing: bool,
+    temporary_config: Option<crate::state::ProtocolConfig>,
+
     // ---- the state, owned outright ----
     status: Status,
     intent: Intent,
@@ -161,22 +166,55 @@ impl TunnelActor {
     /// process is set up outside any Tokio runtime and has to go through Tauri's handle, while the
     /// `:vpn` process owns its runtime outright — and the actor should not have to know which one
     /// it is running in.
-    pub fn spawn(
+    pub async fn spawn(
         backend: Arc<dyn VpnBackend>,
         platform: Arc<PlatformImpl>,
         journal: Option<Journal>,
         spawn_task: Spawn,
         deployment: Deployment,
         #[cfg(target_os = "android")] host: Arc<dyn crate::host::ServiceHost>,
-    ) -> TunnelHandle {
+    ) -> Result<TunnelHandle, String> {
+        let dir = crate::config::config_dir()?;
+        let guard = Arc::new(
+            crate::ownership::OwnerGuard::acquire(&platform, &dir)
+                .await
+                .map_err(|e| e.to_string())?,
+        );
+        let capabilities = crate::settings::SettingsCapabilities {
+            destination_exclusions: cfg!(target_os = "linux"),
+            app_routing: cfg!(target_os = "android"),
+            connect_on_boot: deployment.system_service || cfg!(target_os = "android"),
+        };
+        let settings_path = crate::settings::path(deployment.system_service)?;
+        std::fs::create_dir_all(
+            settings_path
+                .parent()
+                .ok_or("settings path has no parent")?,
+        )
+        .map_err(|e| e.to_string())?;
+        let mut settings_store = crate::settings::SettingsStore::new(settings_path, capabilities);
+        let document = match settings_store.read().map_err(|e| e.to_string())? {
+            Some(document) => document,
+            None => settings_store
+                .replace(0, Default::default())
+                .map_err(|e| e.to_string())?,
+        };
         let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
         let policy = Policy::for_backend(backend.liveness_grace());
 
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        let initial_link = crate::network::initial(deployment.iface.as_str()).await;
         spawn_task(Box::pin(observer(
             backend.clone(),
             cmd_tx.clone(),
             policy.clone(),
+        )));
+
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        spawn_task(Box::pin(crate::network::watch(
+            deployment.iface.as_str().to_owned(),
+            cmd_tx.clone(),
         )));
 
         let actor_tx = cmd_tx.clone();
@@ -190,7 +228,7 @@ impl TunnelActor {
                 // must not leave a copy in anybody's keyring.
                 ConfigSource::Ephemeral => ConfigStore::in_memory(Default::default()),
             };
-            let actor = Self::new(
+            let mut actor = Self::new(
                 backend,
                 platform,
                 journal,
@@ -202,10 +240,18 @@ impl TunnelActor {
                 #[cfg(target_os = "android")]
                 host,
             );
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            {
+                actor.link = initial_link;
+            }
+            actor.owner_guard = Some(guard);
+            actor.settings_store = Some(settings_store);
+            actor.settings.document = document;
+            actor.apply_recovery_settings();
             actor.run(cmd_rx).await;
         }));
 
-        TunnelHandle::new(cmd_tx, state_rx)
+        Ok(TunnelHandle::new(cmd_tx, state_rx))
     }
 
     /// Assemble the actor. Everything that touches the outside world — the backend, the platform,
@@ -224,6 +270,14 @@ impl TunnelActor {
         #[cfg(target_os = "android")] host: Arc<dyn crate::host::ServiceHost>,
     ) -> Self {
         Self {
+            owner_guard: None,
+            settings_store: None,
+            settings: crate::settings::SettingsState {
+                document: crate::settings::SettingsDocument::defaults(),
+                intent_revision: None,
+            },
+            settings_writing: false,
+            temporary_config: None,
             status: Status::Idle,
             intent: Intent::default(),
             held_stack: RollbackStack::default(),
@@ -313,7 +367,18 @@ impl TunnelActor {
 
         // An intent with no params: it asks for "whatever is already there", which is the only
         // intent allowed to adopt a tunnel whose split rules we cannot know.
-        let order = self.configs.resolve_order(&Protocol::ALL);
+        let order = self
+            .settings
+            .document
+            .settings
+            .protocols
+            .plan(
+                &self.configs.available(),
+                crate::settings::ConnectReason::Recovery {
+                    last_successful: self.configs.preferred(),
+                },
+            )
+            .unwrap_or_default();
         if !order.is_empty() {
             self.intent = Intent::Up(UpIntent {
                 epoch: self.mint_epoch(),
@@ -328,6 +393,57 @@ impl TunnelActor {
 
     async fn handle(&mut self, cmd: Command) -> Reconcile {
         match cmd {
+            Command::GetSettings { reply } => {
+                let _ = reply.send(Ok(self.settings.clone()));
+                Reconcile::No
+            }
+            Command::UpdateSettings {
+                expected_revision,
+                settings,
+                reply,
+            } => {
+                if self.settings_writing {
+                    let _ = reply.send(Err(crate::settings::SettingsFault::Busy));
+                } else if let Some(mut store) = self.settings_store.clone() {
+                    self.settings_writing = true;
+                    let guard = self.owner_guard.clone();
+                    let tx = self.cmd_tx.clone();
+                    tokio::spawn(async move {
+                        let result = tokio::task::spawn_blocking(move || {
+                            let _guard = guard;
+                            store.replace(expected_revision, settings)
+                        })
+                        .await
+                        .map_err(|e| crate::settings::SettingsFault::Failed {
+                            detail: e.to_string(),
+                        })
+                        .and_then(|r| r.map_err(Into::into));
+                        let _ = tx.send(Command::SettingsWritten { result, reply }).await;
+                    });
+                } else {
+                    let _ = reply.send(Err(crate::settings::SettingsFault::Unavailable));
+                }
+                Reconcile::No
+            }
+            Command::SettingsWritten { result, reply } => {
+                self.settings_writing = false;
+                match result {
+                    Ok(document) => {
+                        self.settings.document = document;
+                        let _ = reply.send(Ok(self.settings.clone()));
+                    }
+                    Err(error) => {
+                        // A rename may have committed even if directory fsync failed.
+                        if let Some(store) = &self.settings_store
+                            && let Ok(Some(document)) = store.read()
+                        {
+                            self.settings.document = document;
+                        }
+                        let _ = reply.send(Err(error));
+                    }
+                }
+                Reconcile::No
+            }
             Command::SetIntent { intent, reply } => {
                 let result = self.accept_intent(intent);
                 let changed = result.is_ok();
@@ -450,6 +566,14 @@ impl TunnelActor {
                 Reconcile::Yes
             }
 
+            Command::NetworkChanged => {
+                floppa_net::network_changed();
+                self.apply(
+                    reconcile::network_changed(&self.status, &self.intent, &self.policy),
+                    Instant::now(),
+                );
+                Reconcile::Yes
+            }
             Command::LinkChanged(link) => {
                 if self.link == link {
                     return Reconcile::No;
@@ -457,6 +581,17 @@ impl TunnelActor {
                 floppa_net::network_changed();
                 info!(?link, "the network under the tunnel changed");
                 self.link = link;
+                if let Status::Up(up) = &mut self.status {
+                    up.dark_since = None;
+                    up.probing_since = None;
+                    // Link availability is not a new backend observation. In particular,
+                    // last_obs may still say Clear from just before a successful attempt.
+                    // Publish waiting/online now; judge liveness on the next fresh observation.
+                    return Reconcile::No;
+                }
+                if let Status::Retrying { resume_at, .. } = &mut self.status {
+                    *resume_at = Instant::now();
+                }
                 Reconcile::Yes
             }
 
@@ -508,9 +643,51 @@ impl TunnelActor {
     /// write-only intent queue, a caller cannot arrive at a bad moment. Whether anything actually
     /// starts is decided by the table, inside the loop.
     fn accept_intent(&mut self, request: IntentRequest) -> Result<IntentAccepted, IntentError> {
+        let configured = matches!(request, IntentRequest::Configured { .. });
+        let mut temporary = None;
+        let request = match request {
+            IntentRequest::Temporary {
+                config,
+                private_routes,
+            } => {
+                let config = crate::state::ProtocolConfig::parse(config.trim()).map_err(|e| {
+                    IntentError::InvalidConfig {
+                        detail: e.to_string(),
+                    }
+                })?;
+                let order = vec![config.protocol()];
+                temporary = Some(config);
+                IntentRequest::Up {
+                    order,
+                    params: self
+                        .settings
+                        .document
+                        .settings
+                        .tunnel_params(private_routes),
+                }
+            }
+            IntentRequest::Configured { private_routes } => {
+                let settings = &self.settings.document.settings;
+                let order = settings
+                    .protocols
+                    .plan(
+                        &self.configs.available(),
+                        crate::settings::ConnectReason::User,
+                    )
+                    .map_err(|_| IntentError::NoUsableConfig)?;
+                IntentRequest::Up {
+                    order,
+                    params: settings.tunnel_params(private_routes),
+                }
+            }
+            other => other,
+        };
         let epoch = self.mint_epoch();
 
         let intent = match request {
+            IntentRequest::Configured { .. } | IntentRequest::Temporary { .. } => {
+                unreachable!("resolved above")
+            }
             IntentRequest::Down => Intent::Down { epoch },
             IntentRequest::Up { order, mut params } => {
                 params.excluded_routes =
@@ -524,7 +701,17 @@ impl TunnelActor {
                 if order.is_empty() {
                     return Err(IntentError::EmptyOrder);
                 }
-                let order = self.configs.resolve_order(&order);
+                let available = temporary
+                    .as_ref()
+                    .map(|c| vec![c.protocol()])
+                    .unwrap_or_else(|| self.configs.available());
+                let mut unique = Vec::new();
+                for protocol in order {
+                    if available.contains(&protocol) && !unique.contains(&protocol) {
+                        unique.push(protocol);
+                    }
+                }
+                let order = unique;
                 if order.is_empty() {
                     return Err(IntentError::NoUsableConfig);
                 }
@@ -549,9 +736,21 @@ impl TunnelActor {
         }
 
         info!(?intent, "intent accepted");
+        self.temporary_config = temporary;
+        self.settings.intent_revision = configured.then_some(self.settings.document.revision);
+        if configured || self.temporary_config.is_some() {
+            self.apply_recovery_settings();
+        }
         self.intent = intent;
         self.last_outcome = None;
         Ok(IntentAccepted { epoch })
+    }
+
+    fn apply_recovery_settings(&mut self) {
+        self.policy.reconnect_passes = match self.settings.document.settings.recovery {
+            crate::settings::RecoverySettings::Persistent => None,
+            crate::settings::RecoverySettings::Limited { rounds } => Some(rounds),
+        };
     }
 
     fn mint_epoch(&mut self) -> IntentEpoch {
@@ -789,7 +988,12 @@ impl TunnelActor {
             } => {
                 debug_assert!(self.attempt.is_none(), "beginning while an attempt is live");
 
-                let Some(config) = self.configs.get(protocol) else {
+                let Some(config) = self
+                    .temporary_config
+                    .clone()
+                    .filter(|c| c.protocol() == protocol)
+                    .or_else(|| self.configs.get(protocol))
+                else {
                     // A missing config is an attempt failure, not a panic and not a silent stall.
                     // It still goes through the report channel, because the handle is registered
                     // first — a result that skipped the channel would be discarded as stale and
@@ -904,7 +1108,16 @@ impl TunnelActor {
             // Only ever emitted on success, which is why a failed cycle can no longer leave the
             // last *failed* protocol recorded as the preferred one.
             Effect::RememberWinner(protocol) => {
+                if self.temporary_config.is_some() {
+                    return;
+                }
                 self.edit_configs(|c| c.set_preferred(Some(protocol)));
+                if let Intent::Up(up) = &mut self.intent
+                    && let Some(index) = up.order.iter().position(|p| *p == protocol)
+                {
+                    up.order.remove(index);
+                    up.order.insert(0, protocol);
+                }
                 // What a start with nobody watching rebuilds from: always-on, boot, a lockdown
                 // restore. Only the *request* is recorded — the configs are already in the store,
                 // in this process — and the winner leads the order so the protocol that actually
@@ -926,6 +1139,7 @@ impl TunnelActor {
             Effect::DemoteIntent => {
                 let epoch = self.intent.epoch();
                 self.intent = Intent::Down { epoch };
+                self.settings.intent_revision = None;
             }
 
             Effect::Resolve { epoch, outcome } => self.publish_outcome(epoch, outcome),
@@ -944,7 +1158,11 @@ impl TunnelActor {
         index: usize,
         task: impl std::future::Future<Output = ()> + Send + 'static,
     ) {
-        let join = tokio::spawn(task);
+        let guard = self.owner_guard.clone();
+        let join = tokio::spawn(async move {
+            let _guard = guard;
+            task.await
+        });
         let tx = self.cmd_tx.clone();
         tokio::spawn(async move {
             if let Err(e) = join.await {
@@ -978,8 +1196,12 @@ impl TunnelActor {
         task: impl std::future::Future<Output = UnwindReport> + Send + 'static,
     ) -> JoinHandle<()> {
         let tx = self.cmd_tx.clone();
+        let guard = self.owner_guard.clone();
         tokio::spawn(async move {
-            let join = tokio::spawn(task);
+            let join = tokio::spawn(async move {
+                let _guard = guard;
+                task.await
+            });
             let report = match join.await {
                 Ok(report) => report,
                 Err(e) => {
@@ -1078,7 +1300,7 @@ impl TunnelActor {
     fn render(&self, seq: u64) -> TunnelState {
         let now = Instant::now();
         let world = World::classify(&self.last_obs, now, &self.policy);
-        view::render(
+        let mut state = view::render(
             seq,
             &self.status,
             &self.intent,
@@ -1091,7 +1313,9 @@ impl TunnelActor {
             self.outcome_serial,
             now,
             self.observed_once,
-        )
+        );
+        state.temporary_profile = self.temporary_config.is_some();
+        state
     }
 
     fn publish(&mut self) {
@@ -1114,6 +1338,9 @@ impl TunnelActor {
     fn deadline(&self) -> Option<Instant> {
         let status_deadline = match &self.status {
             Status::Connecting { deadline, .. } => Some(*deadline),
+            // An expired retry timer must not busy-loop while the link gate parks it.
+            // LinkChanged or a fresh observation wakes the actor when there is work to do.
+            Status::Retrying { .. } if self.link.is_offline() => None,
             Status::Retrying { resume_at, .. } => Some(*resume_at),
             // Both clocks a running tunnel can be on: the owner not answering us, and the far
             // side not answering it.

@@ -22,6 +22,7 @@ use super::types::{
 };
 use crate::protocol::Protocol;
 use crate::rollback::UnwindReport;
+use crate::settings::{Settings, SettingsDocument, SettingsFault, SettingsState};
 use crate::store::ConfigError;
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -30,6 +31,15 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IntentRequest {
     Down,
+    /// Use the owner's settings; only server grants come from the caller.
+    Configured {
+        private_routes: Vec<String>,
+    },
+    /// A one-shot profile; never imported into the credential store or remembered for boot.
+    Temporary {
+        config: String,
+        private_routes: Vec<String>,
+    },
     Up {
         order: Vec<Protocol>,
         params: TunnelParams,
@@ -45,6 +55,18 @@ pub struct AttemptReport {
 
 #[derive(Debug)]
 pub enum Command {
+    GetSettings {
+        reply: oneshot::Sender<Result<SettingsState, SettingsFault>>,
+    },
+    UpdateSettings {
+        expected_revision: u32,
+        settings: Settings,
+        reply: oneshot::Sender<Result<SettingsState, SettingsFault>>,
+    },
+    SettingsWritten {
+        result: Result<SettingsDocument, SettingsFault>,
+        reply: oneshot::Sender<Result<SettingsState, SettingsFault>>,
+    },
     // ------------------------------------------------------------------ from Tauri commands
     SetIntent {
         intent: IntentRequest,
@@ -95,6 +117,8 @@ pub enum Command {
     /// delivering this command *is* a table pass. There is no timer to cancel and no separate
     /// notification path that could quietly overtake the queue.
     LinkChanged(Link),
+    /// Desktop underlay route changed; rebuild endpoint bindings after ordered teardown.
+    NetworkChanged,
     /// The platform reported how the system is running this VPN.
     ///
     /// Both facts arrive together and are normalised into one value before they get here, so the
@@ -114,6 +138,12 @@ pub enum Command {
 /// unreachable, but both of those are `ActorGone` to a caller who can only give up either way.
 #[async_trait::async_trait]
 pub trait TunnelControl: Send + Sync {
+    async fn get_settings(&self) -> Result<SettingsState, SettingsFault>;
+    async fn update_settings(
+        &self,
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault>;
     /// The current snapshot. Always a local read — a mirror kept up to date, never a call — which
     /// is why the UI may poll it as freely as it likes.
     fn snapshot(&self) -> TunnelState;
@@ -146,7 +176,7 @@ pub trait TunnelControl: Send + Sync {
     /// Tell the actor the device gained or lost its network.
     ///
     /// Reported by whoever holds the platform's watcher, which is always the process the actor
-    /// lives in — the `:vpn` service on Android, nobody at all on desktop. It is a sibling of the
+    /// lives in — the `:vpn` service on Android, or the desktop network observer. It is a sibling of the
     /// rebind reflex rather than of the commands above: a statement of fact about the machine, not
     /// a request, and so it has no reply and nothing to refuse.
     async fn report_link(&self, link: Link);
@@ -164,6 +194,17 @@ pub trait TunnelControl: Send + Sync {
 pub struct TunnelHandle(std::sync::Arc<dyn TunnelControl>);
 
 impl TunnelHandle {
+    pub async fn get_settings(&self) -> Result<SettingsState, SettingsFault> {
+        self.0.get_settings().await
+    }
+    pub async fn update_settings(
+        &self,
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault> {
+        self.0.update_settings(expected_revision, settings).await
+    }
+
     pub fn new(tx: mpsc::Sender<Command>, state: watch::Receiver<TunnelState>) -> Self {
         Self(std::sync::Arc::new(LocalActor { tx, state }))
     }
@@ -228,6 +269,31 @@ struct LocalActor {
 
 #[async_trait::async_trait]
 impl TunnelControl for LocalActor {
+    async fn get_settings(&self) -> Result<SettingsState, SettingsFault> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::GetSettings { reply })
+            .await
+            .map_err(|_| SettingsFault::Unavailable)?;
+        rx.await.map_err(|_| SettingsFault::Unavailable)?
+    }
+    async fn update_settings(
+        &self,
+        expected_revision: u32,
+        settings: Settings,
+    ) -> Result<SettingsState, SettingsFault> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::UpdateSettings {
+                expected_revision,
+                settings,
+                reply,
+            })
+            .await
+            .map_err(|_| SettingsFault::Unavailable)?;
+        rx.await.map_err(|_| SettingsFault::Unavailable)?
+    }
+
     fn snapshot(&self) -> TunnelState {
         self.state.borrow().clone()
     }

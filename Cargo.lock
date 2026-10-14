@@ -1664,6 +1664,7 @@ dependencies = [
  "tracing-logcat",
  "tracing-subscriber",
  "tun",
+ "windows-sys 0.61.2",
  "wintun-bindings",
 ]
 

@@ -42,6 +42,12 @@ enum Command {
     /// stops taking it down, and `systemctl enable` brings it back after a reboot.
     #[cfg(target_os = "linux")]
     Service,
+    /// Read or replace preferences through the selected tunnel owner
+    #[cfg(target_os = "linux")]
+    Settings {
+        #[command(subcommand)]
+        action: SettingsAction,
+    },
     /// Log in via Telegram (opens browser)
     Login {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
@@ -49,15 +55,13 @@ enum Command {
     },
     /// Connect to VPN (auto-detects WireGuard/AmneziaWG .conf or VLESS URI)
     ///
-    /// Without --config this asks the system service for the machine's tunnel, which then outlives
-    /// this command. With --config it builds one here instead, from the file, and holds it until
-    /// interrupted — that run needs root and never touches the service.
+    /// Uses the system service when available, otherwise holds a standalone tunnel until Ctrl+C.
+    /// --config is temporary input to the selected owner; it does not change ownership.
     Connect {
         /// JSON file containing {"excluded_routes": ["194.186.63.0/24"]}
         #[arg(long)]
         routes: Option<std::path::PathBuf>,
-        /// Config file (.conf) or VLESS URI file. Implies a tunnel run by this command, not by the
-        /// service
+        /// Temporary config file (.conf) or VLESS URI file; not saved for future connections
         #[arg(long)]
         config: Option<String>,
         /// Tunnel protocol (AmneziaWG by default, like the app)
@@ -89,10 +93,8 @@ enum Command {
         #[arg(value_parser = ["on", "off"])]
         state: Option<String>,
     },
-    /// Give the system service a config from a file, without connecting
-    ///
-    /// For a config you already hold. `connect --config` builds a tunnel in this command instead,
-    /// and never touches the service's.
+    /// Persist a config in the selected owner without connecting.
+    /// Unlike temporary `connect --config`, this saves credentials for future connections.
     #[cfg(target_os = "linux")]
     Import {
         /// Config file (.conf) or VLESS URI file
@@ -121,6 +123,17 @@ enum Command {
     Logout {
         #[arg(long, env = "FLOPPA_API_URL", default_value = DEFAULT_API_URL)]
         api_url: String,
+    },
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Subcommand)]
+enum SettingsAction {
+    Show,
+    /// Set a dotted settings field to a JSON value (bare strings are accepted)
+    Set {
+        field: String,
+        value: String,
     },
 }
 
@@ -159,6 +172,34 @@ async fn main() -> Result<()> {
 
     match cli.command {
         #[cfg(target_os = "linux")]
+        Command::Settings { action } => {
+            let owner = client::reach().await?;
+            let state = owner.get_settings().await?;
+            match action {
+                SettingsAction::Show => println!("{}", serde_json::to_string_pretty(&state)?),
+                SettingsAction::Set { field, value } => {
+                    let mut json = serde_json::to_value(&state.document.settings)?;
+                    let mut current = &mut json;
+                    let parts: Vec<_> = field.split('.').collect();
+                    for part in parts {
+                        current = current
+                            .get_mut(part)
+                            .with_context(|| format!("unknown settings field: {field}"))?;
+                    }
+                    *current =
+                        serde_json::from_str(&value).unwrap_or(serde_json::Value::String(value));
+                    let settings = serde_json::from_value(json)?;
+                    let saved = owner
+                        .update_settings(state.document.revision, settings)
+                        .await?;
+                    println!(
+                        "Saved revision {}. Connection changes apply on the next connect.",
+                        saved.document.revision
+                    );
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
         Command::Service => {
             service::run().await?;
         }
@@ -182,12 +223,21 @@ async fn main() -> Result<()> {
                         .map_err(anyhow::Error::msg)
                 })
                 .transpose()?;
-            // A config on the command line is a tunnel for this run to build and hold, so it is
-            // also the choice between the two shapes of `connect`. Given one, nothing here looks
-            // for a service; given none, the machine's tunnel is the service's to raise.
+            // Select ownership independently of credentials. An explicit config is temporary
+            // input to that same owner, not an implicit request to bypass the service.
+            #[cfg(target_os = "linux")]
+            let owner = client::reach_for_connect(&interface, no_dns).await?;
             if let Some(path) = config {
                 let config_str = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?;
+                #[cfg(target_os = "linux")]
+                {
+                    if routes.is_some() {
+                        bail!("use `floppa settings` for routing preferences");
+                    }
+                    return client::connect_temporary(&owner, config_str).await;
+                }
+                #[cfg(not(target_os = "linux"))]
                 connect::run(
                     &config_str,
                     &interface,
@@ -197,6 +247,7 @@ async fn main() -> Result<()> {
                     excluded_routes.unwrap_or_default(),
                 )
                 .await?;
+                #[cfg(not(target_os = "linux"))]
                 return Ok(());
             }
 
@@ -206,9 +257,9 @@ async fn main() -> Result<()> {
             // config they have would fail for a reason that is not their problem.
             #[cfg(target_os = "linux")]
             if tokens.load()?.is_none() {
-                let remote = client::reach().await?;
-                if client::has_config(&remote).await {
-                    return client::connect_stored(&remote, excluded_routes).await;
+                let remote = &owner;
+                if client::has_config(remote).await {
+                    return client::connect_stored(remote, excluded_routes).await;
                 }
                 return Err(anyhow::anyhow!(
                     "Not logged in, and the tunnel service holds no config.\n\
@@ -248,12 +299,12 @@ async fn main() -> Result<()> {
 
             #[cfg(target_os = "linux")]
             {
-                let remote = client::reach().await?;
+                let remote = &owner;
                 // The service is what will need to reach the server later, with nobody at this
                 // terminal, to replace a peer that has been deleted. Handing the session over is
                 // how it can: the credentials are this user's and the store is root's.
-                client::seed_session(&remote, &api_url, &token, &identity).await;
-                client::connect(&remote, &config_str, private_routes, excluded_routes).await?;
+                client::seed_session(remote, &api_url, &token, &identity).await;
+                client::connect(remote, &config_str, private_routes, excluded_routes).await?;
             }
             #[cfg(not(target_os = "linux"))]
             connect::run(

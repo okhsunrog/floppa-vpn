@@ -333,7 +333,7 @@ const healthDotClass = computed(() => {
         </template>
         <template v-else>
           <span class="text-sm text-[var(--ui-text-muted)]">
-            {{ t('vpn.reconnecting', { current: vpn.retry.pass, max: vpn.retry.max }) }}
+            {{ t('vpn.reconnecting', { current: vpn.retry.pass, max: vpn.retry.max ?? '∞' }) }}
           </span>
           <span class="text-xs text-[var(--ui-text-muted)]">
             {{ t('vpn.retryingIn', { seconds: Math.ceil(vpn.retry.resume_in_ms / 1000) }) }}

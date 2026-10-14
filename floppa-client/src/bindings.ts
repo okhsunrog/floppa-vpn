@@ -20,12 +20,15 @@ export const commands = {
 	getDeviceName: () => __TAURI_INVOKE<string>("get_device_name"),
 	/**
 	 *  Ask for a tunnel.
-	 * 
+	 *
 	 *  Returns as soon as the actor accepts the intent — the epoch it returns identifies this request
 	 *  for [`tunnel_await_cycle`]. There is deliberately no "busy" failure: with a single owner and a
 	 *  write-only intent queue, there is no bad moment to ask.
 	 */
 	tunnelSetIntentUp: (order: Protocol[], params: TunnelParams) => typedError<IntentAccepted, IntentError>(__TAURI_INVOKE("tunnel_set_intent_up", { order, params })),
+	tunnelGetSettings: () => typedError<SettingsState, SettingsFault>(__TAURI_INVOKE("tunnel_get_settings")),
+	tunnelUpdateSettings: (expectedRevision: number, settings: Settings) => typedError<SettingsState, SettingsFault>(__TAURI_INVOKE("tunnel_update_settings", { expectedRevision, settings })),
+	tunnelConnectConfigured: (privateRoutes: string[]) => typedError<IntentAccepted, IntentError>(__TAURI_INVOKE("tunnel_connect_configured", { privateRoutes })),
 	/**
 	 *  Ask for no tunnel. Also the cancel button: an intent change is how an in-flight attempt is
 	 *  stopped.
@@ -33,7 +36,7 @@ export const commands = {
 	tunnelSetIntentDown: () => typedError<IntentAccepted, IntentError>(__TAURI_INVOKE("tunnel_set_intent_down")),
 	/**
 	 *  Wait for a request to reach a terminal outcome.
-	 * 
+	 *
 	 *  Safe to drop: dropping the future only discards the answer, it never cancels what the actor is
 	 *  doing. A caller that asks after the fact still gets the answer, because recent outcomes are
 	 *  retained.
@@ -43,7 +46,7 @@ export const commands = {
 	tunnelGetState: () => __TAURI_INVOKE<TunnelState>("tunnel_get_state"),
 	/**
 	 *  Store a config under its own protocol key.
-	 * 
+	 *
 	 *  Storing is not choosing: this does not change which protocol the next connect would use. The
 	 *  previous behaviour of switching to whatever was imported last is what let a server sync
 	 *  silently reorder the user's preference.
@@ -51,7 +54,7 @@ export const commands = {
 	importConfig: (raw: string) => typedError<Protocol, ConfigError>(__TAURI_INVOKE("import_config", { raw })),
 	/**
 	 *  Forget every stored config.
-	 * 
+	 *
 	 *  Goes down and waits for the tunnel to actually be gone before wiping, rather than deciding from
 	 *  a status snapshot — which is how a live adopted tunnel could survive being forgotten.
 	 */
@@ -98,27 +101,27 @@ export const commands = {
 	setLogConfig: (config: LogConfig) => typedError<null, string>(__TAURI_INVOKE("set_log_config", { config })),
 	/**
 	 *  Record a line the frontend wrote, under the frontend's own target.
-	 * 
+	 *
 	 *  The webview used to reach the log through `tauri-plugin-log`, which hands the line to the
 	 *  `log` crate — and every `log` record arrives in tracing as the *same* callsite, target `log`,
 	 *  with the real source demoted to a `log.target` field. Third-party crates come in that way too,
 	 *  so the one directive that could quiet a noisy dependency also silenced the frontend: `log=warn`
 	 *  in the normal profile, and `console.info` — the level everything in the frontend is told to
 	 *  use — never reached logcat at all.
-	 * 
+	 *
 	 *  Five callsites rather than one dynamic target, because a tracing target is fixed at its
 	 *  callsite: that is exactly what makes `webview=…` a filter directive of its own.
 	 */
 	webviewLog: (level: WebviewLevel, message: string) => __TAURI_INVOKE<void>("webview_log", { level, message }),
 	/**
 	 *  Hand the server session over to Rust, or take it away.
-	 * 
+	 *
 	 *  Called by the frontend whenever any part of it changes: the token on sign-in, on every sliding
 	 *  refresh and on sign-out, and the device identity as soon as the plugin reports it. `token` is
 	 *  `None` exactly when the user is signed out, and then the stored session is removed rather than
 	 *  left to rot — it is what a background repair would authenticate with, and a signed-out device
 	 *  must not be able to make peers.
-	 * 
+	 *
 	 *  A session that arrives incomplete (the token is there but the device id has not been read yet)
 	 *  is written anyway and replaced when the rest lands: [`session::load`] refuses to return
 	 *  anything it could not provision with, so a half-written one is simply not used.
@@ -126,7 +129,7 @@ export const commands = {
 	setServerSession: (baseUrl: string, token: string | null, deviceId: string | null, deviceName: string | null) => typedError<null, string>(__TAURI_INVOKE("set_server_session", { baseUrl, token, deviceId, deviceName })),
 	/**
 	 *  Provision this device's peers, and store what the server hands back.
-	 * 
+	 *
 	 *  The whole of it runs here, in the process the user is looking at: it talks to the server, and
 	 *  the configs it fetches go into the store through the actor — over the socket on Android, which
 	 *  is exactly what that boundary is for. The same logic replaces a deleted peer with nobody
@@ -136,7 +139,7 @@ export const commands = {
 	syncPeers: () => typedError<SyncOutcome, string>(__TAURI_INVOKE("sync_peers")),
 	/**
 	 *  Tell the tray what to say.
-	 * 
+	 *
 	 *  Called by the UI on mount, on a locale change, and whenever what the toggle would do changes —
 	 *  never on every state tick: the words are what travels, and they change far less often than the
 	 *  state they are derived from.
@@ -146,7 +149,7 @@ export const commands = {
 	hideToTray: () => __TAURI_INVOKE<void>("hide_to_tray"),
 	/**
 	 *  Quit for real.
-	 * 
+	 *
 	 *  The exit handler in `lib.rs` takes the tunnel down and flushes the config store on the way out
 	 *  — when the tunnel is this process's — which is why this asks the app to exit rather than doing
 	 *  either of those itself.
@@ -154,7 +157,7 @@ export const commands = {
 	quitApp: () => __TAURI_INVOKE<void>("quit_app"),
 	/**
 	 *  Who holds the tunnel this app is showing.
-	 * 
+	 *
 	 *  The UI needs it because the promises differ. "Quitting will disconnect you" is true when the
 	 *  tunnel is in this process and false when the service has it, and a close dialog that says it
 	 *  either way is wrong half the time. It is also the only place a user can be told that a service
@@ -164,7 +167,7 @@ export const commands = {
 	getTunnelOwner: () => __TAURI_INVOKE<TunnelOwner>("get_tunnel_owner"),
 	/**
 	 *  Whether this machine reconnects its tunnel on boot.
-	 * 
+	 *
 	 *  `None` where there is nothing to answer: no system service is holding the tunnel, so nothing
 	 *  outlives this app to bring anything back. The UI hides the control rather than showing one that
 	 *  could not do anything.
@@ -172,7 +175,7 @@ export const commands = {
 	getResumeOnBoot: () => typedError<boolean | null, string>(__TAURI_INVOKE("get_resume_on_boot")),
 	/**
 	 *  Turn reconnecting on boot on or off.
-	 * 
+	 *
 	 *  Not `systemctl enable`, and not because that would be harder to call: systemd gives polkit the
 	 *  unit's name for `manage-units` but not for `manage-unit-files`, so no rule can let the `floppa`
 	 *  group enable *this one* unit without an administrator's password. Group membership is what
@@ -198,22 +201,27 @@ export type AppInfo = {
 	icon: string | null,
 };
 
+export type AppRouting = {
+	mode: SplitMode,
+	items: string[],
+};
+
 /**
  *  Why a single attempt failed.
- * 
+ *
  *  Note what is deliberately absent: a blanket `From<String>`. The old `ConnectError` had one, and
  *  it stamped every `?`-propagated error as a generic tunnel error — which is how a DNS-resolve
  *  failure and an address-parse failure ended up indistinguishable from a dead peer. Every variant
  *  here is constructed at exactly one call site.
  */
-export type AttemptError = { kind: "permission_denied" } | 
+export type AttemptError = { kind: "permission_denied" } |
 /**
  *  The consent dialog was asked for and never answered: Android refuses to start an activity
  *  for a process that is in the background, and the activity can also be recreated while the
  *  dialog is up, which loses the reply. Neither is a refusal, and neither is fixed by trying
  *  the next protocol — so, like a refusal, it ends the cycle.
  */
-{ kind: "consent_unavailable" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; error: BackendError } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" } | 
+{ kind: "consent_unavailable" } | { kind: "no_config"; protocol: Protocol } | { kind: "platform_unavailable"; detail: string } | { kind: "resolve_failed"; host: string; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "platform"; step: StepKind; detail: string } | { kind: "backend"; error: BackendError } | { kind: "verify_failed" } | { kind: "timed_out" } | { kind: "peer_start_failed"; detail: string } | { kind: "cancelled" } |
 /**
  *  The attempt task panicked or was aborted. Synthesised by the actor from the task's join
  *  error, so a crash can never leave the status waiting for a report that will not come. The
@@ -229,7 +237,7 @@ export type AttemptFailure = {
 
 /**
  *  Which protocol is being probed, and how far through the order we are.
- * 
+ *
  *  Part of the *same* snapshot as [`Phase`], so the cancel/connect swap and the label can no
  *  longer disagree with each other.
  */
@@ -241,39 +249,39 @@ export type AttemptProgress = {
 
 /**
  *  Why the backend could not do what it was asked.
- * 
+ *
  *  Plain data, so it can travel inside an attempt's failure to the UI. The variants that matter
  *  to a caller's *decision* — as opposed to its log line — are the ones a policy hangs off:
  *  [`Self::PermissionDenied`] is what makes the desktop ladder retry once without the socket
  *  mark, and it is derived from the OS error kind, never from the wording of a message that a
  *  `setlocale` may have translated.
  */
-export type BackendError = 
+export type BackendError =
 /**
  *  The OS refused a privileged operation. On Linux that is `SO_MARK`, which needs
  *  `CAP_NET_ADMIN`.
  */
-{ kind: "permission_denied"; detail: string } | 
+{ kind: "permission_denied"; detail: string } |
 /**  The config cannot be turned into a tunnel: a malformed key, address or AWG parameter. */
-{ kind: "invalid_config"; detail: string } | 
+{ kind: "invalid_config"; detail: string } |
 /**  The tunnel engine or its device failed to start or stop. */
-{ kind: "engine"; detail: string } | 
+{ kind: "engine"; detail: string } |
 /**  Nothing is running to be pinged. */
-{ kind: "not_running" } | 
+{ kind: "not_running" } |
 /**
  *  Cross-process only: the service could not be reached, or the call to it failed in
  *  transit. Says nothing about whether a tunnel exists.
  */
-{ kind: "service_unreachable"; detail: string } | 
+{ kind: "service_unreachable"; detail: string } |
 /**  Cross-process only: the service answered, and the answer was a refusal. */
-{ kind: "service_refused"; detail: string } | 
+{ kind: "service_refused"; detail: string } |
 /**
  *  The operation does not exist on this backend: an in-process backend has no service to
  *  ask, and a cross-process one starts nothing itself.
  */
 { kind: "unsupported" };
 
-export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string } | 
+export type ConfigError = { kind: "empty" } | { kind: "unparseable"; detail: string } |
 /**  A transport failure, not a config problem: nothing looked at the config at all. */
 { kind: "actor_gone" };
 
@@ -297,34 +305,34 @@ export type ConfigsView = {
 };
 
 /**  How a cycle ended. */
-export type CycleOutcome = { outcome: "connected"; protocol: Protocol; adopted: boolean; 
+export type CycleOutcome = { outcome: "connected"; protocol: Protocol; adopted: boolean;
 /**
  *  What failed on the way here, if the ladder had to step over anything.
- * 
+ *
  *  A cycle that ends connected is not a cycle in which nothing went wrong: the ladder
  *  tries protocols in order, so AmneziaWG can fail to verify — the signal that its peer
  *  was deleted server-side — and WireGuard carry the connection a second later. Reporting
  *  only the winner left that dead peer in place until something else happened to notice
  *  it, which on device meant the next app start.
  */
-failures: AttemptFailure[] } | 
+failures: AttemptFailure[] } |
 /**
  *  Every protocol in the order failed, for every allowed pass — or one failed fatally.
- * 
+ *
  *  `failures` carries one entry per probe, so the caller can find exactly which protocol
  *  reported `verify_failed` and re-provision *that* peer, instead of assuming it was whichever
  *  protocol happened to be tried last.
  */
-{ outcome: "exhausted"; failures: AttemptFailure[] } | 
+{ outcome: "exhausted"; failures: AttemptFailure[] } |
 /**  Was connected, the tunnel died, the reconnect budget ran out. */
-{ outcome: "lost_gave_up"; protocol: Protocol; passes: number } | 
+{ outcome: "lost_gave_up"; protocol: Protocol; passes: number } |
 /**
  *  A teardown could not be confirmed: after the allowed re-runs the world still reported a
  *  running tunnel. The intent is demoted and the machine may be dirty.
  */
-{ outcome: "unwind_failed" } | 
+{ outcome: "unwind_failed" } |
 /**  Superseded by a newer intent, or torn down by an explicit Down. */
-{ outcome: "cancelled" } | 
+{ outcome: "cancelled" } |
 /**  An explicit Down reached terminal Down. */
 { outcome: "down" };
 
@@ -343,7 +351,7 @@ export type HttpResponse = {
 };
 
 /**  Why the tunnel ended up in this process on a platform that has a service. */
-export type InProcessReason = 
+export type InProcessReason =
 /**  No service is installed or its socket is not enabled. */
 { kind: "not_installed" };
 
@@ -353,22 +361,22 @@ export type IntentAccepted = {
 
 /**
  *  Monotonic, bumped on every accepted intent change — including Down.
- * 
+ *
  *  Carried into the Android service and echoed back by it, so an observation from a previous
  *  service instance, or a stop for a superseded generation, is rejectable by value rather than by
  *  guesswork.
  */
 export type IntentEpoch = number;
 
-export type IntentError = { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } | 
+export type IntentError = { kind: "invalid_config"; detail: string } | { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } |
 /**
  *  The wait for a cycle's ending gave up before the cycle did. **Not a failure of anything.**
- * 
+ *
  *  A cycle used to be bounded by the actor's own budgets, so a wait that outlasted them could
  *  only mean the actor had stopped answering — and that is what it was reported as. Parking
  *  broke that premise deliberately: a cycle with no network to run on waits, spending nothing,
  *  for as long as the outage lasts. Hours is a normal answer.
- * 
+ *
  *  So the wait needs a way to say "no verdict yet" that is not "the actor is gone", because
  *  telling a user to restart the app while their tunnel is patiently waiting is both alarming
  *  and wrong. What the caller should do with it is nothing: the published state already says
@@ -380,28 +388,28 @@ export type IntentView = "down" | "up";
 
 /**
  *  Whether this device has any network to carry a tunnel over.
- * 
+ *
  *  Not part of [`World`], and the difference is the whole point of having it: `World` is what is
  *  true about the *tunnel*, reported by the process that owns it. This is what is true about the
  *  link underneath, reported by the platform — and the two fail independently. A phone in a lift
  *  has a perfectly healthy tunnel object over no network at all.
- * 
+ *
  *  The asymmetry between the variants is deliberate and load-bearing:
- * 
+ *
  *  - [`Offline`](Self::Offline) is only ever a **positive, live report** that there is no network.
  *    Nothing infers it from a failure, a timeout or a missing API.
  *  - [`Unknown`](Self::Unknown) is every other case — before the first report, on a platform that
  *    has no watcher, when registering one failed. It **gates nothing**: a device we know nothing
  *    about is treated exactly as it was before this type existed.
- * 
+ *
  *  That is what keeps the desktop and the CLI byte-identical in behaviour while Android gets the
  *  benefit, and it is the same discipline as [`World::Dark`] — not knowing is never evidence.
  */
-export type Link = 
+export type Link =
 /**  The platform reported a usable non-VPN network. */
-"online" | 
+"online" |
 /**  The platform reported that there is none. */
-"offline" | 
+"offline" |
 /**  Nobody has said. The state every platform without a watcher stays in forever. */
 "unknown";
 
@@ -426,10 +434,10 @@ export type LogProfile = "normal" | "verbose";
  *  The five original status literals are preserved verbatim so the existing indicator component
  *  and its translation keys keep working. `Retrying` and `Unknown` are the additions.
  */
-export type Phase = 
+export type Phase =
 /**
  *  We have not yet had an authoritative look at the world.
- * 
+ *
  *  Distinct from [`Self::Disconnected`], which is a claim: there is no tunnel. Collapsing the
  *  two is why opening the app with a tunnel already running flashed "disconnected" before the
  *  first observation landed — the UI reported an answer it did not have yet.
@@ -438,17 +446,33 @@ export type Phase =
 
 /**
  *  The ONLY protocol representation in the crate.
- * 
+ *
  *  The serde renames are load-bearing: these exact strings are already on users' disks and in
  *  their OS keyrings via the old `SavedVpnConfigs.active_protocol: String`, and in all three
  *  arms of the migration chain in `config.rs::parse_stored_configs`.
  */
 export type Protocol = "wireguard" | "amneziawg" | "vless";
 
+export type ProtocolSettings = {
+	mode: SelectionMode,
+	/**  The ordered allowlist. Never append newly supported protocols on load. */
+	auto_order: Protocol[],
+	manual: Protocol,
+};
+
+export type RecoverySettings = { mode: "persistent" } | { mode: "limited"; rounds: number };
+
 export type RetryProgress = {
 	pass: number,
-	max: number,
+	/**  None means persistent recovery. */
+	max: number | null,
 	resume_in_ms: number,
+};
+
+export type RoutingSettings = {
+	allow_lan: boolean,
+	excluded_routes: string[],
+	apps: AppRouting,
 };
 
 /**  Safe area insets (status bar, nav bar) in dp */
@@ -457,67 +481,97 @@ export type SafeAreaInsets = {
 	bottom: number | null,
 };
 
+export type SelectionMode = "auto" | "manual";
+
 export type ServiceProblem = { kind: "not_permitted" } | { kind: "wrong_version"; theirs: number } | { kind: "unresponsive" };
 
+export type Settings = {
+	protocols: ProtocolSettings,
+	routing: RoutingSettings,
+	recovery: RecoverySettings,
+	startup: StartupSettings,
+};
+
+export type SettingsDocument = {
+	schema_version: number,
+	revision: number,
+} & Settings;
+
+/**  Public settings API errors, independent of a filesystem or transport implementation. */
+export type SettingsFault = { kind: "conflict"; expected: number; actual: number } | { kind: "busy" } | { kind: "unavailable" } | { kind: "failed"; detail: string };
+
+export type SettingsState = {
+	document: SettingsDocument,
+	/**
+	 *  Revision used to construct the current intent, not a claim that the tunnel is connected.
+	 *  None for Down, bootstrap adoption, or a temporary explicit connection.
+	 */
+	intent_revision: number | null,
+};
+
 export type SplitMode = "all" | "include" | "exclude";
+
+export type StartupSettings = {
+	connect_on_boot: boolean,
+};
 
 export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
 
 /**  Why a sync was refused. */
-export type SyncFailure = { kind: "no_subscription" } | { kind: "peer_limit_reached" } | 
+export type SyncFailure = { kind: "no_subscription" } | { kind: "peer_limit_reached" } |
 /**  Anything else. `detail` is the server's own words, for a card that has no better ones. */
 { kind: "create_failed"; detail: string };
 
 /**
  *  How a sync ended, in the words the connection card needs.
- * 
+ *
  *  A translation of [`SyncResult`] rather than the thing itself, and deliberately: what the card
  *  wants is a tag it can look up in a locale file, in the user's language. `floppa-api-client`
  *  describes the server, not this app's vocabulary for talking to a person — and it has no
  *  `specta`, which is the practical half of the same point.
  */
-export type SyncOutcome = 
+export type SyncOutcome =
 /**  Everything this device is entitled to is provisioned and stored. */
-{ outcome: "ok" } | 
+{ outcome: "ok" } |
 /**  The server answered, and refused. */
-{ outcome: "failed"; error: SyncFailure } | 
+{ outcome: "failed"; error: SyncFailure } |
 /**  Nothing was learned and nothing was changed — no server, or nobody signed in. */
 { outcome: "offline" };
 
 /**
  *  How the system itself is running this VPN, as the platform reports it.
- * 
+ *
  *  Nested rather than two booleans, because AOSP nests them: `isLockdownEnabled` is documented as
  *  *"running in always-on VPN **lockdown** mode"* — a mode of always-on, not a second axis. Two
  *  flags would make "lockdown without always-on" representable, and it does not exist.
- * 
+ *
  *  **This is not "who started this tunnel".** Both come from
  *  `isCallerCurrentAlwaysOnVpnApp`/`…LockdownApp`, which ask the system whether *this app* is
  *  configured as the always-on VPN — a live question with the same answer whoever asked for the
  *  start in front of it. A user pressing Connect while always-on is configured produces a start we
  *  flagged ourselves and an `AlwaysOn` here. Which principal issued a given start is still read
  *  from the start intent, and has to be.
- * 
+ *
  *  Display only. Nothing in [`reconcile`](super::reconcile) reads it: what the system would do
  *  about a tunnel that stops is the system's business, and the one thing that changes here is
  *  whether a person is told what disconnecting will cost them.
  */
-export type SystemVpnMode = 
+export type SystemVpnMode =
 /**
  *  Nobody has said — and on this app that is not rare. Both queries are API 29 and the minimum
  *  is 24, so an older device can perfectly well *be* the always-on VPN while being unable to
  *  answer; reporting [`Off`](Self::Off) there would be a lie rather than a default. A question
  *  that could not be asked lands here too, never on a definite answer.
  */
-"unknown" | 
+"unknown" |
 /**  The system is not running this app as its always-on VPN. */
-"off" | 
+"off" |
 /**
  *  The system restarts this service when it needs to — after a reboot, an app update, a
  *  process that died. It does **not** mean the system re-establishes a tunnel that drops, and
  *  a deliberate stop is still respected.
  */
-"always_on" | 
+"always_on" |
 /**
  *  Always-on, and other apps may not bypass the VPN. The one that matters to a person:
  *  disconnecting under it leaves the device with no network at all.
@@ -539,7 +593,7 @@ export type TrayAction = {
 
 /**
  *  The tray's one action was clicked.
- * 
+ *
  *  Carries nothing on purpose: connect and disconnect are the same row, and which of the two it
  *  means is decided where the button's own label is decided. Rust would have to keep a second copy
  *  of that rule to put an answer in here, and a second copy is how the label and the action come
@@ -549,7 +603,7 @@ export type TrayToggleRequested = null;
 
 /**
  *  What the tray says, in the language the app is running in.
- * 
+ *
  *  Labels, never a menu. On Linux a tray menu's *content* can be changed but the menu itself can
  *  never be replaced once set — `TrayIcon::set_menu` is documented as having no effect there — so
  *  the rows are built once, here, and only their text and enabled state ever travel. That also
@@ -569,13 +623,13 @@ export type TrayView = {
 };
 
 /**  Who holds the tunnel this app is showing. */
-export type TunnelOwner = 
+export type TunnelOwner =
 /**  The system service. The tunnel outlives this app. */
-{ kind: "service" } | 
+{ kind: "service" } |
 /**  Service mode is selected, but the service cannot currently be used. */
-{ kind: "service_unavailable"; problem: ServiceProblem } | 
+{ kind: "service_unavailable"; problem: ServiceProblem } |
 /**  This process. The tunnel goes when the app does. */
-{ kind: "in_process"; 
+{ kind: "in_process";
 /**
  *  Why it is not the service, when that is worth saying. `None` on the platforms where
  *  there is no service to be had and nothing has gone wrong.
@@ -624,7 +678,7 @@ export type TunnelState = {
 	/**
 	 *  The split rules the *intent* asks for — what a tunnel being built right now is being built
 	 *  with, and what the one that is up would be rebuilt with.
-	 * 
+	 *
 	 *  [`Self::params`] answers "what is running"; this answers "what was asked for", and the two
 	 *  are only the same once a cycle has finished. Published because the difference is the whole
 	 *  of the split-tunnelling banner: with only the running rules, a settings page could say
@@ -637,7 +691,7 @@ export type TunnelState = {
 	protocol: Protocol | null,
 	/**
 	 *  The split rules the running tunnel was actually built with, when they are known.
-	 * 
+	 *
 	 *  `None` when nothing is running, and for an adopted tunnel whose owner does not report them
 	 *  (only the in-process backend, which cannot find a tunnel it did not start). Published
 	 *  because it is the only way the UI can tell "the settings changed since this tunnel came
@@ -648,6 +702,10 @@ export type TunnelState = {
 	adopted: boolean,
 	attempt: AttemptProgress | null,
 	retry: RetryProgress | null,
+	/**  Recent failures in an unfinished cycle, including persistent recovery. */
+	recovery_failures: AttemptFailure[],
+	/**  An explicit --config profile must never trigger server-side peer provisioning. */
+	temporary_profile: boolean,
 	server_endpoint: string | null,
 	assigned_ip: string | null,
 	connected_at: number | null,
@@ -657,7 +715,7 @@ export type TunnelState = {
 	last_outcome: CycleOutcome | null,
 	/**
 	 *  Which cycle [`Self::last_outcome`] came from, counting up from zero.
-	 * 
+	 *
 	 *  The only thing that identifies an outcome. Neither the intent's epoch nor the outcome's own
 	 *  tag can do it: a reconnect runs under the *same* intent, so a tunnel that dropped and came
 	 *  back reports `connected` twice under one epoch — and a consumer deduplicating by that pair
@@ -669,25 +727,24 @@ export type TunnelState = {
 	backend_reachable: boolean,
 	/**
 	 *  Whether the device has a network under the tunnel, where the platform says so.
-	 * 
+	 *
 	 *  A field rather than a [`Phase`], because it is orthogonal to every one of them: a tunnel
 	 *  can be Connected with the network gone (the phone is in a lift and the tunnel is intact),
 	 *  and a cycle can be Retrying with the network gone (it is parked, waiting, spending
 	 *  nothing). A phase cannot say either of those, and inventing one for each combination is how
 	 *  a state machine acquires a state per adjective.
-	 * 
-	 *  [`Link::Unknown`] on every platform without a watcher, which is every platform but Android
-	 *  — so a consumer must treat it as "do not mention the network", never as bad news.
+	 *
+	 *  [`Link::Unknown`] when the platform cannot observe the network; this is not bad news.
 	 */
 	link: Link,
 	/**
 	 *  How the system is running this VPN — always-on, lockdown, neither, or not knowable.
-	 * 
+	 *
 	 *  Published because one of its values costs a person their whole connection: disconnecting
 	 *  under lockdown leaves the device with no network at all, and nothing used to say so. The
 	 *  actor never reads it — what the system does about a tunnel that stops is the system's
 	 *  business.
-	 * 
+	 *
 	 *  [`SystemVpnMode::Unknown`] on every non-Android platform, and on Android below API 29
 	 *  where the question cannot be asked. Render it as silence, never as "no".
 	 */
@@ -696,7 +753,7 @@ export type TunnelState = {
 
 /**
  *  Emitted whenever the actor publishes a new state.
- * 
+ *
  *  The payload carries a `seq` that only ever increases, so a listener can drop anything not
  *  strictly newer than what it already holds — which is what closes the race between seeding from
  *  a direct read at startup and receiving the first pushed update.
@@ -708,7 +765,7 @@ export type WebviewLevel = "trace" | "debug" | "info" | "warn" | "error";
 
 /**
  *  The window's close button was pressed, and nothing has closed.
- * 
+ *
  *  Desktop only. What closing means is a setting — quit, or carry on in the tray — so the close is
  *  prevented and the question asked here. See `crate::tray`.
  */

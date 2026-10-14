@@ -96,6 +96,25 @@ impl Decision {
     }
 }
 
+/// A desktop route changed underneath the tunnel. Teardown precedes fresh endpoint
+/// resolution; an adopted tunnel still requires an explicit backend stop.
+pub fn network_changed(status: &Status, intent: &Intent, policy: &Policy) -> Decision {
+    match (status, intent) {
+        (Status::Up(running), Intent::Up(up)) => Decision::to(unwinding(
+            Cycle::reconnect(up, policy),
+            UnwindReason::TunnelDied,
+        ))
+        .with(Effect::Unwind {
+            extra: undo_for(running),
+        }),
+        (Status::Connecting { cycle, .. }, _) => {
+            Decision::to(unwinding(Some(cycle.clone()), UnwindReason::NetworkLost))
+                .with(Effect::CancelAttempt)
+        }
+        _ => Decision::stay(status),
+    }
+}
+
 /// The intent, normalised against the epoch the current status belongs to.
 ///
 /// `Same` means "this status is already working on this intent"; `Newer` means a fresher intent has
@@ -428,6 +447,10 @@ pub fn reconcile(
                     .with(Effect::CancelAttempt)
             }
             Rel::Same(_) => {
+                if link.is_offline() {
+                    return Decision::to(unwinding(Some(cycle.clone()), UnwindReason::NetworkLost))
+                        .with(Effect::CancelAttempt);
+                }
                 if now < *deadline {
                     // 10, and it is load-bearing: NO observation may tear down an in-flight
                     // attempt. Connecting is left only by the attempt's own report, an intent
@@ -437,7 +460,7 @@ pub fn reconcile(
                 } else {
                     // 11
                     let mut cycle = cycle.clone();
-                    cycle.failures.push(AttemptFailure {
+                    cycle.record_failure(AttemptFailure {
                         protocol: cycle.protocol(),
                         error: AttemptError::TimedOut,
                         pass: cycle.pass,
@@ -712,7 +735,7 @@ pub fn on_attempt_done(
 
         AttemptResult::Failed(error) => {
             let mut cycle = cycle.clone();
-            cycle.failures.push(AttemptFailure {
+            cycle.record_failure(AttemptFailure {
                 protocol: cycle.protocol(),
                 error: error.clone(),
                 pass: cycle.pass,
@@ -754,6 +777,9 @@ pub fn on_attempt_done(
                     })
                 }
                 Rel::Same(_) => {
+                    if link.is_offline() {
+                        return connecting(cycle, now, policy, link);
+                    }
                     if !cycle.is_last_probe() {
                         // A7: next protocol in the order.
                         cycle.advance();
@@ -884,8 +910,12 @@ pub fn on_unwind_done(
                     connecting(cycle, now, policy, link)
                 }
                 // U4, U5, U6
+                UnwindReason::NetworkLost => connecting(cycle, now, policy, link),
                 UnwindReason::AttemptTimedOut => {
                     let mut cycle = cycle;
+                    if link.is_offline() {
+                        return connecting(cycle, now, policy, link);
+                    }
                     if !cycle.is_last_probe() {
                         cycle.advance();
                         connecting(cycle, now, policy, link)
@@ -910,27 +940,25 @@ pub fn on_unwind_done(
                             failures: cycle.failures,
                         },
                     }),
-                // U7, U8: a tunnel that was up and died gets the reconnect budget, not the cold
-                // one — which is what keeps a user-initiated connect failing fast while a dropped
-                // tunnel keeps trying.
+                // A fresh recovery cycle has not spent its first pass yet. Even a
+                // one-round policy must attempt every allowed protocol once.
                 UnwindReason::TunnelDied
                 | UnwindReason::PeerLost
                 | UnwindReason::PeerSilent
                 | UnwindReason::Usurped => {
                     let mut cycle = cycle;
-                    if cycle.has_budget() {
-                        // The pass is *not* burnt here: this cycle has not tried anything yet,
-                        // and counting the tunnel's death as a pass spent one of the three the
-                        // policy promises, so `reconnect_passes: 3` only ever ran two.
-                        let backoff = policy.backoff(cycle.pass);
-                        cycle.index = 0;
-                        Decision::to(Status::Retrying {
-                            cycle,
-                            resume_at: now + backoff,
-                        })
-                    } else {
-                        give_up_or_park(cycle, now, link)
+                    if cycle
+                        .passes_allowed
+                        .is_some_and(|limit| cycle.pass >= limit)
+                    {
+                        return give_up_or_park(cycle, now, link);
                     }
+                    let backoff = policy.backoff(cycle.pass);
+                    cycle.index = 0;
+                    Decision::to(Status::Retrying {
+                        cycle,
+                        resume_at: now + backoff,
+                    })
                 }
                 // U9: the obstruction is gone, so proceed with what we wanted all along.
                 UnwindReason::WrongProtocol => connecting(cycle, now, policy, link),

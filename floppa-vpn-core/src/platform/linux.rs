@@ -41,6 +41,11 @@ const POLICY_CONTENT: &str = include_str!("../../resources/linux/dev.okhsunrog.f
 pub struct LinuxPlatform;
 
 impl LinuxPlatform {
+    pub async fn prepare_ownership(&self) -> Result<(), PlatformError> {
+        self.preflight().await?;
+        self.run_helper(&["prepare-ownership"], None).await
+    }
+
     pub fn new() -> Self {
         Self
     }

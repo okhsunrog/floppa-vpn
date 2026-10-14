@@ -30,7 +30,12 @@ pub fn render(
     now: Instant,
     observed_once: bool,
 ) -> TunnelState {
-    let phase = phase_of(status, observed_once);
+    let offline_up = link.is_offline() && intent.is_up() && matches!(status, Status::Up(_));
+    let phase = if offline_up {
+        Phase::Retrying
+    } else {
+        phase_of(status, observed_once)
+    };
 
     let (protocol, params, adopted, server_endpoint, assigned_ip, connected_at) = match status {
         Status::Up(u) => (
@@ -54,10 +59,15 @@ pub fn render(
     };
 
     let retry = match status {
+        Status::Up(_) if offline_up => Some(RetryProgress {
+            pass: 0,
+            max: None,
+            resume_in_ms: 0,
+        }),
         Status::Retrying { cycle, resume_at } => Some(RetryProgress {
             // The pass about to run, not the ones already burnt: `cycle.pass` counts backwards
             // from the user's point of view, and "0/3" is not a thing to show anyone.
-            pass: cycle.pass + 1,
+            pass: cycle.pass.saturating_add(1),
             max: cycle.passes_allowed,
             resume_in_ms: resume_at
                 .saturating_duration_since(now)
@@ -99,6 +109,15 @@ pub fn render(
         adopted,
         attempt,
         retry,
+        recovery_failures: match status {
+            Status::Connecting { cycle, .. }
+            | Status::Retrying { cycle, .. }
+            | Status::Unwinding {
+                cycle: Some(cycle), ..
+            } => cycle.failures.clone(),
+            _ => Vec::new(),
+        },
+        temporary_profile: false, // filled by the owner, which holds the temporary credentials
         server_endpoint,
         assigned_ip,
         connected_at,
@@ -183,7 +202,7 @@ mod tests {
             params: TunnelParams::default(),
             index: 0,
             pass: 0,
-            passes_allowed: 3,
+            passes_allowed: Some(3),
             born_from_loss: false,
             failures: Vec::new(),
         }

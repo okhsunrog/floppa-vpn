@@ -39,6 +39,9 @@ pub fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             vpn::commands::get_device_id,
             vpn::commands::get_device_name,
             vpn::commands::tunnel_set_intent_up,
+            vpn::commands::tunnel_get_settings,
+            vpn::commands::tunnel_update_settings,
+            vpn::commands::tunnel_connect_configured,
             vpn::commands::tunnel_set_intent_down,
             vpn::commands::tunnel_await_cycle,
             vpn::commands::tunnel_get_state,
@@ -89,7 +92,15 @@ pub fn export_bindings(path: impl AsRef<std::path::Path>) -> Result<(), String> 
             specta_typescript::Typescript::default().header("/* eslint-disable */\n// @ts-nocheck"),
             path.as_ref(),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let source = std::fs::read_to_string(path.as_ref()).map_err(|e| e.to_string())?;
+    let normalized = source
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(path, normalized).map_err(|e| e.to_string())
 }
 
 /// The actor in this process: the backend, the platform layer and the journal, as the app has
@@ -102,7 +113,7 @@ fn in_process_actor(
     app: &tauri::App,
     spawn: &vpn::actor::Spawn,
     log_dir: &std::path::Path,
-) -> vpn::actor::handle::TunnelHandle {
+) -> Result<vpn::actor::handle::TunnelHandle, Box<dyn std::error::Error>> {
     let backend = app.state::<Arc<dyn vpn::VpnBackend>>().inner().clone();
     let platform = app.state::<Arc<PlatformImpl>>().inner().clone();
     let journal = vpn::config::config_dir()
@@ -112,13 +123,14 @@ fn in_process_actor(
         log_dir.to_path_buf(),
         Arc::new(logging::capture::BackendRelay(backend.clone())),
     ));
-    vpn::actor::TunnelActor::spawn(
+    tauri::async_runtime::block_on(vpn::actor::TunnelActor::spawn(
         backend,
         platform,
         journal,
         spawn.clone(),
         vpn::actor::deployment::Deployment::default(),
-    )
+    ))
+    .map_err(Into::into)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -228,7 +240,10 @@ pub fn run() {
             logging::init_tracing(&log_dir, logging::LogProcess::Ui);
             info!("Logging initialized.");
 
-            // Initialize config dir from Tauri path resolver
+            // Standalone GUI/CLI share the Linux scope. No legacy data is imported.
+            #[cfg(target_os = "linux")]
+            vpn::config::init_config_dir(vpn::config::config_dir()?);
+            #[cfg(not(target_os = "linux"))]
             if let Ok(config_dir) = app.path().app_config_dir() {
                 vpn::config::init_config_dir(config_dir);
             }
@@ -327,11 +342,11 @@ pub fn run() {
                 app.manage(remote.clone());
                 vpn::actor::handle::TunnelHandle::remote(remote)
             } else {
-                in_process_actor(app, &spawn, &log_dir)
+                in_process_actor(app, &spawn, &log_dir)?
             };
 
             #[cfg(all(not(target_os = "android"), not(target_os = "linux")))]
-            let handle = in_process_actor(app, &spawn, &log_dir);
+            let handle = in_process_actor(app, &spawn, &log_dir)?;
 
             // Repairing a peer the server deleted. Started only where the actor actually is — on
             // Android that is `:vpn`, on Linux with a service that is the service, and a second

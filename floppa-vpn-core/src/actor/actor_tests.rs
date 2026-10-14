@@ -306,6 +306,7 @@ fn policy() -> Policy {
         // Generous, so no test trips over the attempt budget by accident. The budget itself is
         // exercised with `short_budget()` below.
         attempt_budget: Duration::from_secs(3600),
+        reconnect_passes: Some(1),
         ..Policy::default()
     }
 }
@@ -314,7 +315,7 @@ fn policy() -> Policy {
 fn short_budget() -> Policy {
     Policy {
         attempt_budget: Duration::from_secs(2),
-        cold_passes: 2,
+        reconnect_passes: Some(2),
         ..policy()
     }
 }
@@ -717,7 +718,7 @@ async fn a_tunnel_that_dies_with_no_reconnect_budget_reports_lost_gave_up_on_the
     // The outcome the UI dedups on: Connected and LostGaveUp arrive on the *same* epoch, because
     // the intent never changed. Anything keyed on the epoch alone swallows the second one.
     let mut h = Harness::spawn(Policy {
-        reconnect_passes: 1,
+        reconnect_passes: Some(1),
         ..policy()
     });
     let epoch = h.connect().await;
@@ -891,7 +892,7 @@ async fn an_attempt_that_never_finishes_hits_its_budget_and_the_cycle_retries() 
     let state = h.wait_for_phase(Phase::Retrying).await;
     let retry = state.retry.expect("a retry reports its countdown");
     assert_eq!(retry.pass, 2, "the first pass is spent");
-    assert_eq!(retry.max, 2);
+    assert_eq!(retry.max, Some(2));
 
     // The second pass is a real attempt: let it through and the cycle ends connected.
     h.platform.park_attempts.store(false, Ordering::SeqCst);
@@ -1049,4 +1050,157 @@ async fn invalid_exclusions_leave_the_running_tunnel_untouched() {
     assert_eq!(h.states.borrow().intent_params, before);
     assert!(h.backend.running().is_some());
     assert_eq!(h.backend.stops(), 0);
+}
+
+#[tokio::test]
+async fn configured_connect_uses_owner_document_and_keeps_user_priority() {
+    let (tx, _) = mpsc::channel(16);
+    let (state_tx, _) = watch::channel(TunnelState::initial());
+    let mut actor = TunnelActor::new(
+        Arc::new(FakeBackend::default()),
+        Arc::new(FakePlatform::new()),
+        None,
+        policy(),
+        ConfigStore::in_memory(configs()),
+        Default::default(),
+        tx,
+        state_tx,
+    );
+    actor.settings.document.revision = 7;
+    actor.settings.document.settings.protocols.mode = crate::settings::SelectionMode::Manual;
+    actor.settings.document.settings.protocols.manual = Protocol::WireGuard;
+    actor.settings.document.settings.routing.allow_lan = true;
+    actor.settings.document.settings.recovery =
+        crate::settings::RecoverySettings::Limited { rounds: 5 };
+    actor
+        .accept_intent(IntentRequest::Configured {
+            private_routes: vec!["10.1.0.0/16".into()],
+        })
+        .unwrap();
+    let Intent::Up(up) = &actor.intent else {
+        panic!("must connect")
+    };
+    assert_eq!(up.order, [Protocol::WireGuard]);
+    assert!(up.params.as_ref().unwrap().allow_lan);
+    assert_eq!(up.params.as_ref().unwrap().private_routes, ["10.1.0.0/16"]);
+    assert_eq!(actor.policy.reconnect_passes, Some(5));
+    assert_eq!(actor.settings.intent_revision, Some(7));
+    actor.status = Status::Retrying {
+        cycle: Cycle::start(up, &actor.policy).unwrap(),
+        resume_at: Instant::now(),
+    };
+    actor.link = Link::Offline;
+    assert_eq!(
+        actor.deadline(),
+        None,
+        "offline waiting must not spin on an expired timer"
+    );
+    actor.link = Link::Online;
+    assert!(actor.deadline().is_some());
+    actor.accept_intent(IntentRequest::Down).unwrap();
+    assert_eq!(actor.settings.intent_revision, None);
+}
+
+#[tokio::test]
+async fn settings_save_roundtrips_through_actor_and_rejects_stale_editor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        crate::settings::SettingsStore::new(dir.path().join("settings.json"), Default::default());
+    let doc = store.replace(0, Default::default()).unwrap();
+    let (tx, rx) = mpsc::channel(16);
+    let (state_tx, state_rx) = watch::channel(TunnelState::initial());
+    let handle = TunnelHandle::new(tx.clone(), state_rx);
+    let mut actor = TunnelActor::new(
+        Arc::new(FakeBackend::default()),
+        Arc::new(FakePlatform::new()),
+        None,
+        policy(),
+        ConfigStore::in_memory(Default::default()),
+        Default::default(),
+        tx,
+        state_tx,
+    );
+    actor.settings_store = Some(store);
+    actor.settings.document = doc;
+    let task = tokio::spawn(actor.run(rx));
+    let mut settings = handle.get_settings().await.unwrap().document.settings;
+    settings.recovery = crate::settings::RecoverySettings::Limited { rounds: 9 };
+    let saved = handle.update_settings(1, settings.clone()).await.unwrap();
+    assert_eq!(saved.document.revision, 2);
+    assert_eq!(saved.intent_revision, None);
+    assert!(matches!(
+        handle.update_settings(1, settings.clone()).await,
+        Err(crate::settings::SettingsFault::Conflict {
+            expected: 1,
+            actual: 2
+        })
+    ));
+    assert_eq!(
+        handle.get_settings().await.unwrap().document.settings,
+        settings
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn temporary_profile_is_not_imported_or_remembered_and_invalid_input_preserves_it() {
+    let (tx, _) = mpsc::channel(16);
+    let (state_tx, _) = watch::channel(TunnelState::initial());
+    let mut actor = TunnelActor::new(
+        Arc::new(FakeBackend::default()),
+        Arc::new(FakePlatform::new()),
+        None,
+        policy(),
+        ConfigStore::in_memory(Default::default()),
+        Default::default(),
+        tx,
+        state_tx,
+    );
+    actor
+        .accept_intent(IntentRequest::Temporary {
+            config: WG_CONFIG.into(),
+            private_routes: vec![],
+        })
+        .unwrap();
+    assert!(actor.configs.available().is_empty());
+    assert!(actor.temporary_config.is_some());
+    actor.exec(super::Effect::RememberWinner(Protocol::WireGuard));
+    assert_eq!(actor.configs.preferred(), None);
+    assert_eq!(actor.settings.intent_revision, None);
+    let epoch = actor.intent.epoch();
+    assert!(
+        actor
+            .accept_intent(IntentRequest::Temporary {
+                config: "broken".into(),
+                private_routes: vec![]
+            })
+            .is_err()
+    );
+    assert_eq!(actor.intent.epoch(), epoch);
+    assert!(actor.temporary_config.is_some());
+    actor.accept_intent(IntentRequest::Down).unwrap();
+    assert!(actor.temporary_config.is_none());
+}
+
+#[tokio::test(start_paused = true)]
+async fn offline_live_tunnel_waits_without_spending_budget_and_can_be_cancelled() {
+    let mut h = Harness::spawn(policy());
+    h.connect().await;
+    let starts = h.backend.starts.load(Ordering::SeqCst);
+    let stops = h.backend.stops();
+    h.handle.report_link(Link::Offline).await;
+    let state = h.wait_for_phase(Phase::Retrying).await;
+    assert_eq!(state.link, Link::Offline);
+    assert!(state.cancellable);
+    h.backend.goes_silent(600);
+    tokio::time::advance(Duration::from_secs(600)).await;
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), starts);
+    assert_eq!(h.backend.stops(), stops);
+    assert_eq!(h.states.borrow().intent, IntentView::Up);
+    let down = h.set(IntentRequest::Down).await;
+    assert_eq!(h.outcome(down).await, CycleOutcome::Down);
+    h.handle.report_link(Link::Online).await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), starts);
+    assert_eq!(h.states.borrow().phase, Phase::Disconnected);
 }
