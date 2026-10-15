@@ -38,14 +38,179 @@ validate_uid() {
     fi
 }
 
-# Symlink targets we are willing to recreate for /etc/resolv.conf: absolute, no traversal,
-# and confined to the directories resolver stubs actually live in.
-validate_link_target() {
-    if [[ "$1" == *".."* ]] || [[ ! "$1" =~ ^/(run|var/run|etc)/[A-Za-z0-9._/-]+$ ]]; then
-        echo "Invalid resolv.conf link target: $1" >&2
-        exit 1
+# The helper captures undo data itself. No caller supplies a journal path, shell command,
+# original DNS contents or original sysctl value. All owners share this root-only store.
+STATE=/var/lib/floppa-vpn/network-rollback-v1
+BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)
+validate_boot() {
+    [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || {
+        echo 'Invalid recovery boot identifier' >&2; exit 1;
+    }
+}
+state_open() {
+    local dir mode
+    for dir in /var/lib/floppa-vpn "$STATE"; do
+        [[ ! -L "$dir" ]] || { echo "Unsafe recovery directory: $dir" >&2; exit 1; }
+        [[ -d "$dir" ]] || install -d -o 0 -g 0 -m 0700 "$dir"
+        mode=$(stat -c %a "$dir")
+        [[ $(stat -c %u "$dir") == 0 ]] && (( (8#$mode & 8#022) == 0 )) || exit 1
+    done
+    chmod 0700 "$STATE"
+    sync /var/lib /var/lib/floppa-vpn "$STATE"
+    # Serialize helper invocations, including a helper still finishing after its parent died.
+    [[ ! -L "$STATE/lock" ]] || exit 1
+    exec 9>"$STATE/lock"
+    chmod 0600 "$STATE/lock"
+    flock -x 9
+}
+state_save() {
+    local name=$1 tmp
+    shift
+    [[ ! -e "$STATE/$name" && ! -L "$STATE/$name" ]] || {
+        echo "Pending $name recovery; restore the previous tunnel first" >&2; exit 1;
+    }
+    tmp=$(mktemp "$STATE/.pending.XXXXXX")
+    printf '%s\0' "$@" > "$tmp"
+    sync "$tmp"
+    mv -T "$tmp" "$STATE/$name"
+    sync "$STATE"
+}
+state_load() {
+    local name=$1 mode
+    RECORD=()
+    [[ -e "$STATE/$name" || -L "$STATE/$name" ]] || return 1
+    mode=$(stat -c %a "$STATE/$name")
+    if [[ ! -f "$STATE/$name" || -L "$STATE/$name" || $(stat -c %u "$STATE/$name") != 0 ||
+          $(stat -c %h "$STATE/$name") != 1 || $(stat -c %s "$STATE/$name") -gt 1048576 ]] ||
+          (( (8#$mode & 8#077) != 0 )); then
+        echo "Unsafe recovery record: $name" >&2; exit 1
+    fi
+    mapfile -d '' -t RECORD < "$STATE/$name"
+    [[ ${#RECORD[@]} -gt 0 ]] || { echo "Empty recovery record: $name" >&2; exit 1; }
+}
+state_clear() {
+    rm -f "$STATE/$1"
+    sync "$STATE"
+}
+recover_routes() {
+    state_load routes || return 0
+    [[ ${#RECORD[@]} -eq 2 ]] || exit 1
+    validate_iface "${RECORD[0]}"
+    validate_boot "${RECORD[1]}"
+    if [[ "${RECORD[1]}" != "$BOOT_ID" ]]; then state_clear routes; return 0; fi
+    # This table is reserved and checked empty before recording the first route.
+    local family routes
+    for family in 4 6; do
+        routes=$(ip -N -"$family" route show table all)
+        if grep -Eq " table $ROUTE_TABLE( |$)" <<< "$routes"; then
+            ip -"$family" route flush table "$ROUTE_TABLE"
+        fi
+    done
+    state_clear routes
+}
+recover_policy() {
+    state_load policy || return 0
+    [[ ${#RECORD[@]} -eq 4 && "${RECORD[0]}" =~ ^[01]$ && "${RECORD[1]}" =~ ^[01]$ &&
+       "${RECORD[2]}" =~ ^(-|0|1)$ ]] || exit 1
+    validate_boot "${RECORD[3]}"
+    if [[ "${RECORD[3]}" != "$BOOT_ID" ]]; then state_clear policy; return 0; fi
+    local family rules
+    for family in 4 6; do
+        [[ "$family" != 4 || "${RECORD[0]}" == 1 ]] || continue
+        [[ "$family" != 6 || "${RECORD[1]}" == 1 ]] || continue
+        ip -"$family" rule del priority 31010 not fwmark "$FWMARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
+        ip -"$family" rule del priority 31000 not fwmark "$FWMARK" lookup main suppress_prefixlength 0 2>/dev/null || true
+        rules=$(ip -"$family" rule show)
+        if grep -Eq '^310(00|10):' <<< "$rules"; then
+            echo 'Could not remove reserved routing rules' >&2; return 1
+        fi
+    done
+    local tables
+    tables=$(nft list tables)
+    if grep -qx 'table inet floppa_policy' <<< "$tables"; then nft delete table inet floppa_policy; fi
+    [[ "${RECORD[2]}" == - ]] || sysctl -q -w "net.ipv4.conf.all.src_valid_mark=${RECORD[2]}"
+    state_clear policy
+}
+capture_resolver() {
+    [[ ! -e "$STATE/dns" && ! -L "$STATE/dns" ]] || { echo 'Pending DNS recovery' >&2; exit 1; }
+    if [[ -L /etc/resolv.conf ]]; then
+        state_save dns link "$(readlink /etc/resolv.conf)"
+    elif [[ -e /etc/resolv.conf ]]; then
+        [[ -f /etc/resolv.conf ]] || exit 1
+        local tmp
+        tmp=$(mktemp "$STATE/.resolver.XXXXXX")
+        cat /etc/resolv.conf > "$tmp"
+        sync "$tmp"
+        mv -T "$tmp" "$STATE/resolver-backup"
+        sync "$STATE"
+        state_save dns file
+    else
+        state_save dns absent
     fi
 }
+recover_dns() {
+    state_load dns || return 0
+    local iface
+    case "${RECORD[0]}" in
+        resolved)
+            [[ ${#RECORD[@]} -eq 3 ]] || exit 1
+            iface=${RECORD[1]}; validate_iface "$iface"
+            validate_boot "${RECORD[2]}"
+            if [[ "${RECORD[2]}" != "$BOOT_ID" ]]; then state_clear dns; return 0; fi
+            # A vanished link has no per-link resolver state left to revert.
+            if [[ -d "/sys/class/net/$iface" ]]; then resolvectl revert "$iface"; fi
+            ;;
+        link)
+            [[ ${#RECORD[@]} -eq 2 && -n "${RECORD[1]}" ]] || exit 1
+            ln -sfnT -- "${RECORD[1]}" /etc/resolv.conf
+            sync /etc
+            ;;
+        file)
+            [[ ${#RECORD[@]} -eq 1 ]] || exit 1
+            [[ -f "$STATE/resolver-backup" && ! -L "$STATE/resolver-backup" ]] || exit 1
+            rm -f /etc/resolv.conf
+            install -m 0644 "$STATE/resolver-backup" /etc/resolv.conf
+            sync /etc/resolv.conf /etc
+            ;;
+        absent)
+            [[ ${#RECORD[@]} -eq 1 ]] || exit 1
+            rm -f /etc/resolv.conf
+            sync /etc
+            ;;
+        *) echo 'Invalid DNS recovery record' >&2; exit 1 ;;
+    esac
+    state_clear dns
+    rm -f "$STATE/resolver-backup"
+}
+recover_link() {
+    state_load link || return 0
+    [[ ${#RECORD[@]} -eq 2 ]] || exit 1
+    local iface=${RECORD[0]}
+    validate_boot "${RECORD[1]}"
+    if [[ "${RECORD[1]}" != "$BOOT_ID" ]]; then state_clear link; return 0; fi
+    validate_iface "$iface"
+    if [[ -d "/sys/class/net/$iface" ]]; then
+        ip link set "$iface" down
+        ip addr flush dev "$iface"
+        ip tuntap del dev "$iface" mode tun
+    fi
+    state_clear link
+}
+
+case "${1:-}" in
+    recover-network|recover-dns|recover-policy|recover-routes|recover-link)
+        [[ $# -eq 1 ]] || exit 1
+        state_open
+        case "$1" in
+            recover-network) recover_dns; recover_policy; recover_routes; recover_link ;;
+            recover-dns) recover_dns ;;
+            recover-policy) recover_policy ;;
+            recover-routes) recover_routes ;;
+            recover-link) recover_link ;;
+        esac
+        exit 0
+        ;;
+esac
 
 case "${1:-}" in
     check-policy)
@@ -59,7 +224,7 @@ case "${1:-}" in
         fi
         for family in 4 6; do
             rules=$(ip -"$family" rule show)
-            routes=$(ip -"$family" route show table all)
+            routes=$(ip -N -"$family" route show table all)
             if grep -Eq '^310(00|10):' <<< "$rules" ||
                 grep -Eq " table $ROUTE_TABLE( |$)" <<< "$routes"; then
                 echo "Reserved Floppa IPv$family routing rules/table are already in use" >&2
@@ -111,7 +276,10 @@ case "${1:-}" in
                 echo "$2 is already in use by uid $owner; another Floppa VPN client is running" >&2
                 exit 1
             fi
-        else
+        fi
+        state_open
+        state_save link "$2" "$BOOT_ID"
+        if ! ip link show dev "$2" >/dev/null 2>&1; then
             ip tuntap add dev "$2" mode tun user "$3"
         fi
         ;;
@@ -136,50 +304,21 @@ case "${1:-}" in
         ip addr del "$3" dev "$2" 2>/dev/null || true
         ;;
 
-    deconfigure)
-        # Usage: deconfigure <iface>
-        [[ $# -eq 2 ]] || { echo "Usage: deconfigure <iface>" >&2; exit 1; }
-        validate_iface "$2"
-        ip link set "$2" down 2>/dev/null || true
-        ip addr flush dev "$2" 2>/dev/null || true
-        ;;
-
-    add-route)
-        # Usage: add-route <destination> via <gateway>
-        [[ $# -eq 4 && "$3" == "via" ]] || { echo "Usage: add-route <dest> via <gateway>" >&2; exit 1; }
-        validate_ip "$2"
-        validate_ip "$4"
-        ip route add "$2" via "$4"
-        ;;
-
-    del-route)
-        # Usage: del-route <destination> [via <gateway>]
-        # The gateway is optional but should always be passed when the route was added with one:
-        # without it this deletes ANY route to that destination, which after a roaming event —
-        # exactly when a reconnect happens — is the wrong route or none at all.
-        case $# in
-            2)
-                validate_ip "$2"
-                ip route del "$2" 2>/dev/null || true
-                ;;
-            4)
-                [[ "$3" == "via" ]] || { echo "Usage: del-route <dest> [via <gw>]" >&2; exit 1; }
-                validate_ip "$2"
-                validate_ip "$4"
-                ip route del "$2" via "$4" 2>/dev/null || true
-                ;;
-            *)
-                echo "Usage: del-route <dest> [via <gw>]" >&2; exit 1
-                ;;
-        esac
-        ;;
-
     add-routes)
         # Usage: add-routes <iface> <dest1> [dest2 ...]
         [[ $# -ge 3 ]] || { echo "Usage: add-routes <iface> <dest1> [dest2 ...]" >&2; exit 1; }
         validate_iface "$2"
         iface="$2"
         shift 2
+        for dest in "$@"; do validate_ip "$dest"; done
+        state_open
+        for family in 4 6; do
+            routes=$(ip -N -"$family" route show table all)
+            if grep -Eq " table $ROUTE_TABLE( |$)" <<< "$routes"; then
+                echo 'Reserved routing table already in use' >&2; exit 1
+            fi
+        done
+        state_save routes "$iface" "$BOOT_ID"
         for dest in "$@"; do
             validate_ip "$dest"
             family=4; [[ "$dest" != *:* ]] || family=6
@@ -187,21 +326,22 @@ case "${1:-}" in
         done
         ;;
 
-    del-routes)
-        # Usage: del-routes <iface> <dest1> [dest2 ...]
-        [[ $# -ge 3 ]] || { echo "Usage: del-routes <iface> <dest1> [dest2 ...]" >&2; exit 1; }
-        validate_iface "$2"
-        iface="$2"
-        shift 2
-        for dest in "$@"; do
-            validate_ip "$dest"
-            family=4; [[ "$dest" != *:* ]] || family=6
-            ip -"$family" route del "$dest" dev "$iface" table "$ROUTE_TABLE" 2>/dev/null || true
-        done
-        ;;
-
     add-policy)
         [[ $# -eq 3 && "$2" =~ ^[01]$ && "$3" =~ ^[01]$ ]] || exit 1
+        state_open
+        tables=$(nft list tables)
+        if grep -qx 'table inet floppa_policy' <<< "$tables"; then
+            echo 'Reserved nftables table already in use' >&2; exit 1
+        fi
+        for family in 4 6; do
+            rules=$(ip -"$family" rule show)
+            if grep -Eq '^310(00|10):' <<< "$rules"; then
+                echo 'Reserved rule priorities already in use' >&2; exit 1
+            fi
+        done
+        old_mark=-
+        [[ "$2" == 0 ]] || old_mark=$(cat /proc/sys/net/ipv4/conf/all/src_valid_mark)
+        state_save policy "$2" "$3" "$old_mark" "$BOOT_ID"
         # Conntrack restores the outbound socket mark on replies, so strict reverse-path
         # validation looks up the physical route rather than the VPN table.
         nft -f - <<'NFT'
@@ -221,21 +361,6 @@ NFT
         done
         ;;
 
-    del-policy)
-        [[ $# -eq 4 && "$2" =~ ^[01]$ && "$3" =~ ^[01]$ && "$4" =~ ^(-|0|1)$ ]] || exit 1
-        for family in 4 6; do
-            [[ "$family" != 4 || "$2" == 1 ]] || continue
-            [[ "$family" != 6 || "$3" == 1 ]] || continue
-            # Delete only our rules, including when apply failed halfway through.
-            ip -"$family" rule del priority 31010 not fwmark "$FWMARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
-            ip -"$family" rule del priority 31000 not fwmark "$FWMARK" lookup main suppress_prefixlength 0 2>/dev/null || true
-        done
-        if nft list table inet floppa_policy >/dev/null 2>&1; then
-            nft delete table inet floppa_policy
-        fi
-        [[ "$4" == - ]] || sysctl -q -w "net.ipv4.conf.all.src_valid_mark=$4"
-        ;;
-
     set-dns)
         # Usage: set-dns <iface> <server1> [server2 ...]
         [[ $# -ge 3 ]] || { echo "Usage: set-dns <iface> <server1> [server2 ...]" >&2; exit 1; }
@@ -243,6 +368,8 @@ NFT
         iface="$2"
         shift 2
         for s in "$@"; do validate_ip "$s"; done
+        state_open
+        state_save dns resolved "$iface" "$BOOT_ID"
         resolvectl dns "$iface" "$@"
         # '~.' makes this link the routing domain for every name. Without it the physical link
         # keeps default-route too, and resolved sends queries that match no routing domain to
@@ -252,39 +379,24 @@ NFT
         resolvectl default-route "$iface" true
         ;;
 
-    revert-dns)
-        # Usage: revert-dns <iface>
-        [[ $# -eq 2 ]] || { echo "Usage: revert-dns <iface>" >&2; exit 1; }
-        validate_iface "$2"
-        resolvectl revert "$2" 2>/dev/null || true
-        ;;
-
-    set-resolv-conf)
-        # Usage: set-resolv-conf <temp-file>
-        # Only accepts files from /tmp/floppa-resolv*
-        #
-        # `cp` onto /etc/resolv.conf FOLLOWS a symlink and writes through it. On a
-        # systemd-resolved host that link points at /run/systemd/resolve/stub-resolv.conf, so a
-        # plain cp silently overwrites systemd's own file and the damage outlives the VPN.
-        # Replace the link itself instead; `restore-resolv-conf-link` puts it back.
-        [[ $# -eq 2 ]] || { echo "Usage: set-resolv-conf <file>" >&2; exit 1; }
-        [[ "$2" == /tmp/floppa-resolv* ]] || { echo "Invalid source path: $2" >&2; exit 1; }
-        [[ -f "$2" ]] || { echo "File not found: $2" >&2; exit 1; }
-        rm -f /etc/resolv.conf
-        install -m 644 "$2" /etc/resolv.conf
-        ;;
-
-    restore-resolv-conf-link)
-        # Usage: restore-resolv-conf-link <target>
-        # Undo for the case where /etc/resolv.conf WAS a symlink before we touched it.
-        [[ $# -eq 2 ]] || { echo "Usage: restore-resolv-conf-link <target>" >&2; exit 1; }
-        validate_link_target "$2"
-        ln -sfn "$2" /etc/resolv.conf
+    set-dns-file)
+        [[ $# -ge 2 ]] || exit 1
+        shift
+        for server in "$@"; do validate_ip "$server"; done
+        state_open
+        capture_resolver
+        # Generate the new file here; never read a caller-selected file as root.
+        tmp=$(mktemp /etc/.floppa-resolv.XXXXXX)
+        { printf '# Generated by floppa-vpn\n'; printf 'nameserver %s\n' "$@"; } > "$tmp"
+        chmod 0644 "$tmp"
+        sync "$tmp"
+        mv -T "$tmp" /etc/resolv.conf
+        sync /etc
         ;;
 
     *)
         echo "Unknown command: ${1:-}" >&2
-        echo "Commands: check-policy, prepare-ownership, ensure-tun, configure, flush-addr, deconfigure, add-route, del-route, add-routes, del-routes, add-policy, del-policy, set-dns, revert-dns, set-resolv-conf, restore-resolv-conf-link" >&2
+        echo "Commands: check-policy, prepare-ownership, ensure-tun, configure, flush-addr, add-routes, add-policy, set-dns, set-dns-file, recover-network, recover-dns, recover-policy, recover-routes, recover-link" >&2
         exit 1
         ;;
 esac

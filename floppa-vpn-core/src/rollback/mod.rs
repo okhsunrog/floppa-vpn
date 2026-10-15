@@ -37,6 +37,9 @@ pub use journal::{Journal, StackId};
 /// One reversible mutation of the machine.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Step {
+    /// Replay undo data captured by the privileged platform, never a user-supplied snapshot.
+    RecoverPlatform,
+
     /// Linux: the persistent TUN created by the helper. Windows: reaping a stale Wintun adapter.
     PrepareLink {
         iface: InterfaceName,
@@ -111,6 +114,7 @@ pub enum StepKind {
 impl Step {
     pub const fn kind(&self) -> StepKind {
         match self {
+            Self::RecoverPlatform => StepKind::PrepareLink,
             Self::PrepareLink { .. } => StepKind::PrepareLink,
             Self::StartBackend { .. } => StepKind::StartBackend,
             Self::Address { .. } => StepKind::Address,
@@ -394,6 +398,7 @@ async fn undo_step(
     backend: &dyn VpnBackend,
 ) -> Result<(), String> {
     match step {
+        Step::RecoverPlatform => platform.recover_network().await.map_err(|e| e.to_string()),
         Step::PrepareLink { iface } => platform
             .release_link(iface)
             .await

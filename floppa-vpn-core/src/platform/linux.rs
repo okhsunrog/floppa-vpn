@@ -15,7 +15,7 @@ use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
 use std::process::Command;
 use std::time::Duration;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// How long an *undo* may wait on the helper.
 ///
@@ -41,8 +41,14 @@ pub struct LinuxPlatform;
 
 impl LinuxPlatform {
     pub async fn prepare_ownership(&self) -> Result<(), PlatformError> {
-        self.preflight().await?;
+        self.ensure_helper().await?;
         self.run_helper(&["prepare-ownership"], None).await
+    }
+
+    async fn ensure_helper(&self) -> Result<(), PlatformError> {
+        tokio::task::spawn_blocking(Self::ensure_polkit_installed)
+            .await
+            .map_err(|e| PlatformError::Unavailable(format!("helper install task panicked: {e}")))?
     }
 
     pub fn new() -> Self {
@@ -276,36 +282,6 @@ impl LinuxPlatform {
         parse_default_gateway(&route_output)
     }
 
-    /// Write `/etc/resolv.conf` through the privileged helper.
-    ///
-    /// The helper replaces the path rather than `cp`-ing onto it, so a symlink to the resolver's
-    /// stub file is never written through.
-    ///
-    /// The temp file goes to `/tmp` explicitly, not `$TMPDIR`: the helper accepts only
-    /// `/tmp/floppa-resolv*` as a source, so on a host with `TMPDIR` set elsewhere every DNS
-    /// configuration used to be refused.
-    async fn write_resolv_conf(
-        &self,
-        content: &str,
-        timeout: Option<Duration>,
-    ) -> Result<(), PlatformError> {
-        let tmp = tempfile::Builder::new()
-            .prefix("floppa-resolv-")
-            .tempfile_in(RESOLV_TEMP_DIR)
-            .map_err(|e| {
-                PlatformError::Failed(format!(
-                    "failed to create temp resolv.conf in {RESOLV_TEMP_DIR}: {e}"
-                ))
-            })?;
-        let path = tmp.path().to_string_lossy().to_string();
-        std::fs::write(tmp.path(), content).map_err(|e| {
-            PlatformError::Failed(format!("failed to write temp resolv.conf {path}: {e}"))
-        })?;
-        self.run_helper(&["set-resolv-conf", &path], timeout)
-            .await
-            .map_err(|e| PlatformError::Failed(format!("set-resolv-conf {path}: {e}")))
-    }
-
     /// Check if IPv6 is enabled in the kernel.
     ///
     /// If the procfs knob is unavailable, assume enabled to avoid silently
@@ -326,6 +302,16 @@ impl Default for LinuxPlatform {
 
 #[async_trait]
 impl Platform for LinuxPlatform {
+    fn has_shared_recovery(&self) -> bool {
+        true
+    }
+
+    async fn recover_network(&self) -> Result<(), PlatformError> {
+        self.ensure_helper().await?;
+        self.run_helper(&["recover-network"], Some(UNDO_TIMEOUT))
+            .await
+    }
+
     fn uses_policy_routing(&self) -> bool {
         true
     }
@@ -339,17 +325,7 @@ impl Platform for LinuxPlatform {
         }
         let ipv4 = routes.iter().any(IpNetwork::is_ipv4);
         let ipv6 = routes.iter().any(IpNetwork::is_ipv6);
-        let src_valid_mark = if ipv4 {
-            Some(
-                std::fs::read_to_string("/proc/sys/net/ipv4/conf/all/src_valid_mark")
-                    .map_err(|e| PlatformError::Failed(e.to_string()))?
-                    .trim()
-                    .parse::<u8>()
-                    .map_err(|e| PlatformError::Failed(e.to_string()))?,
-            )
-        } else {
-            None
-        };
+        let src_valid_mark = None;
         Ok(Some(PolicyRoutingSnapshot {
             ipv4,
             ipv6,
@@ -376,20 +352,9 @@ impl Platform for LinuxPlatform {
         &self,
         snapshot: &PolicyRoutingSnapshot,
     ) -> Result<(), PlatformError> {
-        let old = snapshot
-            .src_valid_mark
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "-".into());
-        self.run_helper(
-            &[
-                "del-policy",
-                if snapshot.ipv4 { "1" } else { "0" },
-                if snapshot.ipv6 { "1" } else { "0" },
-                &old,
-            ],
-            Some(UNDO_TIMEOUT),
-        )
-        .await
+        let _ = snapshot;
+        self.run_helper(&["recover-policy"], Some(UNDO_TIMEOUT))
+            .await
     }
 
     fn tun_params(&self) -> TunParams {
@@ -413,12 +378,10 @@ impl Platform for LinuxPlatform {
     async fn preflight(&self) -> Result<(), PlatformError> {
         crate::socket_mark::preflight()
             .map_err(|e| PlatformError::PermissionDenied(e.to_string()))?;
-        // Blocking: it spawns pkexec and waits for a human.
-        tokio::task::spawn_blocking(Self::ensure_polkit_installed)
-            .await
-            .map_err(|e| {
-                PlatformError::Unavailable(format!("helper install task panicked: {e}"))
-            })??;
+        self.ensure_helper().await?;
+        // Retry any leftover undo before taking new snapshots, including after a failed attempt.
+        self.run_helper(&["recover-network"], Some(UNDO_TIMEOUT))
+            .await?;
         self.run_helper(&["check-policy"], None)
             .await
             .map_err(|e| PlatformError::Unavailable(e.to_string()))
@@ -433,11 +396,9 @@ impl Platform for LinuxPlatform {
             .await
     }
 
-    async fn release_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {
-        // `deconfigure` is down + addr flush, both `|| true`-guarded in the helper, so this is
-        // safe when nothing was ever prepared.
-        self.run_helper(&["deconfigure", iface.as_str()], Some(UNDO_TIMEOUT))
-            .await
+    async fn release_link(&self, _iface: &InterfaceName) -> Result<(), PlatformError> {
+        // Remove only the link recorded by the helper; a subsequent owner may have another UID.
+        self.run_helper(&["recover-link"], Some(UNDO_TIMEOUT)).await
     }
 
     async fn configure_address(
@@ -476,13 +437,10 @@ impl Platform for LinuxPlatform {
         endpoint: IpAddr,
         gateway: Option<&Gateway>,
     ) -> Result<(), PlatformError> {
-        let gateway = gateway.ok_or_else(|| {
-            PlatformError::Failed("no default gateway; cannot pin the endpoint route".to_string())
-        })?;
-        let route = endpoint_route(endpoint);
-        info!("Adding endpoint route: {route} via {gateway}");
-        self.run_helper(&["add-route", &route, "via", &gateway.to_string()], None)
-            .await
+        let _ = (endpoint, gateway);
+        Err(PlatformError::Unavailable(
+            "Linux uses marked transport sockets, not endpoint routes".into(),
+        ))
     }
 
     async fn remove_endpoint_route(
@@ -490,23 +448,10 @@ impl Platform for LinuxPlatform {
         endpoint: IpAddr,
         gateway: Option<&Gateway>,
     ) -> Result<(), PlatformError> {
-        let route = endpoint_route(endpoint);
-        info!("Removing endpoint route: {route}");
-        // Matching on the gateway too: without it this deletes any route to the endpoint, which
-        // after a roaming event is the wrong one.
-        match gateway {
-            Some(gw) => {
-                self.run_helper(
-                    &["del-route", &route, "via", &gw.to_string()],
-                    Some(UNDO_TIMEOUT),
-                )
-                .await
-            }
-            None => {
-                self.run_helper(&["del-route", &route], Some(UNDO_TIMEOUT))
-                    .await
-            }
-        }
+        let _ = (endpoint, gateway);
+        Err(PlatformError::Unavailable(
+            "Linux has no endpoint route to restore".into(),
+        ))
     }
 
     async fn add_routes(
@@ -531,14 +476,9 @@ impl Platform for LinuxPlatform {
         routes: &[IpNetwork],
         _if_index: Option<u32>,
     ) -> Result<(), PlatformError> {
-        if routes.is_empty() {
-            return Ok(());
-        }
-        info!("Removing {} routes via interface {iface}", routes.len());
-        let strs: Vec<String> = routes.iter().map(|r| r.to_string()).collect();
-        let mut args: Vec<&str> = vec!["del-routes", iface.as_str()];
-        args.extend(strs.iter().map(|s| s.as_str()));
-        self.run_helper(&args, Some(UNDO_TIMEOUT)).await
+        let _ = (iface, routes);
+        self.run_helper(&["recover-routes"], Some(UNDO_TIMEOUT))
+            .await
     }
 
     async fn capture_dns(
@@ -549,16 +489,10 @@ impl Platform for LinuxPlatform {
         if Self::systemd_resolved_active() {
             return Ok(DnsSnapshot::Resolvectl);
         }
-        // Record whether the path is a symlink BEFORE writing, so the restore can put the link
-        // back rather than writing through it into the resolver's own stub file.
-        let path = std::path::Path::new(RESOLV_CONF);
-        let symlink_target = std::fs::symlink_metadata(path)
-            .ok()
-            .filter(|m| m.file_type().is_symlink())
-            .and_then(|_| std::fs::read_link(path).ok());
+        // The exact file/link snapshot is captured by the privileged helper before mutation.
         Ok(DnsSnapshot::ResolvConf {
-            content: std::fs::read_to_string(path).ok(),
-            symlink_target,
+            content: None,
+            symlink_target: None,
         })
     }
 
@@ -581,11 +515,10 @@ impl Platform for LinuxPlatform {
             return self.run_helper(&args, None).await;
         }
 
-        let mut content = String::from("# Generated by floppa-vpn\n");
-        for server in servers {
-            content.push_str(&format!("nameserver {server}\n"));
-        }
-        self.write_resolv_conf(&content, None).await
+        let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
+        let mut args = vec!["set-dns-file"];
+        args.extend(strs.iter().map(String::as_str));
+        self.run_helper(&args, None).await
     }
 
     async fn restore_dns(
@@ -594,40 +527,8 @@ impl Platform for LinuxPlatform {
         snapshot: &DnsSnapshot,
         _if_index: Option<u32>,
     ) -> Result<(), PlatformError> {
-        info!("Restoring DNS configuration");
-        match snapshot {
-            DnsSnapshot::Resolvectl => {
-                self.run_helper(&["revert-dns", iface.as_str()], Some(UNDO_TIMEOUT))
-                    .await
-            }
-            DnsSnapshot::ResolvConf {
-                symlink_target: Some(target),
-                ..
-            } => {
-                self.run_helper(
-                    &["restore-resolv-conf-link", &target.to_string_lossy()],
-                    Some(UNDO_TIMEOUT),
-                )
-                .await
-            }
-            DnsSnapshot::ResolvConf {
-                content: Some(content),
-                symlink_target: None,
-            } => self.write_resolv_conf(content, Some(UNDO_TIMEOUT)).await,
-            DnsSnapshot::ResolvConf {
-                content: None,
-                symlink_target: None,
-            } => {
-                // There was no resolv.conf before us. Leaving ours in place is strictly better
-                // than deleting the file and taking name resolution down with it.
-                warn!("no original resolv.conf was captured; leaving the generated one in place");
-                Ok(())
-            }
-            other => {
-                warn!("ignoring non-Linux DNS snapshot: {other:?}");
-                Ok(())
-            }
-        }
+        let _ = (iface, snapshot);
+        self.run_helper(&["recover-dns"], Some(UNDO_TIMEOUT)).await
     }
 
     async fn ipv6_enabled(&self) -> bool {
@@ -640,14 +541,6 @@ impl Platform for LinuxPlatform {
 }
 
 const RESOLV_CONF: &str = "/etc/resolv.conf";
-/// Must match the prefix `set-resolv-conf` accepts in the helper.
-const RESOLV_TEMP_DIR: &str = "/tmp";
-
-/// The single-host route covering `endpoint`, as the helper takes it.
-fn endpoint_route(endpoint: IpAddr) -> String {
-    route::endpoint_route(endpoint).to_string()
-}
-
 /// Parse the first `via` next hop out of `ip route show default` output.
 ///
 /// A next hop that is not an address is an error, not a gateway: the string used to be passed on

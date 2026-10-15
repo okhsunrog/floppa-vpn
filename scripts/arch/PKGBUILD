@@ -28,6 +28,8 @@ depends=(
   'libappindicator-gtk3'
   'libcap'
   'iproute2'
+  'util-linux'
+  'coreutils'
   'nftables'
   'procps-ng'
 )

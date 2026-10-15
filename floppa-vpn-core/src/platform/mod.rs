@@ -123,13 +123,21 @@ pub struct PolicyRoutingSnapshot {
 
 /// Platform-specific VPN operations.
 ///
-/// **Stateless by contract.** An implementation must not remember what it applied — every undo
-/// receives back exactly what the corresponding apply recorded, carried in a
-/// [`Step`](crate::rollback::Step). This is what allows a partially applied connect to be
-/// unwound precisely, and what makes "restore something that was never saved" impossible to
-/// express.
+/// Undo state is either carried in a [`Step`](crate::rollback::Step), or captured durably
+/// inside the privileged platform adapter. The latter allows different OS users to recover
+/// changes without trusting another user's files.
 #[async_trait]
 pub trait Platform: Send + Sync {
+    /// The privileged adapter owns a machine-wide write-ahead journal.
+    fn has_shared_recovery(&self) -> bool {
+        false
+    }
+
+    /// Called while holding the tunnel owner lease, before any new mutation.
+    async fn recover_network(&self) -> Result<(), PlatformError> {
+        Ok(())
+    }
+
     fn uses_policy_routing(&self) -> bool {
         false
     }

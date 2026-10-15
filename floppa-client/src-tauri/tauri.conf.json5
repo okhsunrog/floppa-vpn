@@ -111,7 +111,7 @@
         // libayatana-appindicator3-1: the tray icon. Missing it is survivable — the app logs and
         // runs without one — but then closing the window quits, which is the behaviour the tray
         // exists to replace.
-        depends: ["libcap2-bin", "libayatana-appindicator3-1", "iproute2", "nftables", "procps"],
+        depends: ["libcap2-bin", "libayatana-appindicator3-1", "iproute2", "util-linux", "coreutils", "nftables", "procps"],
         // A second desktop entry, named after the GTK app id rather than the product.
         //
         // The bundler writes "Floppa VPN.desktop", which is what belongs in an application menu,
@@ -142,7 +142,7 @@
         postRemoveScript: "./scripts/linux-postremove.sh",
       },
       rpm: {
-        depends: ["libcap", "iproute", "nftables", "procps-ng"],
+        depends: ["libcap", "iproute", "util-linux", "coreutils", "nftables", "procps-ng"],
         files: {
           "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
           "/usr/bin/floppa": "../../target/release/floppa",

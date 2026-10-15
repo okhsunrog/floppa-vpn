@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated integration test. Run: sudo -n unshare --net uv run --no-project python scripts/tests/linux-policy-routing.py
+"""Isolated integration test. Run: sudo -n unshare --mount --net uv run --no-project python scripts/tests/linux-policy-routing.py
 Requires iproute2, nftables and Linux network namespaces. Never runs in the host netns.
 """
 import ipaddress
@@ -11,8 +11,13 @@ import socket
 import subprocess
 import threading
 
-assert os.geteuid() == 0, 'run through sudo -n unshare --net'
+assert os.geteuid() == 0, 'run through sudo -n unshare --mount --net'
 assert os.readlink('/proc/self/ns/net') != os.readlink('/proc/1/ns/net'), 'refusing host network namespace'
+assert os.readlink('/proc/self/ns/mnt') != os.readlink('/proc/1/ns/mnt'), 'refusing host mount namespace'
+# Shared recovery files must never land in the host /var/lib.
+subprocess.run(['mount', '--make-rprivate', '/'], check=True)
+subprocess.run(['mount', '-t', 'sysfs', 'sysfs', '/sys'], check=True)
+subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', '/var/lib'], check=True)
 HELPER = Path(__file__).resolve().parents[2] / 'floppa-vpn-core/resources/linux/floppa-network-helper'
 MARK = 0x666C6F70
 TABLE = str(MARK)
@@ -129,10 +134,10 @@ try:
     route('203.0.113.77', 'floppa0')
     ip('link', 'del', 'usb0')
     route('203.0.113.77', 'eth0', True)
-    helper('del-policy', '1', '1', original)
-    helper('del-routes', 'floppa0', *routes)
+    helper('recover-policy')
+    helper('recover-routes')
     # Cleanup is idempotent, including interrupted installation recovery.
-    helper('del-policy', '1', '1', original)
+    helper('recover-policy')
     assert run('sysctl', '-n', 'net.ipv4.conf.all.src_valid_mark') == original
     assert '31010:' not in ip('rule', 'show')
     assert '31000:' not in ip('-6', 'rule', 'show')
@@ -140,9 +145,10 @@ try:
     route('203.0.113.77', 'eth0')
     route('10.42.0.5', 'corp0')
     helper('check-policy')
-    # A partially applied policy must also be reversible.
-    ip('rule', 'add', 'priority', '31000', 'not', 'fwmark', hex(MARK), 'lookup', 'main', 'suppress_prefixlength', '0')
-    helper('del-policy', '1', '1', original)
+    # Recover a recorded policy with some mutations already gone (interrupted apply/undo).
+    helper('add-policy', '1', '1')
+    ip('rule', 'del', 'priority', '31010', 'not', 'fwmark', hex(MARK), 'lookup', TABLE)
+    helper('recover-network')
     helper('check-policy')
     print('PASS: IPv4/IPv6 routing, exclusions, corporate routes, TCP/UDP strict rp_filter, underlay switch and cleanup')
 finally:

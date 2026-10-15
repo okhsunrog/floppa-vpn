@@ -167,6 +167,8 @@ impl VpnBackend for FakeBackend {
 /// ladder's very first step so a test can act while an attempt is provably in flight; each
 /// `release` lets exactly one parked attempt continue.
 struct FakePlatform {
+    shared_recovery: AtomicBool,
+    shared_recoveries: AtomicUsize,
     park_attempts: AtomicBool,
     released: Notify,
     /// Panic inside the ladder's link step, as a bug in a real platform would.
@@ -178,6 +180,8 @@ struct FakePlatform {
 impl FakePlatform {
     fn new() -> Self {
         Self {
+            shared_recovery: AtomicBool::new(false),
+            shared_recoveries: AtomicUsize::new(0),
             park_attempts: AtomicBool::new(false),
             released: Notify::new(),
             crash_attempts: AtomicBool::new(false),
@@ -201,6 +205,13 @@ impl FakePlatform {
 
 #[async_trait]
 impl Platform for FakePlatform {
+    fn has_shared_recovery(&self) -> bool {
+        self.shared_recovery.load(Ordering::SeqCst)
+    }
+    async fn recover_network(&self) -> Result<(), PlatformError> {
+        self.shared_recoveries.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
     fn tun_params(&self) -> TunParams {
         TunParams::default()
     }
@@ -1242,4 +1253,18 @@ async fn journal_failure_after_startup_prevents_starting_a_transport() {
     ));
     assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0);
     assert!(path.is_dir());
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_platform_recovery_does_not_read_a_previous_users_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = Journal::default_path(dir.path());
+    std::fs::write(&path, b"untrusted user journal").unwrap();
+    let mut h = Harness::spawn_recovering(policy(), Journal::new(&path));
+    // No task has been polled yet on this single-thread runtime.
+    h.platform.shared_recovery.store(true, Ordering::SeqCst);
+    h.wait_for_phase(Phase::Disconnected).await;
+    assert_eq!(h.platform.shared_recoveries.load(Ordering::SeqCst), 1);
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(path).unwrap(), b"untrusted user journal");
 }

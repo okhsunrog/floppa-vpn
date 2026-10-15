@@ -181,6 +181,12 @@ impl TunnelActor {
                 .await
                 .map_err(|e| e.to_string())?,
         );
+        // Linux recovery records belong to the privileged helper, not this caller's UID.
+        let journal = if platform.has_shared_recovery() {
+            None
+        } else {
+            journal
+        };
         if let Some(journal) = &journal {
             journal
                 .read_orphaned()
@@ -923,6 +929,13 @@ impl TunnelActor {
 
     /// Pick up whatever a crashed attempt or a previous process left recorded in the journal.
     fn recover_journal(&mut self) {
+        if self.platform.has_shared_recovery() {
+            self.held_stack = RollbackStack::default();
+            self.held_stack
+                .push(crate::rollback::Step::RecoverPlatform)
+                .expect("platform recovery marker has no process-local journal");
+            return;
+        }
         let Some(journal) = &self.journal else {
             return;
         };
