@@ -67,6 +67,7 @@ mod socket_mark;
 pub mod state;
 pub mod store;
 pub mod tunnel;
+pub mod underlay;
 pub mod wire;
 
 pub use backend::VpnBackend;

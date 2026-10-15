@@ -6,8 +6,9 @@ connection actor. Routes, DNS, rollback, reconnection and platform consent remai
 owned by Floppa. No extra VPN process or reconnect loop is introduced.
 
 Linux opens the persistent TUN prepared by the existing helper, applies MTU before
-routes, and marks outer TCP/UDP before connect when permitted. Android protects TCP/UDP
-before connect, aborts on protection failure, and gives Foldfin an owned CLOEXEC
+routes, and marks outer TCP/UDP before connect when permitted. Android prepares TCP/UDP
+before connect through a service-generation-owned Underlay, protects and binds
+each socket to the underlying Network, aborts on preparation failure, and gives Foldfin an owned CLOEXEC
 duplicate of the nonblocking Kotlin descriptor. SNI and HTTP authority are kept
 separate from the resolved dial address. Foldfin is not implemented on Windows or
 macOS yet. Host Rustls and Android builds use certificate/name verification;
@@ -58,7 +59,15 @@ capability failure within a shared 15-second deadline. Certificate, authorizatio
 and malformed-protocol failures never trigger transport fallback. `h2_only` and
 `h3_only` force their respective transport. Both use the same persistent packet
 session; network changes replace its carrier while retaining the device.
-The first endpoint is used until session-scoped underlay candidate selection lands.
+The first resolved endpoint is still reused; underlay DNS resolution and endpoint
+candidate selection remain pending. Socket preparation is session-scoped already:
+`TunnelManager::start_foldfin_packets_on` takes an `Arc<dyn Underlay>` retained
+across recovery. Linux's native policy applies SO_MARK; Android captures the exact
+Java VpnService instance when its TUN descriptor arrives. Retired generations
+cannot prepare new sockets, and queued network-change events naming an old
+Foldfin generation are ignored under the tunnel replacement lock. No global
+socket callback is used by Foldfin. Other protocol adapters retain their existing
+socket integration. Android system lockdown remains owned by Android.
 H3 requires path capacity for a 1280-byte IP packet plus HTTP/QUIC overhead.
 The workspace and Tauri workspace patch h3/h3-datagram from Foldfin's vendor
 folder; those patches are required for CONNECT-IP and nonzero request IDs.
@@ -174,3 +183,16 @@ Run `uv run --no-project tests/integration/test_foldfin.py` for real Linux actor
 in disposable namespaces. It builds both checkouts, checks MTU, routed
 TCP/FIN/UDP/DNS/ICMP, and verifies address/route rollback on Ctrl+C. It skips DNS
 configuration and uses an isolated config directory; host routes/DNS are untouched.
+
+## Underlay validation (2026-10-15)
+
+238 core unit tests and eight integration tests pass, including preparation
+refusal without TCP/UDP transmission, retained preparation across recovery and
+stale service notifications. Host and Android core/application checks and Clippy
+pass. An arm64 debug APK builds, including Kotlin compilation. Debug Gradle
+configuration no longer requires release signing credentials.
+
+The additional Android lint run reports one pre-existing GradleDependency finding:
+core-ktx 1.19.0 is pinned while 1.19.1 is available. No source finding was reported.
+Physical service/network-roaming acceptance is pending; the attached Pixel's
+active VPN has not been interrupted. Underlay DNS and actor recovery remain open.

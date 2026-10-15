@@ -221,9 +221,29 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         panic!("wrong protocol")
     };
     let (device, input, mut output) = packets(client_drops.clone());
+    struct Prepared {
+        tcp: Arc<AtomicUsize>,
+        udp: Arc<AtomicUsize>,
+    }
+    impl floppa_vpn_core::underlay::Underlay for Prepared {
+        fn prepare_tcp(&self, _: &tokio::net::TcpSocket) -> io::Result<()> {
+            self.tcp.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn prepare_udp(&self, _: &std::net::UdpSocket) -> io::Result<()> {
+            self.udp.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let prepared_tcp = Arc::new(AtomicUsize::new(0));
+    let prepared_udp = Arc::new(AtomicUsize::new(0));
+    let underlay = Arc::new(Prepared {
+        tcp: prepared_tcp.clone(),
+        udp: prepared_udp.clone(),
+    });
     let manager = TunnelManager::default();
     manager
-        .start_foldfin_packets(&config, endpoint, device, None)
+        .start_foldfin_packets_on(&config, endpoint, device, underlay)
         .await
         .unwrap();
     timeout(Duration::from_secs(3), manager.probe())
@@ -250,12 +270,24 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         response
     );
     assert_eq!(manager.get_stats().await.unwrap().tx_bytes, 20);
+    // A stale service notification cannot start recovery on this session.
+    manager.network_changed_for(999).await.unwrap();
+    assert_eq!(prepared_tcp.load(Ordering::SeqCst), if h3 { 0 } else { 1 });
+    assert_eq!(
+        prepared_udp.load(Ordering::SeqCst),
+        if transport == "h2_only" { 0 } else { 1 }
+    );
     // Host network change replaces only the carrier, preserving the client packet device.
     timeout(Duration::from_secs(3), manager.network_changed())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(client_drops.load(Ordering::SeqCst), 0);
+    assert_eq!(prepared_tcp.load(Ordering::SeqCst), if h3 { 0 } else { 2 });
+    assert_eq!(
+        prepared_udp.load(Ordering::SeqCst),
+        if transport == "h2_only" { 0 } else { 2 }
+    );
     input.send(request.clone()).await.unwrap();
     assert_eq!(
         timeout(Duration::from_secs(3), recovery_output.recv())
@@ -525,4 +557,57 @@ async fn auto_does_not_try_h2_after_h3_certificate_failure() {
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
     stop.send(()).unwrap();
     server_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn underlay_refusal_precedes_any_tcp_or_udp_transmission() {
+    struct Deny;
+    impl floppa_vpn_core::underlay::Underlay for Deny {
+        fn prepare_tcp(&self, _: &tokio::net::TcpSocket) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "test underlay refused",
+            ))
+        }
+        fn prepare_udp(&self, _: &std::net::UdpSocket) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "test underlay refused",
+            ))
+        }
+    }
+    let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = tcp.local_addr().unwrap();
+    let udp = tokio::net::UdpSocket::bind(endpoint).await.unwrap();
+    for transport in ["h2_only", "h3_only", "auto"] {
+        let mut raw: serde_json::Value =
+            serde_json::from_str(&document(&endpoint.to_string(), "")).unwrap();
+        raw["config"]["transport"] = serde_json::json!(transport);
+        let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap()
+        else {
+            panic!("wrong protocol")
+        };
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let (device, _input, _output) = packets(dropped.clone());
+        let manager = TunnelManager::default();
+        let error = manager
+            .start_foldfin_packets_on(&config, endpoint, device, Arc::new(Deny))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("test underlay refused"),
+            "{error}"
+        );
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    }
+    assert!(
+        timeout(Duration::from_millis(100), tcp.accept())
+            .await
+            .is_err()
+    );
+    assert!(
+        timeout(Duration::from_millis(100), udp.recv(&mut [0; 1500]))
+            .await
+            .is_err()
+    );
 }

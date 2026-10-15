@@ -7,7 +7,7 @@ use foldfin::{
 };
 use std::{
     net::SocketAddr,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio::net::TcpSocket;
@@ -16,7 +16,7 @@ pub(crate) struct FoldfinTunnel {
     session: Session,
     config: FoldfinVpnConfig,
     endpoint: SocketAddr,
-    fwmark: Option<u32>,
+    underlay: Arc<dyn crate::underlay::Underlay>,
     started: Instant,
     last_probe: Mutex<Option<Instant>>,
 }
@@ -31,15 +31,15 @@ impl FoldfinTunnel {
         config: &FoldfinVpnConfig,
         endpoint: SocketAddr,
         device: PacketDevice,
-        fwmark: Option<u32>,
+        underlay: Arc<dyn crate::underlay::Underlay>,
     ) -> Result<Self, BackendError> {
         let mut session = Session::new(config.policy(), device).map_err(error)?;
-        Self::attach(&mut session, config, endpoint, fwmark).await?;
+        Self::attach(&mut session, config, endpoint, underlay.clone()).await?;
         Ok(Self {
             session,
             config: config.clone(),
             endpoint,
-            fwmark,
+            underlay,
             started: Instant::now(),
             last_probe: Mutex::new(None),
         })
@@ -49,7 +49,7 @@ impl FoldfinTunnel {
         session: &mut Session,
         config: &FoldfinVpnConfig,
         endpoint: SocketAddr,
-        fwmark: Option<u32>,
+        underlay: Arc<dyn crate::underlay::Underlay>,
     ) -> Result<(), BackendError> {
         use crate::foldfin_config::TransportPolicy;
         tokio::time::timeout(foldfin::DEADLINE, async {
@@ -62,11 +62,7 @@ impl FoldfinTunnel {
                 };
                 let socket = std::net::UdpSocket::bind(bind).map_err(error)?;
                 socket.set_nonblocking(true).map_err(error)?;
-                #[cfg(unix)]
-                {
-                    use std::os::fd::AsRawFd;
-                    Self::prepare_fd(socket.as_raw_fd(), fwmark)?;
-                }
+                underlay.prepare_udp(&socket).map_err(error)?;
                 let attempt = async {
                     let client = foldfin::h3_client::Client::connect_over(
                         config.client_config()?,
@@ -95,41 +91,17 @@ impl FoldfinTunnel {
                     Err(cause) => return Err(error(cause)),
                 }
             }
-            let client = Self::dial(config, endpoint, fwmark).await?;
+            let client = Self::dial(config, endpoint, underlay.clone()).await?;
             session.recover(client).await.map_err(error)
         })
         .await
         .map_err(error)?
     }
 
-    #[cfg(unix)]
-    fn prepare_fd(fd: std::os::fd::RawFd, fwmark: Option<u32>) -> Result<(), BackendError> {
-        #[cfg(target_os = "linux")]
-        if let Some(mark) = fwmark {
-            // SAFETY: the caller retains a live socket and SO_MARK expects a u32.
-            if unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    libc::SO_MARK,
-                    (&mark as *const u32).cast(),
-                    std::mem::size_of::<u32>() as libc::socklen_t,
-                )
-            } != 0
-            {
-                return Err(error(std::io::Error::last_os_error()));
-            }
-        }
-        #[cfg(target_os = "android")]
-        crate::tunnel::protect_tcp_socket(fd)?;
-        let _ = (fd, fwmark);
-        Ok(())
-    }
-
     async fn dial(
         config: &FoldfinVpnConfig,
         endpoint: SocketAddr,
-        fwmark: Option<u32>,
+        underlay: Arc<dyn crate::underlay::Underlay>,
     ) -> Result<Client, BackendError> {
         let socket = if endpoint.is_ipv4() {
             TcpSocket::new_v4()
@@ -137,13 +109,7 @@ impl FoldfinTunnel {
             TcpSocket::new_v6()
         }
         .map_err(error)?;
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            Self::prepare_fd(socket.as_raw_fd(), fwmark)?;
-        }
-        #[cfg(not(unix))]
-        let _ = fwmark;
+        underlay.prepare_tcp(&socket).map_err(error)?;
         let tcp = tokio::time::timeout(foldfin::DEADLINE, socket.connect(endpoint))
             .await
             .map_err(error)?
@@ -154,10 +120,20 @@ impl FoldfinTunnel {
         Ok(client)
     }
 
+    pub(crate) fn service_generation(&self) -> Option<u64> {
+        self.underlay.service_generation()
+    }
+
     pub(crate) async fn network_changed(&mut self) -> Result<(), BackendError> {
         self.session.underlay_changed().await;
         *self.last_probe.lock().unwrap() = None;
-        Self::attach(&mut self.session, &self.config, self.endpoint, self.fwmark).await?;
+        Self::attach(
+            &mut self.session,
+            &self.config,
+            self.endpoint,
+            self.underlay.clone(),
+        )
+        .await?;
         self.probe().await
     }
 

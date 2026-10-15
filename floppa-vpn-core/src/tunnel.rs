@@ -671,10 +671,27 @@ impl TunnelManager {
         device: foldfin::packet::PacketDevice,
         fwmark: Option<u32>,
     ) -> Result<(), BackendError> {
+        self.start_foldfin_packets_on(
+            config,
+            endpoint,
+            device,
+            Arc::new(crate::underlay::NativeUnderlay::new(fwmark)),
+        )
+        .await
+    }
+
+    /// Attach a host-owned underlay to this session. Retained across carrier recovery.
+    pub async fn start_foldfin_packets_on(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        endpoint: std::net::SocketAddr,
+        device: foldfin::packet::PacketDevice,
+        underlay: Arc<dyn crate::underlay::Underlay>,
+    ) -> Result<(), BackendError> {
         let mut guard = self.tunnel.write().await;
         Self::stop_existing(&mut guard).await?;
         let tunnel =
-            crate::foldfin_tunnel::FoldfinTunnel::start(config, endpoint, device, fwmark).await?;
+            crate::foldfin_tunnel::FoldfinTunnel::start(config, endpoint, device, underlay).await?;
         *guard = Some((
             ActiveTunnel::Foldfin(Box::new(tunnel)),
             TunnelMeta {
@@ -715,6 +732,7 @@ impl TunnelManager {
         config: &crate::foldfin_config::FoldfinVpnConfig,
         tun_fd: RawFd,
         endpoint: std::net::SocketAddr,
+        underlay: Arc<dyn crate::underlay::Underlay>,
     ) -> Result<(), BackendError> {
         use std::os::fd::{AsFd, BorrowedFd};
         // Kotlin retains its ParcelFileDescriptor. Only our CLOEXEC duplicate is consumed.
@@ -727,7 +745,7 @@ impl TunnelManager {
         let device = foldfin::adapters::tun::Tun::from_owned_fd(owned)
             .map_err(|e| engine_error("Foldfin TUN", e))?
             .into_device();
-        self.start_foldfin_packets(config, endpoint, device, None)
+        self.start_foldfin_packets_on(config, endpoint, device, underlay)
             .await
     }
 
@@ -795,7 +813,23 @@ impl TunnelManager {
     /// Silently fine when nothing is running: this arrives from the OS, not from a caller who
     /// knows what state we are in.
     pub async fn network_changed(&self) -> Result<(), BackendError> {
+        self.network_changed_in(None).await
+    }
+
+    /// Reject a queued notification for a superseded Foldfin service while
+    /// holding the same lock that protects tunnel replacement.
+    pub async fn network_changed_for(&self, generation: u64) -> Result<(), BackendError> {
+        self.network_changed_in(Some(generation)).await
+    }
+
+    async fn network_changed_in(&self, generation: Option<u64>) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
+        if let (Some(wanted), Some((ActiveTunnel::Foldfin(tunnel), _))) =
+            (generation, tunnel_guard.as_ref())
+            && tunnel.service_generation() != Some(wanted)
+        {
+            return Ok(());
+        }
         match tunnel_guard.as_mut() {
             Some((tunnel, _)) => tunnel.network_changed().await,
             None => Ok(()),
@@ -867,19 +901,5 @@ mod tests {
                 detail: "building: bind failed".into()
             }
         );
-    }
-}
-
-#[cfg(target_os = "android")]
-pub(crate) fn protect_tcp_socket(fd: RawFd) -> Result<(), BackendError> {
-    if SOCKET_PROTECT_CALLBACK
-        .get()
-        .is_some_and(|callback| callback(fd))
-    {
-        Ok(())
-    } else {
-        Err(BackendError::Engine {
-            detail: "Foldfin TCP socket protection failed".into(),
-        })
     }
 }

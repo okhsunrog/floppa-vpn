@@ -67,7 +67,12 @@ async fn bring_up(
     let result = match &config {
         ProtocolConfig::Foldfin(config) => {
             tunnel_manager
-                .start_foldfin_with_fd(config, tun_fd, endpoint)
+                .start_foldfin_with_fd(
+                    config,
+                    tun_fd,
+                    endpoint,
+                    service.underlay().ok_or("service underlay is missing")?,
+                )
                 .await
         }
         ProtocolConfig::Vless(vless) => {
