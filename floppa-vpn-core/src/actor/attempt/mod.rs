@@ -148,6 +148,9 @@ async fn run_inner(mut ctx: AttemptCtx) -> AttemptResult {
             .await;
             if !report.is_clean() {
                 warn!(residual = ?report.residual, "attempt rollback left residue");
+                return AttemptResult::Failed(AttemptError::PlatformUnavailable {
+                    detail: format!("network rollback incomplete: {:?}", report.residual),
+                });
             }
 
             if cancelled {
@@ -246,7 +249,9 @@ pub(super) async fn connect_candidates(
                     )
                     .await;
                     if !report.is_clean() {
-                        return Err(error);
+                        return Err(AttemptError::PlatformUnavailable {
+                            detail: format!("network rollback incomplete: {:?}", report.residual),
+                        });
                     }
                     #[cfg(target_os = "android")]
                     {

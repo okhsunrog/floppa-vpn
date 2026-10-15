@@ -124,6 +124,7 @@ pub struct TunnelActor {
     /// may touch the machine's DNS, and where configs live.
     deployment: Deployment,
     journal: Option<Journal>,
+    recovery_error: Option<String>,
     /// Only the Android ladder needs it: the service that owns the tunnel's descriptor.
     #[cfg(target_os = "android")]
     host: Arc<dyn crate::host::ServiceHost>,
@@ -180,6 +181,11 @@ impl TunnelActor {
                 .await
                 .map_err(|e| e.to_string())?,
         );
+        if let Some(journal) = &journal {
+            journal
+                .read_orphaned()
+                .map_err(|e| format!("cannot read rollback journal: {e}"))?;
+        }
         let capabilities = crate::settings::SettingsCapabilities {
             destination_exclusions: cfg!(target_os = "linux"),
             app_routing: cfg!(target_os = "android"),
@@ -294,6 +300,7 @@ impl TunnelActor {
             policy,
             deployment,
             journal,
+            recovery_error: None,
             #[cfg(target_os = "android")]
             host,
             attempt: None,
@@ -355,6 +362,9 @@ impl TunnelActor {
     /// tunnel that outlived us.
     fn bootstrap(&mut self) {
         self.recover_journal();
+        if self.recovery_error.is_some() {
+            return;
+        }
         if !self.held_stack.is_empty() {
             self.status = Status::Unwinding {
                 cycle: None,
@@ -643,6 +653,13 @@ impl TunnelActor {
     /// write-only intent queue, a caller cannot arrive at a bad moment. Whether anything actually
     /// starts is decided by the table, inside the loop.
     fn accept_intent(&mut self, request: IntentRequest) -> Result<IntentAccepted, IntentError> {
+        if !matches!(request, IntentRequest::Down)
+            && let Some(detail) = &self.recovery_error
+        {
+            return Err(IntentError::RecoveryUnavailable {
+                detail: detail.clone(),
+            });
+        }
         let configured = matches!(request, IntentRequest::Configured { .. });
         let mut temporary = None;
         let request = match request {
@@ -909,15 +926,34 @@ impl TunnelActor {
         let Some(journal) = &self.journal else {
             return;
         };
-        let orphaned = journal.read_orphaned();
-        if orphaned.is_empty() {
-            return;
+        let recovered = journal.read_orphaned().and_then(|steps| {
+            if steps.is_empty() {
+                Ok(None)
+            } else {
+                RollbackStack::from_orphaned(steps, Some(journal.clone())).map(Some)
+            }
+        });
+        match recovered {
+            Ok(Some(stack)) => {
+                warn!(
+                    count = stack.len(),
+                    "recovering network changes from the journal"
+                );
+                self.held_stack = stack;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let detail = format!(
+                    "cannot recover rollback journal: {error}; repair it before reconnecting"
+                );
+                tracing::error!(%detail);
+                self.recovery_error = Some(detail);
+                self.intent = Intent::Down {
+                    epoch: self.mint_epoch(),
+                };
+                self.settings.intent_revision = None;
+            }
         }
-        warn!(
-            count = orphaned.len(),
-            "recovering network changes from the journal"
-        );
-        self.held_stack = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
     }
 
     // ---------------------------------------------------------------------- the only writer

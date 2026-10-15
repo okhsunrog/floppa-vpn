@@ -956,18 +956,20 @@ async fn a_process_that_died_with_changes_applied_undoes_them_before_anything_el
     // a tunnel that no longer exists has no working name resolution until this runs.
     let dir = tempfile::tempdir().unwrap();
     let journal = Journal::new(Journal::default_path(dir.path()));
-    journal.write(
-        StackId::next(),
-        [Applied {
-            step: Step::Dns {
-                iface: InterfaceName::default(),
-                snapshot: DnsSnapshot::Resolvectl,
-                if_index: None,
-            },
-            evidence: Evidence::Done,
-        }]
-        .iter(),
-    );
+    journal
+        .write(
+            StackId::next(),
+            [Applied {
+                step: Step::Dns {
+                    iface: InterfaceName::default(),
+                    snapshot: DnsSnapshot::Resolvectl,
+                    if_index: None,
+                },
+                evidence: Evidence::Done,
+            }]
+            .iter(),
+        )
+        .unwrap();
 
     let mut h = Harness::spawn_recovering(policy(), journal.clone());
     h.wait_for_phase(Phase::Disconnected).await;
@@ -977,7 +979,7 @@ async fn a_process_that_died_with_changes_applied_undoes_them_before_anything_el
         "what the journal recorded is undone"
     );
     assert!(
-        journal.read_orphaned().is_empty(),
+        journal.read_orphaned().unwrap().is_empty(),
         "and the journal is cleared once it has been"
     );
 
@@ -1203,4 +1205,41 @@ async fn offline_live_tunnel_waits_without_spending_budget_and_can_be_cancelled(
     tokio::time::advance(Duration::from_secs(10)).await;
     assert_eq!(h.backend.starts.load(Ordering::SeqCst), starts);
     assert_eq!(h.states.borrow().phase, Phase::Disconnected);
+}
+
+#[tokio::test(start_paused = true)]
+async fn corrupt_recovery_evidence_blocks_connect_and_is_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = Journal::default_path(dir.path());
+    std::fs::write(&path, b"broken evidence").unwrap();
+    let mut h = Harness::spawn_recovering(policy(), Journal::new(&path));
+    h.wait_for_phase(Phase::Disconnected).await;
+    assert!(matches!(
+        h.handle.set_intent(up()).await,
+        Err(IntentError::RecoveryUnavailable { .. })
+    ));
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0);
+    assert_eq!(std::fs::read(path).unwrap(), b"broken evidence");
+    h.handle.set_intent(IntentRequest::Down).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn journal_failure_after_startup_prevents_starting_a_transport() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = Journal::default_path(dir.path());
+    let mut h = Harness::spawn_recovering(policy(), Journal::new(&path));
+    h.wait_for_phase(Phase::Disconnected).await;
+    // Deterministic I/O failure, including when tests run as root.
+    std::fs::create_dir(&path).unwrap();
+    let epoch = h.set(up()).await;
+    let CycleOutcome::Exhausted { failures } = h.outcome(epoch).await else {
+        panic!("journal failure must terminate the cycle");
+    };
+    assert_eq!(failures.len(), 1);
+    assert!(matches!(
+        failures[0].error,
+        AttemptError::PlatformUnavailable { .. }
+    ));
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0);
+    assert!(path.is_dir());
 }

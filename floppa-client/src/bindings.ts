@@ -367,7 +367,7 @@ export type IntentAccepted = {
  */
 export type IntentEpoch = number;
 
-export type IntentError = { kind: "invalid_config"; detail: string } | { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } |
+export type IntentError = { kind: "recovery_unavailable"; detail: string } | { kind: "invalid_config"; detail: string } | { kind: "invalid_routing"; detail: string } | { kind: "empty_order" } | { kind: "no_usable_config" } | { kind: "actor_gone" } | { kind: "settle_timeout" } |
 /**
  *  The wait for a cycle's ending gave up before the cycle did. **Not a failure of anything.**
  *

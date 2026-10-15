@@ -5,12 +5,9 @@
 //! strand a machine with VPN routes and a rewritten `/etc/resolv.conf` pointing at a tunnel that
 //! no longer exists.
 //!
-//! Every failure here is non-fatal by design: a journal that cannot be written, read or parsed
-//! must never prevent a connect. A missing journal degrades to today's behaviour.
-//!
-//! Writes are atomic (temp file, fsync, rename), so a crash mid-write leaves the previous journal
-//! rather than a truncated one. A journal that still fails to parse is moved aside as
-//! `rollback.json.corrupt` rather than deleted — it is the only record of what was applied.
+//! Reading and writing are fail-closed: only a missing file means an empty journal. An
+//! unreadable or corrupt file stays in place and prevents new durable mutations. Atomic writes
+//! preserve the previous record when replacement fails.
 //!
 //! # One file, several stacks
 //!
@@ -23,9 +20,10 @@
 
 use super::Applied;
 use crate::private_file::write_private;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// Which stack a journal record belongs to.
 ///
@@ -75,9 +73,13 @@ impl Journal {
     }
 
     /// Replace `stack`'s records with `steps`, leaving every other stack's records as they are.
-    pub fn write<'a>(&self, stack: StackId, steps: impl Iterator<Item = &'a Applied>) {
+    pub fn write<'a>(
+        &self,
+        stack: StackId,
+        steps: impl Iterator<Item = &'a Applied>,
+    ) -> io::Result<()> {
         let mut records: Vec<Record> = self
-            .records()
+            .records()?
             .into_iter()
             .filter(|r| r.stack != stack)
             .collect();
@@ -85,97 +87,66 @@ impl Journal {
             stack,
             applied: applied.clone(),
         }));
-        self.write_records(&records);
+        self.write_records(&records)
     }
 
     /// Replace the *whole* journal with `steps`, owned by `stack`.
     ///
     /// For a stack rebuilt from everything the journal held: those records are its now, whatever
     /// stack wrote them, and keeping the originals would have them recovered — and undone — twice.
-    pub fn claim<'a>(&self, stack: StackId, steps: impl Iterator<Item = &'a Applied>) {
+    pub fn claim<'a>(
+        &self,
+        stack: StackId,
+        steps: impl Iterator<Item = &'a Applied>,
+    ) -> io::Result<()> {
         let records: Vec<Record> = steps
             .map(|applied| Record {
                 stack,
                 applied: applied.clone(),
             })
             .collect();
-        self.write_records(&records);
+        self.write_records(&records)
     }
 
-    fn write_records(&self, records: &[Record]) {
+    fn write_records(&self, records: &[Record]) -> io::Result<()> {
         if records.is_empty() {
-            self.clear();
-            return;
+            return self.clear();
         }
-        let json = match serde_json::to_vec_pretty(records) {
-            Ok(j) => j,
-            Err(e) => {
-                warn!(error = %e, "failed to serialise rollback journal");
-                return;
-            }
-        };
-        if let Err(e) = write_private(&self.path, &json) {
-            warn!(error = %e, path = %self.path.display(), "failed to write rollback journal");
-        }
+        let json = serde_json::to_vec_pretty(records).map_err(io::Error::other)?;
+        write_private(&self.path, &json)
     }
 
-    pub fn clear(&self) {
+    pub fn clear(&self) -> io::Result<()> {
         match std::fs::remove_file(&self.path) {
-            Ok(()) => debug!("rollback journal cleared"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => warn!(error = %e, "failed to clear rollback journal"),
+            Ok(()) => {
+                crate::private_file::sync_parent(&self.path)?;
+                debug!("rollback journal cleared");
+                Ok(())
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
-    /// Read every step left by a previous process, whichever stack wrote it. Returns an empty vec
-    /// if there is nothing to do, including when the file is unreadable or corrupt — recovery is
-    /// best-effort by definition.
-    pub fn read_orphaned(&self) -> Vec<Applied> {
-        let steps: Vec<Applied> = self.records().into_iter().map(|r| r.applied).collect();
+    /// A missing file is empty; every other failure preserves the evidence and blocks recovery.
+    pub fn read_orphaned(&self) -> io::Result<Vec<Applied>> {
+        let steps: Vec<Applied> = self.records()?.into_iter().map(|r| r.applied).collect();
         if !steps.is_empty() {
             info!(
                 count = steps.len(),
                 "found rollback steps from a previous run"
             );
         }
-        steps
+        Ok(steps)
     }
 
-    fn records(&self) -> Vec<Record> {
+    fn records(&self) -> io::Result<Vec<Record>> {
         let raw = match std::fs::read(&self.path) {
             Ok(raw) => raw,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-            Err(e) => {
-                warn!(error = %e, "failed to read rollback journal");
-                return Vec::new();
-            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(e),
         };
-        match serde_json::from_slice::<Vec<Record>>(&raw) {
-            Ok(records) => records,
-            Err(e) => {
-                warn!(error = %e, "rollback journal is corrupt, moving it aside");
-                self.quarantine();
-                Vec::new()
-            }
-        }
-    }
-
-    /// Where a corrupt journal is moved to.
-    pub fn corrupt_path(&self) -> PathBuf {
-        let mut name = self.path.file_name().unwrap_or_default().to_os_string();
-        name.push(".corrupt");
-        self.path.with_file_name(name)
-    }
-
-    fn quarantine(&self) {
-        let dest = self.corrupt_path();
-        match std::fs::rename(&self.path, &dest) {
-            Ok(()) => info!(path = %dest.display(), "corrupt rollback journal kept for inspection"),
-            Err(e) => {
-                warn!(error = %e, "failed to move the corrupt journal aside; removing it");
-                self.clear();
-            }
-        }
+        serde_json::from_slice(&raw).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 }
 
@@ -217,16 +188,16 @@ mod tests {
     #[test]
     fn missing_journal_reads_as_nothing_to_do() {
         let (_dir, journal) = tmp();
-        assert!(journal.read_orphaned().is_empty());
+        assert!(journal.read_orphaned().unwrap().is_empty());
     }
 
     #[test]
     fn steps_survive_a_write_read_cycle() {
         let (_dir, journal) = tmp();
         let step = dns_step();
-        journal.write(StackId::next(), [&step].into_iter());
+        journal.write(StackId::next(), [&step].into_iter()).unwrap();
 
-        let read = journal.read_orphaned();
+        let read = journal.read_orphaned().unwrap();
         assert_eq!(read, vec![step]);
     }
 
@@ -235,9 +206,9 @@ mod tests {
         let (_dir, journal) = tmp();
         let step = dns_step();
         let stack = StackId::next();
-        journal.write(stack, [&step].into_iter());
-        journal.write(stack, std::iter::empty());
-        assert!(journal.read_orphaned().is_empty());
+        journal.write(stack, [&step].into_iter()).unwrap();
+        journal.write(stack, std::iter::empty()).unwrap();
+        assert!(journal.read_orphaned().unwrap().is_empty());
     }
 
     #[test]
@@ -246,30 +217,37 @@ mod tests {
         // persisting its own — empty or otherwise — set of durable steps.
         let (_dir, journal) = tmp();
         let (first, second) = (StackId::next(), StackId::next());
-        journal.write(first, [&routes_step()].into_iter());
+        journal.write(first, [&routes_step()].into_iter()).unwrap();
 
-        journal.write(second, std::iter::empty());
-        assert_eq!(journal.read_orphaned(), vec![routes_step()]);
+        journal.write(second, std::iter::empty()).unwrap();
+        assert_eq!(journal.read_orphaned().unwrap(), vec![routes_step()]);
 
-        journal.write(second, [&dns_step()].into_iter());
-        assert_eq!(journal.read_orphaned(), vec![routes_step(), dns_step()]);
+        journal.write(second, [&dns_step()].into_iter()).unwrap();
+        assert_eq!(
+            journal.read_orphaned().unwrap(),
+            vec![routes_step(), dns_step()]
+        );
 
-        journal.write(second, std::iter::empty());
-        assert_eq!(journal.read_orphaned(), vec![routes_step()]);
+        journal.write(second, std::iter::empty()).unwrap();
+        assert_eq!(journal.read_orphaned().unwrap(), vec![routes_step()]);
     }
 
     #[test]
     fn a_claim_takes_over_every_record() {
         let (_dir, journal) = tmp();
-        journal.write(StackId::next(), [&routes_step()].into_iter());
-        journal.write(StackId::next(), [&dns_step()].into_iter());
+        journal
+            .write(StackId::next(), [&routes_step()].into_iter())
+            .unwrap();
+        journal
+            .write(StackId::next(), [&dns_step()].into_iter())
+            .unwrap();
 
         let owner = StackId::next();
-        let all = journal.read_orphaned();
-        journal.claim(owner, all.iter());
+        let all = journal.read_orphaned().unwrap();
+        journal.claim(owner, all.iter()).unwrap();
         // Now one write by the owner governs all of it.
-        journal.write(owner, std::iter::empty());
-        assert!(journal.read_orphaned().is_empty());
+        journal.write(owner, std::iter::empty()).unwrap();
+        assert!(journal.read_orphaned().unwrap().is_empty());
     }
 
     #[test]
@@ -277,28 +255,30 @@ mod tests {
         let (dir, journal) = tmp();
         let old = serde_json::to_vec(&vec![dns_step()]).unwrap();
         std::fs::write(Journal::default_path(dir.path()), old).unwrap();
-        assert_eq!(journal.read_orphaned(), vec![dns_step()]);
+        assert_eq!(journal.read_orphaned().unwrap(), vec![dns_step()]);
     }
 
     #[test]
-    fn a_corrupt_journal_is_moved_aside_rather_than_propagated() {
+    fn corrupt_journal_blocks_reads_and_writes_without_losing_evidence() {
         let (dir, journal) = tmp();
-        std::fs::write(Journal::default_path(dir.path()), b"{ not json").unwrap();
-
-        assert!(journal.read_orphaned().is_empty());
-        // ...it does not come back to haunt the next read...
-        assert!(!Journal::default_path(dir.path()).exists());
-        // ...but it is kept, because it is the only record of what was applied.
-        assert_eq!(
-            std::fs::read(journal.corrupt_path()).unwrap(),
-            b"{ not json"
+        let path = Journal::default_path(dir.path());
+        std::fs::write(&path, b"{ not json").unwrap();
+        assert!(journal.read_orphaned().is_err());
+        assert!(
+            journal
+                .write(StackId::next(), [&dns_step()].into_iter())
+                .is_err()
         );
+        assert!(journal.read_orphaned().is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"{ not json");
     }
 
     #[test]
     fn a_write_leaves_no_temp_file_behind() {
         let (dir, journal) = tmp();
-        journal.write(StackId::next(), [&dns_step()].into_iter());
+        journal
+            .write(StackId::next(), [&dns_step()].into_iter())
+            .unwrap();
         let names: Vec<String> = std::fs::read_dir(dir.path())
             .unwrap()
             .flatten()
@@ -313,7 +293,9 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
 
         let (dir, journal) = tmp();
-        journal.write(StackId::next(), [&dns_step()].into_iter());
+        journal
+            .write(StackId::next(), [&dns_step()].into_iter())
+            .unwrap();
 
         let mode = std::fs::metadata(Journal::default_path(dir.path()))
             .unwrap()

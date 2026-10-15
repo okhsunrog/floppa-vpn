@@ -49,9 +49,13 @@ pub(super) async fn ladder(
 
     // 1. Link -----------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
-    stack.push(Step::PrepareLink {
-        iface: iface.clone(),
-    });
+    stack
+        .push(Step::PrepareLink {
+            iface: iface.clone(),
+        })
+        .map_err(|e| AttemptError::PlatformUnavailable {
+            detail: format!("cannot persist rollback journal: {e}"),
+        })?;
     ctx.platform
         .prepare_link(&iface)
         .await
@@ -64,9 +68,13 @@ pub(super) async fn ladder(
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Starting).await;
     let tun_params = ctx.platform.tun_params();
-    stack.push(Step::StartBackend {
-        iface: iface.clone(),
-    });
+    stack
+        .push(Step::StartBackend {
+            iface: iface.clone(),
+        })
+        .map_err(|e| AttemptError::PlatformUnavailable {
+            detail: format!("cannot persist rollback journal: {e}"),
+        })?;
     ctx.backend
         .start(&ctx.config, iface.as_str(), &tun_params, endpoint)
         .await
@@ -84,10 +92,14 @@ pub(super) async fn ladder(
         .map_err(|e| AttemptError::InvalidConfig {
             detail: e.to_string(),
         })?;
-    stack.push(Step::Address {
-        iface: iface.clone(),
-        addr,
-    });
+    stack
+        .push(Step::Address {
+            iface: iface.clone(),
+            addr,
+        })
+        .map_err(|e| AttemptError::PlatformUnavailable {
+            detail: format!("cannot persist rollback journal: {e}"),
+        })?;
     ctx.platform
         .configure_address(&iface, addr)
         .await
@@ -109,10 +121,14 @@ pub(super) async fn ladder(
             .default_gateway(crate::platform::IpFamily::of(endpoint_ip))
             .await
             .unwrap_or_default();
-        stack.push(Step::EndpointRoute {
-            endpoint: endpoint_ip,
-            gateway,
-        });
+        stack
+            .push(Step::EndpointRoute {
+                endpoint: endpoint_ip,
+                gateway,
+            })
+            .map_err(|e| AttemptError::PlatformUnavailable {
+                detail: format!("cannot persist rollback journal: {e}"),
+            })?;
         ctx.platform
             .add_endpoint_route(endpoint_ip, gateway.as_ref())
             .await
@@ -151,11 +167,15 @@ pub(super) async fn ladder(
             .map(|r| r.parse().expect("validated exclusion"))
             .collect::<Vec<_>>(),
     );
-    stack.push(Step::Routes {
-        iface: iface.clone(),
-        routes: routes.clone(),
-        if_index,
-    });
+    stack
+        .push(Step::Routes {
+            iface: iface.clone(),
+            routes: routes.clone(),
+            if_index,
+        })
+        .map_err(|e| AttemptError::PlatformUnavailable {
+            detail: format!("cannot persist rollback journal: {e}"),
+        })?;
     ctx.platform
         .add_routes(&iface, &routes, if_index)
         .await
@@ -172,9 +192,13 @@ pub(super) async fn ladder(
         .await
         .map_err(|e| platform_error(StepKind::PolicyRouting, e))?
     {
-        stack.push(Step::PolicyRouting {
-            snapshot: snapshot.clone(),
-        });
+        stack
+            .push(Step::PolicyRouting {
+                snapshot: snapshot.clone(),
+            })
+            .map_err(|e| AttemptError::PlatformUnavailable {
+                detail: format!("cannot persist rollback journal: {e}"),
+            })?;
         ctx.platform
             .apply_policy_routing(&snapshot)
             .await
@@ -197,11 +221,15 @@ pub(super) async fn ladder(
     if !dns_servers.is_empty() {
         match ctx.platform.capture_dns(&iface, if_index).await {
             Ok(snapshot) => {
-                stack.push(Step::Dns {
-                    iface: iface.clone(),
-                    snapshot: snapshot.clone(),
-                    if_index,
-                });
+                stack
+                    .push(Step::Dns {
+                        iface: iface.clone(),
+                        snapshot: snapshot.clone(),
+                        if_index,
+                    })
+                    .map_err(|e| AttemptError::PlatformUnavailable {
+                        detail: format!("cannot persist rollback journal: {e}"),
+                    })?;
                 match ctx
                     .platform
                     .configure_dns(&iface, &dns_servers, if_index)

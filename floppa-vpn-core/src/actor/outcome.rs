@@ -119,6 +119,8 @@ pub enum CycleOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum IntentError {
+    #[error("network recovery unavailable: {detail}")]
+    RecoveryUnavailable { detail: String },
     #[error("invalid temporary config: {detail}")]
     InvalidConfig { detail: String },
     #[error("invalid route exclusions: {detail}")]

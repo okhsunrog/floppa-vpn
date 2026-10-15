@@ -1,12 +1,6 @@
 //! Writing a small file that only this app may read, without ever leaving a half-written one.
 //!
-//! Two files on the device hold the same private key as the keyring does — the rollback journal
-//! and the autostart bundle — and both are read by a process that starts *after* something went
-//! wrong: a crash, a boot, an always-on start. A truncate-then-write leaves a window where that
-//! reader finds a valid, empty, or half-written file and cannot tell which, and the reader's only
-//! recourse is to give up. The journal already wrote through a temp file and a rename; the bundle
-//! did not, and a bundle that does not parse is a lockdown device with no network until somebody
-//! opens the app.
+//! Runtime state and rollback records must survive a crash without exposing partial contents.
 
 use std::io::Write;
 use std::path::Path;
@@ -31,6 +25,18 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path).map_err(|e| e.error)?;
+    sync_parent(path)
+}
+
+/// Persist a rename or removal on filesystems that support directory fsync.
+pub(crate) fn sync_parent(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    std::fs::File::open(path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+    })?)?
+    .sync_all()?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 

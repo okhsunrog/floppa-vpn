@@ -750,6 +750,7 @@ export default {
       emptyOrder: 'No protocol selected to connect with.',
       noUsableConfig:
         'No config for the selected protocol. Server connection is needed to set it up.',
+      recoveryUnavailable: 'Cannot safely restore the network: {detail}',
       actorGone: 'The VPN engine is not running. Restart the app.',
       settleTimeout: 'The tunnel did not settle in time. Try again.',
       emptyConfig: 'The config received from the server is empty.',

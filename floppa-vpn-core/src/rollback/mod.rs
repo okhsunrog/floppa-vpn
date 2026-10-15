@@ -218,20 +218,20 @@ impl RollbackStack {
     /// unwinding the stack that wrote it — which is the point: crash recovery is not a separate
     /// code path. The journal is rewritten as this stack's alone: `steps` is everything it held,
     /// and the records left under their old stacks would otherwise be recovered a second time.
-    pub fn from_orphaned(steps: Vec<Applied>, journal: Option<Journal>) -> Self {
+    pub fn from_orphaned(steps: Vec<Applied>, journal: Option<Journal>) -> std::io::Result<Self> {
         let stack = Self {
             id: StackId::next(),
             steps,
             journal,
         };
         if let Some(journal) = &stack.journal {
-            journal.claim(stack.id, stack.steps.iter().filter(|a| a.step.durable()));
+            journal.claim(stack.id, stack.steps.iter().filter(|a| a.step.durable()))?;
         }
-        stack
+        Ok(stack)
     }
 
     /// Record a step, persist it if durable, and only then let the caller apply it.
-    pub fn push(&mut self, step: Step) {
+    pub fn push(&mut self, step: Step) -> std::io::Result<()> {
         debug_assert!(
             !matches!(step, Step::Dns { .. })
                 || !self
@@ -244,7 +244,12 @@ impl RollbackStack {
             step,
             evidence: Evidence::Attempted,
         });
-        self.persist();
+        if let Err(error) = self.persist() {
+            // The caller has not applied this step. Do not undo a mutation we never made.
+            self.steps.pop();
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Replace the top step's payload with what the apply actually learned (the real gateway,
@@ -259,7 +264,11 @@ impl RollbackStack {
             top.step = step;
             top.evidence = Evidence::Done;
         }
-        self.persist();
+        // The pre-apply record already contains the complete undo payload. Confirmation is
+        // cosmetic; if it cannot be saved, recovery still treats the operation as attempted.
+        if let Err(error) = self.persist() {
+            warn!(%error, "could not confirm rollback record; attempted record remains");
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -278,14 +287,14 @@ impl RollbackStack {
         self.steps.iter().map(|a| a.step.kind()).collect()
     }
 
-    fn persist(&self) {
-        self.persist_with(&[]);
+    fn persist(&self) -> std::io::Result<()> {
+        self.persist_with(&[])
     }
 
     /// Persist the durable steps on the stack plus `extra` — steps that have been popped because
     /// their undo gave up, but whose effect is still on the machine. Only this stack's records
     /// are replaced; what another stack left in the journal stays.
-    fn persist_with(&self, extra: &[Applied]) {
+    fn persist_with(&self, extra: &[Applied]) -> std::io::Result<()> {
         if let Some(journal) = &self.journal {
             journal.write(
                 self.id,
@@ -293,8 +302,9 @@ impl RollbackStack {
                     .iter()
                     .chain(extra.iter())
                     .filter(|a| a.step.durable()),
-            );
+            )?;
         }
+        Ok(())
     }
 }
 
@@ -306,14 +316,9 @@ pub use floppa_tunnel_config::route::split_default;
 
 /// Undo everything on the stack, in reverse.
 ///
-/// A step is popped only once its undo reports success; until then it is retried up to
-/// `undo_retries` times. A step whose undo never succeeds is popped anyway — an unrecoverable undo
-/// must not wedge the caller forever — but it is reported in [`UnwindReport::residual`] so the
-/// failure is visible rather than silent, and if it was durable it stays in the journal so the
-/// next start tries again. Previously the journal was cleared regardless, which turned "the undo
-/// failed" into "nothing is left to undo" the moment the process restarted — and later, when it
-/// was kept, the next attempt's stack overwrote the whole file with its own steps on its first
-/// push, which lost it just the same. Records are per stack now (see [`journal`]).
+/// Each undo has a bounded retry budget. Failed steps remain in memory and in the journal,
+/// so another unwind of the same stack cannot erase evidence that only lived on disk. Other
+/// steps are still undone, and the caller receives a residual report rather than waiting forever.
 pub async fn unwind(
     stack: &mut RollbackStack,
     extra: Option<ExtraUndo>,
@@ -349,7 +354,11 @@ pub async fn unwind(
             failed.push(applied);
         }
         stack.steps.pop();
-        stack.persist_with(&failed);
+        if let Err(error) = stack.persist_with(&failed) {
+            // Keep cleaning the live machine, but never report a clean result while stale
+            // journal entries could be replayed on the next start.
+            residual.push((kind, format!("could not update rollback journal: {error}")));
+        }
     }
 
     if let Some(ExtraUndo::StopBackend) = extra
@@ -359,10 +368,16 @@ pub async fn unwind(
         residual.push((StepKind::StartBackend, e));
     }
 
-    // Writing an empty set clears the journal; a non-empty one leaves the failed durable steps
-    // for the next start to retry.
-    stack.persist_with(&failed);
-    if failed.iter().any(|a| a.step.durable()) {
+    // Preserve original application order: the next unwind visits failures in reverse again.
+    failed.reverse();
+    stack.steps = failed;
+    if let Err(error) = stack.persist() {
+        residual.push((
+            StepKind::PrepareLink,
+            format!("could not finalize rollback journal: {error}"),
+        ));
+    }
+    if stack.steps.iter().any(|a| a.step.durable()) {
         warn!("durable steps whose undo failed are kept in the rollback journal");
     }
     info!(residual = residual.len(), "unwind complete");
@@ -432,18 +447,37 @@ mod tests {
     #[test]
     fn push_records_the_step_as_attempted_before_it_is_applied() {
         let mut stack = RollbackStack::default();
-        stack.push(Step::PrepareLink { iface: iface() });
+        stack.push(Step::PrepareLink { iface: iface() }).unwrap();
         assert_eq!(stack.top().unwrap().evidence, Evidence::Attempted);
+    }
+
+    #[test]
+    fn failed_write_does_not_enqueue_an_unapplied_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(dir.path().join("missing-parent/rollback.json"));
+        let mut stack = RollbackStack::new(Some(journal));
+        assert!(
+            stack
+                .push(Step::Dns {
+                    iface: iface(),
+                    snapshot: DnsSnapshot::Resolvectl,
+                    if_index: None,
+                })
+                .is_err()
+        );
+        assert!(stack.is_empty());
     }
 
     #[test]
     fn confirm_top_upgrades_the_payload_in_place() {
         let mut stack = RollbackStack::default();
         let endpoint: IpAddr = "1.2.3.4".parse().unwrap();
-        stack.push(Step::EndpointRoute {
-            endpoint,
-            gateway: None,
-        });
+        stack
+            .push(Step::EndpointRoute {
+                endpoint,
+                gateway: None,
+            })
+            .unwrap();
         let gw: Gateway = "192.168.1.1".parse().unwrap();
         stack.confirm_top(Step::EndpointRoute {
             endpoint,
@@ -674,17 +708,18 @@ mod tests {
                 src_valid_mark: Some(0),
             },
         };
-        stack.push(step.clone()); // crash before confirmation still needs recovery
-        let orphaned = journal.read_orphaned();
+        stack.push(step.clone()).unwrap(); // crash before confirmation still needs recovery
+        let orphaned = journal.read_orphaned().unwrap();
         assert_eq!(orphaned.len(), 1);
         assert_eq!(orphaned[0].step, step);
-        let mut recovered = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
+        let mut recovered = RollbackStack::from_orphaned(orphaned, Some(journal.clone())).unwrap();
         let platform = StuckRoutes::stuck();
         let report = unwind(&mut recovered, None, &platform, &NoBackend, 0).await;
         assert_eq!(report.residual.len(), 1);
         assert_eq!(report.residual[0].0, StepKind::PolicyRouting);
         let mut recovered =
-            RollbackStack::from_orphaned(journal.read_orphaned(), Some(journal.clone()));
+            RollbackStack::from_orphaned(journal.read_orphaned().unwrap(), Some(journal.clone()))
+                .unwrap();
         platform.release();
         assert!(
             unwind(&mut recovered, None, &platform, &NoBackend, 0)
@@ -692,7 +727,7 @@ mod tests {
                 .residual
                 .is_empty()
         );
-        assert!(journal.read_orphaned().is_empty());
+        assert!(journal.read_orphaned().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -710,25 +745,37 @@ mod tests {
             routes: vec![net("0.0.0.0/1")],
             if_index: None,
         };
-        stack.push(endpoint.clone());
+        stack.push(endpoint.clone()).unwrap();
         stack.confirm_top(endpoint.clone());
-        stack.push(routes.clone());
+        stack.push(routes.clone()).unwrap();
         stack.confirm_top(routes.clone());
 
         let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
 
         assert!(
-            stack.is_empty(),
-            "an unrecoverable undo must not wedge the stack"
+            !stack.is_empty(),
+            "failed undo must remain retryable without blocking the caller"
         );
         assert_eq!(report.residual.len(), 1);
         assert_eq!(report.residual[0].0, StepKind::Routes);
 
         // The endpoint route was removed and is gone from the journal; the routes were not, and
         // the next start must find them.
-        let left = journal.read_orphaned();
+        let left = journal.read_orphaned().unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].step, routes);
+        let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
+        assert!(!report.is_clean());
+        assert_eq!(
+            journal.read_orphaned().unwrap(),
+            left,
+            "a second unwind preserves failures"
+        );
+        let platform = StuckRoutes::stuck();
+        platform.release();
+        let report = unwind(&mut stack, None, &platform, &NoBackend, 0).await;
+        assert!(report.is_clean());
+        assert!(journal.read_orphaned().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -736,11 +783,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let journal = Journal::new(Journal::default_path(dir.path()));
         let mut stack = RollbackStack::new(Some(journal.clone()));
-        stack.push(Step::Dns {
-            iface: iface(),
-            snapshot: DnsSnapshot::Resolvectl,
-            if_index: None,
-        });
+        stack
+            .push(Step::Dns {
+                iface: iface(),
+                snapshot: DnsSnapshot::Resolvectl,
+                if_index: None,
+            })
+            .unwrap();
         assert!(Journal::default_path(dir.path()).exists());
 
         let report = unwind(&mut stack, None, &StuckRoutes::stuck(), &NoBackend, 0).await;
@@ -763,16 +812,16 @@ mod tests {
             if_index: None,
         };
         let mut first = RollbackStack::new(Some(journal.clone()));
-        first.push(routes.clone());
+        first.push(routes.clone()).unwrap();
         first.confirm_top(routes.clone());
         let report = unwind(&mut first, None, &platform, &NoBackend, 0).await;
         assert_eq!(report.residual.len(), 1);
 
         // The next attempt: a non-durable push, then a durable one, then a clean unwind.
         let mut second = RollbackStack::new(Some(journal.clone()));
-        second.push(Step::PrepareLink { iface: iface() });
+        second.push(Step::PrepareLink { iface: iface() }).unwrap();
         assert_eq!(
-            journal.read_orphaned().len(),
+            journal.read_orphaned().unwrap().len(),
             1,
             "the first stack's residue survives the second stack's first write"
         );
@@ -781,21 +830,21 @@ mod tests {
             snapshot: DnsSnapshot::Resolvectl,
             if_index: None,
         };
-        second.push(dns.clone());
+        second.push(dns.clone()).unwrap();
         second.confirm_top(dns);
         assert_eq!(
-            journal.read_orphaned().len(),
+            journal.read_orphaned().unwrap().len(),
             2,
             "both stacks are in the file"
         );
         let report = unwind(&mut second, None, &platform, &NoBackend, 0).await;
         assert!(report.is_clean(), "the second stack had nothing stuck");
-        let left = journal.read_orphaned();
+        let left = journal.read_orphaned().unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].step, routes, "only the residue is left");
 
         // The next start: recovery picks it up and, with the helper back, finishes the job.
-        let mut recovered = RollbackStack::from_orphaned(left, Some(journal.clone()));
+        let mut recovered = RollbackStack::from_orphaned(left, Some(journal.clone())).unwrap();
         assert_eq!(recovered.len(), 1);
         platform.release();
         let report = unwind(&mut recovered, None, &platform, &NoBackend, 0).await;

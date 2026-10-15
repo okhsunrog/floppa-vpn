@@ -83,9 +83,13 @@ pub(super) async fn ladder(
     ctx.phase(AttemptPhase::Starting).await;
 
     let spec = TunSpec::derive(&ctx.config, &ctx.params);
-    stack.push(Step::AndroidService {
-        generation: ctx.generation,
-    });
+    stack
+        .push(Step::AndroidService {
+            generation: ctx.generation,
+        })
+        .map_err(|e| AttemptError::PlatformUnavailable {
+            detail: format!("cannot persist rollback journal: {e}"),
+        })?;
 
     ctx.host
         .start(spec, ctx.generation)
