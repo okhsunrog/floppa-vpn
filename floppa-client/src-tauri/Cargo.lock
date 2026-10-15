@@ -2009,8 +2009,8 @@ dependencies = [
 
 [[package]]
 name = "gotatun"
-version = "0.9.1"
-source = "git+https://github.com/okhsunrog/gotatun?tag=amnezia-v0.9.1#5cbb71b1f373c70af94cfc802ed82d9e5e5ca35f"
+version = "0.10.0"
+source = "git+https://github.com/okhsunrog/gotatun?tag=amnezia-v0.10.0#b4fcd9995bff018603c6b89fdf1e5a3ca80d931d"
 dependencies = [
  "aead",
  "aws-lc-rs",
@@ -2024,7 +2024,6 @@ dependencies = [
  "either",
  "eyre",
  "futures",
- "hex",
  "hmac",
  "ip_network",
  "ip_network_table",
@@ -2042,7 +2041,7 @@ dependencies = [
  "tracing",
  "tun",
  "typed-builder",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
  "wintun-bindings",
  "x25519-dalek",
  "zerocopy",
