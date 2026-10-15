@@ -5,7 +5,7 @@
 #   makepkg -p PKGBUILD-local -si
 
 pkgname=floppa-vpn-local
-pkgver=0.3.3
+pkgver=0.6.6
 pkgrel=1
 pkgdesc='Floppa VPN desktop client (AmneziaWG, WireGuard, VLESS+REALITY) built with Tauri (local build)'
 arch=('x86_64')
@@ -62,16 +62,16 @@ build() {
 
   cd "${_repodir}/floppa-client"
 
-  bun install --frozen-lockfile
-  bun tauri build --bundles deb --ci
+  vp install --frozen-lockfile
+  vpx tauri build --bundles deb --ci
 }
 
 package() {
   cd "${_repodir}/floppa-client/src-tauri/target/release/bundle/deb"
 
   local deb_dir
-  deb_dir=$(find . -maxdepth 1 -type d -name "Floppa VPN_*" | head -n 1)
-  if [[ -z "${deb_dir}" ]]; then
+  deb_dir="Floppa VPN_${pkgver}_amd64"
+  if [[ ! -d "${deb_dir}/data" ]]; then
     echo "Failed to find extracted deb bundle directory" >&2
     return 1
   fi
