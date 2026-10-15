@@ -38,13 +38,13 @@ async fn bring_up(
     mut config: ProtocolConfig,
     endpoint: SocketAddr,
     started: Started,
-) -> Result<(), String> {
+) -> Result<(), BackendError> {
     let tun_fd = match service.take_fd() {
         Ok(fd) => fd,
         Err(why) => {
             let e = why.to_string();
             service.set_error(e.clone());
-            return Err(e);
+            return Err(BackendError::ServiceRefused { detail: e });
         }
     };
 
@@ -54,7 +54,9 @@ async fn bring_up(
         endpoint
             .to_string()
             .parse::<floppa_tunnel_config::Endpoint>()
-            .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
+            .map_err(|e| BackendError::InvalidConfig {
+                detail: format!("endpoint `{endpoint}`: {e}"),
+            })
     };
     match &mut config {
         ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
@@ -71,7 +73,11 @@ async fn bring_up(
                     config,
                     tun_fd,
                     endpoint,
-                    service.underlay().ok_or("service underlay is missing")?,
+                    service
+                        .underlay()
+                        .ok_or_else(|| BackendError::ServiceRefused {
+                            detail: "service underlay is missing".into(),
+                        })?,
                 )
                 .await
         }
@@ -92,7 +98,7 @@ async fn bring_up(
         }
     };
 
-    match result.map_err(|e| e.to_string()) {
+    match result {
         Ok(()) => {
             info!(protocol = %config.protocol(), "tunnel started");
             service.set_started(started);
@@ -103,7 +109,7 @@ async fn bring_up(
             // Recorded as well as returned: the caller may already have given up, and the next
             // observation should still say why rather than looking like an idle service.
             error!("failed to start the tunnel: {e}");
-            service.set_error(e.clone());
+            service.set_error(e.to_string());
             Err(e)
         }
     }
@@ -162,7 +168,6 @@ impl VpnBackend for AndroidServiceBackend {
             },
         )
         .await
-        .map_err(|detail| BackendError::ServiceRefused { detail })
     }
 
     /// Stop the tunnel — and *only* the tunnel.

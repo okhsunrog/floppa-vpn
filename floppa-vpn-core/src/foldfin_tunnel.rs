@@ -26,6 +26,18 @@ fn error(error: impl std::fmt::Display) -> BackendError {
     }
 }
 
+fn connection_error(cause: foldfin::error::Error) -> BackendError {
+    let detail = format!("Foldfin: {cause}");
+    if cause.permits_transport_fallback() {
+        BackendError::EndpointUnavailable { detail }
+    } else {
+        BackendError::ConnectionRejected { detail }
+    }
+}
+fn timeout_error(_: tokio::time::error::Elapsed) -> BackendError {
+    connection_error(foldfin::error::Error::Timeout("connection attempt"))
+}
+
 fn socket_error(cause: std::io::Error) -> BackendError {
     if cause.kind() == std::io::ErrorKind::PermissionDenied {
         BackendError::PermissionDenied {
@@ -98,14 +110,14 @@ impl FoldfinTunnel {
                     {
                         session.underlay_changed().await;
                     }
-                    Err(cause) => return Err(error(cause)),
+                    Err(cause) => return Err(connection_error(cause)),
                 }
             }
             let client = Self::dial(config, endpoint, underlay.clone()).await?;
-            session.recover(client).await.map_err(error)
+            session.recover(client).await.map_err(connection_error)
         })
         .await
-        .map_err(error)?
+        .map_err(timeout_error)?
     }
 
     async fn dial(
@@ -122,11 +134,11 @@ impl FoldfinTunnel {
         underlay.prepare_tcp(&socket).map_err(socket_error)?;
         let tcp = tokio::time::timeout(foldfin::DEADLINE, socket.connect(endpoint))
             .await
-            .map_err(error)?
-            .map_err(error)?;
-        let client = Client::connect_over(config.client_config().map_err(error)?, tcp)
+            .map_err(timeout_error)?
+            .map_err(|e| connection_error(e.into()))?;
+        let client = Client::connect_over(config.client_config().map_err(connection_error)?, tcp)
             .await
-            .map_err(error)?;
+            .map_err(connection_error)?;
         Ok(client)
     }
 
@@ -181,12 +193,51 @@ impl FoldfinTunnel {
             }
         })
         .await
-        .map_err(error)??;
-        self.session.probe_carrier().await.map_err(error)?;
+        .map_err(timeout_error)??;
+        self.session
+            .probe_carrier()
+            .await
+            .map_err(connection_error)?;
         *self.last_probe.lock().unwrap() = Some(Instant::now());
         Ok(())
     }
     pub(crate) async fn stop(mut self) -> Result<(), BackendError> {
         self.session.stop().await.map_err(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn identity_authorization_and_protocol_failures_are_terminal() {
+        use foldfin::error::Error;
+        for cause in [
+            Error::Rejected(401),
+            Error::Rejected(403),
+            Error::Rejected(409),
+            Error::InvalidConfig("invalid identity".into()),
+            Error::Unsupported("invalid capsule negotiation"),
+        ] {
+            let failure = crate::actor::types::AttemptError::Backend {
+                error: connection_error(cause),
+            };
+            assert!(failure.is_fatal_for_cycle());
+            assert!(!failure.permits_endpoint_retry());
+        }
+        for cause in [
+            Error::Timeout("handshake"),
+            Error::Io(std::io::ErrorKind::ConnectionRefused.into()),
+            Error::PathMtu {
+                required: 1280,
+                available: 1200,
+            },
+        ] {
+            let failure = crate::actor::types::AttemptError::Backend {
+                error: connection_error(cause),
+            };
+            assert!(!failure.is_fatal_for_cycle());
+            assert!(failure.permits_endpoint_retry());
+        }
     }
 }

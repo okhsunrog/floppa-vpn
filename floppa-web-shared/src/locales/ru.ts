@@ -783,6 +783,8 @@ export default {
         permissionDenied: 'система отклонила привилегированную операцию ({detail})',
         invalidConfig: 'из конфига не удалось собрать туннель ({detail})',
         engine: '{detail}',
+        endpointUnavailable: 'адрес сервера недоступен ({detail})',
+        connectionRejected: 'соединение отклонено ({detail})',
         notRunning: 'ничего не запущено',
         serviceUnreachable: 'сервис VPN недоступен ({detail})',
         serviceRefused: 'сервис VPN отказал ({detail})',

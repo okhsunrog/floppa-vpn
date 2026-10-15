@@ -49,6 +49,7 @@ struct FakeBackend {
     /// Refuse every start, as a peer that was deleted server-side would look from here.
     refuse_starts: AtomicBool,
     first_address_silent: AtomicBool,
+    first_start_error: std::sync::Mutex<Option<BackendError>>,
     /// What the owner would say about how long the far side has been quiet. `None` until a test
     /// makes the tunnel go silent, which reads as "nothing to report" rather than "silent".
     silent_secs: std::sync::Mutex<Option<i64>>,
@@ -101,6 +102,9 @@ impl VpnBackend for FakeBackend {
         endpoint: SocketAddr,
     ) -> Result<(), BackendError> {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.first_start_error.lock().unwrap().take() {
+            return Err(error);
+        }
         if self.refuse_starts.load(Ordering::SeqCst) {
             return Err(BackendError::Engine {
                 detail: "start refused".into(),
@@ -205,6 +209,9 @@ impl FakePlatform {
 
 #[async_trait]
 impl Platform for FakePlatform {
+    async fn configure_mtu(&self, _: &InterfaceName, _: u16) -> Result<(), PlatformError> {
+        Ok(())
+    }
     fn has_shared_recovery(&self) -> bool {
         self.shared_recovery.load(Ordering::SeqCst)
     }
@@ -1378,4 +1385,154 @@ async fn restored_intent_survives_startup_network_recovery() {
     assert_eq!(h.states.borrow().protocol, Some(Protocol::WireGuard));
     h.set(IntentRequest::Down).await;
     h.wait_for_phase(Phase::Disconnected).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn classified_candidate_failures_retry_only_network_errors_after_rollback() {
+    for (error, retry) in [
+        (
+            BackendError::EndpointUnavailable {
+                detail: "connection refused".into(),
+            },
+            true,
+        ),
+        (
+            BackendError::ConnectionRejected {
+                detail: "untrusted certificate".into(),
+            },
+            false,
+        ),
+        (
+            BackendError::ConnectionRejected {
+                detail: "HTTP 401".into(),
+            },
+            false,
+        ),
+        (
+            BackendError::PermissionDenied {
+                detail: "SO_MARK denied".into(),
+            },
+            false,
+        ),
+    ] {
+        let backend = Arc::new(FakeBackend::default());
+        *backend.first_start_error.lock().unwrap() = Some(error.clone());
+        let platform = Arc::new(FakePlatform::new());
+        let (tx, _rx) = mpsc::channel(64);
+        let mut ctx = super::attempt::AttemptCtx {
+            epoch: IntentEpoch(1),
+            index: 0,
+            protocol: Protocol::WireGuard,
+            config: ProtocolConfig::WireGuard(WgConfig::from_config_str(WG_CONFIG).unwrap()),
+            iface: Default::default(),
+            manage_dns: true,
+            params: TunnelParams::default(),
+            backend: backend.clone(),
+            platform: platform.clone(),
+            journal: None,
+            policy: policy(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            tx,
+        };
+        let candidates = watch::channel(vec![
+            "127.0.0.1".parse().unwrap(),
+            "127.0.0.2".parse().unwrap(),
+        ])
+        .1;
+        let mut stack = crate::rollback::RollbackStack::new(None);
+        let result = super::attempt::connect_candidates(
+            &mut ctx,
+            &mut stack,
+            floppa_net::Resolver::new(None),
+            candidates,
+        )
+        .await;
+        if retry {
+            result.unwrap();
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 2);
+            assert_eq!(backend.stops(), 1, "rollback precedes next candidate");
+            assert_eq!(backend.running().unwrap().endpoint, "127.0.0.2:51820");
+        } else {
+            let failure = result.unwrap_err();
+            assert_eq!(failure, AttemptError::Backend { error });
+            assert!(failure.is_fatal_for_cycle());
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 1);
+        }
+        let report =
+            crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1).await;
+        assert!(report.is_clean());
+        assert!(backend.running().is_none());
+    }
+}
+
+#[tokio::test]
+async fn foldfin_uses_provisioned_endpoints_without_mutating_stored_order() {
+    for rejected in [false, true] {
+        let config = ProtocolConfig::parse(
+            &serde_json::json!({
+                "protocol": "foldfin", "config": {
+                    "version": 2, "endpoints": ["127.0.0.1:8443", "127.0.0.2:9443"],
+                    "server_name": "vpn.example", "token": "0123456789abcdef0123456789abcdef",
+                    "transport": "h2_only", "network": {
+                        "revision": 1, "addresses": ["192.0.2.2/32"], "peers": ["192.0.2.1"],
+                        "routes": ["192.0.2.1/32"], "dns": [], "mtu": 1280
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let original = serde_json::to_string(&config).unwrap();
+        let backend = Arc::new(FakeBackend::default());
+        backend.answers_probes(true);
+        *backend.first_start_error.lock().unwrap() = Some(if rejected {
+            BackendError::ConnectionRejected {
+                detail: "HTTP 401".into(),
+            }
+        } else {
+            BackendError::EndpointUnavailable {
+                detail: "connection refused".into(),
+            }
+        });
+        let platform = Arc::new(FakePlatform::new());
+        let (tx, _rx) = mpsc::channel(64);
+        let mut ctx = super::attempt::AttemptCtx {
+            epoch: IntentEpoch(1),
+            index: 0,
+            protocol: Protocol::Foldfin,
+            config: config.clone(),
+            iface: Default::default(),
+            manage_dns: true,
+            params: TunnelParams::default(),
+            backend: backend.clone(),
+            platform: platform.clone(),
+            journal: None,
+            policy: policy(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            tx,
+        };
+        let mut stack = crate::rollback::RollbackStack::new(None);
+        let result = super::attempt::ladder(&mut ctx, &mut stack).await;
+        if rejected {
+            assert!(result.unwrap_err().is_fatal_for_cycle());
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 1);
+        } else {
+            assert_eq!(result.unwrap().server_endpoint, "127.0.0.2:9443");
+            assert_eq!(backend.running().unwrap().endpoint, "127.0.0.2:9443");
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 2);
+            assert_eq!(backend.stops(), 1);
+            let ProtocolConfig::Foldfin(selected) = &ctx.config else {
+                unreachable!()
+            };
+            let client = selected.client_config().unwrap();
+            assert_eq!(client.authority, "127.0.0.2:9443");
+            assert_eq!(client.server_name, "vpn.example");
+        }
+        assert_eq!(serde_json::to_string(&config).unwrap(), original);
+        assert!(
+            crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1)
+                .await
+                .is_clean()
+        );
+    }
 }

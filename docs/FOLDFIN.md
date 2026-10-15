@@ -60,8 +60,10 @@ capability failure within a shared 15-second deadline. Certificate, authorizatio
 and malformed-protocol failures never trigger transport fallback. `h2_only` and
 `h3_only` force their respective transport. Both use the same persistent packet
 session; network changes replace its carrier while retaining the device.
-The first resolved endpoint is still reused; underlay DNS resolution and endpoint
-candidate selection remain pending. Socket preparation is session-scoped already:
+Initial connection walks the configured endpoints and their resolved address
+candidates through Floppa's shared resolver and rollback ladder. Carrier-only
+recovery still reuses the last dial address; scoped underlay DNS for that path
+remains pending. Socket preparation is session-scoped already:
 `TunnelManager::start_foldfin_packets_on` takes an `Arc<dyn Underlay>` retained
 across recovery. Linux's native policy applies SO_MARK; Android captures the exact
 Java VpnService instance when its TUN descriptor arrives. Retired generations
@@ -234,12 +236,21 @@ failure still rebuild the tunnel. Foldfin's retained packet session is currently
 used only through TunnelManager's explicit network change path. Actor-owned carrier recovery must preserve the current rollback stack
 and TUN while respecting settings changes, cancellation and retry limits.
 
-Main's candidate resolver handles the first configured endpoint at initial start;
-Foldfin carrier recovery still uses its saved address. Foldfin connect failures
-currently arrive as BackendError::Engine and do not participate in the generic
-VerifyFailed-only address retry loop. Typed candidate failure handling, all
-provisioned endpoints and service/network-scoped resolution remain required.
-Do not weaken TLS/authentication failure handling to enable candidate retries.
+Initial attempts now walk every provisioned endpoint through main's candidate
+resolver. A selected endpoint supplies the HTTP authority and port while retaining
+the provisioned TLS name/CA. Selection is attempt-local and never rewrites stored
+configuration. Existing attempt deadlines and cancellation bound the whole walk.
+
+Foldfin maps classified network/capability failures to EndpointUnavailable, allowing
+the next address only after successful rollback. ConnectionRejected covers TLS,
+authorization, policy and protocol rejection: it stops both endpoint fallback and
+the actor's protocol/retry cycle. Socket permission failures remain fatal as well.
+Android preserves these typed backend errors instead of flattening them into a
+service-error string. Unclassified local engine errors do not permit address
+fallback. UI bindings and both locales expose the new failure categories.
+
+Carrier-only recovery still uses its saved address. Service/network-scoped
+resolution and retained-TUN actor recovery remain required.
 
 Device/WAN acceptance is deferred. Local compilation and regressions validate the
 rebase; they do not establish Android roaming or production deployment readiness.
@@ -250,3 +261,14 @@ JavaScript tests and `vp check` pass after syncing main's dependencies. Desktop 
 arm64 all-target compilation pass. Logs are under
 `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-rebase/`. Vendored h3 emits existing
 compiler warnings; no vendor changes were made in this rebase.
+
+Candidate regression coverage includes rollback before a second address, stopping
+on certificate/authorization/permission failure, selection across endpoint ports
+without changing TLS identity or stored order, actual H2 connection refusal, and
+H2/H3 authorization rejection. These are local checks without host route changes.
+
+Candidate increment validation: 278 core unit tests, 12 Foldfin integration tests,
+91 client JavaScript tests, host all-target checks/Clippy, Android application
+all-target Clippy, and frontend format/lint/type checks pass. TypeScript bindings
+were regenerated with the application's export example. Logs:
+`/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-candidates/`.

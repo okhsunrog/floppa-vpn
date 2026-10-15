@@ -141,6 +141,15 @@ impl FoldfinVpnConfig {
             .expect("strings serialize")
     }
 
+    /// Attempt-local selection; the persisted provisioning order remains unchanged.
+    pub(crate) fn endpoint_candidates(&self) -> impl Iterator<Item = Self> + '_ {
+        (0..self.0.endpoints.len()).map(|index| {
+            let mut candidate = self.clone();
+            candidate.0.endpoints.swap(0, index);
+            candidate
+        })
+    }
+
     pub fn endpoint(&self) -> &str {
         &self.0.endpoints[0]
     }

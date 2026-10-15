@@ -265,6 +265,10 @@ export type BackendError =
 { kind: "invalid_config"; detail: string } |
 /**  The tunnel engine or its device failed to start or stop. */
 { kind: "engine"; detail: string } |
+/**  A classified network/capability failure; another resolved address may work. */
+{ kind: "endpoint_unavailable"; detail: string } |
+/**  TLS identity, authorization, policy or protocol validation failed. No fallback. */
+{ kind: "connection_rejected"; detail: string } |
 /**  Nothing is running to be pinged. */
 { kind: "not_running" } |
 /**

@@ -781,6 +781,8 @@ export default {
         permissionDenied: 'the system refused a privileged operation ({detail})',
         invalidConfig: 'the config could not be turned into a tunnel ({detail})',
         engine: '{detail}',
+        endpointUnavailable: 'server address is unreachable ({detail})',
+        connectionRejected: 'connection was rejected ({detail})',
         notRunning: 'nothing is running',
         serviceUnreachable: 'the VPN service could not be reached ({detail})',
         serviceRefused: 'the VPN service refused ({detail})',

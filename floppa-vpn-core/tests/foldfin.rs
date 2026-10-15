@@ -548,6 +548,10 @@ async fn auto_does_not_try_h2_after_h3_certificate_failure() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("TLS"), "{error}");
+    assert!(matches!(
+        error,
+        floppa_vpn_core::backend::BackendError::ConnectionRejected { .. }
+    ));
     assert!(
         timeout(Duration::from_millis(100), tcp.accept())
             .await
@@ -661,4 +665,97 @@ fn provisioned_exclusions_compose_with_shared_user_exclusions() {
     assert!(!carries("10.2.3.4"));
     assert!(!carries("172.18.1.1"));
     assert!(carries("192.0.2.1"));
+}
+
+#[tokio::test]
+async fn refused_tcp_connection_is_an_endpoint_failure() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = listener.local_addr().unwrap();
+    drop(listener);
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&document(&endpoint.to_string(), "")).unwrap();
+    raw["config"]["transport"] = serde_json::json!("h2_only");
+    let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap() else {
+        unreachable!()
+    };
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (device, _input, _output) = packets(dropped.clone());
+    let manager = TunnelManager::default();
+    let error = manager
+        .start_foldfin_packets_on(&config, endpoint, device, Arc::new(LoopbackUnderlay))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            floppa_vpn_core::backend::BackendError::EndpointUnavailable { .. }
+        ),
+        "{error}"
+    );
+    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    assert!(manager.meta().await.is_none());
+}
+
+#[tokio::test]
+async fn authorization_failure_is_terminal_on_both_carriers() {
+    for transport in ["h2_only", "auto"] {
+        let (server_tls, ca) = tls();
+        // No grants: the TLS identity is trusted, but authorization must fail.
+        let server = Arc::new(DeviceRegistry::default())
+            .server(server_tls)
+            .unwrap();
+        let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = tcp.local_addr().unwrap();
+        let udp = std::net::UdpSocket::bind(endpoint).unwrap();
+        let (stop, stopped) = oneshot::channel();
+        let h3 = transport == "auto";
+        let server_task = tokio::spawn(async move {
+            if h3 {
+                let result = server
+                    .serve_h3(udp, async {
+                        let _ = stopped.await;
+                    })
+                    .await;
+                // Keep the TCP port bound but unaccepted for the entire H3 attempt.
+                drop(tcp);
+                result
+            } else {
+                server
+                    .serve(tcp, async {
+                        let _ = stopped.await;
+                    })
+                    .await
+            }
+        });
+        let mut raw: serde_json::Value =
+            serde_json::from_str(&document(&endpoint.to_string(), &ca)).unwrap();
+        raw["config"]["transport"] = serde_json::json!(transport);
+        let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap()
+        else {
+            unreachable!()
+        };
+        let dropped = Arc::new(AtomicUsize::new(0));
+        let (device, _input, _output) = packets(dropped.clone());
+        let manager = TunnelManager::default();
+        let failure = timeout(
+            Duration::from_secs(5),
+            manager.start_foldfin_packets_on(&config, endpoint, device, Arc::new(LoopbackUnderlay)),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(
+            matches!(
+                failure,
+                floppa_vpn_core::backend::BackendError::ConnectionRejected { .. }
+            ),
+            "{failure}"
+        );
+        let failure = floppa_vpn_core::actor::types::AttemptError::Backend { error: failure };
+        assert!(failure.is_fatal_for_cycle());
+        assert!(!failure.permits_endpoint_retry());
+        assert_eq!(dropped.load(Ordering::SeqCst), 2);
+        stop.send(()).unwrap();
+        server_task.await.unwrap().unwrap();
+    }
 }
