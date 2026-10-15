@@ -1,13 +1,12 @@
 #!/bin/sh
 set -eu
 
-BIN_PATH="/usr/bin/floppa-client"
-
-# CAP_NET_ADMIN on the app, so the in-process path works without a prompt for everything.
-if command -v setcap >/dev/null 2>&1 && [ -x "$BIN_PATH" ]; then
-  setcap cap_net_admin+ep "$BIN_PATH" || \
-    echo "floppa-vpn: failed to set CAP_NET_ADMIN on $BIN_PATH" >&2
-fi
+for bin in /usr/bin/floppa-client /usr/bin/floppa; do
+  setcap cap_net_admin+ep "$bin" || {
+    echo "floppa-vpn: cannot set CAP_NET_ADMIN on $bin; standalone mode requires it" >&2
+    exit 1
+  }
+done
 
 # The tunnel service. Each step is guarded: a container or a chroot may have none of this, and an
 # install must not fail because a system has no systemd to tell.

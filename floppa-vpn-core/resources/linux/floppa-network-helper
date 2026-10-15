@@ -8,6 +8,10 @@
 
 set -euo pipefail
 
+# Reserved for the single Floppa tunnel owner. Keep in sync with socket_mark::FWMARK.
+FWMARK=0x666c6f70
+ROUTE_TABLE=1718382448
+
 ALLOWED_IFACE='^floppa[0-9]+$'
 # IPv4: digits and dots with optional /prefix
 # IPv6: hex digits, colons with optional /prefix
@@ -44,6 +48,25 @@ validate_link_target() {
 }
 
 case "${1:-}" in
+    check-policy)
+        [[ $# -eq 1 ]] || exit 1
+        # Called after journal recovery and before recording any new mutations. Refuse a
+        # collision rather than later deleting rules/table that belong to another owner.
+        tables=$(nft list tables)
+        if grep -qx 'table inet floppa_policy' <<< "$tables"; then
+            echo 'Reserved nftables table floppa_policy is already in use; recover the previous tunnel first' >&2
+            exit 1
+        fi
+        for family in 4 6; do
+            rules=$(ip -"$family" rule show)
+            routes=$(ip -"$family" route show table all)
+            if grep -Eq '^310(00|10):' <<< "$rules" ||
+                grep -Eq " table $ROUTE_TABLE( |$)" <<< "$routes"; then
+                echo "Reserved Floppa IPv$family routing rules/table are already in use" >&2
+                exit 1
+            fi
+        done
+        ;;
     prepare-ownership)
         [[ $# -eq 1 ]] || exit 1
         # /run is root-owned. Never replace an existing lock inode, including during upgrades.
@@ -159,7 +182,8 @@ case "${1:-}" in
         shift 2
         for dest in "$@"; do
             validate_ip "$dest"
-            ip route add "$dest" dev "$iface"
+            family=4; [[ "$dest" != *:* ]] || family=6
+            ip -"$family" route add "$dest" dev "$iface" table "$ROUTE_TABLE"
         done
         ;;
 
@@ -171,8 +195,45 @@ case "${1:-}" in
         shift 2
         for dest in "$@"; do
             validate_ip "$dest"
-            ip route del "$dest" dev "$iface" 2>/dev/null || true
+            family=4; [[ "$dest" != *:* ]] || family=6
+            ip -"$family" route del "$dest" dev "$iface" table "$ROUTE_TABLE" 2>/dev/null || true
         done
+        ;;
+
+    add-policy)
+        [[ $# -eq 3 && "$2" =~ ^[01]$ && "$3" =~ ^[01]$ ]] || exit 1
+        # Conntrack restores the outbound socket mark on replies, so strict reverse-path
+        # validation looks up the physical route rather than the VPN table.
+        nft -f - <<'NFT'
+add table inet floppa_policy
+add chain inet floppa_policy prerouting { type filter hook prerouting priority mangle; policy accept; }
+add rule inet floppa_policy prerouting ct mark 0x666c6f70 meta mark set ct mark
+add chain inet floppa_policy postrouting { type filter hook postrouting priority mangle; policy accept; }
+add rule inet floppa_policy postrouting meta mark 0x666c6f70 ct mark set meta mark
+NFT
+        [[ "$2" == 0 ]] || sysctl -q -w net.ipv4.conf.all.src_valid_mark=1
+        for family in 4 6; do
+            [[ "$family" != 4 || "$2" == 1 ]] || continue
+            [[ "$family" != 6 || "$3" == 1 ]] || continue
+            # More-specific system routes (LAN, corporate VPN) retain precedence.
+            ip -"$family" rule add priority 31000 not fwmark "$FWMARK" lookup main suppress_prefixlength 0
+            ip -"$family" rule add priority 31010 not fwmark "$FWMARK" lookup "$ROUTE_TABLE"
+        done
+        ;;
+
+    del-policy)
+        [[ $# -eq 4 && "$2" =~ ^[01]$ && "$3" =~ ^[01]$ && "$4" =~ ^(-|0|1)$ ]] || exit 1
+        for family in 4 6; do
+            [[ "$family" != 4 || "$2" == 1 ]] || continue
+            [[ "$family" != 6 || "$3" == 1 ]] || continue
+            # Delete only our rules, including when apply failed halfway through.
+            ip -"$family" rule del priority 31010 not fwmark "$FWMARK" lookup "$ROUTE_TABLE" 2>/dev/null || true
+            ip -"$family" rule del priority 31000 not fwmark "$FWMARK" lookup main suppress_prefixlength 0 2>/dev/null || true
+        done
+        if nft list table inet floppa_policy >/dev/null 2>&1; then
+            nft delete table inet floppa_policy
+        fi
+        [[ "$4" == - ]] || sysctl -q -w "net.ipv4.conf.all.src_valid_mark=$4"
         ;;
 
     set-dns)
@@ -223,7 +284,7 @@ case "${1:-}" in
 
     *)
         echo "Unknown command: ${1:-}" >&2
-        echo "Commands: ensure-tun, configure, flush-addr, deconfigure, add-route, del-route, add-routes, del-routes, set-dns, revert-dns, set-resolv-conf, restore-resolv-conf-link" >&2
+        echo "Commands: check-policy, prepare-ownership, ensure-tun, configure, flush-addr, deconfigure, add-route, del-route, add-routes, del-routes, add-policy, del-policy, set-dns, revert-dns, set-resolv-conf, restore-resolv-conf-link" >&2
         exit 1
         ;;
 esac

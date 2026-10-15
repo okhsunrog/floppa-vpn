@@ -162,7 +162,7 @@ On Linux there is a second, preferred arrangement: **`floppa service`**, a root 
 holds the actor in a process outliving every client, so the tunnel survives closing the app. Clients
 reach it over `/run/floppa-vpn/vpn.sock`, gated by the `floppa` group, and choose between the two
 modes by probing that socket once at startup. The single-process mode above stays exactly as it is —
-it is what a tarball, an AppImage, Windows and macOS use. See
+it is what a native package or a local build, Windows and macOS use. See
 [`docs/DESKTOP-TUNNEL-SERVICE.md`](docs/DESKTOP-TUNNEL-SERVICE.md).
 
 ### Android

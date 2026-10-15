@@ -95,7 +95,7 @@ function platformFileKey(): string | null {
     case 'android':
       return 'android'
     case 'linux':
-      return 'linux_appimage'
+      return null // Linux users choose the package for their distribution on the release page.
     case 'windows':
       return 'windows_exe'
     default:
@@ -177,7 +177,9 @@ export const useUpdateStore = defineStore('update', () => {
       updateInfo.value = {
         version: remoteVersion,
         currentVersion,
-        downloadUrl: file ? `${DOWNLOADS_BASE}/${file}` : DOWNLOADS_BASE,
+        downloadUrl: file
+          ? `${DOWNLOADS_BASE}/${file}`
+          : `https://github.com/okhsunrog/floppa-vpn/releases/tag/${encodeURIComponent(latest.tag)}`,
       }
 
       // Pre-fetch changelog for the available update

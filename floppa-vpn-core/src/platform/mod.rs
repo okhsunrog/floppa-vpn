@@ -99,7 +99,7 @@ pub enum DnsSnapshot {
 /// Platform-specific parameters for TUN device creation.
 ///
 /// Each platform provides these via [`Platform::tun_params()`], centralizing
-/// OS-specific decisions (fwmark, wintun path, device management) so callers
+/// OS-specific decisions (wintun path, device management) so callers
 /// don't need scattered `#[cfg]` blocks.
 #[derive(Debug, Clone, Default)]
 pub struct TunParams {
@@ -109,14 +109,16 @@ pub struct TunParams {
     /// - Windows: `true` — Wintun creates the adapter in-process
     pub manage_device: bool,
 
-    /// Firewall mark for policy routing (Linux only).
-    ///
-    /// Marks WireGuard UDP packets so they bypass the VPN routing table,
-    /// preventing routing loops. `None` if CAP_NET_ADMIN is unavailable.
-    pub fwmark: Option<u32>,
-
     /// Path to `wintun.dll` (Windows only).
     pub wintun_file: Option<PathBuf>,
+}
+
+/// Linux policy state captured before mutation, also stored in the rollback journal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyRoutingSnapshot {
+    pub ipv4: bool,
+    pub ipv6: bool,
+    pub src_valid_mark: Option<u8>,
 }
 
 /// Platform-specific VPN operations.
@@ -128,6 +130,29 @@ pub struct TunParams {
 /// express.
 #[async_trait]
 pub trait Platform: Send + Sync {
+    fn uses_policy_routing(&self) -> bool {
+        false
+    }
+
+    async fn capture_policy_routing(
+        &self,
+        _routes: &[IpNetwork],
+    ) -> Result<Option<PolicyRoutingSnapshot>, PlatformError> {
+        Ok(None)
+    }
+    async fn apply_policy_routing(
+        &self,
+        _snapshot: &PolicyRoutingSnapshot,
+    ) -> Result<(), PlatformError> {
+        Ok(())
+    }
+    async fn restore_policy_routing(
+        &self,
+        _snapshot: &PolicyRoutingSnapshot,
+    ) -> Result<(), PlatformError> {
+        Ok(())
+    }
+
     /// Return platform-specific TUN creation parameters.
     fn tun_params(&self) -> TunParams;
 

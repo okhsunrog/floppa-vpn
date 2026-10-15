@@ -1,9 +1,11 @@
-_bin_path='/usr/bin/floppa-client'
-
 _setcap_floppa() {
-  if command -v setcap >/dev/null 2>&1 && [ -x "${_bin_path}" ]; then
-    setcap cap_net_admin+ep "${_bin_path}" || true
-  fi
+  local bin
+  for bin in /usr/bin/floppa-client /usr/bin/floppa; do
+    if ! setcap cap_net_admin+ep "$bin"; then
+      echo "floppa-vpn: cannot set CAP_NET_ADMIN on $bin; standalone mode requires it" >&2
+      return 1
+    fi
+  done
 }
 
 # The `floppa` group, created empty. Being in it means being able to change this machine's default
@@ -25,7 +27,7 @@ _service_files() {
 }
 
 post_install() {
-  _setcap_floppa
+  _setcap_floppa || return 1
   _service_files
   cat <<'EOF'
 ==> The tunnel service is installed but not enabled. To let it hold the VPN
@@ -39,7 +41,7 @@ EOF
 }
 
 post_upgrade() {
-  _setcap_floppa
+  _setcap_floppa || return 1
   _service_files
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
@@ -54,9 +56,10 @@ post_upgrade() {
 }
 
 post_remove() {
-  if command -v setcap >/dev/null 2>&1 && [ -e "${_bin_path}" ]; then
-    setcap -r "${_bin_path}" || true
-  fi
+  local bin
+  for bin in /usr/bin/floppa-client /usr/bin/floppa; do
+    [ ! -e "$bin" ] || setcap -r "$bin" || true
+  done
   # Both, and in this order: stopping only the service leaves the socket to start it again.
   # The group is left alone — removing it would strip a membership somebody granted on purpose.
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then

@@ -62,6 +62,8 @@ pub mod rpc_server;
 #[cfg(unix)]
 pub mod service_state;
 pub mod settings;
+#[cfg(target_os = "linux")]
+mod socket_mark;
 pub mod state;
 pub mod store;
 pub mod tunnel;

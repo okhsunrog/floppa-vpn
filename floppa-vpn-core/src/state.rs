@@ -287,6 +287,10 @@ impl VlessVpnConfig {
         let address = self.address.split('/').next().map(|s| s.to_string());
 
         VlessConfig {
+            #[cfg(target_os = "linux")]
+            fwmark: Some(crate::socket_mark::FWMARK),
+            #[cfg(not(target_os = "linux"))]
+            fwmark: None,
             uuid: self.uuid.clone(),
             server_addr: self.server_addr.clone(),
             server_name: self.server_name.clone(),

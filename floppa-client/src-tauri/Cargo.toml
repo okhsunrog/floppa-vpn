@@ -49,7 +49,7 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-android-fs = "29"
 # VLESS+REALITY protocol support
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "4cf98c6022427b2e6aaf2605e296a7c89437e546", version = "0.1.0" }
 floppa-api-client = { version = "0.1.0", path = "../../floppa-api-client" }
 floppa-vpn-core = { version = "0.1.0", path = "../../floppa-vpn-core" }
 # The bridge an MCP server drives this app through, so an agent can read the DOM and click

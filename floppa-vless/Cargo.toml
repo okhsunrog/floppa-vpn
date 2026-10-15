@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
+shoes-lite.workspace = true
 # Uncomment for local development, comment out before commit/push:
 # shoes-lite = { path = "../../rust/shoes-lite" }
 

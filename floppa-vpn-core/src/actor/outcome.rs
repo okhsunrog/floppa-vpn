@@ -67,6 +67,9 @@ impl AttemptError {
             Self::PermissionDenied
                 | Self::ConsentUnavailable
                 | Self::PlatformUnavailable { .. }
+                | Self::Backend {
+                    error: BackendError::PermissionDenied { .. }
+                }
                 | Self::Cancelled
                 | Self::Crashed { .. }
         )
@@ -170,6 +173,13 @@ mod tests {
 
     #[test]
     fn consent_and_helper_failures_stop_the_cycle_but_a_bad_peer_does_not() {
+        let socket_denied = AttemptError::Backend {
+            error: BackendError::PermissionDenied {
+                detail: "SO_MARK requires CAP_NET_ADMIN".into(),
+            },
+        };
+        assert!(socket_denied.is_fatal_for_cycle());
+        assert!(socket_denied.to_string().contains("CAP_NET_ADMIN"));
         assert!(AttemptError::PermissionDenied.is_fatal_for_cycle());
         assert!(AttemptError::ConsentUnavailable.is_fatal_for_cycle());
         assert!(

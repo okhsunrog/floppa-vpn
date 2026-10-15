@@ -4,7 +4,7 @@
 //! does anything: the **system service**, an **unprivileged actor in this process** that raises
 //! polkit for each change it makes, or an actor in this process that is **already root**. The
 //! first is the one to prefer where it exists; the other two are what every other platform has,
-//! and what a tarball or an AppImage has on Linux.
+//! and what a native package or a local build has on Linux.
 //!
 //! # Decided once
 //!

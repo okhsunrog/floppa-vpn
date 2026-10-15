@@ -4,7 +4,7 @@
   // Which binary is the app. Without it Tauri bundles whichever `target/release` binary it finds
   // first, and `src/bin/export_bindings.rs` — a build-time tool that writes bindings.ts — sorts
   // ahead of `floppa-client` alphabetically. Every Linux package from 0.6.0 shipped that tool
-  // instead of the app: the deb, the AppImage and the Arch package each contained a single
+  // instead of the app: the Linux packages each contained a single
   // `usr/bin/export_bindings` and no client at all.
   mainBinaryName: "floppa-client",
   version: "0.6.6",
@@ -107,14 +107,11 @@
     targets: "all",
 
     linux: {
-      appimage: {
-        bundleMediaFramework: false,
-      },
       deb: {
         // libayatana-appindicator3-1: the tray icon. Missing it is survivable — the app logs and
         // runs without one — but then closing the window quits, which is the behaviour the tray
         // exists to replace.
-        depends: ["libcap2-bin", "libayatana-appindicator3-1"],
+        depends: ["libcap2-bin", "libayatana-appindicator3-1", "iproute2", "nftables", "procps"],
         // A second desktop entry, named after the GTK app id rather than the product.
         //
         // The bundler writes "Floppa VPN.desktop", which is what belongs in an application menu,
@@ -145,7 +142,16 @@
         postRemoveScript: "./scripts/linux-postremove.sh",
       },
       rpm: {
-        depends: ["libcap"],
+        depends: ["libcap", "iproute", "nftables", "procps-ng"],
+        files: {
+          "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
+          "/usr/bin/floppa": "../../target/release/floppa",
+          "/usr/lib/systemd/system/floppa-vpn.socket": "../../floppa/resources/systemd/floppa-vpn.socket",
+          "/usr/lib/systemd/system/floppa-vpn.service": "../../floppa/resources/systemd/floppa-vpn.service",
+          "/usr/lib/systemd/system/floppa-vpn-autostart.service": "../../floppa/resources/systemd/floppa-vpn-autostart.service",
+          "/usr/lib/sysusers.d/floppa-vpn.conf": "../../floppa/resources/sysusers.d/floppa-vpn.conf",
+          "/usr/lib/tmpfiles.d/floppa-vpn.conf": "../../floppa/resources/tmpfiles.d/floppa-vpn.conf",
+        },
         postInstallScript: "./scripts/linux-postinstall.sh",
         postRemoveScript: "./scripts/linux-postremove.sh",
       },

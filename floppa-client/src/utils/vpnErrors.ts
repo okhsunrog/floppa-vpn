@@ -77,6 +77,7 @@ export const BACKEND_ERROR_KEYS: Record<BackendError['kind'], string> = {
 
 /** The platform step that failed, for `AttemptError` of kind `platform`. */
 export const STEP_KEYS: Record<StepKind, string> = {
+  policy_routing: 'vpn.errors.step.routes',
   prepare_link: 'vpn.errors.step.prepareLink',
   start_backend: 'vpn.errors.step.startBackend',
   address: 'vpn.errors.step.address',

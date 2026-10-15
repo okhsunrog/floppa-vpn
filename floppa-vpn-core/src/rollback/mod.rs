@@ -25,7 +25,7 @@
 //! undo runs anyway.
 
 use crate::backend::VpnBackend;
-use crate::platform::{DnsSnapshot, Gateway, Platform};
+use crate::platform::{DnsSnapshot, Gateway, Platform, PolicyRoutingSnapshot};
 use crate::protocol::InterfaceName;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
@@ -38,10 +38,14 @@ pub use journal::{Journal, StackId};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Step {
     /// Linux: the persistent TUN created by the helper. Windows: reaping a stale Wintun adapter.
-    PrepareLink { iface: InterfaceName },
+    PrepareLink {
+        iface: InterfaceName,
+    },
     /// The tunnel itself. Undo is `backend.stop()`, which the caller supplies as an
     /// [`ExtraUndo::StopBackend`] because the stack has no handle on the backend.
-    StartBackend { iface: InterfaceName },
+    StartBackend {
+        iface: InterfaceName,
+    },
     Address {
         iface: InterfaceName,
         addr: IpNetwork,
@@ -61,6 +65,9 @@ pub enum Step {
         routes: Vec<IpNetwork>,
         if_index: Option<u32>,
     },
+    PolicyRouting {
+        snapshot: PolicyRoutingSnapshot,
+    },
     Dns {
         iface: InterfaceName,
         snapshot: DnsSnapshot,
@@ -72,7 +79,9 @@ pub enum Step {
     /// Its undo is cross-process, and the OS can also perform it unilaterally — revoked consent, a
     /// low-memory kill — so "undo returned Ok" is not the same as "it is gone". The caller
     /// re-observes rather than trusting the return value.
-    AndroidService { generation: u64 },
+    AndroidService {
+        generation: u64,
+    },
 }
 
 #[derive(
@@ -93,6 +102,7 @@ pub enum StepKind {
     StartBackend,
     Address,
     EndpointRoute,
+    PolicyRouting,
     Routes,
     Dns,
     AndroidService,
@@ -106,6 +116,7 @@ impl Step {
             Self::Address { .. } => StepKind::Address,
             Self::EndpointRoute { .. } => StepKind::EndpointRoute,
             Self::Routes { .. } => StepKind::Routes,
+            Self::PolicyRouting { .. } => StepKind::PolicyRouting,
             Self::Dns { .. } => StepKind::Dns,
             Self::AndroidService { .. } => StepKind::AndroidService,
         }
@@ -123,7 +134,10 @@ impl Step {
     pub const fn durable(&self) -> bool {
         matches!(
             self,
-            Self::EndpointRoute { .. } | Self::Routes { .. } | Self::Dns { .. }
+            Self::EndpointRoute { .. }
+                | Self::Routes { .. }
+                | Self::Dns { .. }
+                | Self::PolicyRouting { .. }
         )
     }
 }
@@ -386,6 +400,10 @@ async fn undo_step(
             .remove_routes(iface, routes, *if_index)
             .await
             .map_err(|e| e.to_string()),
+        Step::PolicyRouting { snapshot } => platform
+            .restore_policy_routing(snapshot)
+            .await
+            .map_err(|e| e.to_string()),
         Step::Dns {
             iface,
             snapshot,
@@ -444,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn only_routes_dns_and_the_endpoint_route_survive_process_death() {
+    fn routing_and_dns_survive_process_death() {
         assert!(
             Step::EndpointRoute {
                 endpoint: "1.2.3.4".parse().unwrap(),
@@ -499,6 +517,19 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Platform for StuckRoutes {
+        async fn restore_policy_routing(
+            &self,
+            snapshot: &PolicyRoutingSnapshot,
+        ) -> Result<(), crate::platform::PlatformError> {
+            assert!(snapshot.ipv4 && snapshot.ipv6);
+            assert_eq!(snapshot.src_valid_mark, Some(0));
+            if self.stuck.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(crate::platform::PlatformError::Failed(
+                    "helper unavailable".into(),
+                ));
+            }
+            Ok(())
+        }
         fn tun_params(&self) -> crate::platform::TunParams {
             Default::default()
         }
@@ -629,6 +660,39 @@ mod tests {
         async fn ping(&self) -> Result<(), crate::backend::BackendError> {
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn partial_policy_apply_is_journalled_and_recovered() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::new(Journal::default_path(dir.path()));
+        let mut stack = RollbackStack::new(Some(journal.clone()));
+        let step = Step::PolicyRouting {
+            snapshot: PolicyRoutingSnapshot {
+                ipv4: true,
+                ipv6: true,
+                src_valid_mark: Some(0),
+            },
+        };
+        stack.push(step.clone()); // crash before confirmation still needs recovery
+        let orphaned = journal.read_orphaned();
+        assert_eq!(orphaned.len(), 1);
+        assert_eq!(orphaned[0].step, step);
+        let mut recovered = RollbackStack::from_orphaned(orphaned, Some(journal.clone()));
+        let platform = StuckRoutes::stuck();
+        let report = unwind(&mut recovered, None, &platform, &NoBackend, 0).await;
+        assert_eq!(report.residual.len(), 1);
+        assert_eq!(report.residual[0].0, StepKind::PolicyRouting);
+        let mut recovered =
+            RollbackStack::from_orphaned(journal.read_orphaned(), Some(journal.clone()));
+        platform.release();
+        assert!(
+            unwind(&mut recovered, None, &platform, &NoBackend, 0)
+                .await
+                .residual
+                .is_empty()
+        );
+        assert!(journal.read_orphaned().is_empty());
     }
 
     #[tokio::test]

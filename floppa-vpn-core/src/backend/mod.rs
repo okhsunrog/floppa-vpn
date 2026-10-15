@@ -35,9 +35,8 @@ use std::time::Duration;
 ///
 /// Plain data, so it can travel inside an attempt's failure to the UI. The variants that matter
 /// to a caller's *decision* — as opposed to its log line — are the ones a policy hangs off:
-/// [`Self::PermissionDenied`] is what makes the desktop ladder retry once without the socket
-/// mark, and it is derived from the OS error kind, never from the wording of a message that a
-/// `setlocale` may have translated.
+/// [`Self::PermissionDenied`] is a terminal failure: trying another protocol cannot repair
+/// missing privileges. Socket marking is mandatory on Linux.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type, thiserror::Error)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BackendError {
@@ -78,7 +77,7 @@ pub trait VpnBackend: Send + Sync {
     ///
     /// `endpoint` is the pre-resolved server address so the hostname is only
     /// resolved once. `tun_params` carries platform-specific configuration
-    /// (fwmark, wintun path, manage_device) from the platform layer.
+    /// (wintun path, manage_device) from the platform layer. Linux socket marks are mandatory.
     async fn start(
         &self,
         config: &ProtocolConfig,

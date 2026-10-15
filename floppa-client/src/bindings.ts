@@ -252,9 +252,8 @@ export type AttemptProgress = {
  *
  *  Plain data, so it can travel inside an attempt's failure to the UI. The variants that matter
  *  to a caller's *decision* — as opposed to its log line — are the ones a policy hangs off:
- *  [`Self::PermissionDenied`] is what makes the desktop ladder retry once without the socket
- *  mark, and it is derived from the OS error kind, never from the wording of a message that a
- *  `setlocale` may have translated.
+ *  [`Self::PermissionDenied`] is a terminal failure: trying another protocol cannot repair
+ *  missing privileges. Socket marking is mandatory on Linux.
  */
 export type BackendError =
 /**
@@ -515,7 +514,7 @@ export type StartupSettings = {
 	connect_on_boot: boolean,
 };
 
-export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "routes" | "dns" | "android_service";
+export type StepKind = "prepare_link" | "start_backend" | "address" | "endpoint_route" | "policy_routing" | "routes" | "dns" | "android_service";
 
 /**  Why a sync was refused. */
 export type SyncFailure = { kind: "no_subscription" } | { kind: "peer_limit_reached" } |

@@ -3,7 +3,7 @@
 //! Two places it can be, and on Linux both are real. The **system service** holds it in a process
 //! that outlives this one, which is what makes closing the window stop meaning "disconnect". **In
 //! this process** is what the app has always done, what Windows and macOS do, and what a tarball
-//! or an AppImage does — so it is not a legacy path and cannot be allowed to rot.
+//! or a standalone package does — so it is not a legacy path and cannot be allowed to rot.
 //!
 //! Everything downstream of the choice is already transport-agnostic: `TunnelControl` has both
 //! implementations and a Tauri command cannot tell them apart. What the rest of the app still

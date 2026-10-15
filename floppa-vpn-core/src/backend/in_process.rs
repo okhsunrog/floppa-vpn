@@ -43,8 +43,13 @@ impl VpnBackend for InProcessBackend {
                     .await
             }
             ProtocolConfig::Vless(vless) => {
+                // Resolution is owned by the attempt, before tunnel routing is applied.
+                // Keep REALITY's server_name intact, but avoid re-resolving the outer endpoint
+                // through the VPN for every new proxied connection.
+                let mut transport = vless.to_shoes_config();
+                transport.server_addr = endpoint.to_string();
                 self.tunnel_manager
-                    .start_vless(&vless.to_shoes_config(), interface_name, tun_params)
+                    .start_vless(&transport, interface_name, tun_params)
                     .await
             }
         }

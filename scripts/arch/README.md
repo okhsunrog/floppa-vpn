@@ -31,8 +31,12 @@ cd scripts/arch
 makepkg -p PKGBUILD-local -si
 ```
 
-`floppa-vpn.install` applies `CAP_NET_ADMIN` to `/usr/bin/floppa-client` on install/upgrade
-so Linux `fwmark` can work without runtime fallback.
+`floppa-vpn.install` applies `CAP_NET_ADMIN` to `/usr/bin/floppa-client` and
+`/usr/bin/floppa` after install/upgrade. Package archives do not preserve these
+file capabilities, so the install hook assigns them to the installed files.
+Every Linux transport socket must accept `SO_MARK`; failure stops the connection
+with an error. Both standalone entry points therefore need the capability.
+No socket broker or extra privileged process is introduced.
 
 ## Tunnel service and boot autostart
 

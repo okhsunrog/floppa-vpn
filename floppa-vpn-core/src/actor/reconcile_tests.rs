@@ -1244,6 +1244,29 @@ fn a_denied_consent_dialog_stops_the_whole_cycle() {
 }
 
 #[test]
+fn missing_socket_mark_permission_stops_without_trying_another_protocol() {
+    let now = t0();
+    let error = AttemptError::Backend {
+        error: crate::backend::BackendError::PermissionDenied {
+            detail: "SO_MARK requires CAP_NET_ADMIN".into(),
+        },
+    };
+    let d = attempt_done(
+        &connecting_status(now, &[AWG, WG, VLESS]),
+        &up_intent(1, &[AWG, WG, VLESS], params()),
+        AttemptResult::Failed(error.clone()),
+        now,
+    );
+    assert!(matches!(d.next, Status::Idle));
+    assert!(has_demote(&d));
+    let Some(CycleOutcome::Exhausted { failures }) = outcome(&d) else {
+        panic!("expected exhausted cycle");
+    };
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].error, error);
+}
+
+#[test]
 fn exhausting_a_cold_cycle_reports_every_failure_not_just_the_last() {
     // This is what lets the caller re-provision the peer of the protocol that actually failed
     // verification, instead of assuming it was whichever one happened to be tried last.

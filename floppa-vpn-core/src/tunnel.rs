@@ -204,8 +204,8 @@ impl GotatunTunnel {
             .with_ip(gota_tun);
 
         #[cfg(target_os = "linux")]
-        if let Some(mark) = tun_params.fwmark {
-            builder = builder.with_fwmark(mark);
+        {
+            builder = builder.with_fwmark(crate::socket_mark::FWMARK);
         }
 
         // Key, peer, and AmneziaWG obfuscation when the config carries it.
@@ -587,6 +587,12 @@ impl TunnelManager {
         interface_name: &str,
         tun_params: &TunParams,
     ) -> Result<(), BackendError> {
+        #[cfg(target_os = "linux")]
+        {
+            crate::socket_mark::preflight().map_err(|e| BackendError::PermissionDenied {
+                detail: e.to_string(),
+            })?;
+        }
         let mut tunnel_guard = self.tunnel.write().await;
         Self::stop_existing(&mut tunnel_guard).await?;
 

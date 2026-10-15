@@ -25,6 +25,9 @@ depends=(
   'webkit2gtk-4.1'
   'libappindicator-gtk3'
   'libcap'
+  'iproute2'
+  'nftables'
+  'procps-ng'
 )
 
 makedepends=(

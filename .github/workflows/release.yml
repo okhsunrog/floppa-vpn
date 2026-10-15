@@ -137,10 +137,6 @@ jobs:
         run: |
           VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
           BUNDLE_DIR="floppa-client/src-tauri/target/release/bundle"
-          # AppImage
-          if ls "$BUNDLE_DIR/appimage/"*.AppImage 1>/dev/null 2>&1; then
-            mv "$BUNDLE_DIR/appimage/"*.AppImage "$BUNDLE_DIR/appimage/floppa-vpn-${VERSION}-linux-x86_64.AppImage"
-          fi
           # deb
           if ls "$BUNDLE_DIR/deb/"*.deb 1>/dev/null 2>&1; then
             mv "$BUNDLE_DIR/deb/"*.deb "$BUNDLE_DIR/deb/floppa-vpn-${VERSION}-linux-x86_64.deb"
@@ -151,7 +147,6 @@ jobs:
         with:
           name: linux-bundle
           path: |
-            floppa-client/src-tauri/target/release/bundle/appimage/floppa-vpn-*.AppImage
             floppa-client/src-tauri/target/release/bundle/deb/floppa-vpn-*.deb
 
   windows:
@@ -276,7 +271,6 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/**/*.apk
-            release-artifacts/**/*.AppImage
             release-artifacts/**/*.deb
             release-artifacts/**/*.exe
             release-artifacts/**/*.msi

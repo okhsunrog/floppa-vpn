@@ -44,7 +44,6 @@ jobs:
             --repo "${{ github.repository }}" \
             --dir dl \
             --pattern '*.apk' \
-            --pattern '*.AppImage' \
             --pattern '*.deb' \
             --pattern '*.exe' \
             --pattern '*.msi' \
@@ -70,7 +69,6 @@ jobs:
 
           echo "Mapping assets:"
           copy_one '*android-arm64.apk'      floppa-vpn-android-arm64.apk
-          copy_one '*linux-x86_64.AppImage'  floppa-vpn-linux-x86_64.AppImage
           copy_one '*linux-x86_64.deb'       floppa-vpn-linux-x86_64.deb
           copy_one '*windows-x86_64.exe'     floppa-vpn-windows-x86_64.exe
           copy_one '*windows-x86_64.msi'     floppa-vpn-windows-x86_64.msi
@@ -93,7 +91,6 @@ jobs:
           files='{}'
           add() { [ -f "$2" ] && files="$(echo "$files" | jq --arg k "$1" --arg v "$2" '. + {($k):$v}')"; }
           add android        floppa-vpn-android-arm64.apk
-          add linux_appimage floppa-vpn-linux-x86_64.AppImage
           add linux_deb      floppa-vpn-linux-x86_64.deb
           add windows_exe    floppa-vpn-windows-x86_64.exe
           add windows_msi    floppa-vpn-windows-x86_64.msi

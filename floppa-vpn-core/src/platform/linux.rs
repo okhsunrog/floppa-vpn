@@ -4,7 +4,9 @@
 //! A polkit policy (`dev.okhsunrog.floppa-vpn.policy`) allows the helper to
 //! run without a password prompt for active desktop sessions.
 
-use super::{DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, TunParams};
+use super::{
+    DnsSnapshot, Gateway, IpFamily, Platform, PlatformError, PolicyRoutingSnapshot, TunParams,
+};
 use crate::protocol::InterfaceName;
 use async_trait::async_trait;
 use floppa_tunnel_config::route;
@@ -14,9 +16,6 @@ use std::os::unix::fs::MetadataExt;
 use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, info, warn};
-
-/// Firewall mark for policy routing — "flop" in hex.
-const FWMARK: u32 = 0x666c6f70;
 
 /// How long an *undo* may wait on the helper.
 ///
@@ -277,39 +276,6 @@ impl LinuxPlatform {
         parse_default_gateway(&route_output)
     }
 
-    /// Check whether the current process has effective CAP_NET_ADMIN.
-    fn has_cap_net_admin() -> bool {
-        const CAP_NET_ADMIN_BIT: u32 = 12;
-
-        let status = match std::fs::read_to_string("/proc/self/status") {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to read /proc/self/status: {e}");
-                return false;
-            }
-        };
-
-        let cap_eff_hex = match status
-            .lines()
-            .find(|line| line.starts_with("CapEff:"))
-            .and_then(|line| line.split_whitespace().nth(1))
-        {
-            Some(v) => v,
-            None => {
-                warn!("CapEff not found in /proc/self/status");
-                return false;
-            }
-        };
-
-        match u128::from_str_radix(cap_eff_hex, 16) {
-            Ok(bits) => (bits & (1u128 << CAP_NET_ADMIN_BIT)) != 0,
-            Err(e) => {
-                warn!("Failed to parse CapEff value '{cap_eff_hex}': {e}");
-                false
-            }
-        }
-    }
-
     /// Write `/etc/resolv.conf` through the privileged helper.
     ///
     /// The helper replaces the path rather than `cp`-ing onto it, so a symlink to the resolver's
@@ -360,17 +326,75 @@ impl Default for LinuxPlatform {
 
 #[async_trait]
 impl Platform for LinuxPlatform {
-    fn tun_params(&self) -> TunParams {
-        let fwmark = if Self::has_cap_net_admin() {
-            Some(FWMARK)
+    fn uses_policy_routing(&self) -> bool {
+        true
+    }
+
+    async fn capture_policy_routing(
+        &self,
+        routes: &[IpNetwork],
+    ) -> Result<Option<PolicyRoutingSnapshot>, PlatformError> {
+        if routes.is_empty() {
+            return Ok(None);
+        }
+        let ipv4 = routes.iter().any(IpNetwork::is_ipv4);
+        let ipv6 = routes.iter().any(IpNetwork::is_ipv6);
+        let src_valid_mark = if ipv4 {
+            Some(
+                std::fs::read_to_string("/proc/sys/net/ipv4/conf/all/src_valid_mark")
+                    .map_err(|e| PlatformError::Failed(e.to_string()))?
+                    .trim()
+                    .parse::<u8>()
+                    .map_err(|e| PlatformError::Failed(e.to_string()))?,
+            )
         } else {
-            info!("CAP_NET_ADMIN not present, running without fwmark");
             None
         };
+        Ok(Some(PolicyRoutingSnapshot {
+            ipv4,
+            ipv6,
+            src_valid_mark,
+        }))
+    }
 
+    async fn apply_policy_routing(
+        &self,
+        snapshot: &PolicyRoutingSnapshot,
+    ) -> Result<(), PlatformError> {
+        self.run_helper(
+            &[
+                "add-policy",
+                if snapshot.ipv4 { "1" } else { "0" },
+                if snapshot.ipv6 { "1" } else { "0" },
+            ],
+            None,
+        )
+        .await
+    }
+
+    async fn restore_policy_routing(
+        &self,
+        snapshot: &PolicyRoutingSnapshot,
+    ) -> Result<(), PlatformError> {
+        let old = snapshot
+            .src_valid_mark
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "-".into());
+        self.run_helper(
+            &[
+                "del-policy",
+                if snapshot.ipv4 { "1" } else { "0" },
+                if snapshot.ipv6 { "1" } else { "0" },
+                &old,
+            ],
+            Some(UNDO_TIMEOUT),
+        )
+        .await
+    }
+
+    fn tun_params(&self) -> TunParams {
         TunParams {
             manage_device: false,
-            fwmark,
             wintun_file: None,
         }
     }
@@ -387,10 +411,17 @@ impl Platform for LinuxPlatform {
     /// file reads, and when the user dismisses the dialog, pressing Connect again asks again
     /// instead of failing from a decision cached at startup.
     async fn preflight(&self) -> Result<(), PlatformError> {
+        crate::socket_mark::preflight()
+            .map_err(|e| PlatformError::PermissionDenied(e.to_string()))?;
         // Blocking: it spawns pkexec and waits for a human.
         tokio::task::spawn_blocking(Self::ensure_polkit_installed)
             .await
-            .map_err(|e| PlatformError::Unavailable(format!("helper install task panicked: {e}")))?
+            .map_err(|e| {
+                PlatformError::Unavailable(format!("helper install task panicked: {e}"))
+            })??;
+        self.run_helper(&["check-policy"], None)
+            .await
+            .map_err(|e| PlatformError::Unavailable(e.to_string()))
     }
 
     async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {

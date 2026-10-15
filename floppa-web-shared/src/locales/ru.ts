@@ -669,7 +669,7 @@ export default {
     downloadsTitle: 'Скачать приложение',
     download_android: 'Android (.apk)',
     download_windows: 'Windows (.exe)',
-    download_linux: 'Linux (.AppImage)',
+    download_linux: 'Linux (.deb)',
     download_deb: 'Linux (.deb)',
     download_arch: 'Arch (.pkg.tar.zst)',
     channel: 'Telegram-канал',

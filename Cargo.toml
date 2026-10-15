@@ -64,7 +64,7 @@ metrics-exporter-prometheus = { version = "0.18", features = ["http-listener"] }
 # WireGuard/AmneziaWG engine (fork of Mullvad's boringtun). floppa-client/src-tauri is outside the
 # workspace and pins the same tag by hand; bump both together.
 gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-v0.9.1", features = ["device", "tun"] }
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", tag = "v0.1.0" }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "4cf98c6022427b2e6aaf2605e296a7c89437e546", version = "0.1.0" }
 
 # Shared crates
 floppa-core = { path = "floppa-core" }

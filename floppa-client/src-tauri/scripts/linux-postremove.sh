@@ -1,11 +1,9 @@
 #!/bin/sh
 set -eu
 
-BIN_PATH="/usr/bin/floppa-client"
-
-if command -v setcap >/dev/null 2>&1 && [ -e "$BIN_PATH" ]; then
-  setcap -r "$BIN_PATH" || true
-fi
+for bin in /usr/bin/floppa-client /usr/bin/floppa; do
+  [ ! -e "$bin" ] || setcap -r "$bin" || true
+done
 
 # Stop holding the tunnel. Both, and in this order: stopping only the service would leave the
 # socket to start it again the moment anything connected.

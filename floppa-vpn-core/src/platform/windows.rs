@@ -210,7 +210,6 @@ impl Platform for WindowsPlatform {
     fn tun_params(&self) -> TunParams {
         TunParams {
             manage_device: true,
-            fwmark: None,
             wintun_file: wintun_path(),
         }
     }

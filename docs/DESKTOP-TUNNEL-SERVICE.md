@@ -11,15 +11,15 @@ started a different way.
 ## Three ways a tunnel gets onto a machine
 
 Not two. The service is the one to prefer where it exists; the others are what every other
-platform has, and what a tarball or an AppImage has on Linux.
+platform has, and what a native package or a local build has on Linux.
 
 | mode | holds the actor | how it gets privileges | store | when |
 |---|---|---|---|---|
 | **service** | `floppa service`, as root | it *is* root | `/var/lib/floppa-vpn`, `0700` | Linux with the package |
-| **in-process, unprivileged** | the app, or `floppa` as a user | `pkexec` per change | the OS keyring | tarball, AppImage, Windows, macOS, socket disabled |
+| **in-process, desktop user** | the app, or `floppa` as a user | Linux: `CAP_NET_ADMIN` for socket marks, existing `pkexec` helper for network changes | the OS keyring | native Linux packages, Windows, macOS, socket disabled |
 | **in-process, root** | `sudo floppa --config …` | already root | nothing persisted | one-shot runs, the test containers |
 
-The second row is what the desktop app has always done, unchanged. It is also the only mode on
+The second row runs the actor inside the client. It is also the only mode on
 Windows and macOS, so it cannot rot: everyone who is not a packaged Linux user runs it.
 
 ## Choosing one
