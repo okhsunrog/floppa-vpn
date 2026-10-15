@@ -34,6 +34,26 @@ beforeEach(() => {
 })
 
 describe('owner settings', () => {
+  it('receives another client revision without a local write', async () => {
+    const settings = useSettingsStore()
+    await settings.loadOwnerSettings()
+    const newer = state(4)
+    newer.document.routing.allow_lan = true
+    get.mockResolvedValue({ status: 'ok', data: newer })
+    settings.observeRevision(4)
+    await vi.waitFor(() => expect(settings.allowLan).toBe(true))
+    expect(update).not.toHaveBeenCalled()
+  })
+  it('does not replace a pending draft when its own event precedes the write response', async () => {
+    const settings = useSettingsStore()
+    await settings.loadOwnerSettings()
+    settings.allowLan = true
+    settings.observeRevision(4)
+    await settings.flushSettings()
+    await Promise.resolve()
+    expect(get).toHaveBeenCalledTimes(1)
+    expect(settings.allowLan).toBe(true)
+  })
   it('loads without writing defaults or expanding the protocol allowlist', async () => {
     const settings = useSettingsStore()
     await settings.loadOwnerSettings()

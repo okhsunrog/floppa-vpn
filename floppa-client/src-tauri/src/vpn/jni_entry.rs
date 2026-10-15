@@ -335,13 +335,28 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
             })
         };
 
+        let boot_id = with_service("bootCount", |env, service| {
+            env.call_method(
+                service,
+                jni::jni_str!("bootCount"),
+                jni::jni_sig!("()I"),
+                &[],
+            )?
+            .i()
+        })
+        .ok()
+        .filter(|count| *count >= 0)
+        .map(|count| format!("android-boot-{count}"));
         let actor = runtime
             .block_on(crate::vpn::actor::TunnelActor::spawn(
                 backend,
                 platform,
                 journal,
                 spawn.clone(),
-                crate::vpn::actor::deployment::Deployment::default(),
+                crate::vpn::actor::deployment::Deployment {
+                    boot_id,
+                    ..Default::default()
+                },
                 host.clone(),
             ))
             .map_err(EntryError::ActorStart)?;
@@ -372,7 +387,10 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
                 let mut worked = false;
                 while states.changed().await.is_ok() {
                     let phase = states.borrow().phase;
-                    if phase == Phase::Disconnected {
+                    if matches!(
+                        phase,
+                        Phase::Disconnected | Phase::Failed | Phase::NeedsAttention
+                    ) {
                         if worked {
                             worked = false;
                             said = None;

@@ -441,7 +441,7 @@ export type Phase =
  *  two is why opening the app with a tunnel already running flashed "disconnected" before the
  *  first observation landed — the UI reported an answer it did not have yet.
  */
-"unknown" | "disconnected" | "connecting" | "verifying_connection" | "connected" | "disconnecting" | "retrying";
+"unknown" | "disconnected" | "failed" | "needs_attention" | "connecting" | "verifying_connection" | "connected" | "disconnecting" | "retrying";
 
 /**
  *  The ONLY protocol representation in the crate.
@@ -663,6 +663,11 @@ export type TunnelState = {
 	 *  not newer than the one they hold, which closes the seed-versus-first-event race at startup.
 	 */
 	seq: number,
+	/**  Saved settings, delivered on the same subscription as tunnel state. */
+	settings_revision: number,
+	/**  Revision confirmed by a connected tunnel, never inferred from a disk write. */
+	applied_revision: number | null,
+	settings_apply_error: string | null,
 	phase: Phase,
 	/**
 	 *  [`Phase::is_busy`] for [`Self::phase`], carried so the consumer never restates which phases

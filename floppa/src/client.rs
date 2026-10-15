@@ -8,8 +8,10 @@ use std::time::Duration;
 use floppa_vpn_core::actor::Spawn;
 use floppa_vpn_core::actor::handle::{IntentRequest, TunnelHandle};
 use floppa_vpn_core::actor::types::{CycleOutcome, Phase, TunnelState};
+#[cfg(target_os = "linux")]
 use floppa_vpn_core::client_mode::{ServiceAccess, probe, system_remote, system_socket};
 use floppa_vpn_core::protocol::Protocol;
+#[cfg(target_os = "linux")]
 use floppa_vpn_core::remote::RemoteActor;
 
 /// How long to wait for the mirror to say anything at all before giving up on the service.
@@ -23,6 +25,7 @@ const FIRST_STATE: Duration = Duration::from_secs(10);
 /// Reach the service, or say why not in terms the person can act on.
 pub struct ClientOwner {
     handle: TunnelHandle,
+    #[cfg(target_os = "linux")]
     remote: Option<Arc<RemoteActor>>,
 }
 impl std::ops::Deref for ClientOwner {
@@ -32,7 +35,18 @@ impl std::ops::Deref for ClientOwner {
     }
 }
 impl ClientOwner {
+    fn standalone(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.remote.is_none()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            true
+        }
+    }
     async fn set_session(&self, payload: Option<String>) -> Result<(), String> {
+        #[cfg(target_os = "linux")]
         if let Some(remote) = &self.remote {
             return remote.set_session(payload).await.map_err(|e| e.to_string());
         }
@@ -61,6 +75,7 @@ pub async fn reach_for_connect(interface: &str, no_dns: bool) -> Result<ClientOw
     let spawn: Spawn = Arc::new(|fut| {
         tokio::spawn(fut);
     });
+    #[cfg(target_os = "linux")]
     match probe(&system_socket()).await {
         ServiceAccess::Available => {
             if no_dns || interface != floppa_vpn_core::protocol::InterfaceName::DEFAULT {
@@ -68,45 +83,46 @@ pub async fn reach_for_connect(interface: &str, no_dns: bool) -> Result<ClientOw
             }
             eprintln!("Mode: systemd service");
             let remote = system_remote(&spawn);
-            Ok(ClientOwner {
+            return Ok(ClientOwner {
                 handle: TunnelHandle::remote(remote.clone()),
                 remote: Some(remote),
-            })
+            });
         }
-        ServiceAccess::Absent => {
-            eprintln!("Mode: standalone (this process owns the tunnel)");
-            let dir = floppa_vpn_core::config::config_dir().map_err(anyhow::Error::msg)?;
-            let handle = floppa_vpn_core::actor::TunnelActor::spawn(
-                floppa_vpn_core::create_backend(),
-                Arc::new(floppa_vpn_core::get_platform()),
-                Some(floppa_vpn_core::rollback::Journal::new(
-                    floppa_vpn_core::rollback::Journal::default_path(&dir),
-                )),
-                spawn.clone(),
-                floppa_vpn_core::actor::deployment::Deployment {
-                    iface: floppa_vpn_core::protocol::InterfaceName::new(interface)
-                        .map_err(|e| anyhow::anyhow!("{}", e.0))?,
-                    manage_dns: !no_dns,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(anyhow::Error::msg)?;
-            floppa_provision::watcher::watch(handle.clone(), spawn, env!("CARGO_PKG_VERSION"));
-            Ok(ClientOwner {
-                handle,
-                remote: None,
-            })
-        }
+        ServiceAccess::Absent => {}
         other => bail!("{}", other.explain().expect("not a usable answer")),
     }
+    eprintln!("Mode: standalone (this process owns the tunnel)");
+    let dir = floppa_vpn_core::config::config_dir().map_err(anyhow::Error::msg)?;
+    let handle = floppa_vpn_core::actor::TunnelActor::spawn(
+        floppa_vpn_core::create_backend(),
+        Arc::new(floppa_vpn_core::get_platform()),
+        Some(floppa_vpn_core::rollback::Journal::new(
+            floppa_vpn_core::rollback::Journal::default_path(&dir),
+        )),
+        spawn.clone(),
+        floppa_vpn_core::actor::deployment::Deployment {
+            iface: floppa_vpn_core::protocol::InterfaceName::new(interface)
+                .map_err(|e| anyhow::anyhow!("{}", e.0))?,
+            manage_dns: !no_dns,
+            resume_on_start: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    floppa_provision::watcher::watch(handle.clone(), spawn, env!("CARGO_PKG_VERSION"));
+    Ok(ClientOwner {
+        handle,
+        #[cfg(target_os = "linux")]
+        remote: None,
+    })
 }
 
 async fn finish_connect(
     owner: &ClientOwner,
     accepted: floppa_vpn_core::actor::types::IntentAccepted,
 ) -> Result<()> {
-    if owner.remote.is_none() {
+    if owner.standalone() {
         return crate::connect::hold(&owner.handle, accepted).await;
     }
     match owner.await_cycle(accepted.epoch).await {
@@ -258,10 +274,13 @@ pub async fn connect_stored(
     if let Some(routes) = excluded_routes {
         update_routes(remote, routes).await?;
     }
+    #[cfg(target_os = "linux")]
     let saved = match &remote.remote {
         Some(service) => service.saved_intent().await?,
         None => floppa_vpn_core::autostart::last_intent(),
     };
+    #[cfg(not(target_os = "linux"))]
+    let saved = floppa_vpn_core::autostart::last_intent();
     let private_routes = match saved {
         Some(IntentRequest::Configured { private_routes }) => private_routes,
         _ => vec![],
@@ -307,20 +326,27 @@ pub async fn resume(remote: &ClientOwner, only_if_enabled: bool) -> Result<()> {
     if only_if_enabled && !remote.resume_on_boot().await? {
         return Ok(());
     }
+    #[cfg(target_os = "linux")]
     if let Some(service) = &remote.remote {
         let Some(accepted) = service.resume().await? else {
             eprintln!("No saved connection.");
             return Ok(());
         };
-        finish_connect(remote, accepted).await
-    } else {
-        connect_stored(remote, None).await
+        return finish_connect(remote, accepted).await;
     }
+    connect_stored(remote, None).await
 }
 
 /// What the service says the tunnel is doing.
 pub async fn status(remote: &ClientOwner) -> Result<()> {
     let state = first_state(remote).await?;
+    eprintln!(
+        "Settings: saved revision {}, applied {:?}",
+        state.settings_revision, state.applied_revision
+    );
+    if let Some(detail) = &state.settings_apply_error {
+        eprintln!("Attention: {detail}");
+    }
     match state.phase {
         Phase::Connected => {
             let over = state

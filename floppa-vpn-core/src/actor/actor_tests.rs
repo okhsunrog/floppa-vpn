@@ -390,12 +390,22 @@ impl Harness {
         running: Option<RunningTunnel>,
         journal: Option<Journal>,
     ) -> Self {
+        Self::spawn_custom(policy, store, running, journal, |_| {})
+    }
+
+    fn spawn_custom(
+        policy: Policy,
+        store: ConfigStore,
+        running: Option<RunningTunnel>,
+        journal: Option<Journal>,
+        configure: impl FnOnce(&mut TunnelActor),
+    ) -> Self {
         let backend = Arc::new(FakeBackend::default());
         *backend.running.lock().unwrap() = running;
         let platform = Arc::new(FakePlatform::new());
         let (cmd_tx, cmd_rx) = mpsc::channel(super::CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
-        let actor = TunnelActor::new(
+        let mut actor = TunnelActor::new(
             backend.clone(),
             platform.clone(),
             journal,
@@ -405,6 +415,7 @@ impl Harness {
             cmd_tx.clone(),
             state_tx,
         );
+        configure(&mut actor);
         tokio::spawn(observer(backend.clone(), cmd_tx.clone(), policy));
         tokio::spawn(actor.run(cmd_rx));
         Self {
@@ -680,7 +691,7 @@ async fn an_attempt_task_that_panics_still_reports_and_the_cycle_ends() {
         }
         other => panic!("expected the crash on record, got {other:?}"),
     }
-    let state = h.wait_for_phase(Phase::Disconnected).await;
+    let state = h.wait_for_phase(Phase::Failed).await;
     assert_eq!(state.intent, IntentView::Down, "the intent is demoted");
     assert!(!state.busy);
 }
@@ -744,7 +755,7 @@ async fn a_tunnel_that_dies_with_no_reconnect_budget_reports_lost_gave_up_on_the
         })
         .await;
     assert_eq!(state.epoch, epoch, "same epoch as the Connected before it");
-    assert_eq!(state.phase, Phase::Disconnected);
+    assert_eq!(state.phase, Phase::Failed);
     assert_eq!(state.intent, IntentView::Down, "the intent is demoted");
 }
 
@@ -1089,6 +1100,7 @@ async fn configured_connect_uses_owner_document_and_keeps_user_priority() {
         .accept_intent(IntentRequest::Configured {
             private_routes: vec!["10.1.0.0/16".into()],
         })
+        .await
         .unwrap();
     let Intent::Up(up) = &actor.intent else {
         panic!("must connect")
@@ -1110,7 +1122,7 @@ async fn configured_connect_uses_owner_document_and_keeps_user_priority() {
     );
     actor.link = Link::Online;
     assert!(actor.deadline().is_some());
-    actor.accept_intent(IntentRequest::Down).unwrap();
+    actor.accept_intent(IntentRequest::Down).await.unwrap();
     assert_eq!(actor.settings.intent_revision, None);
 }
 
@@ -1174,6 +1186,7 @@ async fn temporary_profile_is_not_imported_or_remembered_and_invalid_input_prese
             config: WG_CONFIG.into(),
             private_routes: vec![],
         })
+        .await
         .unwrap();
     assert!(actor.configs.available().is_empty());
     assert!(actor.temporary_config.is_some());
@@ -1187,11 +1200,12 @@ async fn temporary_profile_is_not_imported_or_remembered_and_invalid_input_prese
                 config: "broken".into(),
                 private_routes: vec![]
             })
+            .await
             .is_err()
     );
     assert_eq!(actor.intent.epoch(), epoch);
     assert!(actor.temporary_config.is_some());
-    actor.accept_intent(IntentRequest::Down).unwrap();
+    actor.accept_intent(IntentRequest::Down).await.unwrap();
     assert!(actor.temporary_config.is_none());
 }
 
@@ -1224,7 +1238,7 @@ async fn corrupt_recovery_evidence_blocks_connect_and_is_preserved() {
     let path = Journal::default_path(dir.path());
     std::fs::write(&path, b"broken evidence").unwrap();
     let mut h = Harness::spawn_recovering(policy(), Journal::new(&path));
-    h.wait_for_phase(Phase::Disconnected).await;
+    h.wait_for_phase(Phase::NeedsAttention).await;
     assert!(matches!(
         h.handle.set_intent(up()).await,
         Err(IntentError::RecoveryUnavailable { .. })
@@ -1267,4 +1281,101 @@ async fn shared_platform_recovery_does_not_read_a_previous_users_journal() {
     assert_eq!(h.platform.shared_recoveries.load(Ordering::SeqCst), 1);
     assert_eq!(h.backend.starts.load(Ordering::SeqCst), 0);
     assert_eq!(std::fs::read(path).unwrap(), b"untrusted user journal");
+}
+
+#[tokio::test]
+async fn saving_routes_rebuilds_active_tunnel_and_reports_applied_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store =
+        crate::settings::SettingsStore::new(dir.path().join("settings.json"), Default::default());
+    let document = store.replace(0, Default::default()).unwrap();
+    let mut h = Harness::spawn_custom(
+        policy(),
+        ConfigStore::in_memory(configs()),
+        None,
+        None,
+        |actor| {
+            actor.settings_store = Some(store);
+            actor.settings.document = document;
+        },
+    );
+    h.set(IntentRequest::Configured {
+        private_routes: vec![],
+    })
+    .await;
+    h.wait_for_phase(Phase::Connected).await;
+    assert_eq!(h.states.borrow().applied_revision, Some(1));
+    let mut settings = h.handle.get_settings().await.unwrap().document.settings;
+    settings.routing.allow_lan = true;
+    h.handle.update_settings(1, settings).await.unwrap();
+    let state = h
+        .wait_for("new settings applied", |s| s.applied_revision == Some(2))
+        .await;
+    assert_eq!(state.settings_revision, 2);
+    assert!(state.params.unwrap().allow_lan);
+    assert!(h.backend.stops() > 0);
+    let mut settings = h.handle.get_settings().await.unwrap().document.settings;
+    settings.protocols.mode = crate::settings::SelectionMode::Manual;
+    settings.protocols.manual = Protocol::Vless;
+    h.handle.update_settings(2, settings).await.unwrap();
+    let state = h
+        .wait_for("unavailable protocol rejected", |s| {
+            s.phase == Phase::Failed
+        })
+        .await;
+    assert_eq!(state.settings_revision, 3);
+    assert_eq!(state.applied_revision, None);
+    assert!(state.settings_apply_error.is_some());
+    assert!(h.backend.running().is_none());
+}
+
+#[tokio::test]
+async fn explicit_disconnect_and_owner_shutdown_have_distinct_durable_intents() {
+    let dir = tempfile::tempdir().unwrap();
+    let (writer, _) = crate::runtime_intent::RuntimeWriter::open(
+        dir.path().into(),
+        Some("test-boot".into()),
+        Arc::new(()),
+    )
+    .unwrap();
+    let mut h = Harness::spawn_custom(
+        policy(),
+        ConfigStore::in_memory(configs()),
+        None,
+        None,
+        |actor| actor.runtime = Some(writer),
+    );
+    h.set(IntentRequest::Configured {
+        private_routes: vec![],
+    })
+    .await;
+    assert!(crate::autostart::load(dir.path()).unwrap().desired_up);
+    h.wait_for_phase(Phase::Connected).await;
+    h.set(IntentRequest::Suspend).await;
+    h.wait_for_phase(Phase::Disconnected).await;
+    assert!(crate::autostart::load(dir.path()).unwrap().desired_up);
+    h.set(IntentRequest::Down).await;
+    assert!(!crate::autostart::load(dir.path()).unwrap().desired_up);
+}
+
+#[tokio::test]
+async fn restored_intent_survives_startup_network_recovery() {
+    let mut h = Harness::spawn_custom(
+        policy(),
+        ConfigStore::in_memory(configs()),
+        None,
+        None,
+        |actor| {
+            actor.resume_request = Some(IntentRequest::Configured {
+                private_routes: vec![],
+            });
+            actor.resume_protocol = Some(Protocol::WireGuard);
+        },
+    );
+    h.platform.shared_recovery.store(true, Ordering::SeqCst);
+    h.wait_for_phase(Phase::Connected).await;
+    assert_eq!(h.platform.shared_recoveries.load(Ordering::SeqCst), 1);
+    assert_eq!(h.states.borrow().protocol, Some(Protocol::WireGuard));
+    h.set(IntentRequest::Down).await;
+    h.wait_for_phase(Phase::Disconnected).await;
 }

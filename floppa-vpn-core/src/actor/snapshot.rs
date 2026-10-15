@@ -26,6 +26,8 @@ pub enum Phase {
     /// first observation landed — the UI reported an answer it did not have yet.
     Unknown,
     Disconnected,
+    Failed,
+    NeedsAttention,
     Connecting,
     VerifyingConnection,
     Connected,
@@ -132,6 +134,11 @@ pub struct TunnelState {
     /// Bumped only when a state is actually published. Consumers drop any snapshot whose `seq` is
     /// not newer than the one they hold, which closes the seed-versus-first-event race at startup.
     pub seq: u64,
+    /// Saved settings, delivered on the same subscription as tunnel state.
+    pub settings_revision: u32,
+    /// Revision confirmed by a connected tunnel, never inferred from a disk write.
+    pub applied_revision: Option<u32>,
+    pub settings_apply_error: Option<String>,
     pub phase: Phase,
     /// [`Phase::is_busy`] for [`Self::phase`], carried so the consumer never restates which phases
     /// count as work in progress.
@@ -212,6 +219,9 @@ impl TunnelState {
     pub fn eq_ignoring_seq(&self, other: &Self) -> bool {
         let Self {
             seq: _,
+            settings_revision,
+            applied_revision,
+            settings_apply_error,
             phase,
             busy,
             cancellable,
@@ -238,7 +248,10 @@ impl TunnelState {
             link,
             vpn_mode,
         } = self;
-        *phase == other.phase
+        *settings_revision == other.settings_revision
+            && *applied_revision == other.applied_revision
+            && *settings_apply_error == other.settings_apply_error
+            && *phase == other.phase
             && *busy == other.busy
             && *cancellable == other.cancellable
             && *intent == other.intent
@@ -268,6 +281,9 @@ impl TunnelState {
     pub fn initial() -> Self {
         Self {
             seq: 0,
+            settings_revision: 0,
+            applied_revision: None,
+            settings_apply_error: None,
             // Not Disconnected: at seq 0 nothing has been observed, and claiming there is no
             // tunnel before looking is what made an already-running tunnel flash as down.
             phase: Phase::Unknown,

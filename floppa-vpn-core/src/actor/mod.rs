@@ -83,8 +83,13 @@ enum Reconcile {
 pub struct TunnelActor {
     owner_guard: Option<Arc<crate::ownership::OwnerGuard>>,
     settings_store: Option<crate::settings::SettingsStore>,
+    runtime: Option<crate::runtime_intent::RuntimeWriter>,
+    resume_request: Option<IntentRequest>,
+    resume_protocol: Option<crate::protocol::Protocol>,
     settings: crate::settings::SettingsState,
     settings_writing: bool,
+    applied_revision: Option<u32>,
+    settings_apply_error: Option<String>,
     temporary_config: Option<crate::state::ProtocolConfig>,
 
     // ---- the state, owned outright ----
@@ -175,18 +180,32 @@ impl TunnelActor {
         deployment: Deployment,
         #[cfg(target_os = "android")] host: Arc<dyn crate::host::ServiceHost>,
     ) -> Result<TunnelHandle, String> {
+        #[cfg(target_os = "windows")]
+        let _ = journal; // User-scoped journals are never elevated.
         let dir = crate::config::config_dir()?;
         let guard = Arc::new(
             crate::ownership::OwnerGuard::acquire(&platform, &dir)
                 .await
                 .map_err(|e| e.to_string())?,
         );
+        let boot = match &deployment.boot_id {
+            Some(id) => Some(id.clone()),
+            None => crate::runtime_intent::boot_id().await,
+        };
         // Linux recovery records belong to the privileged helper, not this caller's UID.
+        #[cfg(not(target_os = "windows"))]
         let journal = if platform.has_shared_recovery() {
             None
         } else {
             journal
         };
+        #[cfg(target_os = "windows")]
+        let journal = Some(Journal::for_boot(
+            crate::windows_recovery::journal_path()
+                .map_err(|e| format!("cannot open shared network recovery: {e}"))?,
+            boot.clone()
+                .ok_or("cannot establish Windows boot identity for safe network recovery")?,
+        ));
         if let Some(journal) = &journal {
             journal
                 .read_orphaned()
@@ -211,6 +230,30 @@ impl TunnelActor {
                 .replace(0, Default::default())
                 .map_err(|e| e.to_string())?,
         };
+        let (runtime, previous) = if deployment.configs == ConfigSource::Persisted {
+            let dir = dir.clone();
+            let guard = guard.clone();
+            let boot = boot.clone();
+            let (writer, previous) = tokio::task::spawn_blocking(move || {
+                crate::runtime_intent::RuntimeWriter::open(dir, boot, guard)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            (Some(writer), previous)
+        } else {
+            (None, None)
+        };
+        let resume = deployment.resume_on_start
+            && crate::runtime_intent::should_resume(
+                previous.as_ref(),
+                boot.as_deref(),
+                (deployment.system_service || cfg!(target_os = "android"))
+                    && document.settings.startup.connect_on_boot,
+            );
+        let resume_protocol = previous.as_ref().and_then(|p| p.last_successful);
+        let resume_request = resume.then(|| IntentRequest::Configured {
+            private_routes: previous.map(|p| p.private_routes).unwrap_or_default(),
+        });
         let (cmd_tx, cmd_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (state_tx, state_rx) = watch::channel(TunnelState::initial());
         let policy = Policy::for_backend(backend.liveness_grace());
@@ -257,6 +300,9 @@ impl TunnelActor {
                 actor.link = initial_link;
             }
             actor.owner_guard = Some(guard);
+            actor.runtime = runtime;
+            actor.resume_request = resume_request;
+            actor.resume_protocol = resume_protocol;
             actor.settings_store = Some(settings_store);
             actor.settings.document = document;
             actor.apply_recovery_settings();
@@ -284,11 +330,16 @@ impl TunnelActor {
         Self {
             owner_guard: None,
             settings_store: None,
+            runtime: None,
+            resume_request: None,
+            resume_protocol: None,
             settings: crate::settings::SettingsState {
                 document: crate::settings::SettingsDocument::defaults(),
                 intent_revision: None,
             },
             settings_writing: false,
+            applied_revision: None,
+            settings_apply_error: None,
             temporary_config: None,
             status: Status::Idle,
             intent: Intent::default(),
@@ -327,7 +378,7 @@ impl TunnelActor {
     }
 
     async fn run(mut self, mut cmds: mpsc::Receiver<Command>) {
-        self.bootstrap();
+        self.bootstrap().await;
         self.publish();
 
         loop {
@@ -338,9 +389,8 @@ impl TunnelActor {
             tokio::select! {
                 biased;
 
-                // Commands and signals first, and nothing in this arm awaits I/O. That is the
-                // structural reason a disconnect can no longer queue behind a slow round trip to
-                // the tunnel process.
+                // Commands precede timers. Intent acknowledgement awaits the serial local-disk
+                // checkpoint, never transport or remote network I/O.
                 cmd = cmds.recv() => {
                     let Some(cmd) = cmd else {
                         // Every handle is gone. Unreachable in practice — Tauri holds a handle
@@ -366,7 +416,18 @@ impl TunnelActor {
 
     /// Runs once, before the loop. Recovers anything a previous process left applied, and adopts a
     /// tunnel that outlived us.
-    fn bootstrap(&mut self) {
+    async fn bootstrap(&mut self) {
+        if let Some(request) = self.resume_request.take()
+            && let Err(error) = self.accept_intent(request).await
+        {
+            self.settings_apply_error = Some(error.to_string());
+        }
+        if let (Some(protocol), Intent::Up(up)) = (self.resume_protocol.take(), &mut self.intent)
+            && let Some(index) = up.order.iter().position(|p| *p == protocol)
+        {
+            up.order.remove(index);
+            up.order.insert(0, protocol);
+        }
         self.recover_journal();
         if self.recovery_error.is_some() {
             return;
@@ -378,6 +439,10 @@ impl TunnelActor {
                 tries: 0,
             };
             self.exec(Effect::Unwind { extra: None });
+            return;
+        }
+
+        if self.intent.is_up() {
             return;
         }
 
@@ -445,10 +510,56 @@ impl TunnelActor {
                 self.settings_writing = false;
                 match result {
                     Ok(document) => {
+                        let previous = self.settings.document.settings.clone();
                         self.settings.document = document;
+                        self.settings_apply_error = None;
+                        if self.settings.intent_revision.is_some() && self.intent.is_up() {
+                            let settings = &self.settings.document.settings;
+                            if previous.protocols != settings.protocols
+                                || previous.routing != settings.routing
+                                || previous.recovery != settings.recovery
+                            {
+                                let routes = match &self.intent {
+                                    Intent::Up(up) => up
+                                        .params
+                                        .as_ref()
+                                        .map(|p| p.private_routes.clone())
+                                        .unwrap_or_default(),
+                                    _ => Vec::new(),
+                                };
+                                if let Err(error) = self
+                                    .accept_intent(IntentRequest::Configured {
+                                        private_routes: routes,
+                                    })
+                                    .await
+                                {
+                                    // Retaining a now-disallowed protocol is not applying the new settings.
+                                    let mut detail = error.to_string();
+                                    if let Err(stop_error) =
+                                        self.accept_intent(IntentRequest::Down).await
+                                    {
+                                        // A failed checkpoint must not leave a disallowed tunnel up.
+                                        // Suspend cleans up without claiming that Down was persisted.
+                                        let _ = self.accept_intent(IntentRequest::Suspend).await;
+                                        detail.push_str(&format!(
+                                            "; could not persist disconnect: {stop_error}"
+                                        ));
+                                    }
+                                    self.settings_apply_error = Some(detail);
+                                }
+                            } else {
+                                self.apply_recovery_settings();
+                                self.settings.intent_revision =
+                                    Some(self.settings.document.revision);
+                                if matches!(self.status, Status::Up(_)) {
+                                    self.applied_revision = self.settings.intent_revision;
+                                }
+                            }
+                        }
                         let _ = reply.send(Ok(self.settings.clone()));
                     }
                     Err(error) => {
+                        self.settings_apply_error = Some(error.to_string());
                         // A rename may have committed even if directory fsync failed.
                         if let Some(store) = &self.settings_store
                             && let Ok(Some(document)) = store.read()
@@ -458,10 +569,10 @@ impl TunnelActor {
                         let _ = reply.send(Err(error));
                     }
                 }
-                Reconcile::No
+                Reconcile::Yes
             }
             Command::SetIntent { intent, reply } => {
-                let result = self.accept_intent(intent);
+                let result = self.accept_intent(intent).await;
                 let changed = result.is_ok();
                 let _ = reply.send(result);
                 if changed {
@@ -508,7 +619,10 @@ impl TunnelActor {
                 // is free to start the service again, `nativeSystemStart` raises the intent from
                 // the autostart bundle — and there is no bundle and no config, so the actor stops
                 // instead of connecting the account that was just forgotten.
-                let _ = self.accept_intent(IntentRequest::Down);
+                if let Err(error) = self.accept_intent(IntentRequest::Down).await {
+                    let _ = reply.send(Err(error));
+                    return Reconcile::No;
+                }
                 self.pending_clear
                     .push((reply, Instant::now() + self.policy.settle_timeout));
                 Reconcile::Yes
@@ -658,14 +772,18 @@ impl TunnelActor {
     /// There is no "busy" rejection here, and that is deliberate: with a single owner and a
     /// write-only intent queue, a caller cannot arrive at a bad moment. Whether anything actually
     /// starts is decided by the table, inside the loop.
-    fn accept_intent(&mut self, request: IntentRequest) -> Result<IntentAccepted, IntentError> {
-        if !matches!(request, IntentRequest::Down)
+    async fn accept_intent(
+        &mut self,
+        request: IntentRequest,
+    ) -> Result<IntentAccepted, IntentError> {
+        if !matches!(request, IntentRequest::Down | IntentRequest::Suspend)
             && let Some(detail) = &self.recovery_error
         {
             return Err(IntentError::RecoveryUnavailable {
                 detail: detail.clone(),
             });
         }
+        let suspend = matches!(request, IntentRequest::Suspend);
         let configured = matches!(request, IntentRequest::Configured { .. });
         let mut temporary = None;
         let request = match request {
@@ -711,7 +829,7 @@ impl TunnelActor {
             IntentRequest::Configured { .. } | IntentRequest::Temporary { .. } => {
                 unreachable!("resolved above")
             }
-            IntentRequest::Down => Intent::Down { epoch },
+            IntentRequest::Down | IntentRequest::Suspend => Intent::Down { epoch },
             IntentRequest::Up { order, mut params } => {
                 params.excluded_routes =
                     crate::routing::validate_exclusions(&params.excluded_routes)
@@ -746,6 +864,22 @@ impl TunnelActor {
             }
         };
 
+        if !suspend && let Some(runtime) = &self.runtime {
+            let routes = match &intent {
+                Intent::Up(up) => up
+                    .params
+                    .as_ref()
+                    .map(|p| p.private_routes.clone())
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            // The disk worker serializes intent and winner updates. Acknowledgement means durable.
+            runtime
+                .intent(configured && intent.is_up(), routes)
+                .await
+                .map_err(|detail| IntentError::RecoveryUnavailable { detail })?;
+        }
+
         // Anyone still waiting on a superseded epoch is released now, rather than being left to
         // time out on something that will never complete.
         let superseded: Vec<IntentEpoch> = self
@@ -759,6 +893,7 @@ impl TunnelActor {
         }
 
         info!(?intent, "intent accepted");
+        self.settings_apply_error = None;
         self.temporary_config = temporary;
         self.settings.intent_revision = configured.then_some(self.settings.document.revision);
         if configured || self.temporary_config.is_some() {
@@ -1157,6 +1292,7 @@ impl TunnelActor {
             // Only ever emitted on success, which is why a failed cycle can no longer leave the
             // last *failed* protocol recorded as the preferred one.
             Effect::RememberWinner(protocol) => {
+                self.applied_revision = self.settings.intent_revision;
                 if self.temporary_config.is_some() {
                     return;
                 }
@@ -1167,21 +1303,8 @@ impl TunnelActor {
                     up.order.remove(index);
                     up.order.insert(0, protocol);
                 }
-                // What a start with nobody watching rebuilds from: always-on, boot, a lockdown
-                // restore. Only the *request* is recorded — the configs are already in the store,
-                // in this process — and the winner leads the order so the protocol that actually
-                // worked is tried first. Written on success only: an order that has never carried
-                // a tunnel is not worth bringing a device up for.
-                #[cfg(target_os = "android")]
-                if let Intent::Up(up) = &self.intent
-                    && let Some(params) = up.params.clone()
-                {
-                    let mut order = vec![protocol];
-                    order.extend(up.order.iter().copied().filter(|p| *p != protocol));
-                    let at = chrono::Utc::now().timestamp();
-                    tokio::task::spawn_blocking(move || {
-                        crate::autostart::remember(order, params, at)
-                    });
+                if let Some(runtime) = &self.runtime {
+                    runtime.winner(protocol);
                 }
             }
 
@@ -1316,9 +1439,8 @@ impl TunnelActor {
             // The last-good intent goes too, and this is what makes a wipe beat always-on: a
             // system start that found the bundle would ask for a tunnel the user has just asked
             // to be rid of.
-            #[cfg(target_os = "android")]
-            if let Ok(dir) = crate::config::config_dir() {
-                tokio::task::spawn_blocking(move || crate::autostart::remove(&dir));
+            if let Some(runtime) = &self.runtime {
+                runtime.clear();
             }
             // Answered only once the delete has actually run, from a task of its own: "forgotten"
             // used to be said as soon as the in-memory copy was empty, while the keys were still
@@ -1363,6 +1485,32 @@ impl TunnelActor {
             now,
             self.observed_once,
         );
+        if view::is_quiescent(&self.status)
+            && (self.recovery_error.is_some()
+                || matches!(state.last_outcome, Some(CycleOutcome::UnwindFailed)))
+        {
+            state.phase = types::Phase::NeedsAttention;
+            state.busy = false;
+            state.cancellable = false;
+        } else if matches!(state.phase, types::Phase::Disconnected)
+            && (self.settings_apply_error.is_some()
+                || matches!(
+                    state.last_outcome,
+                    Some(CycleOutcome::Exhausted { .. } | CycleOutcome::LostGaveUp { .. })
+                ))
+        {
+            state.phase = types::Phase::Failed;
+        }
+        state.settings_revision = self.settings.document.revision;
+        state.applied_revision = if matches!(self.status, Status::Up(_)) {
+            self.applied_revision
+        } else {
+            None
+        };
+        state.settings_apply_error = self
+            .settings_apply_error
+            .clone()
+            .or_else(|| self.recovery_error.clone());
         state.temporary_profile = self.temporary_config.is_some();
         state
     }

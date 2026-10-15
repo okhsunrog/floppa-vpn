@@ -68,3 +68,5 @@ namespace. It passes routes calculated by the production Rust function to Linux,
 checks exclusion and corporate-route selection, changes physical defaults without
 rewriting Floppa routes, and checks cleanup with the production helper. Dummy
 interfaces validate route selection, not real remote VPN connectivity.
+
+Changes saved through the owner API now reconcile an active configured tunnel automatically. Temporary profiles retain their explicit parameters. Saved and applied revisions are reported separately in TunnelState.

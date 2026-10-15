@@ -240,10 +240,10 @@ pub fn run() {
             logging::init_tracing(&log_dir, logging::LogProcess::Ui);
             info!("Logging initialized.");
 
-            // Standalone GUI/CLI share the Linux scope. No legacy data is imported.
-            #[cfg(target_os = "linux")]
+            // Standalone GUI/CLI share the desktop scope. No legacy data is imported.
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             vpn::config::init_config_dir(vpn::config::config_dir()?);
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             if let Ok(config_dir) = app.path().app_config_dir() {
                 vpn::config::init_config_dir(config_dir);
             }

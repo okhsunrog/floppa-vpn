@@ -217,6 +217,7 @@ impl VpnRpc for ActorServer {
             crate::actor::handle::IntentRequest::Up { params, .. } => params.private_routes,
             crate::actor::handle::IntentRequest::Configured { private_routes } => private_routes,
             crate::actor::handle::IntentRequest::Down
+            | crate::actor::handle::IntentRequest::Suspend
             | crate::actor::handle::IntentRequest::Temporary { .. } => return Ok(None),
         };
         self.handle

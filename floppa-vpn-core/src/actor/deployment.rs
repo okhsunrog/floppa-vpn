@@ -37,6 +37,10 @@ pub struct Deployment {
     pub configs: ConfigSource,
     /// A system owner may promise boot startup; standalone processes cannot.
     pub system_service: bool,
+    /// Long-lived owners may restore intent; short-lived CLI queries must never connect.
+    pub resume_on_start: bool,
+    /// Platform boot identity where /proc is unavailable (Android BOOT_COUNT).
+    pub boot_id: Option<String>,
 }
 
 impl Default for Deployment {
@@ -46,6 +50,8 @@ impl Default for Deployment {
             manage_dns: true,
             configs: ConfigSource::default(),
             system_service: false,
+            resume_on_start: true,
+            boot_id: None,
         }
     }
 }

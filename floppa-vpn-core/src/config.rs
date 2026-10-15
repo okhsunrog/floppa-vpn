@@ -67,7 +67,16 @@ fn get_config_dir() -> Result<PathBuf, String> {
     let config_dir = APP_CONFIG_DIR
         .get()
         .cloned()
-        .or_else(|| dirs::config_dir().map(|d| d.join("floppa-vpn")))
+        .or_else(|| {
+            #[cfg(target_os = "windows")]
+            {
+                dirs::data_local_dir().map(|d| d.join("FloppaVPN"))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                dirs::config_dir().map(|d| d.join("floppa-vpn"))
+            }
+        })
         .ok_or("Could not determine config directory")?;
 
     if !config_dir.exists() {

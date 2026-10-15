@@ -154,6 +154,26 @@ export const useSettingsStore = defineStore(
       await loadOwnerSettings()
     }
 
+    let observedRevision = 0
+    let refreshing: Promise<void> | null = null
+    function observeRevision(next: number): void {
+      observedRevision = Math.max(observedRevision, next)
+      if (refreshing || observedRevision <= revision) return
+      refreshing = (async () => {
+        // A notification may beat our own write reply. Let that reply advance revision first.
+        await pending
+        if (settingsError.value || observedRevision <= revision) return
+        await reloadOwnerSettings()
+      })()
+        .catch((error: unknown) => {
+          settingsError.value = String(error)
+        })
+        .finally(() => {
+          refreshing = null
+          if (!settingsError.value && observedRevision > revision) observeRevision(observedRevision)
+        })
+    }
+
     // Cached app list (not persisted — fetched once per session)
     const cachedApps = ref<AppInfo[] | null>(null)
     const appsLoading = ref(false)
@@ -208,6 +228,7 @@ export const useSettingsStore = defineStore(
       settingsError,
       settingsReady,
       loadOwnerSettings,
+      observeRevision,
       flushSettings,
       reloadOwnerSettings,
       closeBehavior,

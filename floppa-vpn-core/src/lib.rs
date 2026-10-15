@@ -75,3 +75,8 @@ pub use backend::create_backend;
 pub use platform::{Platform, PlatformImpl, get_platform};
 pub use protocol::{InterfaceName, Preference, Protocol};
 pub use state::ProtocolConfig;
+
+mod runtime_intent;
+
+#[cfg(target_os = "windows")]
+mod windows_recovery;

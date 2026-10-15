@@ -49,7 +49,7 @@ keyring = { version = "3.6.3", features = [
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3.6.3", features = ["windows-native"] }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security", "Win32_Security_Authorization"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_Security", "Win32_Security_Authorization", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_UI_Shell", "Win32_System_Com"] }
 wintun-bindings = "0.7.40"
 
 [target.'cfg(target_os = "android")'.dependencies]

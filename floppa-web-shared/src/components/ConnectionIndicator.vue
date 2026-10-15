@@ -16,6 +16,8 @@ const statusKeys: Record<ConnectionStatus, string> = {
   connecting: 'status.connecting',
   verifying_connection: 'status.verifyingConnection',
   disconnected: 'status.disconnected',
+  failed: 'status.failed',
+  needs_attention: 'status.needsAttention',
   disconnecting: 'status.disconnecting',
   retrying: 'status.retrying',
 }
@@ -28,6 +30,8 @@ const dotClass = computed(() => {
     connecting: 'bg-yellow-500',
     verifying_connection: 'bg-yellow-500',
     disconnected: 'bg-neutral-400',
+    failed: 'bg-red-500',
+    needs_attention: 'bg-red-500',
     disconnecting: 'bg-yellow-500',
     retrying: 'bg-yellow-500',
   }
@@ -47,6 +51,8 @@ const pulsing: Record<ConnectionStatus, boolean> = {
   connecting: true,
   verifying_connection: true,
   disconnected: false,
+  failed: false,
+  needs_attention: false,
   disconnecting: true,
   retrying: true,
 }

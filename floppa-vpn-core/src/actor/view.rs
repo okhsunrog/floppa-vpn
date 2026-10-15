@@ -85,6 +85,9 @@ pub fn render(
 
     TunnelState {
         seq,
+        settings_revision: 0,
+        applied_revision: None,
+        settings_apply_error: None,
         phase,
         // Derived here, once, from the phase they belong to — so they cannot describe a different
         // phase than the one in the same snapshot.

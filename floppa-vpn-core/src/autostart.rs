@@ -1,6 +1,6 @@
 //! TUN specification derivation and a small last-successful runtime record.
-//! Preferences are read from settings.json by the actor. runtime.json stores only
-//! the last successful protocol, server-granted routes and a timestamp. It contains
+//! Preferences are read from settings.json by the actor. runtime.json stores desired
+//! connection state, boot identity, last success and server grants. It contains
 //! neither credentials nor copies of routing/protocol/recovery preferences.
 
 use super::actor::types::{SplitMode, TunnelParams};
@@ -14,7 +14,7 @@ use tracing::{debug, info, warn};
 /// Bumped whenever the on-disk shape changes incompatibly. A file of another version is not
 /// migrated, it is ignored: the next connect writes a fresh one, and a system start that finds
 /// nothing usable stops rather than guessing.
-pub const BUNDLE_VERSION: u32 = 3;
+pub const BUNDLE_VERSION: u32 = 4;
 
 /// Also spelled out as `AUTOSTART_FILENAME` in `BackgroundStart.kt` on the Kotlin side: the Quick
 /// Settings tile and the boot retry have to know whether there is anything to start *before*
@@ -129,6 +129,8 @@ pub struct TunPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastIntent {
     pub version: u32,
+    pub desired_up: bool,
+    pub boot_id: Option<String>,
     pub last_successful: Option<super::protocol::Protocol>,
     /// Server grants are runtime data. User routing/preferences live only in settings.json.
     pub private_routes: Vec<String>,
@@ -140,6 +142,8 @@ impl LastIntent {
     pub fn new(order: Vec<super::protocol::Protocol>, params: TunnelParams, saved_at: i64) -> Self {
         Self {
             version: BUNDLE_VERSION,
+            desired_up: false,
+            boot_id: None,
             last_successful: order.first().copied(),
             private_routes: params.private_routes,
             saved_at,
@@ -171,30 +175,6 @@ pub fn save(dir: &Path, intent: &LastIntent) -> Result<(), String> {
     write_private(&path, json.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
     debug!(winner = ?intent.last_successful, "the last-good intent was written to {}", path.display());
     Ok(())
-}
-
-/// Serial writer for successful connections. Traffic samples do not rewrite the
-/// record; changes to the winner or server grants do. Failed writes remain
-/// retryable on the next sample.
-pub struct IntentRecorder {
-    dir: PathBuf,
-    written: Option<(Option<super::protocol::Protocol>, Vec<String>)>,
-}
-
-impl IntentRecorder {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir, written: None }
-    }
-
-    pub fn record(&mut self, intent: LastIntent) -> Result<(), String> {
-        let key = (intent.last_successful, intent.private_routes.clone());
-        if self.written.as_ref() == Some(&key) && bundle_path(&self.dir).exists() {
-            return Ok(());
-        }
-        save(&self.dir, &intent)?;
-        self.written = Some(key);
-        Ok(())
-    }
 }
 
 /// Read the last-good intent, if there is one this build can use.
@@ -242,19 +222,6 @@ pub fn load(dir: &Path) -> Option<LastIntent> {
 pub fn last_intent() -> Option<crate::actor::handle::IntentRequest> {
     let dir = super::config::config_dir().ok()?;
     load(&dir)?.request()
-}
-
-/// Record what just connected, so the system can ask for it again with nobody watching.
-///
-/// Best-effort: an intent that could not be written costs the next always-on start, never this
-/// connect.
-pub fn remember(order: Vec<super::protocol::Protocol>, params: TunnelParams, saved_at: i64) {
-    let Ok(dir) = super::config::config_dir() else {
-        return;
-    };
-    if let Err(e) = save(&dir, &LastIntent::new(order, params, saved_at)) {
-        warn!("failed to record the last-good intent: {e}");
-    }
 }
 
 /// Delete it. A missing file is not an error.
@@ -541,46 +508,6 @@ AllowedIPs = 0.0.0.0/0
             }
             other => panic!("expected an Up, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn recording_updates_parameters_without_rewriting_traffic_samples() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut recorder = IntentRecorder::new(dir.path().to_path_buf());
-        let mut first = intent(TunnelParams::default());
-        recorder.record(first.clone()).unwrap();
-        first.saved_at += 1;
-        recorder.record(first.clone()).unwrap();
-        assert_eq!(load(dir.path()).unwrap().saved_at, first.saved_at - 1);
-
-        first.private_routes = vec!["10.66.66.0/24".into()];
-        recorder.record(first.clone()).unwrap();
-        assert_eq!(load(dir.path()).unwrap(), first);
-    }
-
-    #[test]
-    fn a_failed_record_is_retried_for_the_same_connection() {
-        let dir = tempfile::tempdir().unwrap();
-        let destination = dir.path().join("not-a-directory");
-        std::fs::write(&destination, "blocked").unwrap();
-        let mut recorder = IntentRecorder::new(destination.clone());
-        let last = intent(TunnelParams::default());
-        assert!(recorder.record(last.clone()).is_err());
-        std::fs::remove_file(&destination).unwrap();
-        std::fs::create_dir(&destination).unwrap();
-        recorder.record(last.clone()).unwrap();
-        assert_eq!(load(&destination).unwrap(), last);
-    }
-
-    #[test]
-    fn reconnecting_after_forgetting_recreates_the_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut recorder = IntentRecorder::new(dir.path().to_path_buf());
-        let last = intent(TunnelParams::default());
-        recorder.record(last.clone()).unwrap();
-        remove(dir.path());
-        recorder.record(last.clone()).unwrap();
-        assert_eq!(load(dir.path()).unwrap(), last);
     }
 
     #[test]

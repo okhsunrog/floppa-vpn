@@ -9,10 +9,12 @@ export default {
     remove: 'Remove',
     invalid: 'Enter a valid IPv4 address or network, such as 194.186.63.0/24.',
     duplicate: 'This network is already listed, or the 64-exclusion limit was reached.',
-    hint: 'Changes apply on the next connection. DNS is configured separately.',
+    hint: 'Saving changes reconnects an active VPN. DNS is configured separately.',
     apply: 'Reconnect',
   },
   status: {
+    failed: 'Connection failed',
+    needsAttention: 'Recovery needs attention',
     active: 'Active',
     pending: 'Pending',
     removing: 'Removing',

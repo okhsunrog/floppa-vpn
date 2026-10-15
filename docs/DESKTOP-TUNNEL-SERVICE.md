@@ -170,46 +170,33 @@ whether someone may run this VPN: group membership is what gates everything else
 here, and connecting on boot belongs inside it. So the preference lives where that authority
 reaches, in the service's own state directory, and the unit asks for it.
 
-`resume` is a *client* command for a separate reason: the tunnel service is started by its socket
-as well as at boot, so a service that reconnected whenever it started would reconnect every time
-anybody ran `floppa status`, on a VPN they had just turned off. Being **asked** is not the same as
-being **started**, and only a caller can tell the two apart.
+The actor owns `runtime.json` v4 alongside `settings.json`. It stores durable desired
+Up/Down, boot identity, last successful protocol and server-granted routes. In the
+same boot, a restarted long-lived owner recovers desired Up after network cleanup.
+On a new boot it consults `startup.connect_on_boot`. Explicit Disconnect persists
+Down; service shutdown uses Suspend so a restart does not become a user disconnect.
+Short-lived standalone CLI queries disable automatic resume. A standalone process
+still needs to be launched again before it can recover.
 
-What it resumes is not named in the unit. The service writes down what last connected — the winner
-first, since that is the protocol that actually carried a tunnel — into `autostart.json` beside the
-configs, which only root can read. So the request is "whatever you had", and the process that knows
-answers it. A machine that has never connected is told so, and nothing happens.
+`connect --config` supplies an ephemeral profile to the selected owner, either
+service or standalone. It is neither imported nor recorded for restart. `floppa
+import` explicitly persists credentials. All normal connection requests derive
+preferences from the selected owner's settings document.
 
-The same file is what Android uses for always-on and boot starts; the difference is only who does
-the asking.
-
-## Handing it a config you already have
-
-```bash
-floppa import ./wg0.conf     # into the service's store
-floppa connect               # uses it
-```
-
-`connect --config` deliberately does not do this — that flag means "build a tunnel in this
-command" — so `import` is the way into a store that belongs to root. With a config there and nobody
-logged in, `floppa connect` uses it rather than sending you to the server for one you already have:
-running a WireGuard tunnel does not require a Floppa account.
-
-Connecting from the service's store restores the last successful request,
-including its private routes and LAN preference. If no connection has succeeded
-yet, it tries the stored configs with default parameters. The boot record is
-updated when either the protocol order or connection parameters change; traffic
-samples alone do not rewrite it, and failed saves can be retried.
+Settings writes publish a new revision and reconcile the active configured tunnel.
+Subscribers receive saved and applied revisions separately. GUI and CLI observe
+`failed` and `needs_attention` rather than treating failed cleanup as disconnected.
+Linux uses the privileged helper's shared rollback directory; Windows uses a
+protected Administrators/SYSTEM directory in ProgramData. See
+[the architecture](CONNECTION-ARCHITECTURE.md) for current paths and validation limits.
 
 ## Not done yet
 
 **Hardening the unit.** It runs as root with no `ProtectSystem=` or capability bounding. Narrowing
 it needs testing against the DNS path, which rewrites `/etc/resolv.conf`.
 
-**One tunnel per machine is only half-enforced.** `ensure-tun` refuses a TUN that belongs to
-another uid, which covers two actors reaching for the same interface. It does not cover
-`sudo floppa connect --config … --interface floppa9` beside a running service: different
-interfaces, no collision, and both would lay down a default route.
+The machine-wide ownership lock now covers service and standalone, including
+custom interface names. A competing owner fails before touching the network.
 
 **Windows** needs a named pipe instead of a Unix socket and a service instead of a unit. Deferred:
 the tray already keeps the tunnel alive while the app is open there.
@@ -238,8 +225,9 @@ in again since. `id -nG` will tell you which.
 upgrade. `sudo systemctl restart floppa-vpn.service`. The Arch package does this for you on
 upgrade when the service is running.
 
-**"no tunnel service is running"** — the socket is not enabled, or this is not a packaged install.
-`systemctl enable --now floppa-vpn.socket`, or use `sudo floppa connect --config <file>`.
+**Service absent** — GUI and CLI select standalone automatically. An inaccessible,
+incompatible or unresponsive service is an explicit error; it never triggers a
+second owner. `--config` selects an ephemeral input profile, not the execution mode.
 
 **Watching it** — `journalctl -u floppa-vpn.service -f`. The service logs to stderr, which
 journald captures; `RUST_LOG` applies as it does to any other run.

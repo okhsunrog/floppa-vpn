@@ -48,6 +48,8 @@ pub struct Policy {
     pub reconnect_passes: Option<u32>,
     pub backoff_base: Duration,
     pub backoff_max: Duration,
+    /// Per-owner entropy; zero keeps deterministic test policies.
+    pub jitter_seed: u64,
     /// How many times an unwind is re-run while the world still reports a running tunnel.
     pub unwind_tries: u32,
     /// How many times one step's undo is retried before it is logged and popped.
@@ -72,6 +74,7 @@ impl Default for Policy {
             reconnect_passes: None,
             backoff_base: Duration::from_secs(1),
             backoff_max: Duration::from_secs(30),
+            jitter_seed: 0,
             unwind_tries: 3,
             undo_retries: 2,
             dns_failure: DnsFailurePolicy::Tolerate,
@@ -84,9 +87,14 @@ impl Policy {
     /// Adapt to the backend: only a cross-process backend can go dark, and only it needs the
     /// extra budget for a consent dialog.
     pub fn for_backend(grace: Duration) -> Self {
+        use std::hash::{BuildHasher, Hasher};
+        let seed = std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish();
         let android = !grace.is_zero();
         Self {
             dark_grace: grace,
+            jitter_seed: seed,
             attempt_budget: if android {
                 Duration::from_secs(40)
             } else {
@@ -97,15 +105,45 @@ impl Policy {
     }
 
     pub fn backoff(&self, pass: u32) -> Duration {
-        self.backoff_base
+        let cap = self
+            .backoff_base
             .saturating_mul(1u32 << pass.min(5))
-            .min(self.backoff_max)
+            .min(self.backoff_max);
+        if self.jitter_seed == 0 {
+            return cap;
+        }
+        // Stable for a given pass: rendering/reconciliation cannot move its deadline.
+        let mut x = self.jitter_seed.wrapping_add(u64::from(pass));
+        x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+        x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+        x ^= x >> 31;
+        cap.mul_f64(0.5 + (x as f64 / u64::MAX as f64) * 0.5)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jitter_is_bounded_stable_and_owner_specific() {
+        let mut policy = Policy {
+            jitter_seed: 1234,
+            ..Policy::default()
+        };
+        for pass in [0, 1, 5, u32::MAX] {
+            let delay = policy.backoff(pass);
+            let cap = policy
+                .backoff_base
+                .saturating_mul(1 << pass.min(5))
+                .min(policy.backoff_max);
+            assert!(delay >= cap / 2 && delay <= cap);
+            assert_eq!(delay, policy.backoff(pass));
+        }
+        let first = policy.backoff(3);
+        policy.jitter_seed += 1;
+        assert_ne!(first, policy.backoff(3));
+    }
 
     #[test]
     fn backoff_grows_then_saturates() {

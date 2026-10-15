@@ -90,10 +90,64 @@ impl WindowsPlatform {
         iface: &InterfaceName,
         if_index: Option<u32>,
     ) -> Result<u32, PlatformError> {
-        match if_index {
-            Some(idx) => Ok(idx),
-            None => self.get_interface_index(iface.as_str()).await,
+        let current = self.get_interface_index(iface.as_str()).await?;
+        if if_index.is_some_and(|saved| saved != current) {
+            return Err(PlatformError::Failed(format!(
+                "interface {iface} changed identity; refusing a stale index"
+            )));
         }
+        Ok(current)
+    }
+
+    /// Confirm absence after deletion, including partial applies and already-removed routes.
+    /// All interpolated values come from parsed IP networks, gateways and numeric indices.
+    async fn confirm_route_absent(
+        network: IpNetwork,
+        index: Option<u32>,
+        gateway: Option<&Gateway>,
+    ) -> Result<(), PlatformError> {
+        let mut filter = format!("$_.DestinationPrefix -eq '{network}'");
+        if let Some(index) = index {
+            filter.push_str(&format!(" -and $_.InterfaceIndex -eq {index}"));
+        }
+        if let Some(gateway) = gateway {
+            filter.push_str(&format!(" -and $_.NextHop -eq '{gateway}'"));
+        }
+        let script = format!(
+            "$ErrorActionPreference='Stop'; if (@(Get-NetRoute -PolicyStore ActiveStore | Where-Object {{ {filter} }}).Count -gt 0) {{ exit 1 }}"
+        );
+        let output = run_bounded(
+            Command::new("powershell.exe").args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ]),
+            "verify route removal",
+            Some(UNDO_TIMEOUT),
+        )
+        .await?;
+        if !output.status.success() {
+            return Err(PlatformError::Failed(format!(
+                "could not confirm removal of route {network}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn recovery_index(
+        &self,
+        iface: &InterfaceName,
+        saved: Option<u32>,
+    ) -> Result<Option<u32>, PlatformError> {
+        let output = self
+            .run_netsh(
+                &["interface", "ip", "show", "interfaces"],
+                Some(UNDO_TIMEOUT),
+            )
+            .await?;
+        let current = parse_interface_index(&output, iface.as_str()).ok();
+        Ok(current.filter(|current| saved.is_none_or(|saved| saved == *current)))
     }
 
     /// Get interface index by name, read fresh from the OS every time.
@@ -330,6 +384,7 @@ impl Platform for WindowsPlatform {
                     "route",
                     &format!("{endpoint}/128"),
                     &format!("nexthop={gateway}"),
+                    "store=active",
                 ],
                 None,
             )
@@ -366,7 +421,12 @@ impl Platform for WindowsPlatform {
                     String::from_utf8_lossy(&output.stderr).trim()
                 );
             }
-            Ok(())
+            Self::confirm_route_absent(
+                IpNetwork::new(endpoint, 32).expect("IPv4 prefix"),
+                None,
+                gateway,
+            )
+            .await
         } else {
             let _ = self
                 .run_netsh(
@@ -376,11 +436,22 @@ impl Platform for WindowsPlatform {
                         "delete",
                         "route",
                         &format!("{endpoint}/128"),
+                        &format!(
+                            "nexthop={}",
+                            gateway.ok_or_else(|| PlatformError::Failed(
+                                "missing endpoint gateway in recovery record".into()
+                            ))?
+                        ),
                     ],
                     Some(UNDO_TIMEOUT),
                 )
                 .await;
-            Ok(())
+            Self::confirm_route_absent(
+                IpNetwork::new(endpoint, 128).expect("IPv6 prefix"),
+                None,
+                gateway,
+            )
+            .await
         }
     }
 
@@ -407,6 +478,7 @@ impl Platform for WindowsPlatform {
                     "route",
                     &network.to_string(),
                     &idx,
+                    "store=active",
                 ],
                 None,
             )
@@ -424,11 +496,12 @@ impl Platform for WindowsPlatform {
         if routes.is_empty() {
             return Ok(());
         }
-        let Ok(idx) = self.index_or_lookup(iface, if_index).await else {
+        let Some(idx) = self.recovery_index(iface, if_index).await? else {
             // The adapter is already gone, and its routes went with it.
             debug!("Windows: no interface index for {iface}; routes already released");
             return Ok(());
         };
+        let index = idx;
         let idx = idx.to_string();
 
         info!("Removing {} routes via interface {iface}", routes.len());
@@ -449,6 +522,7 @@ impl Platform for WindowsPlatform {
                     Some(UNDO_TIMEOUT),
                 )
                 .await;
+            Self::confirm_route_absent(*network, Some(index), None).await?;
         }
         Ok(())
     }
@@ -523,26 +597,25 @@ impl Platform for WindowsPlatform {
         if_index: Option<u32>,
     ) -> Result<(), PlatformError> {
         info!("Restoring DNS configuration for {iface}");
-        let Ok(idx) = self.index_or_lookup(iface, if_index).await else {
+        let Some(idx) = self.recovery_index(iface, if_index).await? else {
             debug!("Windows: no interface index for {iface}; DNS already released");
             return Ok(());
         };
         let idx = idx.to_string();
 
         for proto in ["ipv4", "ipv6"] {
-            let _ = self
-                .run_netsh(
-                    &[
-                        "interface",
-                        proto,
-                        "set",
-                        "dnsservers",
-                        &format!("name={idx}"),
-                        "source=dhcp",
-                    ],
-                    Some(UNDO_TIMEOUT),
-                )
-                .await;
+            self.run_netsh(
+                &[
+                    "interface",
+                    proto,
+                    "set",
+                    "dnsservers",
+                    &format!("name={idx}"),
+                    "source=dhcp",
+                ],
+                Some(UNDO_TIMEOUT),
+            )
+            .await?;
         }
         flush_dns_cache().await;
         Ok(())

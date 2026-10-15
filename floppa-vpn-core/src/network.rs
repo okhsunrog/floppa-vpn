@@ -106,7 +106,7 @@ async fn paths(_: &str) -> Result<Paths, ()> {
     // Physical adapters include WLAN/Ethernet/USB. Exclude virtual VPN adapters, whose
     // surviving routes must not claim connectivity in airplane mode.
     let raw = output("powershell.exe", &["-NoProfile", "-NonInteractive", "-Command",
-        "$ErrorActionPreference='Stop'; $ids=@(Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | Select-Object -ExpandProperty ifIndex); @(Get-NetRoute | Where-Object { ($_.DestinationPrefix -eq '0.0.0.0/0' -or $_.DestinationPrefix -eq '::/0') -and $ids.Contains($_.InterfaceIndex) } | ForEach-Object { '{0}:{1}:{2}:{3}' -f $_.AddressFamily,$_.InterfaceIndex,$_.NextHop,$_.RouteMetric } | Sort-Object -Unique) | ConvertTo-Json -Compress"]).await?;
+        "$ErrorActionPreference='Stop'; $ids=@(Get-NetAdapter -Physical | Where-Object Status -eq 'Up' | Select-Object -ExpandProperty ifIndex); $routes=@(Get-NetRoute | Where-Object { ($_.DestinationPrefix -eq '0.0.0.0/0' -or $_.DestinationPrefix -eq '::/0') -and $ids.Contains($_.InterfaceIndex) }); if ($routes.Count -gt 0) { $active=@($routes.InterfaceIndex); @(@($routes | ForEach-Object { '{0}:{1}:{2}:{3}' -f $_.AddressFamily,$_.InterfaceIndex,$_.NextHop,$_.RouteMetric }) + @(Get-NetIPAddress | Where-Object { $active.Contains($_.InterfaceIndex) } | ForEach-Object { 'ip:{0}:{1}' -f $_.InterfaceIndex,$_.IPAddress }) | Sort-Object -Unique) | ConvertTo-Json -Compress }"]).await?;
     if raw.iter().all(u8::is_ascii_whitespace) {
         return Ok(Paths(vec![]));
     }
@@ -193,6 +193,8 @@ impl RouteEvents {
 pub(crate) async fn watch(iface: String, tx: mpsc::Sender<Command>) {
     #[cfg(target_os = "linux")]
     let mut events = RouteEvents::subscribe().ok();
+    #[cfg(target_os = "windows")]
+    let events = windows_events::Events::subscribe().ok();
     let mut previous: Option<Paths> = None;
     let mut previous_link = Link::Unknown;
     loop {
@@ -235,7 +237,15 @@ pub(crate) async fn watch(iface: String, tx: mpsc::Sender<Command>) {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
         #[cfg(target_os = "windows")]
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        if let Some(source) = &events {
+            tokio::select! {
+                _ = tx.closed() => return,
+                _ = source.changed() => { floppa_net::network_changed(); },
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {},
+            }
+        } else {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
     }
 }
 
@@ -281,5 +291,103 @@ mod tests {
             1
         );
         assert!(linux_paths(b"bad", b"[]", b"[]", "floppa0").is_err());
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows_events {
+    use std::sync::Arc;
+    use windows_sys::Win32::{
+        Foundation::HANDLE, NetworkManagement::IpHelper::*, Networking::WinSock::AF_UNSPEC,
+    };
+    pub(super) struct Events {
+        handles: [HANDLE; 3],
+        notify: Box<Arc<tokio::sync::Notify>>,
+    }
+    // Handles are opaque registration tokens; cancellation does not have thread affinity.
+    unsafe impl Send for Events {}
+    unsafe impl Sync for Events {}
+    unsafe extern "system" fn route(
+        context: *const core::ffi::c_void,
+        _: *const MIB_IPFORWARD_ROW2,
+        _: MIB_NOTIFICATION_TYPE,
+    ) {
+        unsafe { &*context.cast::<Arc<tokio::sync::Notify>>() }.notify_one();
+    }
+    unsafe extern "system" fn interface(
+        context: *const core::ffi::c_void,
+        _: *const MIB_IPINTERFACE_ROW,
+        _: MIB_NOTIFICATION_TYPE,
+    ) {
+        unsafe { &*context.cast::<Arc<tokio::sync::Notify>>() }.notify_one();
+    }
+    unsafe extern "system" fn address(
+        context: *const core::ffi::c_void,
+        _: *const MIB_UNICASTIPADDRESS_ROW,
+        _: MIB_NOTIFICATION_TYPE,
+    ) {
+        unsafe { &*context.cast::<Arc<tokio::sync::Notify>>() }.notify_one();
+    }
+    impl Events {
+        pub(super) fn subscribe() -> std::io::Result<Self> {
+            let mut events = Self {
+                handles: [std::ptr::null_mut(); 3],
+                notify: Box::new(Arc::new(tokio::sync::Notify::new())),
+            };
+            let context = (&*events.notify as *const Arc<tokio::sync::Notify>).cast();
+            let code = unsafe {
+                NotifyRouteChange2(
+                    AF_UNSPEC,
+                    Some(route),
+                    context,
+                    false,
+                    &mut events.handles[0],
+                )
+            };
+            if code != 0 {
+                return Err(std::io::Error::from_raw_os_error(code as i32));
+            }
+            let code = unsafe {
+                NotifyIpInterfaceChange(
+                    AF_UNSPEC,
+                    Some(interface),
+                    context,
+                    false,
+                    &mut events.handles[1],
+                )
+            };
+            if code != 0 {
+                return Err(std::io::Error::from_raw_os_error(code as i32));
+            }
+            let code = unsafe {
+                NotifyUnicastIpAddressChange(
+                    AF_UNSPEC,
+                    Some(address),
+                    context,
+                    false,
+                    &mut events.handles[2],
+                )
+            };
+            if code != 0 {
+                return Err(std::io::Error::from_raw_os_error(code as i32));
+            }
+            Ok(events)
+        }
+        pub(super) async fn changed(&self) {
+            self.notify.notified().await;
+        }
+    }
+    impl Drop for Events {
+        fn drop(&mut self) {
+            for handle in self.handles {
+                if !handle.is_null() {
+                    // Called outside callbacks. Cancellation waits for in-flight callbacks before
+                    // the boxed context is freed.
+                    unsafe {
+                        CancelMibChangeNotify2(handle);
+                    }
+                }
+            }
+        }
     }
 }

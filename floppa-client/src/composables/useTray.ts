@@ -11,6 +11,8 @@ const STATUS_KEYS: Record<Phase, string> = {
   connecting: 'status.connecting',
   verifying_connection: 'status.verifyingConnection',
   disconnected: 'status.disconnected',
+  failed: 'status.failed',
+  needs_attention: 'status.needsAttention',
   disconnecting: 'status.disconnecting',
   retrying: 'status.retrying',
 }

@@ -43,6 +43,8 @@ const TUNNEL_AT_STAKE: Record<Phase, boolean> = {
   retrying: true,
   disconnecting: false,
   disconnected: false,
+  failed: false,
+  needs_attention: false,
   unknown: false,
 }
 

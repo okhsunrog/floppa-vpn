@@ -223,7 +223,10 @@ export const useVpnStore = defineStore(
      * initial read could overwrite a pushed update that already superseded it.
      */
     function apply(next: TunnelState) {
-      if (next.seq >= state.value.seq) state.value = next
+      if (next.seq >= state.value.seq) {
+        state.value = next
+        useSettingsStore().observeRevision(next.settings_revision)
+      }
     }
 
     let initialising: Promise<void> | null = null
@@ -500,6 +503,9 @@ export const useVpnStore = defineStore(
 function emptyState(): TunnelState {
   return {
     seq: 0,
+    settings_revision: 0,
+    applied_revision: null,
+    settings_apply_error: null,
     // Not 'disconnected': before the first snapshot arrives we have no idea whether a tunnel is
     // running, and saying otherwise is what made an active tunnel flash as down on app start.
     phase: 'unknown',

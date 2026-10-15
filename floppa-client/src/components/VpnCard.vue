@@ -240,6 +240,16 @@ const healthDotClass = computed(() => {
   <UCard class="mb-4">
     <div class="flex flex-col items-center text-center gap-3">
       <TunnelModeBadge v-if="isLinux" />
+      <UAlert
+        v-if="vpn.state.settings_apply_error"
+        color="error"
+        variant="soft"
+        :title="
+          t(vpn.state.phase === 'needs_attention' ? 'status.needsAttention' : 'status.failed')
+        "
+        :description="vpn.state.settings_apply_error"
+        class="w-full max-w-sm"
+      />
       <!--
         No device identity: `getDeviceId` failed, so there is no peer to provision and the
         Connect button is disabled with nothing on screen explaining why. Reachable on desktop

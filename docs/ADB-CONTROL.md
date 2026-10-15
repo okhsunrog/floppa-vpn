@@ -164,3 +164,5 @@ The receiver is exported — the sender is another app, `com.android.shell` — 
 `signature|privileged|development`, so granting it to a third-party app itself takes adb). The guard
 keeps other apps out; it was never meant to keep out someone with a cable, who can tap the tile with
 `input` anyway.
+
+Android boot startup uses settings.json startup.connect_on_boot independently of system Always-on. Diagnostic snapshots include settings_revision, applied_revision and settings_apply_error; failed and needs_attention are terminal phases.

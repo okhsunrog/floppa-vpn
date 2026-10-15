@@ -357,6 +357,11 @@ class FloppaVpnService : VpnService() {
         // established yet, which is the truth at that point.
         reportVpnMode()
 
+        if (intent?.action == ACTION_BOOT_RETRY && !BootRetry.wanted(this)) {
+            // An app preference can be disabled after the boot job was scheduled.
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             // The user asked to stop, from the app or from the notification. The actor decides
             // what that means for the tunnel; this service goes away when it says so.
@@ -422,6 +427,9 @@ class FloppaVpnService : VpnService() {
      * *shown* from an activity, which this process does not have. Consent that is missing comes
      * back as a refusal, and the UI — which does have an activity — is what asks for it.
      */
+    fun bootCount(): Int =
+        android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+
     fun hasConsent(): Boolean = VpnService.prepare(this) == null
 
     /**

@@ -1,5 +1,5 @@
 mod auth;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 mod client;
 mod connect;
 mod protocol;
@@ -43,7 +43,7 @@ enum Command {
     #[cfg(target_os = "linux")]
     Service,
     /// Read or replace preferences through the selected tunnel owner
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Settings {
         #[command(subcommand)]
         action: SettingsAction,
@@ -77,17 +77,17 @@ enum Command {
         api_url: String,
     },
     /// Take the tunnel the system service is holding down
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Disconnect,
     /// Bring back whatever tunnel the system service last had up
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Resume {
         /// Do nothing unless `floppa autostart on` was set. What the boot unit passes.
         #[arg(long)]
         if_enabled: bool,
     },
     /// Whether to reconnect the tunnel on boot; with no argument, prints the current setting
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Autostart {
         /// `on` or `off`
         #[arg(value_parser = ["on", "off"])]
@@ -95,13 +95,13 @@ enum Command {
     },
     /// Persist a config in the selected owner without connecting.
     /// Unlike temporary `connect --config`, this saves credentials for future connections.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Import {
         /// Config file (.conf) or VLESS URI file
         config: String,
     },
     /// What the system service says the tunnel is doing
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     Status,
     /// List your peers
     Peers {
@@ -126,7 +126,7 @@ enum Command {
     },
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 #[derive(Subcommand)]
 enum SettingsAction {
     Show,
@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
     let tokens = auth::TokenSource::new(cli.token, cli.token_file);
 
     match cli.command {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Settings { action } => {
             let owner = client::reach().await?;
             let state = owner.get_settings().await?;
@@ -225,19 +225,19 @@ async fn main() -> Result<()> {
                 .transpose()?;
             // Select ownership independently of credentials. An explicit config is temporary
             // input to that same owner, not an implicit request to bypass the service.
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             let owner = client::reach_for_connect(&interface, no_dns).await?;
             if let Some(path) = config {
                 let config_str = std::fs::read_to_string(&path)
                     .with_context(|| format!("Failed to read config file: {path}"))?;
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 {
                     if routes.is_some() {
                         bail!("use `floppa settings` for routing preferences");
                     }
                     return client::connect_temporary(&owner, config_str).await;
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
                 connect::run(
                     &config_str,
                     &interface,
@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
                     excluded_routes.unwrap_or_default(),
                 )
                 .await?;
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
                 return Ok(());
             }
 
@@ -255,7 +255,7 @@ async fn main() -> Result<()> {
             // combination — `floppa import` puts a `.conf` there, and nothing about running a
             // WireGuard tunnel requires a Floppa account. Sending that person to the server for a
             // config they have would fail for a reason that is not their problem.
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             if tokens.load()?.is_none() {
                 let remote = &owner;
                 if client::has_config(remote).await {
@@ -297,7 +297,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             {
                 let remote = &owner;
                 // The service is what will need to reach the server later, with nobody at this
@@ -306,7 +306,7 @@ async fn main() -> Result<()> {
                 client::seed_session(remote, &api_url, &token, &identity).await;
                 client::connect(remote, &config_str, private_routes, excluded_routes).await?;
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             connect::run(
                 &config_str,
                 &interface,
@@ -317,29 +317,29 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Disconnect => {
             let remote = client::reach().await?;
             client::disconnect(&remote).await?;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Resume { if_enabled } => {
             let remote = client::reach().await?;
             client::resume(&remote, if_enabled).await?;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Autostart { state } => {
             let remote = client::reach().await?;
             client::autostart(&remote, state.map(|s| s == "on")).await?;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Import { config } => {
             let raw = std::fs::read_to_string(&config)
                 .with_context(|| format!("Failed to read config file: {config}"))?;
             let remote = client::reach().await?;
             client::import(&remote, &raw).await?;
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         Command::Status => {
             let remote = client::reach().await?;
             client::status(&remote).await?;

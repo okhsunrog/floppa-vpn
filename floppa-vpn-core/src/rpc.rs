@@ -50,7 +50,7 @@ use crate::store::ConfigError;
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
 /// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference. Six adds route exclusions
 /// and saved settings reads; five was the withdrawn destination-policy implementation.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Why a session could not be handed over.
 ///

@@ -31,6 +31,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IntentRequest {
     Down,
+    /// Process shutdown: clean the network while preserving the last explicit intention.
+    Suspend,
     /// Use the owner's settings; only server grants come from the caller.
     Configured {
         private_routes: Vec<String>,

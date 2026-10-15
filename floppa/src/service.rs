@@ -67,7 +67,6 @@ pub async fn run() -> Result<()> {
     .map_err(anyhow::Error::msg)?;
 
     floppa_provision::watcher::watch(handle.clone(), spawn.clone(), env!("CARGO_PKG_VERSION"));
-    remember_what_connects(handle.clone(), &spawn);
 
     let server = start_server(handle.clone())?;
 
@@ -80,66 +79,6 @@ pub async fn run() -> Result<()> {
     server.shutdown();
     take_down(&handle).await;
     Ok(())
-}
-
-/// Write down what just connected, so a start with nobody watching can ask for it again.
-///
-/// Android does this inside the actor, off `Effect::RememberWinner`, because there the actor and
-/// the thing that restarts it are the same process. Here they are not — systemd restarts this, and
-/// the actor has no opinion about systemd — so it is done from outside, off the published state,
-/// which carries everything the record needs.
-///
-/// Store the winner and server grants; resume resolves preferences from current owner settings.
-///
-/// Written only when it changes. The state publishes on every traffic sample, and a file rewritten
-/// once a second for the life of a connection would be a great deal of writing to say the same
-/// thing.
-fn remember_what_connects(handle: TunnelHandle, spawn: &Spawn) {
-    use floppa_vpn_core::actor::types::{IntentView, Phase};
-
-    let mut states = handle.states();
-    spawn(Box::pin(async move {
-        let mut recorder = floppa_vpn_core::autostart::IntentRecorder::new(
-            std::path::PathBuf::from(SYSTEM_STATE_DIR),
-        );
-        while states.changed().await.is_ok() {
-            let state = states.borrow_and_update().clone();
-            if state.phase != Phase::Connected || state.intent != IntentView::Up {
-                continue;
-            }
-            if state.temporary_profile {
-                continue;
-            }
-            let (Some(winner), Some(params)) = (state.protocol, state.params.clone()) else {
-                continue;
-            };
-            let mut order = vec![winner];
-            order.extend(state.intent_order.iter().copied().filter(|p| *p != winner));
-            let at = chrono::Utc::now().timestamp();
-            // Await each write: a slower earlier save must not replace newer parameters.
-            let result = tokio::task::spawn_blocking(move || {
-                let result = recorder.record(floppa_vpn_core::autostart::LastIntent::new(
-                    order, params, at,
-                ));
-                (recorder, result)
-            })
-            .await;
-            match result {
-                Ok((returned, result)) => {
-                    recorder = returned;
-                    if let Err(e) = result {
-                        tracing::warn!("failed to record the last-good intent: {e}");
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("the last-good intent writer did not finish: {e}");
-                    recorder = floppa_vpn_core::autostart::IntentRecorder::new(
-                        std::path::PathBuf::from(SYSTEM_STATE_DIR),
-                    );
-                }
-            }
-        }
-    }));
 }
 
 /// Serve on systemd's socket if there is one, and bind for ourselves if not.
@@ -214,7 +153,7 @@ fn restrict_to_owner(path: &std::path::Path) -> Result<()> {
 /// what was applied, so it is the only thing that can undo precisely that, and a process that
 /// exited first would leave the machine holding it.
 async fn take_down(handle: &TunnelHandle) {
-    let _ = handle.set_intent(IntentRequest::Down).await;
+    let _ = handle.set_intent(IntentRequest::Suspend).await;
     match tokio::time::timeout(std::time::Duration::from_secs(10), handle.await_quiescent()).await {
         Ok(()) => tracing::info!("the tunnel is down and the machine is back as it was"),
         // Said plainly rather than swallowed: what is left behind is a route or a resolv.conf, and

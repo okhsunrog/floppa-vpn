@@ -103,13 +103,15 @@ internal object BootRetry {
                 null
             }
         val current = bootCount(context)
-        if (recorded == null || current < 0 || recorded != current) {
+        val appBootEnabled = connectOnBoot(context)
+        if (!appBootEnabled && (recorded == null || current < 0 || recorded != current)) {
             Log.i(
                 TAG,
                 "the system did not start us this boot (marker=$recorded, boot=$current); no retry",
             )
             return false
         }
+        Log.i(TAG, if (appBootEnabled) "app boot preference requests startup" else "retrying Android Always-on startup")
         val blocker = startBlocker(context)
         if (blocker != null) {
             Log.i(TAG, "a start made with no UI cannot succeed here: $blocker")

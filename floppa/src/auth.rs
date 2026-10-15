@@ -1,7 +1,9 @@
 use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,12 +16,15 @@ use floppa_api_client::{ApiClient, DeviceIdentity};
 /// The uid/gid of the user behind `sudo`, so files created in their home stay theirs.
 struct SudoUser {
     home: PathBuf,
+    #[cfg(unix)]
     uid: u32,
+    #[cfg(unix)]
     gid: u32,
 }
 
 /// `connect` needs root, so the CLI usually runs under sudo, where HOME and the config dir point
 /// at root's. The token was saved by the invoking user: look there instead.
+#[cfg(unix)]
 fn sudo_user() -> Option<SudoUser> {
     let user = std::env::var("SUDO_USER").ok()?;
     let uid: u32 = std::env::var("SUDO_UID").ok()?.parse().ok()?;
@@ -33,6 +38,19 @@ fn sudo_user() -> Option<SudoUser> {
         (fields.next()? == user).then(|| fields.nth(4).map(PathBuf::from))?
     })?;
     Some(SudoUser { home, uid, gid })
+}
+
+#[cfg(not(unix))]
+fn sudo_user() -> Option<SudoUser> {
+    None
+}
+
+fn create_private_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path)
 }
 
 /// The directory this installation keeps its token and device id in.
@@ -56,11 +74,7 @@ pub fn config_dir() -> Result<PathBuf> {
             })?;
             return Ok(dir);
         }
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir)
-            .with_context(|| format!("Failed to create {}", dir.display()))?;
+        create_private_dir(&dir).with_context(|| format!("Failed to create {}", dir.display()))?;
         give_to_sudo_user(&dir, sudo.as_ref());
     }
     Ok(dir)
@@ -68,6 +82,7 @@ pub fn config_dir() -> Result<PathBuf> {
 
 /// Files created as root in the invoking user's home are handed back to that user, so a later
 /// unprivileged `login` can replace them.
+#[cfg(unix)]
 fn give_to_sudo_user(path: &Path, sudo: Option<&SudoUser>) {
     if let Some(sudo) = sudo
         && let Err(e) = std::os::unix::fs::chown(path, Some(sudo.uid), Some(sudo.gid))
@@ -76,8 +91,17 @@ fn give_to_sudo_user(path: &Path, sudo: Option<&SudoUser>) {
     }
 }
 
+#[cfg(not(unix))]
+fn give_to_sudo_user(_: &Path, _: Option<&SudoUser>) {}
+
+#[cfg(not(unix))]
+fn write_private(path: &Path, content: &str) -> Result<()> {
+    floppa_vpn_core::private_file::write_private(path, content.as_bytes()).map_err(Into::into)
+}
+
 /// Write `content` to `path` with mode 0600 from the first byte: a temp file in the same
 /// directory, then an atomic rename over the destination.
+#[cfg(unix)]
 fn write_private(path: &Path, content: &str) -> Result<()> {
     let tmp = path.with_extension("tmp");
     let _ = fs::remove_file(&tmp);
@@ -146,10 +170,7 @@ impl TokenSource {
             .parent()
             .filter(|p| !p.as_os_str().is_empty() && !p.is_dir())
         {
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(parent)
+            create_private_dir(parent)
                 .with_context(|| format!("Failed to create {}", parent.display()))?;
         }
         write_private(&path, token)
@@ -362,6 +383,7 @@ async fn respond(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -435,6 +457,7 @@ mod tests {
 
         write_private(&path, "first").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600

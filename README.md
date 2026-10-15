@@ -200,7 +200,13 @@ Two-process model so the VPN survives app swipe-close:
 
 **The flow:** `tauri-plugin-vpn` (Kotlin) starts `FloppaVpnService` as a foreground service → service creates TUN via Android's `VpnService.Builder` → passes the raw fd to Rust via JNI (`nativeStartServer`) → the tarpc server starts listening on `vpn.sock` and the tunnel (gotatun or shoes-lite) is brought up over that fd. When gotatun creates UDP sockets, it calls back into Kotlin via JNI (`protectSocket`) to mark them as bypass — preventing WireGuard packets from routing through the VPN itself. Split tunneling uses Android's per-app VPN API (`addAllowedApplication` / `addDisallowedApplication`).
 
-**Always-on:** after every verified connect the UI process writes `autostart.json` (the TUN parameters, the protocol config, the resolved endpoint and the split rules; `0600` in the app's private data directory, like `vpn-config.json`). When the system starts the service with no configuration — the always-on toggle, boot, a lockdown restore — the service reads that bundle through `nativeLoadAutostart`, builds the same TUN, binds the RPC and starts the tunnel in-process (`nativeStartTunnelFromBundle`) under an epoch from a range the UI never uses. The UI, once opened, finds the tunnel over the RPC with its protocol and split rules reported by the service and adopts it as connected. Forgetting the configs removes the bundle, so a later system start finds nothing and stops.
+**Always-on:** the VPN process owns the same Rust actor as the desktop client.
+`settings.json` contains preferences; `runtime.json` v4 contains desired Up/Down,
+boot identity, last successful protocol and server grants, without credentials.
+Android Always-on requests a connection independently of the application's
+`startup.connect_on_boot` preference. BOOT_COUNT distinguishes a process restart
+from a new boot. The UI observes the VPN process over RPC; it does not write a
+separate autostart bundle. See [the current architecture](docs/CONNECTION-ARCHITECTURE.md).
 
 ## Frontend Sharing
 

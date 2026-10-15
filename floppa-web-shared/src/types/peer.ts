@@ -12,6 +12,8 @@ export type ConnectionStatus =
   /** Nothing has been observed yet. Not a claim that there is no tunnel — see `Phase::Unknown`. */
   | 'unknown'
   | 'disconnected'
+  | 'failed'
+  | 'needs_attention'
   | 'connecting'
   | 'verifying_connection'
   | 'connected'

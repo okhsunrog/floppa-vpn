@@ -11,26 +11,26 @@
 //! run rather than only by hand on a phone.
 
 use anyhow::{Result, bail};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use std::sync::Arc;
 use tokio::sync::watch;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use floppa_vpn_core::actor::deployment::{ConfigSource, Deployment};
 use floppa_vpn_core::actor::handle::IntentRequest;
 use floppa_vpn_core::actor::types::{CycleOutcome, TunnelState};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use floppa_vpn_core::actor::{Spawn, TunnelActor};
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use floppa_vpn_core::protocol::InterfaceName;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use floppa_vpn_core::rollback::Journal;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 use floppa_vpn_core::{create_backend, get_platform};
 
 /// Bring up `config_str` and stay up until a signal says otherwise. `private_routes` are the
 /// plan's private networks (empty for a config from a file), routed on top of everything else.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub async fn run(
     config_str: &str,
     interface: &str,
@@ -50,6 +50,8 @@ pub async fn run(
         // private key in the keyring of whoever the CLI is running as — under `sudo`, root's.
         configs: ConfigSource::Ephemeral,
         system_service: false,
+        resume_on_start: false,
+        ..Deployment::default()
     };
 
     let spawn: Spawn = Arc::new(|fut| {
@@ -150,23 +152,31 @@ pub fn describe(outcome: &CycleOutcome) -> String {
 /// Wait for a shutdown signal, or for the actor to give up on the tunnel for good.
 async fn watch_until_stopped(mut states: watch::Receiver<TunnelState>) -> Result<String> {
     use floppa_vpn_core::actor::types::Phase;
-    use tokio::signal::unix::{SignalKind, signal};
-
-    let mut terminate = signal(SignalKind::terminate())?;
-    let mut hangup = signal(SignalKind::hangup())?;
+    #[cfg(unix)]
+    let unix_shutdown = async {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut terminate = signal(SignalKind::terminate())?;
+        let mut hangup = signal(SignalKind::hangup())?;
+        Ok::<_, std::io::Error>(tokio::select! {
+            _ = terminate.recv() => "SIGTERM received",
+            _ = hangup.recv() => "SIGHUP received",
+        })
+    };
+    #[cfg(not(unix))]
+    let unix_shutdown = std::future::pending::<Result<&str, std::io::Error>>();
+    tokio::pin!(unix_shutdown);
 
     loop {
         tokio::select! {
             r = tokio::signal::ctrl_c() => { r?; return Ok("SIGINT received".into()) }
-            _ = terminate.recv() => return Ok("SIGTERM received".into()),
-            _ = hangup.recv() => return Ok("SIGHUP received".into()),
+            reason = &mut unix_shutdown => return Ok(reason?.into()),
             changed = states.changed() => {
                 if changed.is_err() {
                     bail!("the tunnel actor stopped");
                 }
                 // Reconnecting is not stopping: only a settled Disconnected is, and it means the
                 // actor has run out of ways to keep this tunnel up.
-                if states.borrow_and_update().phase == Phase::Disconnected {
+                if matches!(states.borrow_and_update().phase, Phase::Disconnected | Phase::Failed | Phase::NeedsAttention) {
                     return Ok("the tunnel could not be kept up".into());
                 }
             }

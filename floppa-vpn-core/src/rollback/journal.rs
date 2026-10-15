@@ -52,6 +52,8 @@ impl Default for StackId {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct Record {
     #[serde(default)]
+    boot_id: Option<String>,
+    #[serde(default)]
     stack: StackId,
     #[serde(flatten)]
     applied: Applied,
@@ -59,12 +61,24 @@ struct Record {
 
 #[derive(Debug, Clone)]
 pub struct Journal {
-    path: PathBuf,
+    path: std::sync::Arc<PathBuf>,
+    boot_id: Option<std::sync::Arc<str>>,
 }
 
 impl Journal {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: std::sync::Arc::new(path.into()),
+            boot_id: None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn for_boot(path: PathBuf, boot_id: String) -> Self {
+        Self {
+            path: std::sync::Arc::new(path),
+            boot_id: Some(boot_id.into()),
+        }
     }
 
     /// Where the journal lives, given the app config directory.
@@ -84,6 +98,7 @@ impl Journal {
             .filter(|r| r.stack != stack)
             .collect();
         records.extend(steps.map(|applied| Record {
+            boot_id: self.boot_id.as_deref().map(str::to_owned),
             stack,
             applied: applied.clone(),
         }));
@@ -101,6 +116,7 @@ impl Journal {
     ) -> io::Result<()> {
         let records: Vec<Record> = steps
             .map(|applied| Record {
+                boot_id: self.boot_id.as_deref().map(str::to_owned),
                 stack,
                 applied: applied.clone(),
             })
@@ -117,7 +133,7 @@ impl Journal {
     }
 
     pub fn clear(&self) -> io::Result<()> {
-        match std::fs::remove_file(&self.path) {
+        match std::fs::remove_file(self.path.as_ref()) {
             Ok(()) => {
                 crate::private_file::sync_parent(&self.path)?;
                 debug!("rollback journal cleared");
@@ -141,12 +157,25 @@ impl Journal {
     }
 
     fn records(&self) -> io::Result<Vec<Record>> {
-        let raw = match std::fs::read(&self.path) {
+        let raw = match std::fs::read(self.path.as_ref()) {
             Ok(raw) => raw,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(e) => return Err(e),
         };
-        serde_json::from_slice(&raw).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+        let mut records: Vec<Record> = serde_json::from_slice(&raw)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if self.boot_id.is_some() {
+            // Windows installs these routes only in ActiveStore. They disappeared at reboot;
+            // never delete a new owner's coincidentally identical endpoint route.
+            records.retain(|record| {
+                record.boot_id.as_deref() == self.boot_id.as_deref()
+                    || !matches!(
+                        record.applied.step,
+                        super::Step::EndpointRoute { .. } | super::Step::Routes { .. }
+                    )
+            });
+        }
+        Ok(records)
     }
 }
 
@@ -183,6 +212,18 @@ mod tests {
             },
             evidence: Evidence::Done,
         }
+    }
+
+    #[test]
+    fn new_boot_does_not_replay_ephemeral_routes_but_keeps_dns_cleanup() {
+        let (_dir, mut journal) = tmp();
+        journal.boot_id = Some("old".into());
+        journal
+            .write(StackId::next(), [routes_step(), dns_step()].iter())
+            .unwrap();
+        assert_eq!(journal.read_orphaned().unwrap().len(), 2);
+        journal.boot_id = Some("new".into());
+        assert_eq!(journal.read_orphaned().unwrap(), [dns_step()]);
     }
 
     #[test]

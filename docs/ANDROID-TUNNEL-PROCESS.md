@@ -560,3 +560,16 @@ connected answers `nothing-to-raise` rather than starting a service for nothing.
 12 a background start of a foreground service is refused unless the app is exempt; being off the
 battery optimisations is one such exemption, which is what the app asks for on its first run, so
 `start-refused` in reply to a `CONNECT` means that exemption is missing on that device.
+
+## Unified settings and recovery (2026-10-15)
+
+`settings.json` is the VPN owner's preference document. `runtime.json` v4 is
+written only by the core's serial writer: desired Up/Down, Android BOOT_COUNT,
+last successful protocol and server grants. No credentials or preference copies.
+Explicit Down is durable before cancellation; the next actor can restore a same-boot
+Up. System Always-on remains an independent explicit request. The boot retry checks
+either the application's connect_on_boot preference or the system-start marker;
+disabling the application preference does not disable Android Always-on.
+The JNI phase bridge treats failed/needs_attention as terminal, so the service
+notification is not kept spinning after a final failure. Physical reboot, revoke,
+OEM process killing and airplane-mode acceptance still require device testing.
