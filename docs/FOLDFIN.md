@@ -225,10 +225,13 @@ settings, DNS caches or recovery loops.
   protocol allowlists remain authoritative; adding Foldfin does not silently
   append it to a user's saved automatic selection order.
 
-Remaining integration work: main's desktop NetworkChanged path deliberately
-unwinds the full tunnel, and its persistent retries rebuild it. Foldfin's retained
-packet session is currently used only through TunnelManager's explicit network
-change path. Actor-owned carrier recovery must preserve the current rollback stack
+Remaining integration work: main's Windows watcher emits NetworkChanged, whose
+actor handler unwinds the full tunnel. Linux instead observes link availability
+and invalidates resolver discovery on rtnetlink events; it does not emit that
+teardown command on route changes. Marked transport sockets follow OS routing,
+without endpoint host-route rewrites. Persistent retries after a detected tunnel
+failure still rebuild the tunnel. Foldfin's retained packet session is currently
+used only through TunnelManager's explicit network change path. Actor-owned carrier recovery must preserve the current rollback stack
 and TUN while respecting settings changes, cancellation and retry limits.
 
 Main's candidate resolver handles the first configured endpoint at initial start;
