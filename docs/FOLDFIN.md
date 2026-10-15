@@ -6,7 +6,7 @@ connection actor. Routes, DNS, rollback, reconnection and platform consent remai
 owned by Floppa. No extra VPN process or reconnect loop is introduced.
 
 Linux opens the persistent TUN prepared by the existing helper, applies MTU before
-routes, and marks outer TCP/UDP before connect when permitted. Android prepares TCP/UDP
+routes, and marks outer TCP/UDP before connect using the mandatory shared Linux SO_MARK policy. Android prepares TCP/UDP
 before connect through a service-generation-owned Underlay, protects and binds
 each socket to the underlying Network, aborts on preparation failure, and gives Foldfin an owned CLOEXEC
 duplicate of the nonblocking Kotlin descriptor. SNI and HTTP authority are kept
@@ -22,8 +22,9 @@ Foldfin in `~/code/rust/foldfin`. Release packaging/CI needs a published or pinn
 Git Foldfin dependency before distribution; the current local path is intentional.
 
 Import this document through the existing app import action or
-`floppa import <file>`. For a one-off privileged desktop run, use
-`sudo floppa connect --config <file> --no-dns`. Store the document privately:
+`floppa import <file>`. For a temporary configuration, use
+`floppa connect --config <file> --no-dns`. The normal service/standalone ownership
+selection applies; `--config` changes input, not ownership. Store the document privately:
 it contains a device bearer credential. The token below is a dummy example.
 
 ```json
@@ -174,8 +175,7 @@ redaction, capsule confirmation, bidirectional IP packet IO, awaited endpoint
 release, wrong token, credential rotation, reauthorization on an existing carrier,
 mode withdrawal, revocation, renewal and expiry of already-open streams. A successor
 carrier takes over the device VPN session only after the old packet ownership is
-released. The suite passes with the default Rustls profile and with the Chrome
-profile selected through the imported configuration. Existing actor and
+released. The suite uses rustls with H2 and H3; Chrome profile support was removed. Existing actor and
 provision tests remain enabled. Android arm64 compilation is distinct from Android
 runtime acceptance.
 
@@ -203,4 +203,47 @@ assembled with a temporary Gradle init script setting `.foldfinlab` as its
 application ID suffix; native code is the same validated arm64 build.
 Artifact: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-underlay/artifacts/floppa-foldfin-lab-arm64-debug.apk`.
 The artifact's package is `dev.okhsunrog.floppa_vpn.foldfinlab`; installation and
-switching the active VPN still await the user's reply.
+switching the active VPN are deferred until implementation and Floppa integration
+are ready, per the user's revised validation order.
+
+## Integration with main (2026-10-15)
+
+Rebased onto main `60bc70b`. Main now owns persistent retry policy, revisioned
+settings, endpoint candidate discovery/cache, shared Linux recovery and mandatory
+socket marking. Foldfin must extend these mechanisms rather than create parallel
+settings, DNS caches or recovery loops.
+
+- Desktop Foldfin uses the same fixed socket mark as WG/VLESS. Marking failures
+  remain typed permission failures, so the actor does not treat them as network
+  verification failures. Packet-channel tests supply an explicit test Underlay.
+- Shared endpoint cache identity includes Foldfin's TLS name and configured CA,
+  never the bearer token. Credential rotation does not discard endpoint knowledge.
+- Provisioned route exclusions use the existing shared subtraction function;
+  Linux user exclusions are applied afterwards by the desktop ladder. Every dual-stack
+  address is journaled before mutation; a journal write failure aborts setup.
+- Config import follows main's service/standalone ownership rules. Existing saved
+  protocol allowlists remain authoritative; adding Foldfin does not silently
+  append it to a user's saved automatic selection order.
+
+Remaining integration work: main's desktop NetworkChanged path deliberately
+unwinds the full tunnel, and its persistent retries rebuild it. Foldfin's retained
+packet session is currently used only through TunnelManager's explicit network
+change path. Actor-owned carrier recovery must preserve the current rollback stack
+and TUN while respecting settings changes, cancellation and retry limits.
+
+Main's candidate resolver handles the first configured endpoint at initial start;
+Foldfin carrier recovery still uses its saved address. Foldfin connect failures
+currently arrive as BackendError::Engine and do not participate in the generic
+VerifyFailed-only address retry loop. Typed candidate failure handling, all
+provisioned endpoints and service/network-scoped resolution remain required.
+Do not weaken TLS/authentication failure handling to enable candidate retries.
+
+Device/WAN acceptance is deferred. Local compilation and regressions validate the
+rebase; they do not establish Android roaming or production deployment readiness.
+
+Rebase validation: core/adapter/CLI check and Clippy with warnings denied pass;
+340 Rust tests pass (one privileged namespace test remains ignored). All 91 client
+JavaScript tests and `vp check` pass after syncing main's dependencies. Desktop Tauri and JNI/Android
+arm64 all-target compilation pass. Logs are under
+`/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-rebase/`. Vendored h3 emits existing
+compiler warnings; no vendor changes were made in this rebase.

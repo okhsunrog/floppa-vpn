@@ -12,42 +12,26 @@ pub trait Underlay: Send + Sync {
 }
 
 /// Desktop socket policy. Android must supply its service-owned implementation.
-pub struct NativeUnderlay {
-    mark: Option<u32>,
-}
+#[derive(Default)]
+pub struct NativeUnderlay;
 impl NativeUnderlay {
-    pub fn new(mark: Option<u32>) -> Self {
-        Self { mark }
-    }
     #[cfg(unix)]
     fn prepare(&self, fd: std::os::fd::RawFd) -> io::Result<()> {
         #[cfg(target_os = "android")]
         {
-            let _ = (fd, self.mark);
+            let _ = fd;
             Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "Android requires a service-owned underlay",
             ))
         }
         #[cfg(target_os = "linux")]
-        if let Some(mark) = self.mark {
-            // SAFETY: the caller holds the live socket; SO_MARK takes a u32.
-            if unsafe {
-                libc::setsockopt(
-                    fd,
-                    libc::SOL_SOCKET,
-                    libc::SO_MARK,
-                    (&mark as *const u32).cast(),
-                    std::mem::size_of::<u32>() as libc::socklen_t,
-                )
-            } != 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-        }
-        #[cfg(not(target_os = "android"))]
         {
-            let _ = (fd, self.mark);
+            crate::socket_mark::set(fd)
+        }
+        #[cfg(not(any(target_os = "android", target_os = "linux")))]
+        {
+            let _ = fd;
             Ok(())
         }
     }
@@ -61,7 +45,7 @@ impl Underlay for NativeUnderlay {
         }
         #[cfg(not(unix))]
         {
-            let _ = (socket, self.mark);
+            let _ = socket;
             Ok(())
         }
     }
@@ -73,7 +57,7 @@ impl Underlay for NativeUnderlay {
         }
         #[cfg(not(unix))]
         {
-            let _ = (socket, self.mark);
+            let _ = socket;
             Ok(())
         }
     }

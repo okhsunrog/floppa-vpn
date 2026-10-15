@@ -105,12 +105,14 @@ pub(super) async fn ladder(
     };
     for addr in addresses {
         bail_if_cancelled!(ctx);
-        stack.push(Step::Address {
-            iface: iface.clone(),
-            addr,
-        }).map_err(|e| AttemptError::PlatformUnavailable {
-            detail: format!("cannot persist rollback journal: {e}"),
-        })?;
+        stack
+            .push(Step::Address {
+                iface: iface.clone(),
+                addr,
+            })
+            .map_err(|e| AttemptError::PlatformUnavailable {
+                detail: format!("cannot persist rollback journal: {e}"),
+            })?;
         ctx.platform
             .configure_address(&iface, addr)
             .await

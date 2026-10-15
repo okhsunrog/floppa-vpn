@@ -26,6 +26,16 @@ fn error(error: impl std::fmt::Display) -> BackendError {
     }
 }
 
+fn socket_error(cause: std::io::Error) -> BackendError {
+    if cause.kind() == std::io::ErrorKind::PermissionDenied {
+        BackendError::PermissionDenied {
+            detail: cause.to_string(),
+        }
+    } else {
+        error(cause)
+    }
+}
+
 impl FoldfinTunnel {
     pub(crate) async fn start(
         config: &FoldfinVpnConfig,
@@ -62,7 +72,7 @@ impl FoldfinTunnel {
                 };
                 let socket = std::net::UdpSocket::bind(bind).map_err(error)?;
                 socket.set_nonblocking(true).map_err(error)?;
-                underlay.prepare_udp(&socket).map_err(error)?;
+                underlay.prepare_udp(&socket).map_err(socket_error)?;
                 let attempt = async {
                     let client = foldfin::h3_client::Client::connect_over(
                         config.client_config()?,
@@ -109,7 +119,7 @@ impl FoldfinTunnel {
             TcpSocket::new_v6()
         }
         .map_err(error)?;
-        underlay.prepare_tcp(&socket).map_err(error)?;
+        underlay.prepare_tcp(&socket).map_err(socket_error)?;
         let tcp = tokio::time::timeout(foldfin::DEADLINE, socket.connect(endpoint))
             .await
             .map_err(error)?

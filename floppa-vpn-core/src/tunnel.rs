@@ -669,13 +669,12 @@ impl TunnelManager {
         config: &crate::foldfin_config::FoldfinVpnConfig,
         endpoint: std::net::SocketAddr,
         device: foldfin::packet::PacketDevice,
-        fwmark: Option<u32>,
     ) -> Result<(), BackendError> {
         self.start_foldfin_packets_on(
             config,
             endpoint,
             device,
-            Arc::new(crate::underlay::NativeUnderlay::new(fwmark)),
+            Arc::new(crate::underlay::NativeUnderlay),
         )
         .await
     }
@@ -713,11 +712,14 @@ impl TunnelManager {
     ) -> Result<(), BackendError> {
         #[cfg(target_os = "linux")]
         {
+            let _ = tun_params;
+            crate::socket_mark::preflight().map_err(|e| BackendError::PermissionDenied {
+                detail: e.to_string(),
+            })?;
             let device = foldfin::adapters::tun::Tun::open(interface_name)
                 .map_err(|e| engine_error("Foldfin TUN", e))?
                 .into_device();
-            self.start_foldfin_packets(config, endpoint, device, tun_params.fwmark)
-                .await
+            self.start_foldfin_packets(config, endpoint, device).await
         }
         #[cfg(not(target_os = "linux"))]
         {

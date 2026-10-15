@@ -135,6 +135,12 @@ impl From<FoldfinVpnConfig> for Document {
     }
 }
 impl FoldfinVpnConfig {
+    /// Public trust identity for the shared endpoint cache; credentials never enter its key.
+    pub(crate) fn server_identity(&self) -> String {
+        serde_json::to_string(&(&self.0.server_name, &self.0.additional_ca_pem))
+            .expect("strings serialize")
+    }
+
     pub fn endpoint(&self) -> &str {
         &self.0.endpoints[0]
     }
@@ -163,8 +169,7 @@ impl FoldfinVpnConfig {
     pub fn routes(&self) -> Vec<IpNetwork> {
         let convert = |n: &IpNet| n.to_string().parse().expect("validated IP prefix");
         floppa_tunnel_config::route::exclude_networks(
-            self
-                .0
+            self.0
                 .network
                 .routes
                 .iter()

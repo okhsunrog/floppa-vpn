@@ -79,7 +79,7 @@ pub use state::ProtocolConfig;
 
 mod runtime_intent;
 
-#[cfg(target_os = "windows")]
-mod windows_recovery;
 pub mod foldfin_config;
 mod foldfin_tunnel;
+#[cfg(target_os = "windows")]
+mod windows_recovery;

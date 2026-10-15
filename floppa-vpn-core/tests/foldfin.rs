@@ -301,7 +301,7 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
     let successor = TunnelManager::default();
     let (device, successor_input, _successor_output) = packets(client_drops.clone());
     successor
-        .start_foldfin_packets(&config, endpoint, device, None)
+        .start_foldfin_packets_on(&config, endpoint, device, Arc::new(LoopbackUnderlay))
         .await
         .unwrap();
     timeout(Duration::from_secs(3), successor.probe())
@@ -331,7 +331,7 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
     let (device, _input, _output) = packets(Arc::new(AtomicUsize::new(0)));
     assert!(
         failed
-            .start_foldfin_packets(&config, endpoint, device, None)
+            .start_foldfin_packets_on(&config, endpoint, device, Arc::new(LoopbackUnderlay))
             .await
             .is_err()
     );
@@ -544,7 +544,7 @@ async fn auto_does_not_try_h2_after_h3_certificate_failure() {
     let (device, _input, _output) = packets(dropped.clone());
     let manager = TunnelManager::default();
     let error = manager
-        .start_foldfin_packets(&config, endpoint, device, None)
+        .start_foldfin_packets_on(&config, endpoint, device, Arc::new(LoopbackUnderlay))
         .await
         .unwrap_err();
     assert!(error.to_string().contains("TLS"), "{error}");
@@ -598,6 +598,10 @@ async fn underlay_refusal_precedes_any_tcp_or_udp_transmission() {
             error.to_string().contains("test underlay refused"),
             "{error}"
         );
+        assert!(matches!(
+            error,
+            floppa_vpn_core::backend::BackendError::PermissionDenied { .. }
+        ));
         assert_eq!(dropped.load(Ordering::SeqCst), 2);
     }
     assert!(
@@ -610,4 +614,51 @@ async fn underlay_refusal_precedes_any_tcp_or_udp_transmission() {
             .await
             .is_err()
     );
+}
+
+// Packet-channel tests have no host routing; production uses mandatory marked sockets.
+struct LoopbackUnderlay;
+impl floppa_vpn_core::underlay::Underlay for LoopbackUnderlay {
+    fn prepare_tcp(&self, _: &tokio::net::TcpSocket) -> io::Result<()> {
+        Ok(())
+    }
+    fn prepare_udp(&self, _: &std::net::UdpSocket) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn endpoint_cache_tracks_trust_identity_without_tracking_credentials() {
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&document("localhost:8443", "ca-one")).unwrap();
+    let identity = |v: &serde_json::Value| {
+        ProtocolConfig::parse(&v.to_string())
+            .unwrap()
+            .endpoint_cache_identity()
+    };
+    let original = identity(&raw);
+    assert!(!original.contains(TOKEN));
+    raw["config"]["token"] = serde_json::json!("rotatedcredential0123456789abcdef012345");
+    assert_eq!(identity(&raw), original);
+    raw["config"]["server_name"] = serde_json::json!("other.example");
+    assert_ne!(identity(&raw), original);
+    raw["config"]["server_name"] = serde_json::json!("localhost");
+    raw["config"]["additional_ca_pem"] = serde_json::json!("ca-two");
+    assert_ne!(identity(&raw), original);
+}
+
+#[test]
+fn provisioned_exclusions_compose_with_shared_user_exclusions() {
+    let mut raw: serde_json::Value = serde_json::from_str(&document("localhost:8443", "")).unwrap();
+    raw["config"]["network"]["routes"] = serde_json::json!(["0.0.0.0/0"]);
+    raw["config"]["network"]["excluded_routes"] = serde_json::json!(["10.0.0.0/8"]);
+    let config = ProtocolConfig::parse(&raw.to_string()).unwrap();
+    let routes = floppa_tunnel_config::route::exclude_networks(
+        config.allowed_ips_networks(),
+        &["172.16.0.0/12".parse().unwrap()],
+    );
+    let carries = |ip: &str| routes.iter().any(|r| r.contains(ip.parse().unwrap()));
+    assert!(!carries("10.2.3.4"));
+    assert!(!carries("172.18.1.1"));
+    assert!(carries("192.0.2.1"));
 }

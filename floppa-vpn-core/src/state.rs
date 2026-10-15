@@ -444,6 +444,7 @@ impl ProtocolConfig {
     pub fn endpoint_cache_identity(&self) -> String {
         use sha2::Digest;
         let public_key = match self {
+            Self::Foldfin(config) => config.server_identity(),
             Self::WireGuard(wg) => wg.0.peer.public_key.to_string(),
             Self::AmneziaWg(awg) => awg.wg.0.peer.public_key.to_string(),
             Self::Vless(vless) => format!("{}:{}", vless.server_name, vless.reality_public_key),
