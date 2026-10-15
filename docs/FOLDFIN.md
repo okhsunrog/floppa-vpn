@@ -196,3 +196,11 @@ The additional Android lint run reports one pre-existing GradleDependency findin
 core-ktx 1.19.0 is pinned while 1.19.1 is available. No source finding was reported.
 Physical service/network-roaming acceptance is pending; the attached Pixel's
 active VPN has not been interrupted. Underlay DNS and actor recovery remain open.
+
+The installed Pixel application has a different signing certificate from the debug
+build. No replacement/uninstall was attempted. A side-by-side debug package was
+assembled with a temporary Gradle init script setting `.foldfinlab` as its
+application ID suffix; native code is the same validated arm64 build.
+Artifact: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-underlay/artifacts/floppa-foldfin-lab-arm64-debug.apk`.
+The artifact's package is `dev.okhsunrog.floppa_vpn.foldfinlab`; installation and
+switching the active VPN still await the user's reply.
