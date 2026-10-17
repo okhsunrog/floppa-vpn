@@ -1902,8 +1902,8 @@ dependencies = [
 
 [[package]]
 name = "gotatun"
-version = "0.10.0"
-source = "git+https://github.com/okhsunrog/gotatun?tag=amnezia-v0.10.0#b4fcd9995bff018603c6b89fdf1e5a3ca80d931d"
+version = "0.10.1"
+source = "git+https://github.com/okhsunrog/gotatun?tag=amnezia-v0.10.1#23be85e8571856b10ec69ddfee016d6127fe93cc"
 dependencies = [
  "aead",
  "aws-lc-rs",
@@ -4498,7 +4498,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "shoes-lite"
 version = "0.1.0"
-source = "git+https://github.com/okhsunrog/shoes-lite?rev=5504ce6c687e1d504a730d223836d85cc7c1c207#5504ce6c687e1d504a730d223836d85cc7c1c207"
+source = "git+https://github.com/okhsunrog/shoes-lite?rev=2451f6db13c2d503b87ba8366a6da118da4447e0#2451f6db13c2d503b87ba8366a6da118da4447e0"
 dependencies = [
  "async-trait",
  "aws-lc-rs",

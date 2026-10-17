@@ -63,8 +63,8 @@ metrics-exporter-prometheus = { version = "0.18", features = ["http-listener"] }
 
 # WireGuard/AmneziaWG engine (fork of Mullvad's GotaTun). The standalone Tauri workspace
 # consumes it through the shared crates; refresh its Cargo.lock when changing this tag.
-gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-v0.10.0", version = "0.10.0", features = ["device", "tun"] }
-shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "5504ce6c687e1d504a730d223836d85cc7c1c207", version = "0.1.0" }
+gotatun = { git = "https://github.com/okhsunrog/gotatun", tag = "amnezia-v0.10.1", version = "0.10.1", features = ["device", "tun"] }
+shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "2451f6db13c2d503b87ba8366a6da118da4447e0", version = "0.1.0" }
 
 # Shared crates
 floppa-core = { path = "floppa-core" }
