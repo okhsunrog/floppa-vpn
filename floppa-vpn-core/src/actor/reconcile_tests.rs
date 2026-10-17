@@ -45,6 +45,7 @@ fn params() -> Option<TunnelParams> {
 
 fn running(protocol: Protocol) -> World {
     World::Running(RunningTunnel {
+        carrier: None,
         protocol,
         generation: None,
         endpoint: "vpn.example:51820".into(),
@@ -60,6 +61,7 @@ fn running(protocol: Protocol) -> World {
 fn running_with(protocol: Protocol, params: TunnelParams) -> World {
     match running(protocol) {
         World::Running(rt) => World::Running(RunningTunnel {
+            carrier: None,
             params: Some(params),
             ..rt
         }),
@@ -75,6 +77,7 @@ fn running_with(protocol: Protocol, params: TunnelParams) -> World {
 /// adoption rows below are what has to handle it.
 fn autonomous(protocol: Protocol, params: TunnelParams) -> World {
     World::Running(RunningTunnel {
+        carrier: None,
         protocol,
         generation: Some(7),
         endpoint: "203.0.113.7:51820".into(),
@@ -883,6 +886,7 @@ fn a_dying_tunnel_gets_the_reconnect_budget_not_the_cold_one() {
 fn quiet(protocol: Protocol, secs: i64) -> World {
     match running(protocol) {
         World::Running(rt) => World::Running(RunningTunnel {
+            carrier: None,
             silent_secs: Some(secs),
             ..rt
         }),
@@ -990,6 +994,7 @@ fn an_owner_that_cannot_say_how_quiet_it_is_never_costs_the_tunnel() {
     let now = t0();
     let world = match running(AWG) {
         World::Running(rt) => World::Running(RunningTunnel {
+            carrier: None,
             silent_secs: None,
             ..rt
         }),

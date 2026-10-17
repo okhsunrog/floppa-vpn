@@ -38,7 +38,7 @@ pub fn render(
     };
 
     let (protocol, params, adopted, server_endpoint, assigned_ip, connected_at) = match status {
-        Status::Up(u) => (
+        Status::Up(u) | Status::Recovering { up: u, .. } => (
             Some(u.protocol),
             u.params.clone(),
             u.adopted,
@@ -64,7 +64,10 @@ pub fn render(
             max: None,
             resume_in_ms: 0,
         }),
-        Status::Retrying { cycle, resume_at } => Some(RetryProgress {
+        Status::Retrying { cycle, resume_at }
+        | Status::Recovering {
+            cycle, resume_at, ..
+        } => Some(RetryProgress {
             // The pass about to run, not the ones already burnt: `cycle.pass` counts backwards
             // from the user's point of view, and "0/3" is not a thing to show anyone.
             pass: cycle.pass.saturating_add(1),
@@ -79,7 +82,7 @@ pub fn render(
 
     // Stats are only meaningful while a tunnel is actually up.
     let (stats, last_packet_received) = match status {
-        Status::Up(_) => (traffic.stats, traffic.last_packet_secs),
+        Status::Up(_) | Status::Recovering { .. } => (traffic.stats, traffic.last_packet_secs),
         _ => (TrafficStats::default(), None),
     };
 
@@ -113,7 +116,8 @@ pub fn render(
         attempt,
         retry,
         recovery_failures: match status {
-            Status::Connecting { cycle, .. }
+            Status::Recovering { cycle, .. }
+            | Status::Connecting { cycle, .. }
             | Status::Retrying { cycle, .. }
             | Status::Unwinding {
                 cycle: Some(cycle), ..
@@ -152,7 +156,7 @@ fn phase_of(status: &Status, observed_once: bool) -> Phase {
         },
         Status::Up(_) => Phase::Connected,
         Status::Unwinding { .. } => Phase::Disconnecting,
-        Status::Retrying { .. } => Phase::Retrying,
+        Status::Retrying { .. } | Status::Recovering { .. } => Phase::Retrying,
     }
 }
 

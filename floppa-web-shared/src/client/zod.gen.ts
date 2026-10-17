@@ -113,6 +113,16 @@ export const zCreateUserResponse = z.object({
     id: z.int()
 });
 
+export const zDeviceStatus = z.object({
+    applied_revision: z.int(),
+    id: z.int(),
+    installation_id: z.int(),
+    node_last_sync_at: z.iso.datetime({ offset: true }).nullish(),
+    region_id: z.string(),
+    revision: z.int(),
+    revoked_at: z.iso.datetime({ offset: true }).nullish()
+});
+
 export const zExchangeTelegramLoginCodeRequest = z.object({
     code: z.string()
 });
@@ -140,6 +150,16 @@ export const zInstallationSummary = z.object({
     platform: z.string().nullish(),
     user_id: z.int(),
     username: z.string().nullish()
+});
+
+export const zIssueRequest = z.object({
+    rotate: z.boolean().optional()
+});
+
+export const zIssueResponse = z.object({
+    config: z.unknown(),
+    device_id: z.int(),
+    revision: z.int()
 });
 
 export const zLinkPollResponse = z.object({
@@ -553,6 +573,18 @@ export const zSetMyCredentialBody = zSetCredentialRequest;
  * Credential set
  */
 export const zSetMyCredentialResponse = z.void();
+
+export const zIssueBody = zIssueRequest;
+
+export const zIssueResponse2 = zIssueResponse;
+
+export const zListResponse = z.array(zDeviceStatus);
+
+export const zRevokePath = z.object({
+    id: z.int()
+});
+
+export const zRevokeResponse = z.void();
 
 export const zUpsertMyInstallationBody = zUpsertInstallationRequest;
 

@@ -59,6 +59,8 @@ enum EntryError {
     NotBooted,
     #[error("generation {0} is not the one being served")]
     WrongGeneration(u64),
+    #[error("service underlay: {0}")]
+    Underlay(&'static str),
 }
 
 static JAVA_VM: OnceLock<JavaVM> = OnceLock::new();
@@ -435,16 +437,46 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeInit<'
 #[unsafe(no_mangle)]
 pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeSetTunFd<'local>(
     mut env: EnvUnowned<'local>,
-    _class: JClass<'local>,
+    this: JObject<'local>,
     generation: jlong,
     tun_fd: jint,
 ) {
-    env.with_env(|_env: &mut Env<'local>| -> Result<(), EntryError> {
+    env.with_env(|env: &mut Env<'local>| -> Result<(), EntryError> {
         let generation = generation as u64;
         let service = booted()?
             .services
             .serving(generation)
             .ok_or(EntryError::WrongGeneration(generation))?;
+        // Capture this exact Java service instance. A later nativeInit cannot
+        // redirect an older session's socket preparation into its replacement.
+        let instance = env.new_global_ref(this)?;
+        let underlay = crate::vpn::underlay::ServiceUnderlay::new(&service, move |fd| {
+            let vm = JAVA_VM
+                .get()
+                .ok_or_else(|| std::io::Error::other("JavaVM unavailable"))?;
+            let protected = vm
+                .attach_current_thread(|env| {
+                    env.call_method(
+                        instance.as_ref(),
+                        jni::jni_str!("prepareFoldfinSocket"),
+                        jni::jni_sig!("(IJ)Z"),
+                        &[fd.into(), (generation as jlong).into()],
+                    )?
+                    .z()
+                })
+                .map_err(std::io::Error::other)?;
+            if protected {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "service refused Foldfin socket preparation",
+                ))
+            }
+        });
+        service
+            .set_underlay(Arc::new(underlay))
+            .map_err(EntryError::Underlay)?;
         service.set_fd(tun_fd as RawFd);
         info!("nativeSetTunFd: generation {generation} holds fd {tun_fd}");
         Ok(())
@@ -498,8 +530,8 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetwor
         info!("the network moved under generation {generation}; rebinding");
         let manager = booted.tunnel_manager.clone();
         runtime().spawn(async move {
-            match manager.network_changed().await {
-                Ok(()) => info!("the tunnel was rebound onto the new network"),
+            match manager.notify_network_changed_for(generation).await {
+                Ok(()) => info!("the tunnel processed the network change"),
                 Err(e) => warn!("could not rebind the tunnel after the network changed: {e}"),
             }
         });

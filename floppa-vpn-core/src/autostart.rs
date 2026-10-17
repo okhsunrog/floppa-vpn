@@ -59,7 +59,10 @@ impl TunSpec {
         // because Android prefers IPv6 wherever a route offers it, that was not a slow path but
         // no connectivity at all — a tunnel that reported Connected and carried nothing.
         // See `ProtocolConfig::has_ipv6_address`.
-        let allowed_ips = floppa_tunnel_config::route::CATCH_ALL;
+        let allowed_ips = match config {
+            ProtocolConfig::Foldfin(config) => config.routes(),
+            _ => floppa_tunnel_config::route::CATCH_ALL.to_vec(),
+        };
         let routes = if params.allow_lan {
             floppa_tunnel_config::route::exclude_local_networks(
                 &allowed_ips,
@@ -82,7 +85,14 @@ impl TunSpec {
 
         let mut spec = Self {
             ipv4_addr: config.address(),
-            ipv6_addr: None,
+            ipv6_addr: match config {
+                ProtocolConfig::Foldfin(config) if config.address().is_ipv4() => config
+                    .addresses()
+                    .iter()
+                    .find(|a| a.is_ipv6())
+                    .map(ToString::to_string),
+                _ => None,
+            },
             routes,
             dns,
             mtu: config.get_mtu() as u32,

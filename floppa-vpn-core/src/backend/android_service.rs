@@ -38,13 +38,13 @@ async fn bring_up(
     mut config: ProtocolConfig,
     endpoint: SocketAddr,
     started: Started,
-) -> Result<(), String> {
+) -> Result<(), BackendError> {
     let tun_fd = match service.take_fd() {
         Ok(fd) => fd,
         Err(why) => {
             let e = why.to_string();
             service.set_error(e.clone());
-            return Err(e);
+            return Err(BackendError::ServiceRefused { detail: e });
         }
     };
 
@@ -54,7 +54,9 @@ async fn bring_up(
         endpoint
             .to_string()
             .parse::<floppa_tunnel_config::Endpoint>()
-            .map_err(|e| format!("endpoint `{endpoint}`: {e}"))
+            .map_err(|e| BackendError::InvalidConfig {
+                detail: format!("endpoint `{endpoint}`: {e}"),
+            })
     };
     match &mut config {
         ProtocolConfig::WireGuard(wg) => wg.set_endpoint(literal()?),
@@ -62,8 +64,23 @@ async fn bring_up(
         // VLESS dials by address while taking its SNI from `server_name`, so substituting a
         // literal here does not disturb the REALITY handshake.
         ProtocolConfig::Vless(vless) => vless.server_addr = endpoint.to_string(),
+        ProtocolConfig::Foldfin(_) => (), // preserve authority and verification name; dial literal separately
     }
     let result = match &config {
+        ProtocolConfig::Foldfin(config) => {
+            tunnel_manager
+                .start_foldfin_with_fd(
+                    config,
+                    tun_fd,
+                    endpoint,
+                    service
+                        .underlay()
+                        .ok_or_else(|| BackendError::ServiceRefused {
+                            detail: "service underlay is missing".into(),
+                        })?,
+                )
+                .await
+        }
         ProtocolConfig::Vless(vless) => {
             tunnel_manager
                 .start_vless_with_fd(&vless.to_shoes_config(), tun_fd)
@@ -81,7 +98,7 @@ async fn bring_up(
         }
     };
 
-    match result.map_err(|e| e.to_string()) {
+    match result {
         Ok(()) => {
             info!(protocol = %config.protocol(), "tunnel started");
             service.set_started(started);
@@ -92,7 +109,7 @@ async fn bring_up(
             // Recorded as well as returned: the caller may already have given up, and the next
             // observation should still say why rather than looking like an idle service.
             error!("failed to start the tunnel: {e}");
-            service.set_error(e.clone());
+            service.set_error(e.to_string());
             Err(e)
         }
     }
@@ -151,7 +168,6 @@ impl VpnBackend for AndroidServiceBackend {
             },
         )
         .await
-        .map_err(|detail| BackendError::ServiceRefused { detail })
     }
 
     /// Stop the tunnel — and *only* the tunnel.
@@ -174,6 +190,8 @@ impl VpnBackend for AndroidServiceBackend {
     }
 
     async fn observe(&self) -> Observation {
+        let observed_at = std::time::Instant::now();
+        let carrier = self.tunnel_manager.carrier_health().await;
         let service = self.services.current();
         let stats = self.tunnel_manager.get_stats().await;
         let connected_secs = self
@@ -193,6 +211,7 @@ impl VpnBackend for AndroidServiceBackend {
         let running = self.tunnel_manager.meta().await.map(|m| {
             let started = service.as_ref().and_then(|s| s.started());
             RunningTunnel {
+                carrier,
                 protocol: m.protocol,
                 generation: service.as_ref().map(|s| s.generation),
                 endpoint: m.endpoint,
@@ -204,7 +223,7 @@ impl VpnBackend for AndroidServiceBackend {
         });
 
         Observation {
-            observed_at: std::time::Instant::now(),
+            observed_at,
             view: WorldView::Reachable(TunnelObservation {
                 generation: service.as_ref().map(|s| s.generation).unwrap_or_default(),
                 running,
@@ -222,6 +241,10 @@ impl VpnBackend for AndroidServiceBackend {
 
     async fn ping(&self) -> Result<(), BackendError> {
         self.tunnel_manager.ping().await
+    }
+
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
+        self.tunnel_manager.recover_carrier().await
     }
 
     async fn probe(&self) -> Result<(), BackendError> {

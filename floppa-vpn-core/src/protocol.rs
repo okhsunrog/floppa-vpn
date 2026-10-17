@@ -22,18 +22,21 @@ pub enum Protocol {
     AmneziaWg,
     #[serde(rename = "vless")]
     Vless,
+    #[serde(rename = "foldfin")]
+    Foldfin,
 }
 
 impl Protocol {
     /// Preference order used when nothing else is known. AmneziaWG first: it is the project
     /// default because plain WireGuard is DPI-blocked on the networks this client targets.
-    pub const ALL: [Self; 3] = [Self::AmneziaWg, Self::WireGuard, Self::Vless];
+    pub const ALL: [Self; 4] = [Self::AmneziaWg, Self::WireGuard, Self::Vless, Self::Foldfin];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::WireGuard => "wireguard",
             Self::AmneziaWg => "amneziawg",
             Self::Vless => "vless",
+            Self::Foldfin => "foldfin",
         }
     }
 }
@@ -56,6 +59,7 @@ impl std::str::FromStr for Protocol {
             "wireguard" => Ok(Self::WireGuard),
             "amneziawg" => Ok(Self::AmneziaWg),
             "vless" => Ok(Self::Vless),
+            "foldfin" => Ok(Self::Foldfin),
             other => Err(UnknownProtocol(other.to_owned())),
         }
     }

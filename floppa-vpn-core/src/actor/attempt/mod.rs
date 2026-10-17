@@ -162,7 +162,40 @@ async fn run_inner(mut ctx: AttemptCtx) -> AttemptResult {
     }
 }
 
-async fn ladder(
+pub(super) async fn ladder(
+    ctx: &mut AttemptCtx,
+    stack: &mut RollbackStack,
+) -> Result<super::types::UpStatus, AttemptError> {
+    let configs: Vec<_> = match &ctx.config {
+        ProtocolConfig::Foldfin(config) => config
+            .endpoint_candidates()
+            .map(ProtocolConfig::Foldfin)
+            .collect(),
+        config => vec![config.clone()],
+    };
+    let mut last = None;
+    for config in configs {
+        if ctx.cancelled() {
+            return Err(AttemptError::Cancelled);
+        }
+        ctx.config = config;
+        match connect_endpoint(ctx, stack).await {
+            Ok(view) => return Ok(view),
+            Err(error)
+                if error.permits_endpoint_retry()
+                    || matches!(error, AttemptError::ResolveFailed { .. }) =>
+            {
+                // connect_candidates has already completed rollback before it returns
+                // a retryable failure. DNS failure has not acquired any platform state.
+                last = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last.expect("validated configuration has at least one endpoint"))
+}
+
+async fn connect_endpoint(
     ctx: &mut AttemptCtx,
     stack: &mut RollbackStack,
 ) -> Result<super::types::UpStatus, AttemptError> {
@@ -236,7 +269,7 @@ pub(super) async fn connect_candidates(
                 Err(error) => {
                     // Retrying a different address cannot repair permission, configuration or
                     // platform errors. Only a connection verification failure merits a rebuild.
-                    if !matches!(error, AttemptError::VerifyFailed) {
+                    if !error.permits_endpoint_retry() {
                         return Err(error);
                     }
                     resolver.failed(&identity, ip);
@@ -299,6 +332,10 @@ pub(super) async fn verify(
             info!("tunnel up, waiting for a handshake");
             wait_for_handshake(ctx).await
         }
+        ProtocolConfig::Foldfin(_) => tokio::select! {
+            _ = ctx.cancel.cancelled() => Err(AttemptError::Cancelled),
+            result = ctx.backend.probe() => result.map_err(|error| AttemptError::Backend { error }),
+        },
         ProtocolConfig::Vless(vless) => {
             info!("tunnel up, checking VLESS connectivity");
             let mut dialled = vless.clone();

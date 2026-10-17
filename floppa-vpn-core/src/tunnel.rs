@@ -392,12 +392,17 @@ impl Drop for GotatunTunnel {
 enum ActiveTunnel {
     WireGuard(GotatunTunnel),
     Vless(shoes_lite::api::VlessTunnel),
+    Foldfin(Box<crate::foldfin_tunnel::FoldfinTunnel>),
 }
 
 impl ActiveTunnel {
     async fn get_stats(&self) -> Option<RawStats> {
         match self {
             Self::WireGuard(t) => t.get_stats().await.ok(),
+            Self::Foldfin(t) => Some(RawStats {
+                tx_bytes: t.stats().tx_bytes,
+                rx_bytes: t.stats().rx_bytes,
+            }),
             Self::Vless(t) => {
                 let stats = t.get_stats();
                 Some(RawStats {
@@ -411,6 +416,7 @@ impl ActiveTunnel {
     async fn get_last_packet_received(&self) -> Option<i64> {
         match self {
             Self::WireGuard(t) => t.get_last_packet_received().await,
+            Self::Foldfin(t) => t.last_rx().map(|d| d.as_secs() as i64),
             Self::Vless(t) => t
                 .time_since_last_packet_received()
                 .map(|d| d.as_secs() as i64),
@@ -420,6 +426,7 @@ impl ActiveTunnel {
     fn connection_duration(&self) -> Option<Duration> {
         match self {
             Self::WireGuard(t) => t.connection_duration(),
+            Self::Foldfin(t) => Some(t.duration()),
             Self::Vless(t) => Some(t.connection_duration()),
         }
     }
@@ -432,6 +439,7 @@ impl ActiveTunnel {
     async fn silence(&self) -> Option<Duration> {
         match self {
             Self::WireGuard(t) => t.silence().await,
+            Self::Foldfin(t) => Some(t.silence()),
             Self::Vless(t) => Some(
                 t.time_since_last_packet_received()
                     .unwrap_or_else(|| t.connection_duration())
@@ -452,6 +460,7 @@ impl ActiveTunnel {
             // A fresh handshake *is* the proof, and the rebind is what makes it happen now rather
             // than at the next rekey.
             Self::WireGuard(t) => t.rebind().await,
+            Self::Foldfin(t) => t.probe().await,
             Self::Vless(t) => t
                 .ping(Duration::from_secs(10))
                 .await
@@ -465,9 +474,10 @@ impl ActiveTunnel {
     /// into a hole, so it is rebound. VLESS dials a TCP connection per flow and protects each one
     /// as it is dialled, so it heals on its own — the connections open across the old network die
     /// with it, and nothing here can save them.
-    async fn network_changed(&self) -> Result<(), BackendError> {
+    async fn network_changed(&mut self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.rebind().await,
+            Self::Foldfin(t) => t.network_changed().await,
             Self::Vless(_) => Ok(()),
         }
     }
@@ -478,6 +488,7 @@ impl ActiveTunnel {
                 .ping(Duration::from_secs(10))
                 .await
                 .map_err(|detail| BackendError::Engine { detail }),
+            Self::Foldfin(t) => t.probe().await,
             Self::WireGuard(_) => Ok(()), // WireGuard has handshake-based health
         }
     }
@@ -485,6 +496,7 @@ impl ActiveTunnel {
     async fn stop(self) -> Result<(), BackendError> {
         match self {
             Self::WireGuard(t) => t.stop().await,
+            Self::Foldfin(t) => t.stop().await,
             Self::Vless(t) => t
                 .stop()
                 .await
@@ -527,7 +539,18 @@ impl TunnelManager {
 
     /// Identity of the running tunnel, if there is one.
     pub async fn meta(&self) -> Option<TunnelMeta> {
-        self.tunnel.read().await.as_ref().map(|(_, m)| m.clone())
+        self.tunnel
+            .read()
+            .await
+            .as_ref()
+            .filter(|(t, _)| !matches!(t, ActiveTunnel::Foldfin(f) if !f.alive()))
+            .map(|(t, m)| {
+                let mut meta = m.clone();
+                if let ActiveTunnel::Foldfin(f) = t {
+                    meta.endpoint = f.endpoint().to_string();
+                }
+                meta
+            })
     }
 
     /// Start a WireGuard / AmneziaWG tunnel on desktop platforms (creates TUN device)
@@ -646,6 +669,94 @@ impl TunnelManager {
         Ok(())
     }
 
+    /// Start Foldfin with caller-owned packet endpoints (also used by integration tests).
+    pub async fn start_foldfin_packets(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        endpoint: std::net::SocketAddr,
+        device: foldfin::packet::PacketDevice,
+    ) -> Result<(), BackendError> {
+        self.start_foldfin_packets_on(
+            config,
+            endpoint,
+            device,
+            Arc::new(crate::underlay::NativeUnderlay),
+        )
+        .await
+    }
+
+    /// Attach a host-owned underlay to this session. Retained across carrier recovery.
+    pub async fn start_foldfin_packets_on(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        endpoint: std::net::SocketAddr,
+        device: foldfin::packet::PacketDevice,
+        underlay: Arc<dyn crate::underlay::Underlay>,
+    ) -> Result<(), BackendError> {
+        let mut guard = self.tunnel.write().await;
+        Self::stop_existing(&mut guard).await?;
+        let tunnel =
+            crate::foldfin_tunnel::FoldfinTunnel::start(config, endpoint, device, underlay).await?;
+        *guard = Some((
+            ActiveTunnel::Foldfin(Box::new(tunnel)),
+            TunnelMeta {
+                protocol: Protocol::Foldfin,
+                endpoint: config.endpoint().to_owned(),
+                address: config.address().to_string(),
+            },
+        ));
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub async fn start_foldfin(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        interface_name: &str,
+        tun_params: &TunParams,
+        endpoint: std::net::SocketAddr,
+    ) -> Result<(), BackendError> {
+        #[cfg(target_os = "linux")]
+        {
+            let _ = tun_params;
+            crate::socket_mark::preflight().map_err(|e| BackendError::PermissionDenied {
+                detail: e.to_string(),
+            })?;
+            let device = foldfin::adapters::tun::Tun::open(interface_name)
+                .map_err(|e| engine_error("Foldfin TUN", e))?
+                .into_device();
+            self.start_foldfin_packets(config, endpoint, device).await
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (config, interface_name, tun_params, endpoint);
+            Err(BackendError::Unsupported)
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub async fn start_foldfin_with_fd(
+        &self,
+        config: &crate::foldfin_config::FoldfinVpnConfig,
+        tun_fd: RawFd,
+        endpoint: std::net::SocketAddr,
+        underlay: Arc<dyn crate::underlay::Underlay>,
+    ) -> Result<(), BackendError> {
+        use std::os::fd::{AsFd, BorrowedFd};
+        // Kotlin retains its ParcelFileDescriptor. Only our CLOEXEC duplicate is consumed.
+        // SAFETY: the service keeps its descriptor open throughout this call.
+        let borrowed = unsafe { BorrowedFd::borrow_raw(tun_fd) };
+        let owned = borrowed
+            .as_fd()
+            .try_clone_to_owned()
+            .map_err(|e| engine_error("duplicate Foldfin TUN", e))?;
+        let device = foldfin::adapters::tun::Tun::from_owned_fd(owned)
+            .map_err(|e| engine_error("Foldfin TUN", e))?
+            .into_device();
+        self.start_foldfin_packets_on(config, endpoint, device, underlay)
+            .await
+    }
+
     pub async fn stop(&self) -> Result<(), BackendError> {
         let mut tunnel_guard = self.tunnel.write().await;
         if let Some((tunnel, _)) = tunnel_guard.take() {
@@ -705,13 +816,60 @@ impl TunnelManager {
         }
     }
 
+    pub async fn carrier_health(&self) -> Option<crate::actor::types::CarrierHealth> {
+        match self.tunnel.read().await.as_ref() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => Some(tunnel.carrier_health()),
+            _ => None,
+        }
+    }
+
+    /// One host-requested attempt, retaining the packet device. Cancellation leaves
+    /// the candidate owned by the session for the next recovery or stop to clean up.
+    pub async fn recover_carrier(&self) -> Result<(), BackendError> {
+        match self.tunnel.write().await.as_mut() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => tunnel.network_changed().await,
+            _ => Err(BackendError::Unsupported),
+        }
+    }
+
+    /// Android invalidates its bound Foldfin carrier; the actor owns redial/retries.
+    pub async fn notify_network_changed_for(&self, generation: u64) -> Result<(), BackendError> {
+        let mut guard = self.tunnel.write().await;
+        match guard.as_mut() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => {
+                if tunnel.service_generation() == Some(generation) {
+                    tunnel.invalidate_carrier().await;
+                }
+                Ok(())
+            }
+            Some((tunnel, _)) => tunnel.network_changed().await,
+            None => Ok(()),
+        }
+    }
+
     /// The phone changed network — see [`ActiveTunnel::network_changed`].
     ///
     /// Silently fine when nothing is running: this arrives from the OS, not from a caller who
     /// knows what state we are in.
     pub async fn network_changed(&self) -> Result<(), BackendError> {
-        let tunnel_guard = self.tunnel.read().await;
-        match tunnel_guard.as_ref() {
+        self.network_changed_in(None).await
+    }
+
+    /// Reject a queued notification for a superseded Foldfin service while
+    /// holding the same lock that protects tunnel replacement.
+    pub async fn network_changed_for(&self, generation: u64) -> Result<(), BackendError> {
+        self.network_changed_in(Some(generation)).await
+    }
+
+    async fn network_changed_in(&self, generation: Option<u64>) -> Result<(), BackendError> {
+        let mut tunnel_guard = self.tunnel.write().await;
+        if let (Some(wanted), Some((ActiveTunnel::Foldfin(tunnel), _))) =
+            (generation, tunnel_guard.as_ref())
+            && tunnel.service_generation() != Some(wanted)
+        {
+            return Ok(());
+        }
+        match tunnel_guard.as_mut() {
             Some((tunnel, _)) => tunnel.network_changed().await,
             None => Ok(()),
         }

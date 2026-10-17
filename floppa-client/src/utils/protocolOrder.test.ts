@@ -23,6 +23,7 @@ describe('sanitizeProtocolOrder', () => {
       'vless',
       'wireguard',
       'amneziawg',
+      'foldfin',
     ])
   })
 
@@ -31,6 +32,7 @@ describe('sanitizeProtocolOrder', () => {
       'wireguard',
       'amneziawg',
       'vless',
+      'foldfin',
     ])
   })
 

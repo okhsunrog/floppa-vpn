@@ -50,8 +50,12 @@ internal fun startBlocker(context: Context): StartBlocker? =
 internal fun connectOnBoot(context: Context): Boolean =
     try {
         val file = File(context.applicationInfo.dataDir, "settings.json")
-        if (!file.exists()) false else org.json.JSONObject(file.readText())
-            .optJSONObject("startup")?.optBoolean("connect_on_boot", false) ?: false
+        if (!file.exists()) false
+        else
+            org.json
+                .JSONObject(file.readText())
+                .optJSONObject("startup")
+                ?.optBoolean("connect_on_boot", false) ?: false
     } catch (e: Exception) {
         android.util.Log.w("FloppaBoot", "cannot read boot preference", e)
         false

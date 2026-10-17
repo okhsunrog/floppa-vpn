@@ -265,6 +265,10 @@ export type BackendError =
 { kind: "invalid_config"; detail: string } |
 /**  The tunnel engine or its device failed to start or stop. */
 { kind: "engine"; detail: string } |
+/**  A classified network/capability failure; another resolved address may work. */
+{ kind: "endpoint_unavailable"; detail: string } |
+/**  TLS identity, authorization, policy or protocol validation failed. No fallback. */
+{ kind: "connection_rejected"; detail: string } |
 /**  Nothing is running to be pinged. */
 { kind: "not_running" } |
 /**
@@ -450,7 +454,7 @@ export type Phase =
  *  their OS keyrings via the old `SavedVpnConfigs.active_protocol: String`, and in all three
  *  arms of the migration chain in `config.rs::parse_stored_configs`.
  */
-export type Protocol = "wireguard" | "amneziawg" | "vless";
+export type Protocol = "wireguard" | "amneziawg" | "vless" | "foldfin";
 
 export type ProtocolSettings = {
 	mode: SelectionMode,

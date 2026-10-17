@@ -49,6 +49,13 @@ struct FakeBackend {
     /// Refuse every start, as a peer that was deleted server-side would look from here.
     refuse_starts: AtomicBool,
     first_address_silent: AtomicBool,
+    recoveries: AtomicUsize,
+    recovery_active: AtomicBool,
+    recovery_blocked: AtomicBool,
+    recovery_release: Notify,
+    recovery_failures: AtomicUsize,
+    recovery_rejected: AtomicBool,
+    first_start_error: std::sync::Mutex<Option<BackendError>>,
     /// What the owner would say about how long the far side has been quiet. `None` until a test
     /// makes the tunnel go silent, which reads as "nothing to report" rather than "silent".
     silent_secs: std::sync::Mutex<Option<i64>>,
@@ -101,12 +108,16 @@ impl VpnBackend for FakeBackend {
         endpoint: SocketAddr,
     ) -> Result<(), BackendError> {
         self.starts.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.first_start_error.lock().unwrap().take() {
+            return Err(error);
+        }
         if self.refuse_starts.load(Ordering::SeqCst) {
             return Err(BackendError::Engine {
                 detail: "start refused".into(),
             });
         }
         *self.running.lock().unwrap() = Some(RunningTunnel {
+            carrier: (config.protocol() == Protocol::Foldfin).then_some(CarrierHealth::Ready),
             protocol: config.protocol(),
             generation: None,
             endpoint: endpoint.to_string(),
@@ -119,6 +130,10 @@ impl VpnBackend for FakeBackend {
     }
 
     async fn stop(&self) -> Result<(), BackendError> {
+        assert!(
+            !self.recovery_active.load(Ordering::SeqCst),
+            "stop raced recovery"
+        );
         self.stops.fetch_add(1, Ordering::SeqCst);
         *self.running.lock().unwrap() = None;
         Ok(())
@@ -144,6 +159,37 @@ impl VpnBackend for FakeBackend {
                 },
             }),
         }
+    }
+
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
+        struct Active<'a>(&'a AtomicBool);
+        impl Drop for Active<'_> {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::SeqCst);
+            }
+        }
+        assert!(!self.recovery_active.swap(true, Ordering::SeqCst));
+        let _active = Active(&self.recovery_active);
+        self.recoveries.fetch_add(1, Ordering::SeqCst);
+        if self.recovery_blocked.load(Ordering::SeqCst) {
+            self.recovery_release.notified().await;
+        }
+        if self.recovery_rejected.load(Ordering::SeqCst) {
+            return Err(BackendError::ConnectionRejected {
+                detail: "HTTP 403".into(),
+            });
+        }
+        if self
+            .recovery_failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return Err(BackendError::EndpointUnavailable {
+                detail: "network unavailable".into(),
+            });
+        }
+        self.running.lock().unwrap().as_mut().unwrap().carrier = Some(CarrierHealth::Ready);
+        Ok(())
     }
 
     async fn ping(&self) -> Result<(), BackendError> {
@@ -205,6 +251,9 @@ impl FakePlatform {
 
 #[async_trait]
 impl Platform for FakePlatform {
+    async fn configure_mtu(&self, _: &InterfaceName, _: u16) -> Result<(), PlatformError> {
+        Ok(())
+    }
     fn has_shared_recovery(&self) -> bool {
         self.shared_recovery.load(Ordering::SeqCst)
     }
@@ -708,6 +757,7 @@ async fn a_cancelled_attempts_self_unwind_is_judged_by_a_fresh_look_not_the_stal
     h.set(up()).await;
     h.wait_for_phase(Phase::Connecting).await;
     *h.backend.running.lock().unwrap() = Some(RunningTunnel {
+        carrier: None,
         protocol: Protocol::WireGuard,
         generation: None,
         endpoint: "127.0.0.1:51820".into(),
@@ -864,6 +914,7 @@ async fn disconnecting_an_adopted_tunnel_stops_it_before_down_is_resolved() {
     let mut h = Harness::spawn_adopting(
         policy(),
         RunningTunnel {
+            carrier: None,
             protocol: Protocol::WireGuard,
             generation: None,
             endpoint: "127.0.0.1:51820".into(),
@@ -934,6 +985,7 @@ async fn rebuilding_an_adopted_tunnel_stops_it_before_building_the_new_one() {
     let mut h = Harness::spawn_adopting(
         policy(),
         RunningTunnel {
+            carrier: None,
             protocol: Protocol::WireGuard,
             generation: None,
             endpoint: "127.0.0.1:51820".into(),
@@ -1378,4 +1430,329 @@ async fn restored_intent_survives_startup_network_recovery() {
     assert_eq!(h.states.borrow().protocol, Some(Protocol::WireGuard));
     h.set(IntentRequest::Down).await;
     h.wait_for_phase(Phase::Disconnected).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn classified_candidate_failures_retry_only_network_errors_after_rollback() {
+    for (error, retry) in [
+        (
+            BackendError::EndpointUnavailable {
+                detail: "connection refused".into(),
+            },
+            true,
+        ),
+        (
+            BackendError::ConnectionRejected {
+                detail: "untrusted certificate".into(),
+            },
+            false,
+        ),
+        (
+            BackendError::ConnectionRejected {
+                detail: "HTTP 401".into(),
+            },
+            false,
+        ),
+        (
+            BackendError::PermissionDenied {
+                detail: "SO_MARK denied".into(),
+            },
+            false,
+        ),
+    ] {
+        let backend = Arc::new(FakeBackend::default());
+        *backend.first_start_error.lock().unwrap() = Some(error.clone());
+        let platform = Arc::new(FakePlatform::new());
+        let (tx, _rx) = mpsc::channel(64);
+        let mut ctx = super::attempt::AttemptCtx {
+            epoch: IntentEpoch(1),
+            index: 0,
+            protocol: Protocol::WireGuard,
+            config: ProtocolConfig::WireGuard(WgConfig::from_config_str(WG_CONFIG).unwrap()),
+            iface: Default::default(),
+            manage_dns: true,
+            params: TunnelParams::default(),
+            backend: backend.clone(),
+            platform: platform.clone(),
+            journal: None,
+            policy: policy(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            tx,
+        };
+        let candidates = watch::channel(vec![
+            "127.0.0.1".parse().unwrap(),
+            "127.0.0.2".parse().unwrap(),
+        ])
+        .1;
+        let mut stack = crate::rollback::RollbackStack::new(None);
+        let result = super::attempt::connect_candidates(
+            &mut ctx,
+            &mut stack,
+            floppa_net::Resolver::new(None),
+            candidates,
+        )
+        .await;
+        if retry {
+            result.unwrap();
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 2);
+            assert_eq!(backend.stops(), 1, "rollback precedes next candidate");
+            assert_eq!(backend.running().unwrap().endpoint, "127.0.0.2:51820");
+        } else {
+            let failure = result.unwrap_err();
+            assert_eq!(failure, AttemptError::Backend { error });
+            assert!(failure.is_fatal_for_cycle());
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 1);
+        }
+        let report =
+            crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1).await;
+        assert!(report.is_clean());
+        assert!(backend.running().is_none());
+    }
+}
+
+#[tokio::test]
+async fn foldfin_uses_provisioned_endpoints_without_mutating_stored_order() {
+    for rejected in [false, true] {
+        let config = ProtocolConfig::parse(
+            &serde_json::json!({
+                "protocol": "foldfin", "config": {
+                    "version": 2, "endpoints": ["127.0.0.1:8443", "127.0.0.2:9443"],
+                    "server_name": "vpn.example", "token": "0123456789abcdef0123456789abcdef",
+                    "transport": "h2_only", "network": {
+                        "revision": 1, "addresses": ["192.0.2.2/32"], "peers": ["192.0.2.1"],
+                        "routes": ["192.0.2.1/32"], "dns": [], "mtu": 1280
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let original = serde_json::to_string(&config).unwrap();
+        let backend = Arc::new(FakeBackend::default());
+        backend.answers_probes(true);
+        *backend.first_start_error.lock().unwrap() = Some(if rejected {
+            BackendError::ConnectionRejected {
+                detail: "HTTP 401".into(),
+            }
+        } else {
+            BackendError::EndpointUnavailable {
+                detail: "connection refused".into(),
+            }
+        });
+        let platform = Arc::new(FakePlatform::new());
+        let (tx, _rx) = mpsc::channel(64);
+        let mut ctx = super::attempt::AttemptCtx {
+            epoch: IntentEpoch(1),
+            index: 0,
+            protocol: Protocol::Foldfin,
+            config: config.clone(),
+            iface: Default::default(),
+            manage_dns: true,
+            params: TunnelParams::default(),
+            backend: backend.clone(),
+            platform: platform.clone(),
+            journal: None,
+            policy: policy(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            tx,
+        };
+        let mut stack = crate::rollback::RollbackStack::new(None);
+        let result = super::attempt::ladder(&mut ctx, &mut stack).await;
+        if rejected {
+            assert!(result.unwrap_err().is_fatal_for_cycle());
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 1);
+        } else {
+            assert_eq!(result.unwrap().server_endpoint, "127.0.0.2:9443");
+            assert_eq!(backend.running().unwrap().endpoint, "127.0.0.2:9443");
+            assert_eq!(backend.starts.load(Ordering::SeqCst), 2);
+            assert_eq!(backend.stops(), 1);
+            let ProtocolConfig::Foldfin(selected) = &ctx.config else {
+                unreachable!()
+            };
+            let client = selected.client_config().unwrap();
+            assert_eq!(client.authority, "127.0.0.2:9443");
+            assert_eq!(client.server_name, "vpn.example");
+        }
+        assert_eq!(serde_json::to_string(&config).unwrap(), original);
+        assert!(
+            crate::rollback::unwind(&mut stack, None, platform.as_ref(), backend.as_ref(), 1)
+                .await
+                .is_clean()
+        );
+    }
+}
+
+async fn foldfin_harness(rounds: Option<u32>) -> Harness {
+    let mut store = ConfigStore::in_memory(Default::default());
+    store
+        .import(
+            &serde_json::json!({"protocol":"foldfin","config": {
+                "version":2,"endpoints":["127.0.0.1:8443"],"server_name":"localhost",
+                "token":"0123456789abcdef0123456789abcdef","transport":"h2_only",
+                "network":{"revision":1,"addresses":["192.0.2.2/32"],"peers":["192.0.2.1"],
+                "routes":["192.0.2.1/32"],"dns":["192.0.2.1"],"mtu":1280}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+    let mut h = Harness::spawn_with_store(
+        Policy {
+            poll_active: Duration::from_millis(10),
+            backoff_base: Duration::from_millis(20),
+            backoff_max: Duration::from_millis(20),
+            reconnect_passes: rounds,
+            attempt_budget: Duration::from_millis(500),
+            ..policy()
+        },
+        store,
+    );
+    h.backend.answers_probes(true);
+    let epoch = h
+        .set(IntentRequest::Up {
+            order: vec![Protocol::Foldfin],
+            params: TunnelParams::default(),
+        })
+        .await;
+    assert!(matches!(
+        h.outcome(epoch).await,
+        CycleOutcome::Connected { .. }
+    ));
+    h.wait_for_phase(Phase::Connected).await;
+    h
+}
+fn lose_carrier(h: &Harness) {
+    h.backend.running.lock().unwrap().as_mut().unwrap().carrier = Some(CarrierHealth::Lost);
+}
+
+#[tokio::test]
+async fn carrier_retries_retain_platform_state_and_ignore_pre_recovery_observations() {
+    let mut h = foldfin_harness(Some(3)).await;
+    let serial = h.states.borrow().outcome_serial;
+    h.backend.recovery_failures.store(1, Ordering::SeqCst);
+    lose_carrier(&h);
+    let stale = h.backend.observe().await;
+    h.wait_for("recovered", |s| {
+        s.phase == Phase::Connected && s.outcome_serial > serial
+    })
+    .await;
+    assert_eq!(h.backend.recoveries.load(Ordering::SeqCst), 2);
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(h.backend.stops(), 0);
+    assert_eq!(h.platform.dns_restores.load(Ordering::SeqCst), 0);
+    h.cmd_tx
+        .send(Command::Observed(Box::new(stale)))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(h.backend.recoveries.load(Ordering::SeqCst), 2);
+    let epoch = h.set(IntentRequest::Down).await;
+    assert!(matches!(h.outcome(epoch).await, CycleOutcome::Down));
+    assert_eq!(h.backend.stops(), 1);
+    assert_eq!(h.platform.dns_restores.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancelling_carrier_recovery_joins_before_rollback() {
+    let mut h = foldfin_harness(None).await;
+    h.backend.recovery_blocked.store(true, Ordering::SeqCst);
+    lose_carrier(&h);
+    let state = h.wait_for_phase(Phase::Retrying).await;
+    assert_eq!(state.protocol, Some(Protocol::Foldfin));
+    assert_eq!(state.assigned_ip.as_deref(), Some("192.0.2.2/32"));
+    assert_eq!(h.backend.stops(), 0);
+    let epoch = h.set(IntentRequest::Down).await;
+    assert!(matches!(h.outcome(epoch).await, CycleOutcome::Down));
+    assert!(!h.backend.recovery_active.load(Ordering::SeqCst));
+    assert_eq!(h.backend.stops(), 1);
+}
+
+#[tokio::test]
+async fn carrier_rejection_and_budget_exhaustion_stop_without_rebuilding_tun() {
+    for rejected in [true, false] {
+        let mut h = foldfin_harness(Some(2)).await;
+        h.backend
+            .recovery_rejected
+            .store(rejected, Ordering::SeqCst);
+        h.backend.recovery_failures.store(10, Ordering::SeqCst);
+        lose_carrier(&h);
+        let state = h
+            .wait_for("recovery exhausted", |s| {
+                matches!(
+                    s.last_outcome,
+                    Some(CycleOutcome::Exhausted { .. } | CycleOutcome::LostGaveUp { .. })
+                ) && !s.busy
+            })
+            .await;
+        assert_eq!(state.intent, IntentView::Down);
+        assert_eq!(
+            h.backend.recoveries.load(Ordering::SeqCst),
+            if rejected { 1 } else { 2 }
+        );
+        assert_eq!(h.backend.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(h.backend.stops(), 1);
+    }
+}
+
+#[tokio::test]
+async fn offline_carrier_recovery_keeps_tun_and_waits_for_link() {
+    let mut h = foldfin_harness(Some(1)).await;
+    let serial = h.states.borrow().outcome_serial;
+    h.handle.report_link(Link::Offline).await;
+    lose_carrier(&h);
+    h.wait_for_phase(Phase::Retrying).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(h.backend.recoveries.load(Ordering::SeqCst), 0);
+    assert_eq!(h.backend.stops(), 0);
+    h.handle.report_link(Link::Online).await;
+    h.wait_for("recovered online", |s| {
+        s.phase == Phase::Connected && s.outcome_serial > serial
+    })
+    .await;
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 1);
+    let epoch = h.set(IntentRequest::Down).await;
+    h.outcome(epoch).await;
+}
+
+#[tokio::test]
+async fn carrier_timeout_joins_before_final_rollback() {
+    let mut h = foldfin_harness(Some(1)).await;
+    h.backend.recovery_blocked.store(true, Ordering::SeqCst);
+    lose_carrier(&h);
+    let state = h
+        .wait_for("carrier timeout", |s| {
+            matches!(s.last_outcome, Some(CycleOutcome::LostGaveUp { .. })) && !s.busy
+        })
+        .await;
+    assert_eq!(state.intent, IntentView::Down);
+    assert!(!h.backend.recovery_active.load(Ordering::SeqCst));
+    assert_eq!(h.backend.recoveries.load(Ordering::SeqCst), 1);
+    assert_eq!(h.backend.stops(), 1);
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn new_intent_cancels_carrier_recovery_before_reconfiguration() {
+    let mut h = foldfin_harness(None).await;
+    h.backend.recovery_blocked.store(true, Ordering::SeqCst);
+    lose_carrier(&h);
+    h.wait_for_phase(Phase::Retrying).await;
+    let params = TunnelParams {
+        allow_lan: true,
+        ..TunnelParams::default()
+    };
+    let epoch = h
+        .set(IntentRequest::Up {
+            order: vec![Protocol::Foldfin],
+            params,
+        })
+        .await;
+    assert!(matches!(
+        h.outcome(epoch).await,
+        CycleOutcome::Connected { .. }
+    ));
+    assert!(!h.backend.recovery_active.load(Ordering::SeqCst));
+    assert_eq!(h.backend.stops(), 1);
+    assert_eq!(h.backend.starts.load(Ordering::SeqCst), 2);
+    let epoch = h.set(IntentRequest::Down).await;
+    assert!(matches!(h.outcome(epoch).await, CycleOutcome::Down));
 }

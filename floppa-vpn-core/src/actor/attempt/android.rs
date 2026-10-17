@@ -111,9 +111,7 @@ pub(super) async fn ladder(
     ctx.backend
         .start_tunnel(ctx.generation, &ctx.config, endpoint, &ctx.params)
         .await
-        .map_err(|e| AttemptError::PeerStartFailed {
-            detail: e.to_string(),
-        })?;
+        .map_err(|error| AttemptError::Backend { error })?;
 
     // 5. Verify -----------------------------------------------------------------------------
     bail_if_cancelled!(ctx);

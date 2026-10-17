@@ -70,6 +70,8 @@ export const BACKEND_ERROR_KEYS: Record<BackendError['kind'], string> = {
   permission_denied: 'vpn.errors.backend.permissionDenied',
   invalid_config: 'vpn.errors.backend.invalidConfig',
   engine: 'vpn.errors.backend.engine',
+  endpoint_unavailable: 'vpn.errors.backend.endpointUnavailable',
+  connection_rejected: 'vpn.errors.backend.connectionRejected',
   not_running: 'vpn.errors.backend.notRunning',
   service_unreachable: 'vpn.errors.backend.serviceUnreachable',
   service_refused: 'vpn.errors.backend.serviceRefused',

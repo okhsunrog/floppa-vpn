@@ -12,6 +12,7 @@ members = [
     "floppa-provision",
     "xtask",
     "floppa-net",
+    "floppa-foldfin",
 ]
 exclude = [
     "floppa-client/src-tauri",
@@ -69,3 +70,8 @@ shoes-lite = { git = "https://github.com/okhsunrog/shoes-lite", rev = "2451f6db1
 # Shared crates
 floppa-core = { path = "floppa-core" }
 floppa-tunnel-config = { path = "floppa-tunnel-config" }
+
+[patch.crates-io]
+h3 = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-datagram = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-quinn = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }

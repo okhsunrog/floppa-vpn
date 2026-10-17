@@ -57,6 +57,17 @@ pub enum AttemptError {
 }
 
 impl AttemptError {
+    /// Only verified connectivity failures may advance to another endpoint address.
+    pub const fn permits_endpoint_retry(&self) -> bool {
+        matches!(
+            self,
+            Self::VerifyFailed
+                | Self::Backend {
+                    error: BackendError::EndpointUnavailable { .. }
+                }
+        )
+    }
+
     /// Should this abort the whole cycle rather than move on to the next protocol?
     ///
     /// Without this, probing three protocols after the user denied VPN consent means three consent
@@ -69,6 +80,7 @@ impl AttemptError {
                 | Self::PlatformUnavailable { .. }
                 | Self::Backend {
                     error: BackendError::PermissionDenied { .. }
+                        | BackendError::ConnectionRejected { .. }
                 }
                 | Self::Cancelled
                 | Self::Crashed { .. }

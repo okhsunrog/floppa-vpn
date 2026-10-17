@@ -83,31 +83,45 @@ pub(super) async fn ladder(
         iface: iface.clone(),
     });
 
+    if matches!(ctx.config, crate::state::ProtocolConfig::Foldfin(_)) {
+        ctx.platform
+            .configure_mtu(&iface, ctx.config.get_mtu())
+            .await
+            .map_err(|e| platform_error(StepKind::PrepareLink, e))?;
+    }
+
     // 3. Address --------------------------------------------------------------------------
     bail_if_cancelled!(ctx);
     ctx.phase(AttemptPhase::Configuring).await;
-    let addr = ctx
-        .config
-        .address_network()
-        .map_err(|e| AttemptError::InvalidConfig {
-            detail: e.to_string(),
-        })?;
-    stack
-        .push(Step::Address {
+    let addresses = match &ctx.config {
+        crate::state::ProtocolConfig::Foldfin(config) => config.addresses().to_vec(),
+        _ => vec![
+            ctx.config
+                .address_network()
+                .map_err(|e| AttemptError::InvalidConfig {
+                    detail: e.to_string(),
+                })?,
+        ],
+    };
+    for addr in addresses {
+        bail_if_cancelled!(ctx);
+        stack
+            .push(Step::Address {
+                iface: iface.clone(),
+                addr,
+            })
+            .map_err(|e| AttemptError::PlatformUnavailable {
+                detail: format!("cannot persist rollback journal: {e}"),
+            })?;
+        ctx.platform
+            .configure_address(&iface, addr)
+            .await
+            .map_err(|e| platform_error(StepKind::Address, e))?;
+        stack.confirm_top(Step::Address {
             iface: iface.clone(),
             addr,
-        })
-        .map_err(|e| AttemptError::PlatformUnavailable {
-            detail: format!("cannot persist rollback journal: {e}"),
-        })?;
-    ctx.platform
-        .configure_address(&iface, addr)
-        .await
-        .map_err(|e| platform_error(StepKind::Address, e))?;
-    stack.confirm_top(Step::Address {
-        iface: iface.clone(),
-        addr,
-    });
+        });
+    }
 
     // Only platforms without marked-socket routing pin a host route to the endpoint.
     if !ctx.platform.uses_policy_routing() {

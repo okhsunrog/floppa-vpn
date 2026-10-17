@@ -284,6 +284,13 @@ case "${1:-}" in
         fi
         ;;
 
+    set-mtu)
+        [[ $# -eq 3 ]] || { echo "Usage: set-mtu <iface> <mtu>" >&2; exit 1; }
+        validate_iface "$2"
+        [[ "$3" =~ ^[0-9]{4}$ && "$3" -ge 1280 && "$3" -le 9000 ]] || { echo "Invalid MTU" >&2; exit 1; }
+        ip link set dev "$2" mtu "$3"
+        ;;
+
     configure)
         # Usage: configure <iface> <ip/prefix>
         # `addr replace` rather than `addr add`: applying the same address twice must succeed,

@@ -269,7 +269,7 @@ class FloppaVpnService : VpnService() {
      * end the generation belonging to the one that replaced it — these instances share a process,
      * and stopping one is asynchronous.
      */
-    private var generation: Long = NO_GENERATION
+    @Volatile private var generation: Long = NO_GENERATION
 
     /**
      * The most recent `startId`. `stopSelf(startId)` refuses to stop the service when a newer start
@@ -428,7 +428,11 @@ class FloppaVpnService : VpnService() {
      * back as a refusal, and the UI — which does have an activity — is what asks for it.
      */
     fun bootCount(): Int =
-        android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+        android.provider.Settings.Global.getInt(
+            contentResolver,
+            android.provider.Settings.Global.BOOT_COUNT,
+            -1,
+        )
 
     fun hasConsent(): Boolean = VpnService.prepare(this) == null
 
@@ -1000,6 +1004,21 @@ class FloppaVpnService : VpnService() {
      */
     fun protectSocket(socket: Int): Boolean {
         return protect(socket)
+    }
+
+    /** Prepare one Foldfin socket for this generation before Rust can transmit. */
+    fun prepareFoldfinSocket(socket: Int, expectedGeneration: Long): Boolean {
+        if (generation != expectedGeneration || expectedGeneration == NO_GENERATION) return false
+        val network = underlyingNetwork ?: return false
+        if (!protect(socket)) return false
+        return try {
+            // The duplicate shares the underlying socket; closing it preserves Rust's fd.
+            ParcelFileDescriptor.fromFd(socket).use { network.bindSocket(it.fileDescriptor) }
+            generation == expectedGeneration && underlyingNetwork == network
+        } catch (e: Exception) {
+            Log.w(TAG, "could not bind Foldfin socket to the underlying network", e)
+            false
+        }
     }
 
     /**

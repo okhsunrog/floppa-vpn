@@ -67,6 +67,7 @@ mod socket_mark;
 pub mod state;
 pub mod store;
 pub mod tunnel;
+pub mod underlay;
 pub mod wire;
 
 pub use backend::VpnBackend;
@@ -78,5 +79,7 @@ pub use state::ProtocolConfig;
 
 mod runtime_intent;
 
+pub mod foldfin_config;
+mod foldfin_tunnel;
 #[cfg(target_os = "windows")]
 mod windows_recovery;

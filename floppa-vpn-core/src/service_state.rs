@@ -55,6 +55,7 @@ pub struct ServiceState {
     /// epoch is shared by every protocol and pass of one connect cycle, and restarts at 1 in each
     /// process.
     pub generation: u64,
+    underlay: std::sync::OnceLock<std::sync::Arc<dyn crate::underlay::Underlay>>,
     /// The descriptor handed over by `VpnService.Builder.establish()`, once it has been.
     tun_fd: std::sync::Mutex<FdSlot>,
     phase: std::sync::Mutex<GenerationPhase>,
@@ -67,11 +68,24 @@ impl ServiceState {
     pub fn new(generation: u64) -> Self {
         Self {
             generation,
+            underlay: std::sync::OnceLock::new(),
             tun_fd: std::sync::Mutex::new(FdSlot::NotEstablished),
             phase: std::sync::Mutex::new(GenerationPhase::Bound),
             start_error: std::sync::Mutex::new(None),
             started: std::sync::Mutex::new(None),
         }
+    }
+
+    pub fn set_underlay(
+        &self,
+        underlay: std::sync::Arc<dyn crate::underlay::Underlay>,
+    ) -> Result<(), &'static str> {
+        self.underlay
+            .set(underlay)
+            .map_err(|_| "service underlay already installed")
+    }
+    pub fn underlay(&self) -> Option<std::sync::Arc<dyn crate::underlay::Underlay>> {
+        self.underlay.get().cloned()
     }
 
     /// The service has established its TUN; from now on a tunnel can be started on it.

@@ -104,6 +104,7 @@ pub struct TunnelActor {
     /// sample exactly once and rendering stays pure.
     traffic: Traffic,
     last_obs: Observation,
+    observation_floor: Option<Instant>,
     /// What the platform last said about the network under the tunnel.
     ///
     /// Beside `last_obs` rather than inside it, because the two are reported by different people:
@@ -136,6 +137,7 @@ pub struct TunnelActor {
 
     // ---- in-flight work ----
     attempt: Option<AttemptHandle>,
+    carrier_recovery: Option<(IntentEpoch, u32, CancellationToken)>,
     unwind: Option<JoinHandle<()>>,
 
     // ---- bookkeeping ----
@@ -349,6 +351,7 @@ impl TunnelActor {
             speed: SpeedTracker::new(),
             traffic: Traffic::default(),
             last_obs: Observation::unknown(Instant::now()),
+            observation_floor: None,
             link: Link::default(),
             vpn_mode: SystemVpnMode::default(),
             observed_once: false,
@@ -361,6 +364,7 @@ impl TunnelActor {
             #[cfg(target_os = "android")]
             host,
             attempt: None,
+            carrier_recovery: None,
             unwind: None,
             next_epoch: 1,
             #[cfg(target_os = "android")]
@@ -551,7 +555,8 @@ impl TunnelActor {
                                 self.apply_recovery_settings();
                                 self.settings.intent_revision =
                                     Some(self.settings.document.revision);
-                                if matches!(self.status, Status::Up(_)) {
+                                if matches!(self.status, Status::Up(_) | Status::Recovering { .. })
+                                {
                                     self.applied_revision = self.settings.intent_revision;
                                 }
                             }
@@ -668,12 +673,47 @@ impl TunnelActor {
                 Reconcile::No
             }
 
+            Command::CarrierRecovered {
+                epoch,
+                pass,
+                result,
+            } => {
+                if self
+                    .carrier_recovery
+                    .as_ref()
+                    .is_some_and(|(e, p, _)| *e == epoch && *p == pass)
+                {
+                    self.carrier_recovery = None;
+                    if result.is_ok() {
+                        let now = Instant::now();
+                        self.observation_floor = Some(now);
+                        self.last_obs = Observation::unknown(now);
+                    }
+                    self.apply(
+                        reconcile::carrier_recovered(
+                            &self.status,
+                            result,
+                            Instant::now(),
+                            &self.policy,
+                            self.link,
+                        ),
+                        Instant::now(),
+                    );
+                }
+                Reconcile::No
+            }
             Command::UnwindDone(report) => {
                 self.on_unwind_done(*report);
                 Reconcile::No
             }
 
             Command::Observed(obs) => {
+                if self
+                    .observation_floor
+                    .is_some_and(|floor| obs.observed_at < floor)
+                {
+                    return Reconcile::No;
+                }
                 // Any delivered observation counts, including an unreachable one.
                 //
                 // Requiring a *reachable* answer looks more rigorous and is wrong: on Android the
@@ -719,7 +759,13 @@ impl TunnelActor {
                     // Publish waiting/online now; judge liveness on the next fresh observation.
                     return Reconcile::No;
                 }
-                if let Status::Retrying { resume_at, .. } = &mut self.status {
+                if let Status::Retrying { resume_at, .. }
+                | Status::Recovering {
+                    resume_at,
+                    in_flight: false,
+                    ..
+                } = &mut self.status
+                {
                     *resume_at = Instant::now();
                 }
                 Reconcile::Yes
@@ -1252,6 +1298,10 @@ impl TunnelActor {
                     return;
                 }
                 debug_assert!(self.attempt.is_none(), "unwinding while an attempt is live");
+                debug_assert!(
+                    self.carrier_recovery.is_none(),
+                    "unwinding during carrier recovery"
+                );
                 let mut stack = std::mem::take(&mut self.held_stack);
                 let platform = self.platform.clone();
                 let backend = self.backend.clone();
@@ -1281,6 +1331,44 @@ impl TunnelActor {
                         Err(e) => debug!(%e, "the probe itself failed; the next look decides"),
                     }
                 });
+            }
+
+            Effect::RecoverCarrier { epoch, pass } => {
+                debug_assert!(self.carrier_recovery.is_none());
+                let cancel = CancellationToken::new();
+                self.carrier_recovery = Some((epoch, pass, cancel.clone()));
+                let backend = self.backend.clone();
+                let budget = self.policy.attempt_budget;
+                let tx = self.cmd_tx.clone();
+                let task = tokio::spawn(async move {
+                    tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => Err(AttemptError::Cancelled),
+                        result = tokio::time::timeout(budget, backend.recover_carrier()) => match result {
+                            Ok(result) => result.map_err(|error| AttemptError::Backend { error }),
+                            Err(_) => Err(AttemptError::TimedOut),
+                        }
+                    }
+                });
+                tokio::spawn(async move {
+                    let result = task.await.unwrap_or_else(|_| {
+                        Err(AttemptError::Crashed {
+                            detail: "carrier recovery task failed".into(),
+                        })
+                    });
+                    let _ = tx
+                        .send(Command::CarrierRecovered {
+                            epoch,
+                            pass,
+                            result,
+                        })
+                        .await;
+                });
+            }
+            Effect::CancelRecovery => {
+                if let Some((_, _, cancel)) = &self.carrier_recovery {
+                    cancel.cancel();
+                }
             }
 
             Effect::TakeStack(stack) => self.held_stack = stack,
@@ -1502,7 +1590,8 @@ impl TunnelActor {
             state.phase = types::Phase::Failed;
         }
         state.settings_revision = self.settings.document.revision;
-        state.applied_revision = if matches!(self.status, Status::Up(_)) {
+        state.applied_revision = if matches!(self.status, Status::Up(_) | Status::Recovering { .. })
+        {
             self.applied_revision
         } else {
             None
@@ -1534,6 +1623,11 @@ impl TunnelActor {
     /// darkness grace period, or a pending wipe giving up.
     fn deadline(&self) -> Option<Instant> {
         let status_deadline = match &self.status {
+            Status::Recovering {
+                in_flight: true, ..
+            } => None,
+            Status::Recovering { .. } if self.link.is_offline() => None,
+            Status::Recovering { resume_at, .. } => Some(*resume_at),
             Status::Connecting { deadline, .. } => Some(*deadline),
             // An expired retry timer must not busy-loop while the link gate parks it.
             // LinkChanged or a fresh observation wakes the actor when there is work to do.

@@ -50,6 +50,12 @@ pub enum BackendError {
     /// The tunnel engine or its device failed to start or stop.
     #[error("tunnel engine: {detail}")]
     Engine { detail: String },
+    /// A classified network/capability failure; another resolved address may work.
+    #[error("endpoint unavailable: {detail}")]
+    EndpointUnavailable { detail: String },
+    /// TLS identity, authorization, policy or protocol validation failed. No fallback.
+    #[error("connection rejected: {detail}")]
+    ConnectionRejected { detail: String },
     /// Nothing is running to be pinged.
     #[error("no tunnel is running")]
     NotRunning,
@@ -103,6 +109,11 @@ pub trait VpnBackend: Send + Sync {
         _endpoint: SocketAddr,
         _params: &TunnelParams,
     ) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported)
+    }
+
+    /// Attempt to replace only the carrier of an existing packet session.
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
         Err(BackendError::Unsupported)
     }
 

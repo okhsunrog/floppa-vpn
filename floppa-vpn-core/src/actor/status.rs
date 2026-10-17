@@ -179,6 +179,8 @@ pub enum UnwindReason {
     /// The tunnel is up and the far side stopped answering it: silent past the policy's bound,
     /// and still silent after being asked to prove otherwise.
     PeerSilent,
+    /// Carrier recovery failed permanently or exhausted its configured budget.
+    CarrierRecoveryFailed,
     /// Something is running a different protocol than the one we started.
     Usurped,
     /// A tunnel exists but no Up intent does.
@@ -199,6 +201,13 @@ pub enum Status {
         deadline: Instant,
     },
     Up(UpStatus),
+    /// The existing TUN and rollback stack remain owned while only the carrier is retried.
+    Recovering {
+        up: UpStatus,
+        cycle: Cycle,
+        resume_at: Instant,
+        in_flight: bool,
+    },
     /// An unwind is in flight.
     ///
     /// This variant **absorbs every input**. It is the reason a late teardown can no longer race a
@@ -222,7 +231,9 @@ pub enum Status {
 impl Status {
     pub fn cycle(&self) -> Option<&Cycle> {
         match self {
-            Self::Connecting { cycle, .. } | Self::Retrying { cycle, .. } => Some(cycle),
+            Self::Connecting { cycle, .. }
+            | Self::Retrying { cycle, .. }
+            | Self::Recovering { cycle, .. } => Some(cycle),
             Self::Unwinding { cycle, .. } => cycle.as_ref(),
             Self::Idle | Self::Up(_) => None,
         }

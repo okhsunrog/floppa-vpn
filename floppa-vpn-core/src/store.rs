@@ -220,6 +220,7 @@ impl ConfigStore {
             ProtocolConfig::WireGuard(wg) => self.configs.wireguard = Some(wg),
             ProtocolConfig::AmneziaWg(awg) => self.configs.amneziawg = Some(awg),
             ProtocolConfig::Vless(vless) => self.configs.vless = Some(vless),
+            ProtocolConfig::Foldfin(config) => self.configs.foldfin = Some(config),
         }
 
         self.save();
@@ -456,6 +457,7 @@ AllowedIPs = 0.0.0.0/0
                 obfuscation: Default::default(),
             }),
             vless: Some(VlessVpnConfig::from_uri(VLESS_URI).expect("fixture must parse")),
+            foldfin: None,
             preferred_protocol: Preference(Some(Protocol::Vless)),
         });
         assert_eq!(

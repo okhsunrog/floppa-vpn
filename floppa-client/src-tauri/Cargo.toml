@@ -99,6 +99,9 @@ tokio = { version = "1", features = ["test-util"] }
 #
 # Drop this whole block when Tauri 2.12 is out — nothing else in the tree depends on it.
 [patch.crates-io]
+h3 = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-datagram = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-quinn = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
 tauri = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
 tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }
 tauri-runtime = { git = "https://github.com/tauri-apps/tauri", rev = "cb2ecac53a505b974ef24f0d4f66ac04fc298eff" }

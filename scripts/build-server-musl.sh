@@ -9,7 +9,7 @@ build_dir=${FLOPPA_SERVER_BUILD_DIR:-$repo_dir/target/musl-server}
 rustup target add x86_64-unknown-linux-musl
 mode=build
 if [[ ${1:-} == --test ]]; then
-    mode=test
+    mode="test"
     shift
     : "${DATABASE_URL:?Set DATABASE_URL to an isolated test PostgreSQL instance}"
 fi
@@ -23,7 +23,7 @@ if [[ $# -eq 0 ]]; then
 fi
 for package in "${packages[@]}"; do
     case "$package" in
-        floppa-daemon|floppa-server|floppa-vless) ;;
+        floppa-daemon|floppa-server|floppa-vless|floppa-foldfin) ;;
         floppa-core)
             if [[ $mode != test ]]; then
                 echo "floppa-core is supported only in test mode" >&2
@@ -54,7 +54,10 @@ docker run --rm --init "${docker_args[@]}" -e BUILD_MODE="$mode" \
         git config --global --add safe.directory "$PWD"
         export PATH=/rust-bin:$PATH
         args=()
-        for package in "$@"; do args+=(-p "$package"); done
+        for package in "$@"; do
+            args+=(-p "$package")
+            if [[ $package == floppa-foldfin ]]; then args+=(--features floppa-foldfin/node); fi
+        done
         if [[ $BUILD_MODE == test ]]; then
             cargo test --locked --release --target x86_64-unknown-linux-musl --target-dir /build/target "${args[@]}"
             exit

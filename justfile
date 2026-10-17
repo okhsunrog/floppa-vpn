@@ -451,3 +451,17 @@ deploy-vless: package-vless
 # is mostly the network half; the archive is still built in case it is ever enabled.
 deploy-europe: package-vless
     cd ../cloud-forge && ansible-playbook site-europe.yml --tags floppa-vless,network
+
+# Dedicated Foldfin node artifact using the locked Git protocol dependency.
+build-foldfin-server:
+    bash scripts/build-server-musl.sh floppa-foldfin
+
+package-foldfin-server: build-foldfin-server
+    mkdir -p release-foldfin/bin release-foldfin/systemd release-foldfin/deploy
+    cp "{{ env('FLOPPA_SERVER_BUILD_DIR', absolute_path('target/musl-server')) }}/target/x86_64-unknown-linux-musl/release/floppa-foldfin" release-foldfin/bin/
+    cp systemd/floppa-foldfin.service release-foldfin/systemd/
+    cp floppa-foldfin/deploy/* scripts/foldfin-install-certificate.sh release-foldfin/deploy/
+    git rev-parse HEAD > release-foldfin/REVISION
+    cargo tree --locked -p foldfin --depth 0 --prefix none | sed -n 's/.*[?]rev=\([0-9a-f]*\).*/\1/p' > release-foldfin/FOLDFIN_REVISION
+    test "$(wc -c < release-foldfin/FOLDFIN_REVISION)" -eq 41
+    tar -czf floppa-foldfin-release.tar.gz -C release-foldfin .
