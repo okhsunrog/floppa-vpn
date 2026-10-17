@@ -226,6 +226,9 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         udp: Arc<AtomicUsize>,
     }
     impl floppa_vpn_core::underlay::Underlay for Prepared {
+        fn service_generation(&self) -> Option<u64> {
+            Some(42)
+        }
         fn prepare_tcp(&self, _: &tokio::net::TcpSocket) -> io::Result<()> {
             self.tcp.fetch_add(1, Ordering::SeqCst);
             Ok(())
@@ -251,6 +254,7 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(manager.meta().await.unwrap().protocol, Protocol::Foldfin);
+    assert_eq!(manager.get_last_packet_received().await, None);
     let request = packet([192, 0, 2, 2], [192, 0, 2, 1]);
     input.send(request.clone()).await.unwrap();
     assert_eq!(
@@ -271,14 +275,22 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
     );
     assert_eq!(manager.get_stats().await.unwrap().tx_bytes, 20);
     // A stale service notification cannot start recovery on this session.
-    manager.network_changed_for(999).await.unwrap();
+    manager.notify_network_changed_for(999).await.unwrap();
     assert_eq!(prepared_tcp.load(Ordering::SeqCst), if h3 { 0 } else { 1 });
     assert_eq!(
         prepared_udp.load(Ordering::SeqCst),
         if transport == "h2_only" { 0 } else { 1 }
     );
-    // Host network change replaces only the carrier, preserving the client packet device.
-    timeout(Duration::from_secs(3), manager.network_changed())
+    // Notification invalidates the carrier; only the actor starts a new attempt.
+    manager.notify_network_changed_for(42).await.unwrap();
+    assert_eq!(
+        manager.carrier_health().await,
+        Some(floppa_vpn_core::actor::types::CarrierHealth::Lost)
+    );
+    assert_eq!(client_drops.load(Ordering::SeqCst), 0);
+    assert_eq!(prepared_tcp.load(Ordering::SeqCst), if h3 { 0 } else { 1 });
+    // Recovery replaces only the carrier, preserving the client packet device.
+    timeout(Duration::from_secs(3), manager.recover_carrier())
         .await
         .unwrap()
         .unwrap();

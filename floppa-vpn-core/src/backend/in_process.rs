@@ -68,6 +68,10 @@ impl VpnBackend for InProcessBackend {
         self.tunnel_manager.ping().await
     }
 
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
+        self.tunnel_manager.recover_carrier().await
+    }
+
     async fn probe(&self) -> Result<(), BackendError> {
         self.tunnel_manager.probe().await
     }
@@ -75,9 +79,12 @@ impl VpnBackend for InProcessBackend {
     /// Always reachable by construction: the tunnel is in this process, so an answer is always
     /// authoritative and there is no such thing as a dark observation here.
     async fn observe(&self) -> Observation {
+        let observed_at = std::time::Instant::now();
+        let carrier = self.tunnel_manager.carrier_health().await;
         let stats = self.tunnel_manager.get_stats().await;
         let running = match self.tunnel_manager.meta().await {
             Some(meta) => Some(RunningTunnel {
+                carrier,
                 protocol: meta.protocol,
                 generation: None,
                 endpoint: meta.endpoint,
@@ -100,7 +107,7 @@ impl VpnBackend for InProcessBackend {
         };
 
         Observation {
-            observed_at: std::time::Instant::now(),
+            observed_at,
             view: WorldView::Reachable(TunnelObservation {
                 // In-process: there is no separate service to have generations of.
                 generation: 0,

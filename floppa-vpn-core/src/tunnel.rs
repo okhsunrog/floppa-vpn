@@ -810,6 +810,37 @@ impl TunnelManager {
         }
     }
 
+    pub async fn carrier_health(&self) -> Option<crate::actor::types::CarrierHealth> {
+        match self.tunnel.read().await.as_ref() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => Some(tunnel.carrier_health()),
+            _ => None,
+        }
+    }
+
+    /// One host-requested attempt, retaining the packet device. Cancellation leaves
+    /// the candidate owned by the session for the next recovery or stop to clean up.
+    pub async fn recover_carrier(&self) -> Result<(), BackendError> {
+        match self.tunnel.write().await.as_mut() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => tunnel.network_changed().await,
+            _ => Err(BackendError::Unsupported),
+        }
+    }
+
+    /// Android invalidates its bound Foldfin carrier; the actor owns redial/retries.
+    pub async fn notify_network_changed_for(&self, generation: u64) -> Result<(), BackendError> {
+        let mut guard = self.tunnel.write().await;
+        match guard.as_mut() {
+            Some((ActiveTunnel::Foldfin(tunnel), _)) => {
+                if tunnel.service_generation() == Some(generation) {
+                    tunnel.invalidate_carrier().await;
+                }
+                Ok(())
+            }
+            Some((tunnel, _)) => tunnel.network_changed().await,
+            None => Ok(()),
+        }
+    }
+
     /// The phone changed network — see [`ActiveTunnel::network_changed`].
     ///
     /// Silently fine when nothing is running: this arrives from the OS, not from a caller who

@@ -121,12 +121,21 @@ pub struct RawStats {
     pub rx_bytes: u64,
 }
 
+/// Carrier state is independent of payload activity. None on legacy backends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierHealth {
+    Ready,
+    Preparing,
+    Lost,
+}
+
 /// The identity of a tunnel that is actually running, reported by the process that owns it.
 ///
 /// Never inferred from the stored config: that is what made an adopted Android tunnel claim
 /// whichever protocol the settings happened to name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunningTunnel {
+    pub carrier: Option<CarrierHealth>,
     pub protocol: Protocol,
     /// Which service generation is carrying it. `None` for a backend that has no generations —
     /// the in-process one, where the tunnel and the observer are the same process.

@@ -159,6 +159,20 @@ impl FoldfinTunnel {
         self.probe().await
     }
 
+    pub(crate) fn carrier_health(&self) -> crate::actor::types::CarrierHealth {
+        use crate::actor::types::CarrierHealth;
+        match self.session.snapshot() {
+            Event::Running => CarrierHealth::Ready,
+            Event::Preparing | Event::Recovering => CarrierHealth::Preparing,
+            Event::CarrierLost { .. } | Event::Closed => CarrierHealth::Lost,
+        }
+    }
+
+    pub(crate) async fn invalidate_carrier(&mut self) {
+        self.session.underlay_changed().await;
+        *self.last_probe.lock().unwrap() = None;
+    }
+
     pub(crate) fn stats(&self) -> foldfin::stats::TrafficStats {
         self.session.stats()
     }
@@ -166,6 +180,9 @@ impl FoldfinTunnel {
         self.started.elapsed()
     }
     pub(crate) fn last_rx(&self) -> Option<Duration> {
+        self.stats().since_last_rx_payload
+    }
+    fn last_evidence(&self) -> Option<Duration> {
         let payload = self.stats().since_last_rx_payload;
         let probe = self.last_probe.lock().unwrap().map(|t| t.elapsed());
         match (payload, probe) {
@@ -174,7 +191,7 @@ impl FoldfinTunnel {
         }
     }
     pub(crate) fn silence(&self) -> Duration {
-        self.last_rx().unwrap_or_else(|| self.duration())
+        self.last_evidence().unwrap_or_else(|| self.duration())
     }
     pub(crate) fn alive(&self) -> bool {
         !matches!(self.session.snapshot(), Event::Closed)

@@ -530,8 +530,8 @@ pub extern "C" fn Java_dev_okhsunrog_floppavpn_vpn_FloppaVpnService_nativeNetwor
         info!("the network moved under generation {generation}; rebinding");
         let manager = booted.tunnel_manager.clone();
         runtime().spawn(async move {
-            match manager.network_changed_for(generation).await {
-                Ok(()) => info!("the tunnel was rebound onto the new network"),
+            match manager.notify_network_changed_for(generation).await {
+                Ok(()) => info!("the tunnel processed the network change"),
                 Err(e) => warn!("could not rebind the tunnel after the network changed: {e}"),
             }
         });

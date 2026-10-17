@@ -112,6 +112,11 @@ pub trait VpnBackend: Send + Sync {
         Err(BackendError::Unsupported)
     }
 
+    /// Attempt to replace only the carrier of an existing packet session.
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
+        Err(BackendError::Unsupported)
+    }
+
     /// Stop the tunnel.
     async fn stop(&self) -> Result<(), BackendError>;
 

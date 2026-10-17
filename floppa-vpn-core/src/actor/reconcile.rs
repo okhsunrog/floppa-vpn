@@ -61,6 +61,11 @@ pub enum Effect {
     /// A probe that fails outright and one that succeeds against a peer that no longer exists must
     /// end the same way, and only the tunnel's silence says which happened.
     Probe,
+    RecoverCarrier {
+        epoch: IntentEpoch,
+        pass: u32,
+    },
+    CancelRecovery,
     /// Resolve waiters for an epoch. Always explicit: the actor executes effects after it has
     /// already written the next status, so "the current epoch" would be read off the wrong state.
     Resolve {
@@ -298,6 +303,92 @@ fn adopt(
     })
 }
 
+fn retained_recovery(
+    u: &UpStatus,
+    up: &UpIntent,
+    now: Instant,
+    policy: &Policy,
+    link: Link,
+) -> Option<Decision> {
+    if u.protocol != Protocol::Foldfin || u.adopted {
+        return None;
+    }
+    let mut cycle = Cycle::reconnect(up, policy)?;
+    cycle.order = vec![Protocol::Foldfin];
+    Some(recovering(u.clone(), cycle, now, !link.is_offline()))
+}
+
+fn recovering(up: UpStatus, cycle: Cycle, resume_at: Instant, in_flight: bool) -> Decision {
+    let effect = Effect::RecoverCarrier {
+        epoch: cycle.epoch,
+        pass: cycle.pass,
+    };
+    let decision = Decision::to(Status::Recovering {
+        up,
+        cycle,
+        resume_at,
+        in_flight,
+    });
+    if in_flight {
+        decision.with(effect)
+    } else {
+        decision
+    }
+}
+
+/// A completed, joined carrier attempt never owns or replaces the platform stack.
+pub fn carrier_recovered(
+    status: &Status,
+    result: Result<(), AttemptError>,
+    now: Instant,
+    policy: &Policy,
+    link: Link,
+) -> Decision {
+    if matches!(status, Status::Unwinding { .. }) {
+        return Decision::stay(status).with(Effect::Unwind { extra: None });
+    }
+    let Status::Recovering { up, cycle, .. } = status else {
+        return Decision::stay(status);
+    };
+    match result {
+        Ok(()) => Decision::to(Status::Up(UpStatus {
+            probing_since: None,
+            dark_since: None,
+            resolved: true,
+            ..up.clone()
+        }))
+        .with(Effect::Resolve {
+            epoch: cycle.epoch,
+            outcome: CycleOutcome::Connected {
+                protocol: up.protocol,
+                adopted: false,
+                failures: cycle.failures.clone(),
+            },
+        }),
+        Err(error) => {
+            if link.is_offline() && !error.is_fatal_for_cycle()
+                || matches!(error, AttemptError::Cancelled)
+            {
+                return recovering(up.clone(), cycle.clone(), now, false);
+            }
+            let fatal = error.is_fatal_for_cycle();
+            let mut cycle = cycle.clone();
+            cycle.record_failure(AttemptFailure {
+                protocol: up.protocol,
+                pass: cycle.pass,
+                error,
+            });
+            if fatal || !cycle.has_budget() {
+                return Decision::to(unwinding(Some(cycle), UnwindReason::CarrierRecoveryFailed))
+                    .with(Effect::Unwind { extra: None });
+            }
+            let delay = policy.backoff(cycle.pass);
+            cycle.advance();
+            recovering(up.clone(), cycle, now + delay, false)
+        }
+    }
+}
+
 /// Rows 17a–17c: what a running tunnel's silence means.
 ///
 /// The caller applies the verdict on top of the ordinary alive path, which is why this reports
@@ -348,11 +439,13 @@ fn judge_silence(
         }
         // 17c
         Some(_) => Silence::Decided(Box::new(
-            Decision::to(unwinding(
-                Cycle::reconnect(up, policy),
-                UnwindReason::PeerSilent,
-            ))
-            .with(Effect::Unwind { extra: undo_for(u) }),
+            retained_recovery(u, up, now, policy, Link::Online).unwrap_or_else(|| {
+                Decision::to(unwinding(
+                    Cycle::reconnect(up, policy),
+                    UnwindReason::PeerSilent,
+                ))
+                .with(Effect::Unwind { extra: undo_for(u) })
+            }),
         )),
     }
 }
@@ -433,6 +526,37 @@ pub fn reconcile(
             // not block a connect.
             (Rel::Same(up) | Rel::Newer(up), World::Dark) => start_or_idle(up, now, policy, link),
         },
+
+        Status::Recovering {
+            up: active,
+            cycle,
+            resume_at,
+            in_flight,
+        } => {
+            let unwind = match relate(status, intent) {
+                Rel::Down => Some((None, UnwindReason::IntentDown)),
+                Rel::Newer(up) => Some((Cycle::start(up, policy), UnwindReason::IntentChanged)),
+                Rel::Same(_) => None,
+            };
+            if let Some((cycle, reason)) = unwind {
+                return Decision::to(unwinding(cycle, reason)).with(if *in_flight {
+                    Effect::CancelRecovery
+                } else {
+                    Effect::Unwind { extra: None }
+                });
+            }
+            if *in_flight {
+                if link.is_offline() {
+                    Decision::stay(status).with(Effect::CancelRecovery)
+                } else {
+                    Decision::stay(status)
+                }
+            } else if !link.is_offline() && now >= *resume_at {
+                recovering(active.clone(), cycle.clone(), now, true)
+            } else {
+                Decision::stay(status)
+            }
+        }
 
         // ---------------------------------------------------------------------- Connecting
         Status::Connecting {
@@ -518,6 +642,11 @@ pub fn reconcile(
             // row keeps saying Up, and no traffic passes. So the peer's silence is judged here
             // too, in the order silence → probe → verdict (rows 17a–17c below).
             (Rel::Same(up), World::Running(rt)) if rt.protocol == u.protocol => {
+                if rt.carrier == Some(super::types::CarrierHealth::Lost)
+                    && let Some(decision) = retained_recovery(u, up, now, policy, link)
+                {
+                    return decision;
+                }
                 // With no network at all, silence says nothing about the peer — of course it is
                 // quiet, nothing can reach it. Judging it anyway is what tore the tunnel down
                 // every time the phone spent three minutes in a lift: PeerSilent, unwind, and a
@@ -902,6 +1031,23 @@ pub fn on_unwind_done(
                 return Decision::to(Status::Idle);
             };
             match reason {
+                UnwindReason::CarrierRecoveryFailed => {
+                    let epoch = cycle.epoch;
+                    let fatal = cycle
+                        .failures
+                        .last()
+                        .is_some_and(|f| f.error.is_fatal_for_cycle());
+                    let outcome = if fatal {
+                        CycleOutcome::Exhausted {
+                            failures: cycle.failures,
+                        }
+                    } else {
+                        cycle.gave_up()
+                    };
+                    Decision::to(Status::Idle)
+                        .with(Effect::DemoteIntent)
+                        .with(Effect::Resolve { epoch, outcome })
+                }
                 // U3: the teardown was for an intent change, and the surviving intent still wants
                 // a tunnel — start its order from the top.
                 UnwindReason::IntentDown | UnwindReason::IntentChanged => {

@@ -227,14 +227,24 @@ settings, DNS caches or recovery loops.
   protocol allowlists remain authoritative; adding Foldfin does not silently
   append it to a user's saved automatic selection order.
 
-Remaining integration work: main's Windows watcher emits NetworkChanged, whose
-actor handler unwinds the full tunnel. Linux instead observes link availability
-and invalidates resolver discovery on rtnetlink events; it does not emit that
-teardown command on route changes. Marked transport sockets follow OS routing,
-without endpoint host-route rewrites. Persistent retries after a detected tunnel
-failure still rebuild the tunnel. Foldfin's retained packet session is currently
-used only through TunnelManager's explicit network change path. Actor-owned carrier recovery must preserve the current rollback stack
-and TUN while respecting settings changes, cancellation and retry limits.
+The actor now recovers a lost Foldfin carrier while retaining its packet device
+and platform rollback stack. Retry limits, backoff, offline parking, cancellation,
+and settings/intent changes remain actor-owned. Cancellation and timeout join the
+carrier task before teardown; terminal failures publish their outcome after
+rollback. Observations started before successful recovery cannot trigger a second
+recovery. The existing public Retrying phase represents this internal Recovering
+state and retains tunnel metadata and the applied settings revision.
+
+Android service-generation notifications invalidate the bound Foldfin carrier;
+the actor starts recovery. Stale service notifications are ignored. Main's Windows
+watcher still emits NetworkChanged, whose actor handler unwinds the full tunnel.
+Linux observes availability and invalidates resolver discovery on rtnetlink events;
+it does not emit that teardown command on route changes. Marked transport sockets
+follow OS routing without endpoint host-route rewrites.
+
+Carrier health and received payload are distinct: a successful carrier probe
+does not update the last received payload timestamp. Probe evidence still informs
+silence detection; it does not establish working DNS or forwarding.
 
 Initial attempts now walk every provisioned endpoint through main's candidate
 resolver. A selected endpoint supplies the HTTP authority and port while retaining
@@ -250,7 +260,7 @@ service-error string. Unclassified local engine errors do not permit address
 fallback. UI bindings and both locales expose the new failure categories.
 
 Carrier-only recovery still uses its saved address. Service/network-scoped
-resolution and retained-TUN actor recovery remain required.
+resolution and candidate selection during carrier recovery remain required.
 
 Device/WAN acceptance is deferred. Local compilation and regressions validate the
 rebase; they do not establish Android roaming or production deployment readiness.
@@ -272,3 +282,11 @@ Candidate increment validation: 278 core unit tests, 12 Foldfin integration test
 all-target Clippy, and frontend format/lint/type checks pass. TypeScript bindings
 were regenerated with the application's export example. Logs:
 `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-candidates/`.
+
+Retained-carrier increment validation: 284 core unit tests and 12 local Foldfin
+integration tests pass, including H2/H3 device retention, notification invalidation,
+probe/payload separation, stale observations, retry exhaustion, cancellation,
+timeouts, reconfiguration and offline parking. Host core/adapter/CLI all-target
+check and Clippy, Android application all-target Clippy, and Rust formatting pass.
+Logs: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-recovery/`. No device or WAN
+acceptance was run for this increment.

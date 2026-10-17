@@ -110,6 +110,11 @@ pub enum Command {
         phase: AttemptPhase,
     },
     AttemptDone(Box<AttemptReport>),
+    CarrierRecovered {
+        epoch: IntentEpoch,
+        pass: u32,
+        result: Result<(), super::types::AttemptError>,
+    },
     UnwindDone(Box<UnwindReport>),
     Observed(Box<Observation>),
     /// The platform noticed the device gain or lose its network.

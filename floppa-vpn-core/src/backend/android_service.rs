@@ -190,6 +190,8 @@ impl VpnBackend for AndroidServiceBackend {
     }
 
     async fn observe(&self) -> Observation {
+        let observed_at = std::time::Instant::now();
+        let carrier = self.tunnel_manager.carrier_health().await;
         let service = self.services.current();
         let stats = self.tunnel_manager.get_stats().await;
         let connected_secs = self
@@ -209,6 +211,7 @@ impl VpnBackend for AndroidServiceBackend {
         let running = self.tunnel_manager.meta().await.map(|m| {
             let started = service.as_ref().and_then(|s| s.started());
             RunningTunnel {
+                carrier,
                 protocol: m.protocol,
                 generation: service.as_ref().map(|s| s.generation),
                 endpoint: m.endpoint,
@@ -220,7 +223,7 @@ impl VpnBackend for AndroidServiceBackend {
         });
 
         Observation {
-            observed_at: std::time::Instant::now(),
+            observed_at,
             view: WorldView::Reachable(TunnelObservation {
                 generation: service.as_ref().map(|s| s.generation).unwrap_or_default(),
                 running,
@@ -238,6 +241,10 @@ impl VpnBackend for AndroidServiceBackend {
 
     async fn ping(&self) -> Result<(), BackendError> {
         self.tunnel_manager.ping().await
+    }
+
+    async fn recover_carrier(&self) -> Result<(), BackendError> {
+        self.tunnel_manager.recover_carrier().await
     }
 
     async fn probe(&self) -> Result<(), BackendError> {
