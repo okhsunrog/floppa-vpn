@@ -15,7 +15,7 @@ use tokio::net::TcpSocket;
 pub(crate) struct FoldfinTunnel {
     session: Session,
     config: FoldfinVpnConfig,
-    endpoint: SocketAddr,
+    active_endpoint: String,
     underlay: Arc<dyn crate::underlay::Underlay>,
     started: Instant,
     last_probe: Mutex<Option<Instant>>,
@@ -60,7 +60,7 @@ impl FoldfinTunnel {
         Ok(Self {
             session,
             config: config.clone(),
-            endpoint,
+            active_endpoint: config.endpoint().to_owned(),
             underlay,
             started: Instant::now(),
             last_probe: Mutex::new(None),
@@ -147,16 +147,66 @@ impl FoldfinTunnel {
     }
 
     pub(crate) async fn network_changed(&mut self) -> Result<(), BackendError> {
-        self.session.underlay_changed().await;
-        *self.last_probe.lock().unwrap() = None;
-        Self::attach(
-            &mut self.session,
-            &self.config,
-            self.endpoint,
-            self.underlay.clone(),
-        )
-        .await?;
-        self.probe().await
+        self.invalidate_carrier().await;
+        let resolver = floppa_net::resolver();
+        let mut last = BackendError::EndpointUnavailable {
+            detail: "no usable Foldfin endpoint".into(),
+        };
+        for config in self.config.endpoint_candidates() {
+            let (host, port) = floppa_net::split_endpoint(config.endpoint()).map_err(error)?;
+            let identity =
+                crate::state::ProtocolConfig::Foldfin(config.clone()).endpoint_cache_identity();
+            let addresses = match self
+                .underlay
+                .clone()
+                .resolve(host.clone(), identity.clone())
+                .await
+            {
+                Ok(addresses) => addresses,
+                Err(cause) if cause.kind() == std::io::ErrorKind::PermissionDenied => {
+                    return Err(socket_error(cause));
+                }
+                Err(cause) => {
+                    last = BackendError::EndpointUnavailable {
+                        detail: format!("Foldfin endpoint DNS: {cause}"),
+                    };
+                    continue;
+                }
+            };
+            for ip in addresses {
+                let endpoint = SocketAddr::new(ip, port);
+                let result =
+                    match Self::attach(&mut self.session, &config, endpoint, self.underlay.clone())
+                        .await
+                    {
+                        Ok(()) => self.probe().await,
+                        Err(cause) => Err(cause),
+                    };
+                match result {
+                    Ok(()) => {
+                        self.active_endpoint = config.endpoint().to_owned();
+                        if host.parse::<std::net::IpAddr>().is_err() {
+                            resolver.remember(&identity, ip).await;
+                        }
+                        return Ok(());
+                    }
+                    Err(cause) => {
+                        // Drain the failed candidate before another may own the same device.
+                        self.session.underlay_changed().await;
+                        if !matches!(cause, BackendError::EndpointUnavailable { .. }) {
+                            return Err(cause);
+                        }
+                        resolver.failed(&identity, ip);
+                        last = cause;
+                    }
+                }
+            }
+        }
+        Err(last)
+    }
+
+    pub(crate) fn endpoint(&self) -> &str {
+        &self.active_endpoint
     }
 
     pub(crate) fn carrier_health(&self) -> crate::actor::types::CarrierHealth {

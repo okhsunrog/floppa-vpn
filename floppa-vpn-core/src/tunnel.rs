@@ -544,7 +544,13 @@ impl TunnelManager {
             .await
             .as_ref()
             .filter(|(t, _)| !matches!(t, ActiveTunnel::Foldfin(f) if !f.alive()))
-            .map(|(_, m)| m.clone())
+            .map(|(t, m)| {
+                let mut meta = m.clone();
+                if let ActiveTunnel::Foldfin(f) = t {
+                    meta.endpoint = f.endpoint().to_string();
+                }
+                meta
+            })
     }
 
     /// Start a WireGuard / AmneziaWG tunnel on desktop platforms (creates TUN device)

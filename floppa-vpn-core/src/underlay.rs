@@ -7,6 +7,24 @@ pub trait Underlay: Send + Sync {
     fn service_generation(&self) -> Option<u64> {
         None
     }
+    fn resolve(
+        self: std::sync::Arc<Self>,
+        host: String,
+        identity: String,
+    ) -> std::pin::Pin<Box<dyn Future<Output = io::Result<Vec<std::net::IpAddr>>> + Send>>
+    where
+        Self: 'static,
+    {
+        Box::pin(async move {
+            floppa_net::resolver()
+                .resolve_scoped(
+                    &host,
+                    &identity,
+                    std::sync::Arc::new(move |socket| self.prepare_tcp(socket)),
+                )
+                .await
+        })
+    }
     fn prepare_tcp(&self, socket: &TcpSocket) -> io::Result<()>;
     fn prepare_udp(&self, socket: &UdpSocket) -> io::Result<()>;
 }

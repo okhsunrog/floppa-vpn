@@ -154,17 +154,21 @@ fn import_persistence_validation_and_secret_redaction() {
 
 #[tokio::test]
 async fn imported_foldfin_runs_on_manager_and_revocation_releases_packets() {
-    manager_lifecycle("h2_only", false).await;
+    manager_lifecycle("h2_only", false, false).await;
 }
 #[tokio::test]
 async fn h3_manager_recovers_and_revokes_without_recreating_device() {
-    manager_lifecycle("h3_only", true).await;
+    manager_lifecycle("h3_only", true, false).await;
 }
 #[tokio::test]
 async fn auto_falls_back_when_udp_is_unresponsive() {
-    manager_lifecycle("auto", false).await;
+    manager_lifecycle("auto", false, false).await;
 }
-async fn manager_lifecycle(transport: &str, h3: bool) {
+#[tokio::test]
+async fn recovery_resolves_provisioned_endpoints_without_recreating_device() {
+    manager_lifecycle("h2_only", false, true).await;
+}
+async fn manager_lifecycle(transport: &str, h3: bool, discovery: bool) {
     let (tls, ca) = tls();
     let server_drops = Arc::new(AtomicUsize::new(0));
     let client_drops = Arc::new(AtomicUsize::new(0));
@@ -217,6 +221,12 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
     let mut raw: serde_json::Value =
         serde_json::from_str(&document(&endpoint.to_string(), &ca)).unwrap();
     raw["config"]["transport"] = serde_json::json!(transport);
+    if discovery {
+        raw["config"]["endpoints"] = serde_json::json!([
+            format!("unavailable.invalid:{}", endpoint.port()),
+            format!("recovered.invalid:{}", endpoint.port())
+        ]);
+    }
     let ProtocolConfig::Foldfin(config) = ProtocolConfig::parse(&raw.to_string()).unwrap() else {
         panic!("wrong protocol")
     };
@@ -226,6 +236,22 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         udp: Arc<AtomicUsize>,
     }
     impl floppa_vpn_core::underlay::Underlay for Prepared {
+        fn resolve(
+            self: Arc<Self>,
+            host: String,
+            _: String,
+        ) -> std::pin::Pin<Box<dyn Future<Output = io::Result<Vec<std::net::IpAddr>>> + Send>>
+        {
+            Box::pin(async move {
+                Ok(match host.as_str() {
+                    "unavailable.invalid" => vec!["127.0.0.2".parse().unwrap()],
+                    "recovered.invalid" => {
+                        vec!["127.0.0.3".parse().unwrap(), "127.0.0.1".parse().unwrap()]
+                    }
+                    _ => vec![host.parse().unwrap()],
+                })
+            })
+        }
         fn service_generation(&self) -> Option<u64> {
             Some(42)
         }
@@ -295,7 +321,26 @@ async fn manager_lifecycle(transport: &str, h3: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(client_drops.load(Ordering::SeqCst), 0);
-    assert_eq!(prepared_tcp.load(Ordering::SeqCst), if h3 { 0 } else { 2 });
+    assert_eq!(
+        prepared_tcp.load(Ordering::SeqCst),
+        if h3 {
+            0
+        } else if discovery {
+            4
+        } else {
+            2
+        }
+    );
+    if discovery {
+        assert_eq!(
+            manager.meta().await.unwrap().endpoint,
+            format!("recovered.invalid:{}", endpoint.port())
+        );
+        assert_eq!(
+            config.endpoint(),
+            format!("unavailable.invalid:{}", endpoint.port())
+        );
+    }
     assert_eq!(
         prepared_udp.load(Ordering::SeqCst),
         if transport == "h2_only" { 0 } else { 2 }

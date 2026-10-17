@@ -2,6 +2,7 @@
 //! TLS and VPN public-key verification remain the caller's responsibility.
 #[cfg(target_os = "android")]
 pub mod android;
+pub mod scoped;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -250,6 +251,103 @@ impl Resolver {
         out
     }
 
+    /// A bounded refresh owned by one caller, using only its prepared underlay sockets.
+    /// No system DNS, process-global Android network or shared in-flight refresh is used.
+    /// Dropping this future aborts its jobs and their relays.
+    pub async fn resolve_scoped(
+        &self,
+        host: &str,
+        identity: &str,
+        prepare: scoped::SocketPreparation,
+    ) -> io::Result<Vec<IpAddr>> {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Ok(vec![ip]);
+        }
+        let identity = key(identity);
+        let epoch = self.state.lock().unwrap().network_epoch;
+        let mut jobs = tokio::task::JoinSet::new();
+        for (url, ip) in [
+            ("https://dns.google/resolve", "8.8.8.8:443"),
+            ("https://cloudflare-dns.com/dns-query", "1.1.1.1:443"),
+            ("https://dns.google/resolve", "[2001:4860:4860::8888]:443"),
+            (
+                "https://cloudflare-dns.com/dns-query",
+                "[2606:4700:4700::1111]:443",
+            ),
+        ] {
+            for kind in [1, 28] {
+                // Preparation errors (especially a retired service) must not become a
+                // cache fallback. Socket preparation itself never transmits.
+                let (client, guard) = match scoped::client(ip.parse().unwrap(), &prepare).await {
+                    Ok(client) => client,
+                    Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                        return Err(error);
+                    }
+                    Err(_) => continue, // An unavailable address family need not disable the other.
+                };
+                let name = host.to_owned();
+                jobs.spawn(async move {
+                    let _guard = guard;
+                    let mut url = reqwest::Url::parse(url).expect("static DNS URL");
+                    url.query_pairs_mut()
+                        .append_pair("name", &name)
+                        .append_pair("type", &kind.to_string());
+                    let response = client
+                        .get(url)
+                        .header("accept", "application/dns-json")
+                        .send()
+                        .await
+                        .map_err(|e| e.without_url().to_string())?
+                        .error_for_status()
+                        .map_err(|e| e.without_url().to_string())?;
+                    read_dns_response(response, kind).await
+                });
+            }
+        }
+        let deadline = tokio::time::Instant::now() + DNS_BUDGET;
+        let mut fresh = Vec::new();
+        let mut ttl = 3600;
+        while let Ok(Some(result)) = tokio::time::timeout_at(deadline, jobs.join_next()).await {
+            if let Ok(Ok((ips, lifetime))) = result {
+                ttl = ttl.min(lifetime);
+                for ip in ips {
+                    if fresh.len() < 16 && !fresh.contains(&ip) {
+                        fresh.push(ip);
+                    }
+                }
+            }
+        }
+        // Join cancellation before handing candidates back to the carrier.
+        jobs.shutdown().await;
+        let mut state = self.state.lock().unwrap();
+        if state.network_epoch != epoch {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "underlay changed during DNS",
+            ));
+        }
+        if !fresh.is_empty()
+            && (state.entries.len() < MAX_HOSTS || state.entries.contains_key(&identity))
+        {
+            let entry = state.entries.entry(identity.clone()).or_default();
+            entry.addresses = fresh.clone();
+            entry.expires = now().saturating_add(ttl);
+        }
+        for ip in Self::cached(&state, &identity) {
+            if !fresh.contains(&ip) {
+                fresh.push(ip);
+            }
+        }
+        if fresh.is_empty() {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "no underlay DNS or cached candidates",
+            ))
+        } else {
+            Ok(fresh)
+        }
+    }
+
     /// Optional installation-provided initial addresses. These remain unverified candidates.
     pub fn set_bootstrap(&self, identity: &str, addresses: Vec<IpAddr>) {
         let mut state = self.state.lock().unwrap();
@@ -453,11 +551,18 @@ async fn doh(
         .header("accept", "application/dns-json")
         .build()
         .map_err(|e| e.to_string())?;
-    let mut response = send_to(request, bootstrap.parse().unwrap(), true)
+    let response = send_to(request, bootstrap.parse().unwrap(), true)
         .await
         .map_err(|e| e.detail)?
         .error_for_status()
         .map_err(|e| e.without_url().to_string())?;
+    read_dns_response(response, kind).await
+}
+
+async fn read_dns_response(
+    mut response: reqwest::Response,
+    kind: u16,
+) -> Result<(Vec<IpAddr>, u64), String> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response
         .chunk()
@@ -795,6 +900,10 @@ mod tls_tests {
     use super::*;
     #[tokio::test]
     async fn pinned_ip_does_not_disable_certificate_verification() {
+        check_certificate(false).await;
+        check_certificate(true).await;
+    }
+    async fn check_certificate(scoped: bool) {
         let generated = rcgen::generate_simple_self_signed(vec!["example.invalid".into()]).unwrap();
         let key =
             rustls::pki_types::PrivatePkcs8KeyDer::from(generated.signing_key.serialize_der());
@@ -820,7 +929,16 @@ mod tls_tests {
             .get(format!("https://example.invalid:{port}/"))
             .build()
             .unwrap();
-        let result = send_to(req, "127.0.0.1".parse().unwrap(), false).await;
+        let result = if scoped {
+            let prepare: scoped::SocketPreparation = Arc::new(|_| Ok(()));
+            let (client, _guard) =
+                scoped::client(SocketAddr::from(([127, 0, 0, 1], port)), &prepare)
+                    .await
+                    .unwrap();
+            client.execute(req).await.map_err(SendError::from)
+        } else {
+            send_to(req, "127.0.0.1".parse().unwrap(), false).await
+        };
         assert!(
             result.is_err(),
             "an untrusted certificate must never be accepted even for a cached IP"
@@ -864,5 +982,38 @@ mod cache_tests {
         std::fs::write(&file, "{broken").unwrap();
         let r = Resolver::new(Some(file));
         assert!(r.state.lock().unwrap().entries.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod scoped_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cached_address_cannot_bypass_underlay_refusal() {
+        let resolver = Resolver::new(None);
+        resolver.observe("identity", vec!["192.0.2.1".parse().unwrap()], 60);
+        let result = resolver
+            .resolve_scoped(
+                "example.invalid",
+                "identity",
+                Arc::new(|_| Err(io::ErrorKind::PermissionDenied.into())),
+            )
+            .await;
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+    }
+    #[tokio::test]
+    async fn literal_endpoint_needs_no_dns_socket() {
+        let resolver = Resolver::new(None);
+        let ips = resolver
+            .resolve_scoped(
+                "2001:db8::1",
+                "identity",
+                Arc::new(|_| {
+                    panic!("literal IP must not trigger DNS");
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ips, vec!["2001:db8::1".parse::<IpAddr>().unwrap()]);
     }
 }

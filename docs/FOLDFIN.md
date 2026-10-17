@@ -62,8 +62,8 @@ and malformed-protocol failures never trigger transport fallback. `h2_only` and
 session; network changes replace its carrier while retaining the device.
 Initial connection walks the configured endpoints and their resolved address
 candidates through Floppa's shared resolver and rollback ladder. Carrier-only
-recovery still reuses the last dial address; scoped underlay DNS for that path
-remains pending. Socket preparation is session-scoped already:
+recovery refreshes DNS through its session underlay and walks configured endpoints
+and address candidates without rebuilding the device. Socket preparation is session-scoped:
 `TunnelManager::start_foldfin_packets_on` takes an `Arc<dyn Underlay>` retained
 across recovery. Linux's native policy applies SO_MARK; Android captures the exact
 Java VpnService instance when its TUN descriptor arrives. Retired generations
@@ -259,8 +259,21 @@ Android preserves these typed backend errors instead of flattening them into a
 service-error string. Unclassified local engine errors do not permit address
 fallback. UI bindings and both locales expose the new failure categories.
 
-Carrier-only recovery still uses its saved address. Service/network-scoped
-resolution and candidate selection during carrier recovery remain required.
+Carrier-only recovery now uses the shared resolver cache with caller-owned DoH
+discovery over session-prepared sockets. Its four-second DNS budget queries A/AAAA
+through Google/Cloudflare HTTPS endpoints with IPv4/IPv6 bootstrap addresses.
+Recovery does not use system DNS or the process-global Android network hook;
+Linux SO_MARK and Android's captured service preparation also apply to these DNS
+connections. Private names require existing cached candidates or an explicit host
+Underlay resolver implementation. Initial connection discovery is unchanged.
+
+Fresh answers precede cached candidates; DNS never establishes server identity.
+A network-epoch change rejects the discovery result. Permission refusal cannot
+fall back to cached candidates. DNS failure advances to the next provisioned
+endpoint; transport failure advances after releasing the failed carrier.
+TLS/auth/policy rejection stops the walk. Actor cancellation/deadlines bound the
+whole operation. Successful selection updates the reported authority while leaving
+the provisioned endpoint order, TLS name/CA and network plan unchanged.
 
 Device/WAN acceptance is deferred. Local compilation and regressions validate the
 rebase; they do not establish Android roaming or production deployment readiness.
@@ -290,3 +303,13 @@ timeouts, reconfiguration and offline parking. Host core/adapter/CLI all-target
 check and Clippy, Android application all-target Clippy, and Rust formatting pass.
 Logs: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-recovery/`. No device or WAN
 acceptance was run for this increment.
+
+
+Scoped discovery validation: 14 resolver/relay unit tests, 284 core unit tests and
+13 Foldfin integration tests pass. Coverage includes preparation refusal before
+transmission, literal IPv6 without DNS, cached candidates not bypassing permission
+refusal, TLS verification through the relay, relay closure on cancellation, and
+recovery across multiple endpoints/addresses with the original device and TLS
+identity. Host all-target check/Clippy and Android all-target Clippy pass.
+Logs: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-discovery/`.
+Public DoH availability and physical roaming were not tested.

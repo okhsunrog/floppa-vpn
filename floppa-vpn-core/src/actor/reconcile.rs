@@ -676,7 +676,8 @@ pub fn reconcile(
                 // already recorded what it asked for, and overwriting it here replaced the
                 // configured `host:port` with the address it resolved to about a second after
                 // Connected — so the server line in the UI changed under the user.
-                if u.adopted {
+                // Foldfin reports the selected authority, never its resolved dial IP.
+                if u.adopted || u.protocol == Protocol::Foldfin {
                     next.server_endpoint = rt.endpoint.clone();
                     next.assigned_ip = rt.address.clone();
                 }
