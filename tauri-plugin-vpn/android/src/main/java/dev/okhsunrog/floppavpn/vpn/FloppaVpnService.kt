@@ -428,7 +428,11 @@ class FloppaVpnService : VpnService() {
      * back as a refusal, and the UI — which does have an activity — is what asks for it.
      */
     fun bootCount(): Int =
-        android.provider.Settings.Global.getInt(contentResolver, android.provider.Settings.Global.BOOT_COUNT, -1)
+        android.provider.Settings.Global.getInt(
+            contentResolver,
+            android.provider.Settings.Global.BOOT_COUNT,
+            -1,
+        )
 
     fun hasConsent(): Boolean = VpnService.prepare(this) == null
 

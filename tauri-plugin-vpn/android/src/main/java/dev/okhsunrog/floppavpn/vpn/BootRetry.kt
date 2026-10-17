@@ -111,7 +111,11 @@ internal object BootRetry {
             )
             return false
         }
-        Log.i(TAG, if (appBootEnabled) "app boot preference requests startup" else "retrying Android Always-on startup")
+        Log.i(
+            TAG,
+            if (appBootEnabled) "app boot preference requests startup"
+            else "retrying Android Always-on startup",
+        )
         val blocker = startBlocker(context)
         if (blocker != null) {
             Log.i(TAG, "a start made with no UI cannot succeed here: $blocker")
