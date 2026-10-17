@@ -3560,6 +3560,9 @@
           "display_name": {
             "type": "string"
           },
+          "foldfin_enabled": {
+            "type": "boolean"
+          },
           "is_public": {
             "type": "boolean"
           },
@@ -4280,9 +4283,13 @@
           {
             "type": "object",
             "required": [
-              "region_ids"
+              "region_ids",
+              "foldfin_enabled"
             ],
             "properties": {
+              "foldfin_enabled": {
+                "type": "boolean"
+              },
               "region_ids": {
                 "type": "array",
                 "items": {
@@ -4804,6 +4811,12 @@
           "display_name": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "foldfin_enabled": {
+            "type": [
+              "boolean",
               "null"
             ]
           },

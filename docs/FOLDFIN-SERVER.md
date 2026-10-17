@@ -6,6 +6,23 @@ accounts, subscriptions and installations), and `floppa-foldfin --features node`
 The node shares one persistent TUN/router between its TCP/H2 and UDP/H3 listeners.
 It serves device-level VPN; the standalone Foldfin CLI retains its SOCKS proxy mode.
 
+## Plan access
+
+Migration `0027_foldfin_plan_access.sql` adds `plans.foldfin_enabled`, disabled by
+default for existing and new plans and enabled initially only for `name = 'admin'`.
+The admin plan editor/API can grant it to additional plans later. This is a plan
+entitlement, not a bypass for every account with `users.is_admin`.
+
+Both configuration issuance/refresh and the node's grant snapshot require this flag
+in addition to the active subscription and region entitlement. Disabling the flag
+revokes existing credentials and notifies nodes; reconciliation closes their sessions.
+A node disconnected from PostgreSQL retains only its existing bounded authorization
+lease, as for other revocations. Re-enabling the flag requires fresh issuance.
+
+WireGuard/AmneziaWG/VLESS still have no per-plan protocol switch; region grants and
+private-network grants remain independent. The flag is a Foldfin rollout control,
+not a general protocol allowlist.
+
 ## Provisioning API
 
 1. Authenticate through the existing Floppa API and bind the session to an installation
@@ -64,7 +81,7 @@ builder fetches Foldfin and its H3 patches from the public Git repository at the
 locked revision; no adjacent source checkout is required. The packaged
 `FOLDFIN_REVISION` records this dependency revision.
 
-Apply the main Floppa migrations, including `0025_foldfin.sql` and `0026_foldfin_policy_revisions.sql`, through the normal API
+Apply the main Floppa migrations, including `0025_foldfin.sql`, `0026_foldfin_policy_revisions.sql` and `0027_foldfin_plan_access.sql`, through the normal API
 deployment. Create the `floppa-foldfin` system user. Install the binary in
 `/usr/local/bin`, config in `/etc/floppa-foldfin/config.toml` and secrets as
 `root:floppa-foldfin`, mode 0640. Start from `floppa-foldfin/deploy/` examples.

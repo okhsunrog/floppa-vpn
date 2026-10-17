@@ -935,6 +935,17 @@ mod tests {
         let created = json_body(created).await;
         assert_eq!(created["region_ids"], json!(["europe", "singapore"]));
         let uri = format!("/plans/{}", created["id"]);
+        assert_eq!(created["foldfin_enabled"], false);
+        let enabled = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"foldfin_enabled":true}),
+        )
+        .await;
+        assert_eq!(enabled.status(), StatusCode::OK);
+        assert_eq!(json_body(enabled).await["foldfin_enabled"], true);
 
         // Invalid grants roll back other fields in the same PATCH.
         for invalid in [json!([]), json!(["europe", "unknown"])] {
@@ -943,7 +954,7 @@ mod tests {
                 Method::PATCH,
                 &uri,
                 &auth,
-                json!({"display_name":"Must roll back", "region_ids":invalid}),
+                json!({"display_name":"Must roll back", "region_ids":invalid, "foldfin_enabled":false}),
             )
             .await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -956,6 +967,7 @@ mod tests {
             .iter()
             .find(|p| p["id"] == created["id"])
             .unwrap();
+        assert_eq!(plan["foldfin_enabled"], true);
         assert_eq!(plan["display_name"], "Region test");
         assert_eq!(plan["region_ids"], created["region_ids"]);
 

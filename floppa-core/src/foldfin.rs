@@ -15,7 +15,7 @@ pub enum Error {
     Database(#[from] sqlx::Error),
     #[error("invalid Foldfin configuration: {0}")]
     Config(String),
-    #[error("Foldfin is not available in this region")]
+    #[error("Foldfin is not available for this plan or region")]
     Unavailable,
     #[error("Foldfin configuration already exists; explicit rotation is required")]
     Exists,
@@ -245,6 +245,11 @@ pub async fn issue_with_token(
     // Match WG's lock order and device quota serialization.
     let max: i32 = sqlx::query_scalar("SELECT cs.max_peers FROM current_subscriptions cs WHERE cs.id = (SELECT id FROM subscriptions WHERE user_id = $1 AND is_current FOR UPDATE) AND cs.is_active")
         .bind(user).fetch_optional(&mut *tx).await?.ok_or(FloppaError::NoActiveSubscription)?;
+    let enabled: bool = sqlx::query_scalar("SELECT p.foldfin_enabled FROM current_subscriptions cs JOIN plans p ON p.id=cs.plan_id WHERE cs.user_id=$1 AND cs.is_active FOR SHARE OF p")
+        .bind(user).fetch_one(&mut *tx).await?;
+    if !enabled {
+        return Err(Error::Unavailable);
+    }
     let installation: i64 = sqlx::query_scalar::<_, Option<i64>>("SELECT installation_id FROM sessions WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL FOR UPDATE")
         .bind(session).bind(user).fetch_optional(&mut *tx).await?.flatten().ok_or(Error::Session)?;
     let region: String = sqlx::query_scalar(

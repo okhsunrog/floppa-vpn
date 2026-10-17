@@ -247,7 +247,7 @@ dns = ["198.19.78.2"]
         ns(server, "nft", "-f", str(firewall))
         user = sql("INSERT INTO users DEFAULT VALUES RETURNING id")
         plan = sql(
-            f"INSERT INTO plans(name,display_name) VALUES('{tag}','Node acceptance') RETURNING id"
+            f"INSERT INTO plans(name,display_name,foldfin_enabled) VALUES('{tag}','Node acceptance',true) RETURNING id"
         )
         sql(
             f"INSERT INTO plan_regions VALUES({plan},'singapore'); INSERT INTO subscriptions(user_id,plan_id,starts_at,is_current) VALUES({user},{plan},NOW(),true)"

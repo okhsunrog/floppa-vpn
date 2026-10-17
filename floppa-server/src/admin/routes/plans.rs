@@ -29,6 +29,7 @@ pub struct Plan {
     #[serde(flatten)]
     fields: PlanFields,
     region_ids: Vec<String>,
+    foldfin_enabled: bool,
 }
 
 #[derive(Serialize, ToSchema, sqlx::FromRow)]
@@ -56,9 +57,17 @@ async fn with_regions(fields: PlanFields, conn: &mut sqlx::PgConnection) -> Resu
         "SELECT region_id FROM plan_regions WHERE plan_id = $1 ORDER BY region_id",
     )
     .bind(fields.id)
-    .fetch_all(conn)
+    .fetch_all(&mut *conn)
     .await?;
-    Ok(Plan { fields, region_ids })
+    let foldfin_enabled = sqlx::query_scalar("SELECT foldfin_enabled FROM plans WHERE id=$1")
+        .bind(fields.id)
+        .fetch_one(conn)
+        .await?;
+    Ok(Plan {
+        fields,
+        region_ids,
+        foldfin_enabled,
+    })
 }
 
 /// Europe is the daemon's fallback exit, so it must remain available on every plan.
@@ -101,6 +110,8 @@ async fn replace_regions(
 #[derive(Deserialize, ToSchema)]
 pub struct CreatePlanRequest {
     #[serde(default)]
+    foldfin_enabled: bool,
+    #[serde(default)]
     region_ids: Option<Vec<String>>,
     name: String,
     display_name: String,
@@ -120,6 +131,8 @@ pub struct CreatePlanRequest {
 
 #[derive(Deserialize, ToSchema)]
 pub struct UpdatePlanRequest {
+    #[serde(default)]
+    foldfin_enabled: Option<bool>,
     #[serde(default)]
     region_ids: Option<Vec<String>>,
     #[serde(default)]
@@ -273,6 +286,11 @@ pub(super) async fn create_plan(
     if let Some(region_ids) = &req.region_ids {
         replace_regions(&mut tx, plan.id, region_ids).await?;
     }
+    sqlx::query("UPDATE plans SET foldfin_enabled=$2 WHERE id=$1")
+        .bind(plan.id)
+        .bind(req.foldfin_enabled)
+        .execute(&mut *tx)
+        .await?;
     let plan = with_regions(plan, &mut tx).await?;
     tx.commit().await?;
     Ok((StatusCode::CREATED, Json(plan)))
@@ -343,6 +361,13 @@ pub(super) async fn update_plan(
     .ok_or_else(|| ApiError::not_found("Plan not found"))?;
     if let Some(region_ids) = &req.region_ids {
         replace_regions(&mut tx, plan.id, region_ids).await?;
+    }
+    if let Some(enabled) = req.foldfin_enabled {
+        sqlx::query("UPDATE plans SET foldfin_enabled=$2 WHERE id=$1")
+            .bind(plan.id)
+            .bind(enabled)
+            .execute(&mut *tx)
+            .await?;
     }
     let plan = with_regions(plan, &mut tx).await?;
     tx.commit().await?;

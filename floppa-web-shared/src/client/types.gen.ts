@@ -120,6 +120,7 @@ export type CreatePeerResponse = {
 export type CreatePlanRequest = {
     default_speed_limit_mbps?: number | null;
     display_name: string;
+    foldfin_enabled?: boolean;
     is_public?: boolean;
     max_peers?: number;
     name: string;
@@ -323,6 +324,7 @@ export type PeerSummary = {
 export type PeerSyncStatus = 'pending_add' | 'active' | 'pending_remove' | 'removed';
 
 export type Plan = PlanFields & {
+    foldfin_enabled: boolean;
     region_ids: Array<string>;
 };
 
@@ -503,6 +505,7 @@ export type UpdatePlanRequest = {
     clear_trial_minutes?: boolean;
     default_speed_limit_mbps?: number | null;
     display_name?: string | null;
+    foldfin_enabled?: boolean | null;
     is_public?: boolean | null;
     max_peers?: number | null;
     period_days?: number | null;

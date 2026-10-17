@@ -591,6 +591,9 @@ pub struct CreatePeerResponse {
 ///    "display_name": {
 ///      "type": "string"
 ///    },
+///    "foldfin_enabled": {
+///      "type": "boolean"
+///    },
 ///    "is_public": {
 ///      "type": "boolean"
 ///    },
@@ -640,6 +643,8 @@ pub struct CreatePlanRequest {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub default_speed_limit_mbps: ::std::option::Option<i32>,
     pub display_name: ::std::string::String,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub foldfin_enabled: ::std::option::Option<bool>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub is_public: ::std::option::Option<bool>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
@@ -1771,9 +1776,13 @@ impl ::std::convert::TryFrom<::std::string::String> for PeerSyncStatus {
 ///    {
 ///      "type": "object",
 ///      "required": [
+///        "foldfin_enabled",
 ///        "region_ids"
 ///      ],
 ///      "properties": {
+///        "foldfin_enabled": {
+///          "type": "boolean"
+///        },
 ///        "region_ids": {
 ///          "type": "array",
 ///          "items": {
@@ -1791,6 +1800,7 @@ pub struct Plan {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub default_speed_limit_mbps: ::std::option::Option<i32>,
     pub display_name: ::std::string::String,
+    pub foldfin_enabled: bool,
     pub id: i32,
     pub is_public: bool,
     pub max_peers: i32,
@@ -2772,6 +2782,12 @@ pub struct TelegramAuthData {
 ///        "null"
 ///      ]
 ///    },
+///    "foldfin_enabled": {
+///      "type": [
+///        "boolean",
+///        "null"
+///      ]
+///    },
 ///    "is_public": {
 ///      "type": [
 ///        "boolean",
@@ -2834,6 +2850,8 @@ pub struct UpdatePlanRequest {
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub display_name: ::std::option::Option<::std::string::String>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub foldfin_enabled: ::std::option::Option<bool>,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub is_public: ::std::option::Option<bool>,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub max_peers: ::std::option::Option<i32>,
@@ -2855,6 +2873,7 @@ impl ::std::default::Default for UpdatePlanRequest {
             clear_trial_minutes: Default::default(),
             default_speed_limit_mbps: Default::default(),
             display_name: Default::default(),
+            foldfin_enabled: Default::default(),
             is_public: Default::default(),
             max_peers: Default::default(),
             period_days: Default::default(),

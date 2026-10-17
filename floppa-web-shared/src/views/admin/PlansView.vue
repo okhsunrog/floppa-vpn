@@ -61,6 +61,7 @@ const planForm = ref<PlanForm>({
   default_speed_limit_mbps: null,
   max_peers: 1,
   is_public: true,
+  foldfin_enabled: false,
   trial_minutes: null,
   price_stars: null,
   period_days: null,
@@ -130,6 +131,7 @@ function openNewPlanDialog() {
     default_speed_limit_mbps: null,
     max_peers: 1,
     is_public: true,
+    foldfin_enabled: false,
     trial_minutes: null,
     price_stars: null,
     period_days: null,
@@ -148,6 +150,7 @@ function openEditPlanDialog(plan: Plan) {
     default_speed_limit_mbps: plan.default_speed_limit_mbps ?? null,
     max_peers: plan.max_peers,
     is_public: plan.is_public,
+    foldfin_enabled: plan.foldfin_enabled,
     trial_minutes: plan.trial_minutes ?? null,
     price_stars: plan.price_stars ?? null,
     period_days: plan.period_days ?? null,
@@ -172,6 +175,7 @@ async function savePlan() {
         default_speed_limit_mbps: body.default_speed_limit_mbps,
         max_peers: body.max_peers,
         is_public: body.is_public,
+        foldfin_enabled: body.foldfin_enabled,
         trial_minutes: body.trial_minutes,
         price_stars: body.price_stars,
         period_days: body.period_days,
@@ -513,6 +517,7 @@ const columns = computed<TableColumn<Plan>[]>(() => [
               "
             />
           </fieldset>
+          <UCheckbox v-model="planForm.foldfin_enabled" :label="t('adminPlans.foldfinEnabled')" />
           <UCheckbox v-model="planForm.is_public" :label="t('adminPlans.publicCheckbox')" />
         </div>
       </template>

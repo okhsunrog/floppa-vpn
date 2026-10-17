@@ -91,6 +91,7 @@ export const zCreatePeerResponse = z.object({
 export const zCreatePlanRequest = z.object({
     default_speed_limit_mbps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
     display_name: z.string(),
+    foldfin_enabled: z.boolean().optional(),
     is_public: z.boolean().optional(),
     max_peers: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).optional(),
     name: z.string(),
@@ -203,6 +204,7 @@ export const zPlanFields = z.object({
 });
 
 export const zPlan = zPlanFields.and(z.object({
+    foldfin_enabled: z.boolean(),
     region_ids: z.array(z.string())
 }));
 
@@ -428,6 +430,7 @@ export const zUpdatePlanRequest = z.object({
     clear_trial_minutes: z.boolean().optional(),
     default_speed_limit_mbps: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
     display_name: z.string().nullish(),
+    foldfin_enabled: z.boolean().nullish(),
     is_public: z.boolean().nullish(),
     max_peers: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),
     period_days: z.int().min(-2147483648, { error: 'Invalid value: Expected int32 to be >= -2147483648' }).max(2147483647, { error: 'Invalid value: Expected int32 to be <= 2147483647' }).nullish(),

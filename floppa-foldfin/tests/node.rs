@@ -150,7 +150,7 @@ async fn start_slot(
 }
 async fn acceptance(pool: DbPool, h3: bool) {
     timeout(Duration::from_secs(30), async {
-        let (user, _) = database::seed(&pool, 2).await;
+        let (user, plan) = database::seed(&pool, 2).await;
         let (_, session) = database::device(&pool, user, "device").await;
         let session = session.parse().unwrap();
         let issued = control::issue(&pool, user, session, false).await.unwrap();
@@ -303,9 +303,9 @@ async fn acceptance(pool: DbPool, h3: bool) {
         tokio::time::sleep(Duration::from_millis(300)).await;
         let (client, _tx, mut rx) = device();
         let tunnel = start(&fresh, client).await.unwrap();
-        control::revoke(&pool, user, issued.device_id)
-            .await
-            .unwrap();
+        // Removing the plan entitlement closes a running tunnel and rejects its token.
+        sqlx::query("UPDATE plans SET foldfin_enabled=false WHERE id=(SELECT plan_id FROM current_subscriptions WHERE user_id=$1)")
+            .bind(user).execute(&pool).await.unwrap();
         timeout(Duration::from_secs(3), async {
             while rx.recv().await.is_some() {}
         })
@@ -313,6 +313,9 @@ async fn acceptance(pool: DbPool, h3: bool) {
         .unwrap();
         assert!(start(&fresh, device().0).await.is_err());
         let _ = tunnel.stop().await;
+        assert!(matches!(control::issue(&pool,user,session,true).await, Err(control::Error::Unavailable)));
+        sqlx::query("UPDATE plans SET foldfin_enabled=true WHERE id=(SELECT plan_id FROM current_subscriptions WHERE user_id=$1)")
+            .bind(user).execute(&pool).await.unwrap();
         // Subscription deadlines also close existing sessions, even between snapshots.
         let issued=control::issue(&pool,user,session,false).await.unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -322,6 +325,16 @@ async fn acceptance(pool: DbPool, h3: bool) {
         timeout(Duration::from_secs(3),async {while rx.recv().await.is_some() {}}).await.expect("subscription expiry");
         assert!(start(&last,device().0).await.is_err());let _=tunnel.stop().await;
         sqlx::query("UPDATE subscriptions SET expires_at=NULL WHERE user_id=$1 AND is_current").bind(user).execute(&pool).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (client,_tx,mut rx)=device();let tunnel=start(&last,client).await.unwrap();
+        // A downgrade must also be enforced by the node, even if the token is not revoked.
+        let denied: i32 = sqlx::query_scalar("INSERT INTO plans(name,display_name) VALUES('no-foldfin','No Foldfin') RETURNING id").fetch_one(&pool).await.unwrap();
+        sqlx::query("INSERT INTO plan_regions(plan_id,region_id) VALUES($1,'singapore')").bind(denied).execute(&pool).await.unwrap();
+        sqlx::query("UPDATE subscriptions SET plan_id=$1 WHERE user_id=$2 AND is_current").bind(denied).bind(user).execute(&pool).await.unwrap();
+        timeout(Duration::from_secs(3),async {while rx.recv().await.is_some() {}}).await.expect("plan downgrade");
+        assert!(start(&last,device().0).await.is_err());let _=tunnel.stop().await;
+        assert!(control::list(&pool,user).await.unwrap().iter().any(|d| d.id==issued.device_id && d.revoked_at.is_none()));
+        sqlx::query("UPDATE subscriptions SET plan_id=$1 WHERE user_id=$2 AND is_current").bind(plan).bind(user).execute(&pool).await.unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         let (client,_tx,mut rx)=device();let tunnel=start(&last,client).await.unwrap();
         // Closing the node's shared pool makes every periodic acquisition fail.

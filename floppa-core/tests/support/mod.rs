@@ -16,7 +16,7 @@ pub async fn seed(pool: &DbPool, max: i32) -> (i64, i32) {
         .fetch_one(pool)
         .await
         .unwrap();
-    let plan = sqlx::query_scalar("INSERT INTO plans(name,display_name,max_peers) VALUES('foldfin-test','Test',$1) RETURNING id").bind(max).fetch_one(pool).await.unwrap();
+    let plan = sqlx::query_scalar("INSERT INTO plans(name,display_name,max_peers,foldfin_enabled) VALUES('foldfin-test','Test',$1,true) RETURNING id").bind(max).fetch_one(pool).await.unwrap();
     sqlx::query(
         "INSERT INTO subscriptions(user_id,plan_id,starts_at,is_current) VALUES($1,$2,NOW(),true)",
     )
