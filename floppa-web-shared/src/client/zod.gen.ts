@@ -153,7 +153,8 @@ export const zInstallationSummary = z.object({
 });
 
 export const zIssueRequest = z.object({
-    rotate: z.boolean().optional()
+    rotate: z.boolean().optional(),
+    token: z.string().nullish()
 });
 
 export const zIssueResponse = z.object({

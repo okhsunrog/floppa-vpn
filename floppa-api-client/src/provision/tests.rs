@@ -27,6 +27,8 @@ struct FakeApi {
     /// Consumed by the first `create_peer`; later ones succeed.
     create: Mutex<Option<Result<CreatePeerResponse, ApiFailure>>>,
     vless: Option<String>,
+    foldfin: Mutex<Vec<Result<String, ApiFailure>>>,
+    foldfin_calls: Mutex<Vec<(Option<String>, bool)>>,
     created: Mutex<Vec<Protocol>>,
     looked_up: Mutex<Vec<Protocol>>,
 }
@@ -136,6 +138,24 @@ impl ProvisionApi for FakeApi {
             }))
     }
 
+    async fn foldfin_config(
+        &self,
+        token: Option<String>,
+        rotate: bool,
+    ) -> Result<String, ApiFailure> {
+        self.foldfin_calls.lock().unwrap().push((token, rotate));
+        let mut answers = self.foldfin.lock().unwrap();
+        if !answers.is_empty() {
+            return answers.remove(0);
+        }
+        Err(ApiFailure::Refused(Refusal {
+            status: 503,
+            code: Some(ApiErrorCode::FoldfinUnavailable),
+            raw_code: "foldfin_unavailable".into(),
+            message: "unavailable".into(),
+        }))
+    }
+
     async fn vless_config(&self) -> Result<VlessConfigResponse, ApiFailure> {
         match &self.vless {
             Some(uri) => Ok(VlessConfigResponse { uri: uri.clone() }),
@@ -169,6 +189,8 @@ impl ProvisionApi for FakeApi {
 struct FakeSink {
     imported: Mutex<Vec<String>>,
     refuse: bool,
+    token: Option<String>,
+    token_read_failed: bool,
 }
 
 #[async_trait]
@@ -179,6 +201,14 @@ impl ConfigSink for FakeSink {
         }
         self.imported.lock().unwrap().push(raw);
         Ok(())
+    }
+
+    async fn foldfin_token(&self) -> Result<Option<String>, String> {
+        if self.token_read_failed {
+            Err("actor unavailable".into())
+        } else {
+            Ok(self.token.clone())
+        }
     }
 
     async fn has_any(&self) -> bool {
@@ -542,4 +572,122 @@ async fn a_peer_the_daemon_has_not_activated_yet_is_still_this_devices_peer() {
 
     assert_eq!(result, SyncResult::Ok);
     assert!(api.created.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn normal_sync_fetches_foldfin_without_user_import() {
+    let api = FakeApi {
+        subscribed: true,
+        foldfin: Mutex::new(vec![Ok("foldfin document".into())]),
+        ..Default::default()
+    };
+    let sink = FakeSink {
+        token: Some("saved-token".into()),
+        ..Default::default()
+    };
+    assert_eq!(sync_peers(&api, &sink, &identity()).await, SyncResult::Ok);
+    assert!(
+        sink.imported
+            .lock()
+            .unwrap()
+            .contains(&"foldfin document".into())
+    );
+    assert_eq!(
+        *api.foldfin_calls.lock().unwrap(),
+        vec![(Some("saved-token".into()), false)]
+    );
+}
+
+#[tokio::test]
+async fn foldfin_rotates_once_only_after_a_definitive_conflict() {
+    let api = FakeApi {
+        foldfin: Mutex::new(vec![
+            Err(ApiFailure::Refused(Refusal {
+                status: 409,
+                code: Some(ApiErrorCode::Conflict),
+                raw_code: "conflict".into(),
+                message: "exists".into(),
+            })),
+            Ok("replacement".into()),
+        ]),
+        ..Default::default()
+    };
+    assert_eq!(
+        sync_foldfin(&api, &FakeSink::default()).await,
+        SyncResult::Ok
+    );
+    assert_eq!(
+        *api.foldfin_calls.lock().unwrap(),
+        vec![(None, false), (None, true)]
+    );
+}
+
+#[tokio::test]
+async fn foldfin_unanswered_issuance_never_rotates_or_replaces_cached_config() {
+    let api = FakeApi {
+        foldfin: Mutex::new(vec![Err(ApiFailure::Unreachable("timeout".into()))]),
+        ..Default::default()
+    };
+    let sink = FakeSink {
+        token: Some("cached".into()),
+        ..Default::default()
+    };
+    assert_eq!(sync_foldfin(&api, &sink).await, SyncResult::Offline);
+    assert_eq!(
+        *api.foldfin_calls.lock().unwrap(),
+        vec![(Some("cached".into()), false)]
+    );
+    assert!(sink.imported.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn unreadable_store_is_not_permission_to_rotate() {
+    let api = FakeApi::default();
+    let sink = FakeSink {
+        token_read_failed: true,
+        ..Default::default()
+    };
+    assert_eq!(sync_foldfin(&api, &sink).await, SyncResult::Offline);
+    assert!(api.foldfin_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn foldfin_refusal_is_reported_without_rotating() {
+    for (code, expected) in [
+        (
+            ApiErrorCode::NoActiveSubscription,
+            SyncError::NoSubscription,
+        ),
+        (ApiErrorCode::PeerLimitReached, SyncError::PeerLimitReached),
+    ] {
+        let api = FakeApi {
+            foldfin: Mutex::new(vec![Err(ApiFailure::Refused(Refusal {
+                status: 403,
+                code: Some(code),
+                raw_code: "refused".into(),
+                message: "denied".into(),
+            }))]),
+            ..Default::default()
+        };
+        assert_eq!(
+            sync_foldfin(&api, &FakeSink::default()).await,
+            SyncResult::Failed(expected)
+        );
+        assert_eq!(*api.foldfin_calls.lock().unwrap(), vec![(None, false)]);
+    }
+}
+
+#[tokio::test]
+async fn unsupported_platform_does_not_allocate_foldfin() {
+    let api = FakeApi {
+        subscribed: true,
+        ..Default::default()
+    };
+    let mut device = identity();
+    device.platform = "windows".into();
+    assert_eq!(
+        sync_peers(&api, &FakeSink::default(), &device).await,
+        SyncResult::Ok
+    );
+    assert!(api.foldfin_calls.lock().unwrap().is_empty());
 }

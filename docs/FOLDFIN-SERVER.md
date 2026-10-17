@@ -13,12 +13,13 @@ It serves device-level VPN; the standalone Foldfin CLI retains its SOCKS proxy m
 2. `POST /me/foldfin/config` with `{}` creates a device grant. A second request returns
    409; use `{"rotate":true}` explicitly to replace a lost or compromised credential.
 3. The 201 response contains `device_id`, `revision`, and a Foldfin v2 `config` document.
-   Wrap it as `{"protocol":"foldfin","config":...}` for the existing client import.
+   The shared client automatically wraps and stores it through the tunnel actor.
    The response has `Cache-Control: no-store`. Store the secret privately on the client.
 4. `GET /me/foldfin/devices` lists owned allocations and node acknowledgement, without
    token plaintext or digest. `DELETE /me/foldfin/devices/{id}` revokes an owned grant.
 
-Tokens contain 256 random bits, are returned once, and only SHA-256 digests are stored.
+Tokens contain 256 random bits; only SHA-256 digests are stored. A metadata refresh
+returns the credential supplied by the client after verifying its digest and session.
 A device uses one quota slot across WG/AWG/Foldfin. Subscription locks serialize
 concurrent issuance; regional allocation locks prevent address collisions. Addresses
 stay stable through token rotation and reconnection. Logout revokes grants issued by
@@ -144,3 +145,12 @@ and SQLx cache, frontend build, shellcheck, nftables check and systemd unit vali
 passed. The node built as static musl ELF. Existing vendored h3 warnings are unchanged.
 Artifacts: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-server-review/`;
 real namespace acceptance: `node-netns-1/`.
+
+### Client configuration refresh
+
+The normal client sync calls `POST /me/foldfin/config` after installation registration.
+The optional `token` field proves possession of the current installation/session
+credential: a valid token returns current metadata and revision without changing
+its digest or disconnecting sessions. `rotate: true` remains the explicit replacement
+path when a credential was lost. The server still stores only SHA-256 digests.
+Clients never interpret an unanswered request as a reason to rotate.

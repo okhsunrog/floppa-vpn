@@ -13,9 +13,18 @@ pub async fn config_for(
     client: &ApiClient,
     protocol: Protocol,
     identity: &DeviceIdentity,
+    foldfin_token: Option<String>,
 ) -> Result<String> {
     if protocol == Protocol::Foldfin {
-        bail!("Foldfin API provisioning is not available yet; import a Foldfin JSON config first");
+        client
+            .upsert_installation(&floppa_api_client::schema::UpsertInstallationRequest {
+                device_id: identity.device_id.clone(),
+                device_name: identity.device_name.clone(),
+                platform: Some(identity.platform.clone()),
+                app_version: Some(identity.app_version.clone()),
+            })
+            .await?;
+        return Ok(floppa_api_client::provision::foldfin_config(client, foldfin_token).await?);
     }
     // `None` for VLESS, which is provisioned per user and has no peer row. The conversion lives
     // in `floppa-provision` because it is the same question the peer watcher asks.

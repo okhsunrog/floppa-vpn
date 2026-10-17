@@ -138,6 +138,9 @@ impl VpnRpc for ActorServer {
         self.handle.await_cycle(epoch).await
     }
 
+    async fn foldfin_token(self, _ctx: Context) -> Result<Option<String>, ConfigError> {
+        self.handle.foldfin_token().await
+    }
     async fn import_config(self, _ctx: Context, raw: String) -> Result<Protocol, ConfigError> {
         self.handle.import_config(raw).await
     }
@@ -379,6 +382,9 @@ mod tests {
         async fn await_cycle(&self, _: IntentEpoch) -> Result<CycleOutcome, IntentError> {
             Ok(CycleOutcome::Down)
         }
+        async fn foldfin_token(&self) -> Result<Option<String>, ConfigError> {
+            Ok(None)
+        }
         async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {
             if raw.is_empty() {
                 Err(ConfigError::Empty)
@@ -561,6 +567,8 @@ mod tests {
             1,
             "an Up makes sure the process exists first"
         );
+
+        assert_eq!(remote.foldfin_token().await, Ok(None));
 
         // A Down does not: there is nothing to start a service for.
         assert!(remote.set_intent(IntentRequest::Down).await.is_ok());

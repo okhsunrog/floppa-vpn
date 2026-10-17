@@ -15,6 +15,9 @@ pub struct IssueRequest {
     /// Explicitly invalidate the old credential. A lost response requires rotation.
     #[serde(default)]
     rotate: bool,
+    /// Previously issued credential, for a refresh that preserves active connections.
+    #[serde(default)]
+    token: Option<String>,
 }
 #[derive(Serialize, ToSchema)]
 pub struct IssueResponse {
@@ -35,7 +38,14 @@ pub(super) async fn issue(
     let session = auth.session_id.ok_or_else(|| {
         ApiError::bad_request("Register this installation on a live API session first")
     })?;
-    let result = foldfin::issue(&state.pool, auth.user_id, session, request.rotate).await?;
+    let result = foldfin::issue_with_token(
+        &state.pool,
+        auth.user_id,
+        session,
+        request.rotate,
+        request.token.as_deref(),
+    )
+    .await?;
     Ok((
         StatusCode::CREATED,
         [(header::CACHE_CONTROL, "no-store")],

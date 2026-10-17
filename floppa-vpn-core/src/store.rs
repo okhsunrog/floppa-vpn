@@ -220,7 +220,18 @@ impl ConfigStore {
             ProtocolConfig::WireGuard(wg) => self.configs.wireguard = Some(wg),
             ProtocolConfig::AmneziaWg(awg) => self.configs.amneziawg = Some(awg),
             ProtocolConfig::Vless(vless) => self.configs.vless = Some(vless),
-            ProtocolConfig::Foldfin(config) => self.configs.foldfin = Some(config),
+            ProtocolConfig::Foldfin(config) => {
+                // UI and background repair may finish in the opposite order. A delayed
+                // response must not overwrite a newer credential for the same allocation.
+                if self.configs.foldfin.as_ref().is_some_and(|current| {
+                    current.server_identity() == config.server_identity()
+                        && current.addresses() == config.addresses()
+                        && current.network_plan().revision > config.network_plan().revision
+                }) {
+                    return Ok(protocol);
+                }
+                self.configs.foldfin = Some(config);
+            }
         }
 
         self.save();
@@ -391,6 +402,31 @@ AllowedIPs = 0.0.0.0/0
 
     fn wg() -> WgConfig {
         WgConfig::from_config_str(WG_CONFIG).expect("fixture must parse")
+    }
+
+    #[test]
+    fn delayed_foldfin_response_cannot_replace_a_newer_credential() {
+        let document = |revision, token: &str| {
+            serde_json::json!({
+            "protocol":"foldfin", "config": {
+                "version":2, "endpoints":["vpn.example.org:443"], "server_name":"vpn.example.org",
+                "token":token, "transport":"auto", "network": {
+                    "revision":revision, "addresses":["10.33.0.2/32"], "peers":["10.33.0.1"],
+                    "routes":["0.0.0.0/0"], "dns":["1.1.1.1"], "mtu":1280
+                }
+            }
+        }).to_string()
+        };
+        let mut store = store_with(SavedVpnConfigs::default());
+        let newer = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        store.import(&document(2, newer)).unwrap();
+        store
+            .import(&document(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+            .unwrap();
+        let Some(ProtocolConfig::Foldfin(config)) = store.get(Protocol::Foldfin) else {
+            panic!("missing config")
+        };
+        assert_eq!(config.token(), newer);
     }
 
     #[test]

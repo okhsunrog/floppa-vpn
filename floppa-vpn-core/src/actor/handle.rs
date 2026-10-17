@@ -80,6 +80,9 @@ pub enum Command {
         epoch: IntentEpoch,
         reply: oneshot::Sender<CycleOutcome>,
     },
+    FoldfinToken {
+        reply: oneshot::Sender<Option<String>>,
+    },
     ImportConfig {
         raw: String,
         reply: oneshot::Sender<Result<Protocol, ConfigError>>,
@@ -164,6 +167,9 @@ pub trait TunnelControl: Send + Sync {
     /// answer, it never cancels anything the actor is doing.
     async fn await_cycle(&self, epoch: IntentEpoch) -> Result<CycleOutcome, IntentError>;
 
+    /// Read the credential from the owning store for authenticated API refreshes.
+    async fn foldfin_token(&self) -> Result<Option<String>, ConfigError>;
+
     async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError>;
 
     async fn clear_configs(&self) -> Result<(), IntentError>;
@@ -236,6 +242,10 @@ impl TunnelHandle {
 
     pub async fn await_cycle(&self, epoch: IntentEpoch) -> Result<CycleOutcome, IntentError> {
         self.0.await_cycle(epoch).await
+    }
+
+    pub async fn foldfin_token(&self) -> Result<Option<String>, ConfigError> {
+        self.0.foldfin_token().await
     }
 
     pub async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {
@@ -325,6 +335,15 @@ impl TunnelControl for LocalActor {
             .await
             .map_err(|_| IntentError::ActorGone)?;
         rx.await.map_err(|_| IntentError::ActorGone)
+    }
+
+    async fn foldfin_token(&self) -> Result<Option<String>, ConfigError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Command::FoldfinToken { reply })
+            .await
+            .map_err(|_| ConfigError::ActorGone)?;
+        rx.await.map_err(|_| ConfigError::ActorGone)
     }
 
     async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {

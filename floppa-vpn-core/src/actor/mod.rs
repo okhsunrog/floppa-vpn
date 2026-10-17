@@ -606,6 +606,16 @@ impl TunnelActor {
                 Reconcile::No
             }
 
+            Command::FoldfinToken { reply } => {
+                let token = match self.configs.get(crate::protocol::Protocol::Foldfin) {
+                    Some(crate::state::ProtocolConfig::Foldfin(config)) => {
+                        Some(config.token().to_owned())
+                    }
+                    _ => None,
+                };
+                let _ = reply.send(token);
+                Reconcile::No
+            }
             Command::ImportConfig { raw, reply } => {
                 let result = self.edit_configs(|c| c.import(&raw));
                 let _ = reply.send(result);

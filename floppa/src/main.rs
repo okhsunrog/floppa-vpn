@@ -281,7 +281,16 @@ async fn main() -> Result<()> {
                     .unwrap_or_else(|| "unlimited".into())
             );
             let identity = auth::device_identity()?;
-            let config_str = provision::config_for(&api, protocol, &identity).await?;
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            let foldfin_token = if protocol == Protocol::Foldfin {
+                owner.foldfin_token().await?
+            } else {
+                None
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            let foldfin_token = None;
+            let config_str =
+                provision::config_for(&api, protocol, &identity, foldfin_token).await?;
             // Routes only: the server enforces the grant either way, so failing to ask costs this
             // run the private networks and nothing else.
             let private_routes = match api.private_routes().await {
@@ -382,7 +391,8 @@ async fn main() -> Result<()> {
                     bail!("--peer-id applies only to WireGuard/AmneziaWG")
                 }
                 (protocol, None) => {
-                    provision::config_for(&client, protocol, &auth::device_identity()?).await?
+                    provision::config_for(&client, protocol, &auth::device_identity()?, None)
+                        .await?
                 }
             };
             print!("{config}");

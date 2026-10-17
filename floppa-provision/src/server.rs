@@ -58,6 +58,10 @@ impl ConfigSink for ActorSink {
             .map_err(|e| e.to_string())
     }
 
+    async fn foldfin_token(&self) -> Result<Option<String>, String> {
+        self.0.foldfin_token().await.map_err(|e| e.to_string())
+    }
+
     async fn has_any(&self) -> bool {
         !self.0.snapshot().configs.available.is_empty()
     }

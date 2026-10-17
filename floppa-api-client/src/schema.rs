@@ -743,6 +743,70 @@ pub struct CreateUserRequest {
 pub struct CreateUserResponse {
     pub id: i64,
 }
+///`DeviceStatus`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "applied_revision",
+///    "id",
+///    "installation_id",
+///    "region_id",
+///    "revision"
+///  ],
+///  "properties": {
+///    "applied_revision": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "id": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "installation_id": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "node_last_sync_at": {
+///      "type": [
+///        "string",
+///        "null"
+///      ],
+///      "format": "date-time"
+///    },
+///    "region_id": {
+///      "type": "string"
+///    },
+///    "revision": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "revoked_at": {
+///      "type": [
+///        "string",
+///        "null"
+///      ],
+///      "format": "date-time"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct DeviceStatus {
+    pub applied_revision: i64,
+    pub id: i64,
+    pub installation_id: i64,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub node_last_sync_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
+    pub region_id: ::std::string::String,
+    pub revision: i64,
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub revoked_at: ::std::option::Option<::chrono::DateTime<::chrono::offset::Utc>>,
+}
 ///`ExchangeTelegramLoginCodeRequest`
 ///
 /// <details><summary>JSON schema</summary>
@@ -950,6 +1014,83 @@ pub struct InstallationSummary {
     pub user_id: i64,
     #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
     pub username: ::std::option::Option<::std::string::String>,
+}
+///`IssueRequest`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "properties": {
+///    "rotate": {
+///      "description": "Explicitly invalidate the old credential. A lost response requires rotation.",
+///      "type": "boolean"
+///    },
+///    "token": {
+///      "description": "Previously issued credential, for a refresh that preserves active connections.",
+///      "type": [
+///        "string",
+///        "null"
+///      ]
+///    }
+///  },
+///  "additionalProperties": false
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct IssueRequest {
+    ///Explicitly invalidate the old credential. A lost response requires rotation.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub rotate: ::std::option::Option<bool>,
+    ///Previously issued credential, for a refresh that preserves active connections.
+    #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+    pub token: ::std::option::Option<::std::string::String>,
+}
+impl ::std::default::Default for IssueRequest {
+    fn default() -> Self {
+        Self {
+            rotate: Default::default(),
+            token: Default::default(),
+        }
+    }
+}
+///`IssueResponse`
+///
+/// <details><summary>JSON schema</summary>
+///
+/// ```json
+///{
+///  "type": "object",
+///  "required": [
+///    "config",
+///    "device_id",
+///    "revision"
+///  ],
+///  "properties": {
+///    "config": {
+///      "description": "Foldfin v2 document, including a secret returned only by this issuance call."
+///    },
+///    "device_id": {
+///      "type": "integer",
+///      "format": "int64"
+///    },
+///    "revision": {
+///      "type": "integer",
+///      "format": "int64"
+///    }
+///  }
+///}
+/// ```
+/// </details>
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct IssueResponse {
+    ///Foldfin v2 document, including a secret returned only by this issuance call.
+    pub config: ::serde_json::Value,
+    pub device_id: i64,
+    pub revision: i64,
 }
 ///`LinkPollResponse`
 ///

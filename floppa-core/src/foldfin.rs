@@ -229,6 +229,18 @@ pub struct Issued {
 }
 
 pub async fn issue(pool: &DbPool, user: i64, session: Uuid, rotate: bool) -> Result<Issued> {
+    issue_with_token(pool, user, session, rotate, None).await
+}
+
+/// Refresh metadata without replacing a credential already held by this installation.
+/// Only its digest is stored; the supplied token is never logged.
+pub async fn issue_with_token(
+    pool: &DbPool,
+    user: i64,
+    session: Uuid,
+    rotate: bool,
+    token: Option<&str>,
+) -> Result<Issued> {
     let mut tx = pool.begin().await?;
     // Match WG's lock order and device quota serialization.
     let max: i32 = sqlx::query_scalar("SELECT cs.max_peers FROM current_subscriptions cs WHERE cs.id = (SELECT id FROM subscriptions WHERE user_id = $1 AND is_current FOR UPDATE) AND cs.is_active")
@@ -260,7 +272,19 @@ pub async fn issue(pool: &DbPool, user: i64, session: Uuid, rotate: bool) -> Res
     node.validate()?;
     let previous = sqlx::query_as::<_, (i64, i32, bool)>("SELECT id, slot, revoked_at IS NULL FROM foldfin_devices WHERE installation_id=$1 AND region_id=$2 FOR UPDATE")
         .bind(installation).bind(&region).fetch_optional(&mut *tx).await?;
-    if previous.is_some_and(|(_, _, active)| active) && !rotate {
+    let reusable = if let (Some((id, _, true)), Some(token)) = (previous, token) {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT token_digest=$2 AND issued_by_session=$3 FROM foldfin_devices WHERE id=$1",
+        )
+        .bind(id)
+        .bind(Sha256::digest(token.as_bytes()).to_vec())
+        .bind(session)
+        .fetch_one(&mut *tx)
+        .await?
+    } else {
+        false
+    };
+    if previous.is_some_and(|(_, _, active)| active) && !rotate && !reusable {
         return Err(Error::Exists);
     }
     let occupied: bool = sqlx::query_scalar(
@@ -326,6 +350,25 @@ pub async fn issue(pool: &DbPool, user: i64, session: Uuid, rotate: bool) -> Res
         return Err(Error::Config(
             "private routes exceed policy bounds or overlap a client pool".into(),
         ));
+    }
+    if reusable && !rotate {
+        let (id, slot, _) = previous.expect("validated existing allocation");
+        let revision: i64 = sqlx::query_scalar("SELECT revision FROM foldfin_devices WHERE id=$1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let config = node.document(
+            slot as u32,
+            revision,
+            token.expect("validated token"),
+            &private,
+        );
+        tx.commit().await?;
+        return Ok(Issued {
+            device_id: id,
+            revision,
+            config,
+        });
     }
     let token = hex::encode(rand::random::<[u8; 32]>());
     let digest = Sha256::digest(token.as_bytes()).to_vec();

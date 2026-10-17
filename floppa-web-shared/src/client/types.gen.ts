@@ -195,6 +195,10 @@ export type IssueRequest = {
      * Explicitly invalidate the old credential. A lost response requires rotation.
      */
     rotate?: boolean;
+    /**
+     * Previously issued credential, for a refresh that preserves active connections.
+     */
+    token?: string | null;
 };
 
 export type IssueResponse = {

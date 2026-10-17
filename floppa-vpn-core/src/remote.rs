@@ -397,6 +397,15 @@ impl TunnelControl for RemoteActor {
         }
     }
 
+    async fn foldfin_token(&self) -> Result<Option<String>, ConfigError> {
+        self.call("foldfin_token", |client| async move {
+            client
+                .foldfin_token(RemoteActor::deadline(CALL_DEADLINE))
+                .await
+        })
+        .await
+        .map_err(|_| ConfigError::ActorGone)?
+    }
     async fn import_config(&self, raw: String) -> Result<Protocol, ConfigError> {
         self.call("import_config", |client| async move {
             client

@@ -19,6 +19,16 @@ async fn rotation_ownership_logout_and_region_change(pool: DbPool) {
         foldfin::issue(&pool, user, session, false).await,
         Err(Error::Exists)
     ));
+    let refreshed =
+        foldfin::issue_with_token(&pool, user, session, false, issued.config["token"].as_str())
+            .await
+            .unwrap();
+    assert_eq!(refreshed.config, issued.config);
+    assert_eq!(refreshed.revision, issued.revision);
+    assert!(matches!(
+        foldfin::issue_with_token(&pool, user, session, false, Some("wrong")).await,
+        Err(Error::Exists)
+    ));
     let rotated = foldfin::issue(&pool, user, session, true).await.unwrap();
     assert_eq!(issued.device_id, rotated.device_id);
     assert_eq!(
