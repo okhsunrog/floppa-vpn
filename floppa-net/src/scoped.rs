@@ -50,7 +50,11 @@ pub async fn client(
             tokio::io::copy_bidirectional(&mut downstream, &mut upstream).await?;
             Ok::<_, io::Error>(())
         };
-        let _ = tokio::time::timeout(Duration::from_secs(25), serve).await;
+        match tokio::time::timeout(Duration::from_secs(25), serve).await {
+            Ok(Err(error)) => tracing::debug!(%endpoint, %error, "prepared HTTPS relay failed"),
+            Err(_) => tracing::debug!(%endpoint, "prepared HTTPS relay timed out"),
+            Ok(Ok(())) => {}
+        }
     });
     let guard = Arc::new(Relay(task));
     let client = super::client_builder()

@@ -308,6 +308,9 @@ impl Resolver {
         let mut fresh = Vec::new();
         let mut ttl = 3600;
         while let Ok(Some(result)) = tokio::time::timeout_at(deadline, jobs.join_next()).await {
+            if let Ok(Err(error)) = &result {
+                tracing::debug!(%host, %error, "scoped endpoint DNS failed");
+            }
             if let Ok(Ok((ips, lifetime))) = result {
                 ttl = ttl.min(lifetime);
                 for ip in ips {

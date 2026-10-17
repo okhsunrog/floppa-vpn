@@ -313,3 +313,32 @@ recovery across multiple endpoints/addresses with the original device and TLS
 identity. Host all-target check/Clippy and Android all-target Clippy pass.
 Logs: `/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-discovery/`.
 Public DoH availability and physical roaming were not tested.
+
+Physical underlay validation (2026-10-17): fresh scoped DoH passed from a disposable
+namespace through Ethernet enp0s13f0u1u5, while an explicit blackhole blocked
+unmarked external sockets. The marked SSH marker to Singapore was matched by
+source port against server ss and captures on both the physical NIC and VPS.
+The host's active VPN was retained; administration SSH used its existing route.
+This validates Linux scoped discovery and marked outer connectivity, not a remote
+Foldfin carrier, full VPN recovery, Android roaming or IPv6 WAN forwarding.
+
+The harness is tests/integration/test_foldfin_underlay.py, with the
+floppa-vpn-core/examples/foldfin_underlay.rs diagnostic. Build that example and
+pass its absolute path with --binary and a new disk-backed --output directory.
+It never reads provisioning credentials or changes the deployed Foldfin service.
+Example build/artifacts should use
+/home/okhsunrog/tmp_zfs/codex_tmp/foldfin-physical-discovery/ via
+CARGO_TARGET_DIR/TMPDIR.
+
+Initial failures exposed two fixture requirements: firewalld's nftables forward
+hook rejects the new veth despite iptables ACCEPT, and the synthetic blackhole
+breaks reverse-path checking in the namespace. The helper temporarily assigns
+only its disposable veth to firewalld's trusted zone and disables rp_filter only
+on namespace outer0. Cleanup restores zone membership, deletes exact tagged
+rules/routes and namespace, stops its transient remote capture unit, and checks
+host defaults, rules, forwarding, TCP buffers, rp_filter and resolv.conf.
+
+Final evidence: /home/okhsunrog/tmp_zfs/codex_tmp/foldfin-physical-discovery/run-5/.
+Both passed and cleanup are true. Runs 1–3 preserve the diagnostic failures;
+run 4 first established success. No fallback through the host VPN was used.
+Post-change validation: 311 Rust tests and host all-target check/Clippy pass.
