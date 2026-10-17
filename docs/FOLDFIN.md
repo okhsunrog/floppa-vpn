@@ -342,3 +342,34 @@ Final evidence: /home/okhsunrog/tmp_zfs/codex_tmp/foldfin-physical-discovery/run
 Both passed and cleanup are true. Runs 1–3 preserve the diagnostic failures;
 run 4 first established success. No fallback through the host VPN was used.
 Post-change validation: 311 Rust tests and host all-target check/Clippy pass.
+
+Remote carrier recovery passed on 2026-10-17 through the physical Ethernet path
+to Singapore. Extend the underlay harness with --recovery-client (the built
+foldfin_recovery example) and --server-binary (current static Linux Foldfin CLI,
+built with h3). The helper deploys a disposable server on port 18445 with an
+ephemeral token, separate persistent TUN and 198.18.79.1/198.18.79.2 static peers.
+It restricts the outer listener to the source established by the physical marker.
+It does not upgrade or restart the managed foldfin service.
+
+The real Floppa actor runs in the client network namespace and a private mount
+namespace. /run/floppa-vpn and /var/lib/floppa-vpn are bound to disposable
+directories so ownership and rollback cannot touch the host's active tunnel.
+H2 fault injection destroys only the namespace's TCP socket to the lab listener;
+H3 fault injection restarts only the lab server. Both pass Connected -> Retrying
+-> Connected with unchanged ifindex, addresses, MTU, route/rule snapshots and
+connected_at. Before and after each fault, four concurrent TCP/FIN transfers,
+UDP, direct DNS queries and ICMP pass. Explicit Down completes rollback.
+
+Evidence: /home/okhsunrog/tmp_zfs/codex_tmp/foldfin-recovery-wan/run-2/.
+Local and Singapore captures include the actual carriers, not only the marker.
+Both transport results, local cleanup and remote cleanup pass; the production
+server remains active with the same MainPID. The earlier run stopped on a binary
+upload timeout and completed cleanup before any tunnel test. Uploads now have a
+separate 120-second administration timeout.
+
+This acceptance uses IPv4 routed VPN traffic, not internet full tunnel. OS DNS
+application is disabled (manage_dns=false); DNS packet forwarding and preservation
+of the host resolver are verified, not resolved/resolv.conf reconfiguration.
+It does not claim preservation of pre-existing inner flows, prolonged outage
+recovery, physical IPv6 routing or Android roaming. The example builds and passes
+Clippy; the runtime acceptance above exercises the new harness.

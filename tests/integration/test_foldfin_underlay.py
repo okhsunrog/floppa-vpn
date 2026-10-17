@@ -24,7 +24,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--recovery-client', type=Path)
+    parser.add_argument('--server-binary', type=Path)
     args = parser.parse_args()
+    assert bool(args.recovery_client) == bool(args.server_binary), 'both recovery binaries are required'
     binary = args.binary.resolve()
     assert binary.is_file()
     args.output.mkdir(parents=True, exist_ok=False)
@@ -46,7 +49,7 @@ def main():
     def ns(*cmd, **kw): return root('ip', 'netns', 'exec', namespace, *cmd, **kw)
     def ssh(*cmd, **kw):
         return run('ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                   'root@'+host, shlex.join(map(str, cmd)), timeout=20, **kw)
+                   'root@'+host, shlex.join(map(str, cmd)), timeout=kw.pop('timeout', 20), **kw)
     def change(action, rollback):
         undo.append(rollback)
         action()
@@ -135,7 +138,7 @@ def main():
         summary['forwarding_route'] = root('ip', 'route', 'get', address, 'from', client_ip, 'iif', veth).stdout
         assert 'dev '+dev+' ' in summary['forwarding_route']
         capture = launch('physical.log', ['sudo', '-n', 'tcpdump', '--immediate-mode', '-nn', '-l', '-i', dev,
-                         f'(host 8.8.8.8 or host 1.1.1.1 or host {address}) and tcp and (tcp[tcpflags] & (tcp-syn|tcp-rst) != 0)'])
+                         f'((host 8.8.8.8 or host 1.1.1.1 or host {address}) and tcp and (tcp[tcpflags] & (tcp-syn|tcp-rst) != 0)) or (host {address} and udp port 18445)'])
         ready('physical.log', lambda s: 'listening on' in s, capture)
         inner = launch('namespace.log', ['sudo', '-n', 'ip', 'netns', 'exec', namespace,
                        'tcpdump', '--immediate-mode', '-nn', '-l', '-i', 'any', 'tcp'])
@@ -143,8 +146,8 @@ def main():
         remote_started = True
         remote = launch('singapore.log', ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', 'root@'+host,
                         shlex.join(['systemd-run', '--quiet', '--pipe', '--wait', '--collect', '--unit='+tag,
-                                    '--property=RuntimeMaxSec=45', '--', 'tcpdump', '--immediate-mode', '-nn', '-l', '-i', 'any',
-                                    f'host {address} and tcp port 22 and (tcp[tcpflags] & (tcp-syn|tcp-rst) != 0)'])])
+                                    '--property=RuntimeMaxSec=600', '--', 'tcpdump', '--immediate-mode', '-nn', '-l', '-i', 'any',
+                                    f'host {address} and ((tcp and (port 22 or port 18445) and (tcp[tcpflags] & (tcp-syn|tcp-rst) != 0)) or udp port 18445)'])])
         ready('singapore.log', lambda s: 'listening on' in s, remote)
         probe = launch('probe.log', ['sudo', '-n', 'ip', 'netns', 'exec', namespace, binary, host, address+':22'])
         text = ready('probe.log', lambda s: any(line.startswith('{') for line in s.splitlines()), probe, 20)
@@ -163,6 +166,11 @@ def main():
         ready('physical.log', lambda s: '.'+port+' > '+address+'.22' in s and
               ('8.8.8.8.443' in s or '1.1.1.1.443' in s), capture)
         ready('singapore.log', lambda s: source+'.'+port in s, remote)
+        if args.recovery_client:
+            from foldfin_remote_recovery import exercise
+            summary['recovery'] = exercise(args, namespace, address, source, tag, root, ns, ssh)
+            assert any('18445' in line for line in (args.output/'physical.log').read_text().splitlines())
+            assert any('18445' in line and source in line for line in (args.output/'singapore.log').read_text().splitlines())
         summary['passed'] = True
     finally:
         errors = []
