@@ -33,8 +33,6 @@ for package in "${packages[@]}"; do
         *) echo "Unsupported server package: $package" >&2; exit 1 ;;
     esac
 done
-foldfin_dir=$(realpath "$repo_dir/../rust/foldfin")
-[[ -f "$foldfin_dir/Cargo.toml" ]] || { echo "Foldfin source checkout missing: $foldfin_dir" >&2; exit 1; }
 mkdir -p "$build_dir"
 build_dir=$(realpath "$build_dir")
 
@@ -50,7 +48,7 @@ docker run --rm --init "${docker_args[@]}" -e BUILD_MODE="$mode" \
     -e CC_x86_64_unknown_linux_musl=musl-gcc \
     -v "$rustup_dir:/rustup:ro" -v "$cargo_dir/bin:/rust-bin:ro" \
     -v "$cargo_dir/registry:/cargo/registry" -v "$cargo_dir/git:/cargo/git" \
-    -v "$foldfin_dir:$foldfin_dir:ro" -v "$repo_dir:$repo_dir" -v "$git_dir:$git_dir:ro" -v "$build_dir:/build" \
+    -v "$repo_dir:$repo_dir" -v "$git_dir:$git_dir:ro" -v "$build_dir:/build" \
     -w "$repo_dir" floppa-server-build:musl bash -c '
         set -euo pipefail
         git config --global --add safe.directory "$PWD"

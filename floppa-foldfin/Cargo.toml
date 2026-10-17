@@ -8,7 +8,7 @@ license.workspace = true
 anyhow = { workspace = true, optional = true }
 clap = { version = "4.6.7", features = ["derive"], optional = true }
 floppa-core = { version = "0.1.0", path = "../floppa-core", optional = true }
-foldfin = { version = "0.1.0", path = "../../rust/foldfin", default-features = false, features = ["server"] }
+foldfin = { version = "0.1.0", git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5", default-features = false, features = ["server"] }
 ipnet = { version = "2.12.2", features = ["serde"], optional = true }
 metrics = { workspace = true, optional = true }
 metrics-exporter-prometheus = { workspace = true, optional = true }
@@ -24,7 +24,7 @@ tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
-foldfin = { path = "../../rust/foldfin", default-features = false, features = ["client", "server", "h3"] }
+foldfin = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5", default-features = false, features = ["client", "server", "h3"] }
 tempfile = "3.27.0"
 
 [features]

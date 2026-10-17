@@ -33,7 +33,7 @@ specta = { version = "=2.0.0-rc.25", features = ["derive"] }
 tokio-serde = { version = "0.9.0", features = ["json"] }
 floppa-net = { version = "0.1.0", path = "../floppa-net" }
 sha2.workspace = true
-foldfin = { version = "0.1.0", path = "../../rust/foldfin", default-features = false, features = ["client", "h3"] }
+foldfin = { version = "0.1.0", git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5", default-features = false, features = ["client", "h3"] }
 ipnet = { version = "2.12.2", features = ["serde"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -68,7 +68,7 @@ tarpc = { version = "0.38.0", features = ["serde-transport", "tokio1", "unix"] }
 
 [dev-dependencies]
 floppa-foldfin = { path = "../floppa-foldfin" }
-foldfin = { path = "../../rust/foldfin", default-features = false, features = ["client", "server"] }
+foldfin = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5", default-features = false, features = ["client", "server"] }
 rustls-pemfile = "2.2.0"
 specta-serde = "0.0.12"
 specta-typescript = "0.0.12"

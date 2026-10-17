@@ -59,8 +59,9 @@ There is no traffic-quota accounting feature added by this change.
 Build `cargo build --release -p floppa-foldfin --features node`, or
 `just package-foldfin-server` for the static musl artifact. The latter includes config,
 service, SQL role and certificate hook examples and both source revisions. The musl
-builder mounts the adjacent Foldfin source checkout; publishing/pinning that source
-is still needed before CI/distribution can run outside this development layout.
+builder fetches Foldfin and its H3 patches from the public Git repository at the
+locked revision; no adjacent source checkout is required. The packaged
+`FOLDFIN_REVISION` records this dependency revision.
 
 Apply the main Floppa migrations, including `0025_foldfin.sql` and `0026_foldfin_policy_revisions.sql`, through the normal API
 deployment. Create the `floppa-foldfin` system user. Install the binary in

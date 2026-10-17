@@ -1717,6 +1717,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "foldfin"
 version = "0.1.0"
+source = "git+https://github.com/okhsunrog/foldfin?rev=e09b3d2819463a0845995855bbe61591b79cd7a5#e09b3d2819463a0845995855bbe61591b79cd7a5"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2016,6 +2017,7 @@ dependencies = [
 [[package]]
 name = "h3"
 version = "0.0.8"
+source = "git+https://github.com/okhsunrog/foldfin?rev=e09b3d2819463a0845995855bbe61591b79cd7a5#e09b3d2819463a0845995855bbe61591b79cd7a5"
 dependencies = [
  "bytes",
  "fastrand",
@@ -2028,6 +2030,7 @@ dependencies = [
 [[package]]
 name = "h3-datagram"
 version = "0.0.2"
+source = "git+https://github.com/okhsunrog/foldfin?rev=e09b3d2819463a0845995855bbe61591b79cd7a5#e09b3d2819463a0845995855bbe61591b79cd7a5"
 dependencies = [
  "bytes",
  "h3",
@@ -2037,6 +2040,7 @@ dependencies = [
 [[package]]
 name = "h3-quinn"
 version = "0.0.10"
+source = "git+https://github.com/okhsunrog/foldfin?rev=e09b3d2819463a0845995855bbe61591b79cd7a5#e09b3d2819463a0845995855bbe61591b79cd7a5"
 dependencies = [
  "bytes",
  "futures",

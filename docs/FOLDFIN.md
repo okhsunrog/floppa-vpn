@@ -19,10 +19,11 @@ TLS uses rustls. The former Chrome/BoringSSL backend has been removed.
 
 ## Import and run
 
-Development dependency: `floppa-vpn-core` and `floppa-foldfin` currently use the
-local checkout at `../../rust/foldfin`. Keep this worktree in `~/code/floppa-vpn-foldfin` and
-Foldfin in `~/code/rust/foldfin`. Release packaging/CI needs a published or pinned
-Git Foldfin dependency before distribution; the current local path is intentional.
+`floppa-vpn-core` and `floppa-foldfin` use the public
+[Foldfin repository](https://github.com/okhsunrog/foldfin), pinned to a full Git
+revision. The root workspace and standalone Tauri workspace patch `h3`,
+`h3-datagram` and `h3-quinn` from the same revision. Update all Foldfin revisions
+and both lockfiles together. No adjacent Foldfin checkout is required.
 
 Import this document through the existing app import action or
 `floppa import <file>`. For a temporary configuration, use

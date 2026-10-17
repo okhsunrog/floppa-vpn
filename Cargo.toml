@@ -72,6 +72,6 @@ floppa-core = { path = "floppa-core" }
 floppa-tunnel-config = { path = "floppa-tunnel-config" }
 
 [patch.crates-io]
-h3 = { path = "../rust/foldfin/vendor/h3" }
-h3-datagram = { path = "../rust/foldfin/vendor/h3-datagram" }
-h3-quinn = { path = "../rust/foldfin/vendor/h3-quinn" }
+h3 = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-datagram = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
+h3-quinn = { git = "https://github.com/okhsunrog/foldfin", rev = "e09b3d2819463a0845995855bbe61591b79cd7a5" }
