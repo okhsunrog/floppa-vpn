@@ -74,3 +74,4 @@ floppa-tunnel-config = { path = "floppa-tunnel-config" }
 [patch.crates-io]
 h3 = { path = "../rust/foldfin/vendor/h3" }
 h3-datagram = { path = "../rust/foldfin/vendor/h3-datagram" }
+h3-quinn = { path = "../rust/foldfin/vendor/h3-quinn" }

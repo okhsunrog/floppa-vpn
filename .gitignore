@@ -6,8 +6,10 @@ floppa-client/src-tauri/target
 tauri-plugin-vpn/target
 release/
 release-vless/
+release-foldfin/
 floppa-vpn-release.tar.gz
 floppa-vless-release.tar.gz
+floppa-foldfin-release.tar.gz
 
 # Python
 __pycache__/

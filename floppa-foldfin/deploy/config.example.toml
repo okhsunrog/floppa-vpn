@@ -1,0 +1,20 @@
+region = "singapore"
+listen = "0.0.0.0:443"
+interface = "ff-tun"
+certificate = "/etc/floppa-foldfin/tls/current/fullchain.pem"
+private_key = "/etc/floppa-foldfin/tls/current/privkey.pem"
+metrics = "127.0.0.1:9104"
+sync_interval_secs = 30
+# Maximum offline authorization window, also bounded by subscription expiry.
+lease_secs = 3600
+
+[public]
+endpoints = ["vpn.example.com:443"]
+server_name = "vpn.example.com"
+ipv4_pool = "10.233.0.0/24"
+ipv6_pool = "fd33::/120"
+routes = ["0.0.0.0/0", "::/0"]
+dns = ["1.1.1.1", "2606:4700:4700::1111"]
+allow_destinations = []
+# Public CA certificates need no additional_ca_pem.
+# For IPv4-only nodes omit ipv6_pool, ::/0 and IPv6 DNS together.

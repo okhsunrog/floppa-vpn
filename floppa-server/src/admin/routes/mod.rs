@@ -2,6 +2,7 @@ mod admin;
 mod analytics;
 mod auth;
 pub(crate) mod avatar;
+mod foldfin;
 mod plans;
 mod user;
 
@@ -221,6 +222,7 @@ fn openapi_router() -> OpenApiRouter<AppState> {
     .routes(routes!(user::start_telegram_link))
     .routes(routes!(user::poll_telegram_link))
     .routes(routes!(user::upsert_my_installation))
+    .routes(routes!(foldfin::issue, foldfin::list, foldfin::revoke))
     .routes(routes!(user::get_my_regions, user::set_my_region))
     .routes(routes!(user::get_my_private_networks))
     .routes(routes!(user::get_my_sessions, user::revoke_all_my_sessions))
@@ -677,6 +679,99 @@ mod tests {
             )
             .await
             .unwrap()
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn foldfin_api_issues_rotates_and_revokes_owned_credentials(pool: DbPool) {
+        use axum::http::Method;
+        use serde_json::json;
+        let user = seed_user(&pool, 88112, false).await;
+        let plan: i32 = sqlx::query_scalar("SELECT id FROM plans WHERE name='premium'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO subscriptions(user_id,plan_id,starts_at,is_current) VALUES($1,$2,NOW(),true)").bind(user).bind(plan).execute(&pool).await.unwrap();
+        let node=serde_json::from_value(json!({"endpoints":["localhost:443"],"server_name":"localhost","ipv4_pool":"10.33.0.0/24","routes":["0.0.0.0/0"],"dns":["1.1.1.1"]})).unwrap();
+        floppa_core::foldfin::register_node(&pool, "europe", &node)
+            .await
+            .unwrap();
+        let installation = floppa_core::services::upsert_installation(
+            &pool,
+            user,
+            "foldfin-api",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let session = open_session(&pool, user).await;
+        sqlx::query("UPDATE sessions SET installation_id=$2 WHERE id=$1")
+            .bind(session)
+            .bind(installation.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let auth = token(user, false, Utc::now(), Some(session));
+        let router = create_router(test_state(pool.clone(), None));
+        let issued = plan_request(
+            &router,
+            Method::POST,
+            "/me/foldfin/config",
+            &auth,
+            json!({}),
+        )
+        .await;
+        assert_eq!(issued.status(), StatusCode::CREATED);
+        assert_eq!(issued.headers()[header::CACHE_CONTROL], "no-store");
+        let issued = json_body(issued).await;
+        assert_eq!(issued["config"]["version"], 2);
+        assert_eq!(issued["config"]["token"].as_str().unwrap().len(), 64);
+        let duplicate = plan_request(
+            &router,
+            Method::POST,
+            "/me/foldfin/config",
+            &auth,
+            json!({}),
+        )
+        .await;
+        assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+        let rotated = plan_request(
+            &router,
+            Method::POST,
+            "/me/foldfin/config",
+            &auth,
+            json!({"rotate":true}),
+        )
+        .await;
+        assert_eq!(rotated.status(), StatusCode::CREATED);
+        assert_ne!(
+            json_body(rotated).await["config"]["token"],
+            issued["config"]["token"]
+        );
+        let devices = get(
+            &router,
+            "/me/foldfin/devices",
+            &[("authorization", &bearer(&auth))],
+        )
+        .await;
+        let devices = json_body(devices).await;
+        assert_eq!(devices.as_array().unwrap().len(), 1);
+        assert!(!devices.to_string().contains("token"));
+        let revoked = plan_request(
+            &router,
+            Method::DELETE,
+            &format!("/me/foldfin/devices/{}", issued["device_id"]),
+            &auth,
+            json!({}),
+        )
+        .await;
+        assert_eq!(revoked.status(), StatusCode::NO_CONTENT);
+        assert!(
+            floppa_core::foldfin::list(&pool, user).await.unwrap()[0]
+                .revoked_at
+                .is_some()
+        );
     }
 
     #[sqlx::test(migrations = "../migrations")]

@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod foldfin;
 pub mod models;
 pub mod password;
 pub mod services;

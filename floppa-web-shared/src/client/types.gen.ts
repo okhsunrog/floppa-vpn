@@ -151,6 +151,16 @@ export type CreateUserResponse = {
     id: number;
 };
 
+export type DeviceStatus = {
+    applied_revision: number;
+    id: number;
+    installation_id: number;
+    node_last_sync_at?: string | null;
+    region_id: string;
+    revision: number;
+    revoked_at?: string | null;
+};
+
 export type ExchangeTelegramLoginCodeRequest = {
     code: string;
 };
@@ -178,6 +188,22 @@ export type InstallationSummary = {
     platform?: string | null;
     user_id: number;
     username?: string | null;
+};
+
+export type IssueRequest = {
+    /**
+     * Explicitly invalidate the old credential. A lost response requires rotation.
+     */
+    rotate?: boolean;
+};
+
+export type IssueResponse = {
+    /**
+     * Foldfin v2 document, including a secret returned only by this issuance call.
+     */
+    config: unknown;
+    device_id: number;
+    revision: number;
 };
 
 export type LinkPollResponse = {
@@ -984,6 +1010,73 @@ export type SetMyCredentialResponses = {
 };
 
 export type SetMyCredentialResponse = SetMyCredentialResponses[keyof SetMyCredentialResponses];
+
+export type IssueData = {
+    body: IssueRequest;
+    path?: never;
+    query?: never;
+    url: '/me/foldfin/config';
+};
+
+export type IssueErrors = {
+    401: ApiError;
+    402: ApiError;
+    403: ApiError;
+    409: ApiError;
+    503: ApiError;
+};
+
+export type IssueError = IssueErrors[keyof IssueErrors];
+
+export type IssueResponses = {
+    201: IssueResponse;
+};
+
+export type IssueResponse2 = IssueResponses[keyof IssueResponses];
+
+export type ListData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/me/foldfin/devices';
+};
+
+export type ListErrors = {
+    401: ApiError;
+};
+
+export type ListError = ListErrors[keyof ListErrors];
+
+export type ListResponses = {
+    200: Array<DeviceStatus>;
+};
+
+export type ListResponse = ListResponses[keyof ListResponses];
+
+export type RevokeData = {
+    body?: never;
+    path: {
+        /**
+         * Foldfin device allocation
+         */
+        id: number;
+    };
+    query?: never;
+    url: '/me/foldfin/devices/{id}';
+};
+
+export type RevokeErrors = {
+    401: ApiError;
+    404: ApiError;
+};
+
+export type RevokeError = RevokeErrors[keyof RevokeErrors];
+
+export type RevokeResponses = {
+    204: void;
+};
+
+export type RevokeResponse = RevokeResponses[keyof RevokeResponses];
 
 export type UpsertMyInstallationData = {
     body: UpsertInstallationRequest;

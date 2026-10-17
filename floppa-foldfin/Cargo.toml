@@ -5,6 +5,32 @@ version.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow = { workspace = true, optional = true }
+clap = { version = "4.6.7", features = ["derive"], optional = true }
+floppa-core = { version = "0.1.0", path = "../floppa-core", optional = true }
 foldfin = { version = "0.1.0", path = "../../rust/foldfin", default-features = false, features = ["server"] }
+ipnet = { version = "2.12.2", features = ["serde"], optional = true }
+metrics = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2.2.0"
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 sha2.workspace = true
+sqlx = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["sync", "time"] }
+toml = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[dev-dependencies]
+foldfin = { path = "../../rust/foldfin", default-features = false, features = ["client", "server", "h3"] }
+tempfile = "3.27.0"
+
+[features]
+node = ["dep:floppa-core", "dep:sqlx", "dep:serde", "dep:serde_json", "dep:anyhow", "dep:tracing", "dep:tracing-subscriber", "dep:ipnet", "dep:toml", "dep:clap", "foldfin/h3", "dep:metrics", "dep:metrics-exporter-prometheus"]
+
+[[bin]]
+name = "floppa-foldfin"
+path = "src/main.rs"
+required-features = ["node"]

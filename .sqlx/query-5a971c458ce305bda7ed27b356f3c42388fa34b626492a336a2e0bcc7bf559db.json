@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT EXISTS(SELECT 1 FROM peers WHERE user_id = $1 AND installation_id = $2 AND sync_status != 'removed')",
+  "query": "SELECT EXISTS(SELECT 1 FROM vpn_device_slots WHERE user_id = $1 AND installation_id = $2)",
   "describe": {
     "columns": [
       {
@@ -20,5 +20,5 @@
       null
     ]
   },
-  "hash": "ed7722e5ecdc6e0f7b47d48afb5f38260f5c4bfd5193cc732e8556f06ddc269e"
+  "hash": "5a971c458ce305bda7ed27b356f3c42388fa34b626492a336a2e0bcc7bf559db"
 }

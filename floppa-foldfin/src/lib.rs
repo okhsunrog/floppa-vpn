@@ -2,6 +2,13 @@
 //!
 //! Feed committed control-plane grants into this registry. PostgreSQL, subscription
 //! checks, address allocation and OS routes belong to the host, not the protocol engine.
+#[cfg(feature = "node")]
+pub mod network;
+#[cfg(feature = "node")]
+pub mod node;
+#[cfg(feature = "node")]
+mod policy;
+pub mod tls;
 use foldfin::{
     authorization::{
         AccessGrant, AccessLease, AccessRequest, Authorizer, LeaseState, RequestedMode,

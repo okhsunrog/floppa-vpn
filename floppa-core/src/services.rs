@@ -1163,8 +1163,7 @@ async fn create_peer_in_region(
     let slots_used = sqlx::query_scalar!(
         r#"
         SELECT (
-            (SELECT COUNT(DISTINCT installation_id) FROM peers
-             WHERE user_id = $1 AND sync_status != 'removed' AND installation_id IS NOT NULL)
+            (SELECT COUNT(*) FROM vpn_device_slots WHERE user_id = $1)
           + (SELECT COUNT(*) FROM peers
              WHERE user_id = $1 AND sync_status != 'removed' AND installation_id IS NULL)
         )::int
@@ -1180,7 +1179,7 @@ async fn create_peer_in_region(
     let consumes_new_slot = match installation_id {
         Some(id) => {
             let device_has_peer = sqlx::query_scalar!(
-                r#"SELECT EXISTS(SELECT 1 FROM peers WHERE user_id = $1 AND installation_id = $2 AND sync_status != 'removed')"#,
+                r#"SELECT EXISTS(SELECT 1 FROM vpn_device_slots WHERE user_id = $1 AND installation_id = $2)"#,
                 user_id,
                 id,
             )
@@ -3331,6 +3330,45 @@ mod tests {
         let result = create_peer(&ctx, user_id, wg_opts()).await;
         assert!(matches!(
             result,
+            Err(FloppaError::PeerLimitReached { current: 1, max: 1 })
+        ));
+    }
+
+    #[sqlx::test(migrations = "../migrations")]
+    async fn foldfin_grant_counts_toward_wireguard_device_quota(pool: DbPool) {
+        let config = test_config();
+        let ctx = test_ctx(&pool, &config);
+        let plan: i32=sqlx::query_scalar("INSERT INTO plans(name,display_name,max_peers) VALUES('ff-quota','Quota',1) RETURNING id").fetch_one(&pool).await.unwrap();
+        let user = seed_user(&pool, 48218).await;
+        seed_subscription(&pool, user, plan).await;
+        let node=serde_json::from_value(serde_json::json!({"endpoints":["localhost:443"],"server_name":"localhost","ipv4_pool":"10.33.0.0/24","routes":["0.0.0.0/0"],"dns":["1.1.1.1"]})).unwrap();
+        crate::foldfin::register_node(&pool, "europe", &node)
+            .await
+            .unwrap();
+        let inst = upsert_installation(&pool, user, "foldfin-first", None, None, None)
+            .await
+            .unwrap();
+        let session = create_session(&pool, user, crate::SessionKind::Credential)
+            .await
+            .unwrap();
+        bind_session_installation(&pool, session, user, inst.id, None)
+            .await
+            .unwrap();
+        crate::foldfin::issue(&pool, user, session, false)
+            .await
+            .unwrap();
+        create_peer(
+            &ctx,
+            user,
+            CreatePeerOptions {
+                installation_id: Some(inst.id),
+                protocol: Protocol::WireGuard,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            create_peer(&ctx, user, wg_opts()).await,
             Err(FloppaError::PeerLimitReached { current: 1, max: 1 })
         ));
     }

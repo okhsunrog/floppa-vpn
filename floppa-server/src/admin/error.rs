@@ -147,6 +147,26 @@ impl From<FloppaError> for ApiError {
     }
 }
 
+impl From<floppa_core::foldfin::Error> for ApiError {
+    fn from(error: floppa_core::foldfin::Error) -> Self {
+        use floppa_core::foldfin::Error;
+        match error {
+            Error::Policy(error) => error.into(),
+            Error::Database(error) => error.into(),
+            Error::Exists => {
+                Self::conflict("Foldfin credential already issued; use explicit rotation")
+            }
+            Error::Session => Self::bad_request("A live device-bound API session is required"),
+            Error::Unavailable => Self {
+                error: "foldfin_unavailable".into(),
+                message: "Foldfin is not available in this region".into(),
+                status: StatusCode::SERVICE_UNAVAILABLE,
+            },
+            error @ Error::Config(_) => Self::internal(error),
+        }
+    }
+}
+
 impl From<SubscriptionTermError> for ApiError {
     fn from(e: SubscriptionTermError) -> Self {
         match e {

@@ -1,5 +1,8 @@
 # Foldfin integration and access design
 
+The implemented API, PostgreSQL grant model and regional node are documented in
+[FOLDFIN-SERVER.md](FOLDFIN-SERVER.md), including deployment and validation limits.
+
 The client now imports Foldfin JSON into the existing config store, selects it as
 `Protocol::Foldfin`, and runs the shared engine through `TunnelManager` and the
 connection actor. Routes, DNS, rollback, reconnection and platform consent remain
@@ -108,9 +111,19 @@ lifetime and are not cancelled just because a VPN session is replaced. The devic
 VPN slot is shared across credential rotation/revocation, so old and new grants
 cannot concurrently open the same packet device. Factories must return isolated packet IO;
 multiple `NamedTun` readers on a shared interface would steal each other's packets.
-The shared TUN owner/router and node grant-sync service are still required before
-multi-user deployment. Integration tests use isolated in-memory endpoints. The
-legacy Frankfurt CLI server continues using its existing static token and peer.
+The core provides a shared TUN owner/router. The `floppa-foldfin` node now feeds it
+from PostgreSQL snapshots and serves both carriers; see FOLDFIN-SERVER.md for the
+API and deployment contract. Local multi-peer tests use packet adapters. Managed
+Singapore remains a static-peer server; temporary WAN recovery tests did not deploy
+the new multi-user node.
+
+`floppa_foldfin::tls::TlsIdentity` supplies a shared rustls certificate resolver for
+both listeners. `replace_pem` validates the certificate/key pair before atomically
+publishing it, leaving existing connections and the previous identity on error.
+H2/H3 integration tests verify renewal, retained TCP flows and invalid reloads.
+Certificate issuance, validity/name checks and reload triggers belong to deployment
+and the node host; this adapter is not an ACME client. Renewing a pinned self-signed
+certificate still requires updating client trust.
 
 ## Proposed authentication and authorization
 
@@ -149,7 +162,7 @@ access must also be enforced by the host firewall/router.
 
 Use a bounded node cache so a tunnel does not query PostgreSQL per packet/flow.
 Recommended initial policy: synchronize grants every 30 seconds, expire each node
-lease at the earlier of subscription expiry or five minutes without a fresh
+lease at the earlier of subscription expiry or one hour without a fresh
 control-plane confirmation. Revocations should push immediately and also appear in
 polling snapshots. Apply unchanged snapshots without replacing existing leases;
 actual policy/credential changes close old sessions. `DeviceRegistry::renew()`
@@ -158,7 +171,7 @@ revoked leases cannot be revived. Fail closed after the lease
 horizon if synchronization fails. The exact horizon is an availability/revocation
 tradeoff, not a protocol constant.
 
-Logout-all, installation deletion, disabled account and subscription withdrawal
+Logout-all, installation deletion and subscription withdrawal
 revoke grants. A roaming client reuses its device credential and address, creates
 a fresh protected carrier and a new packet session; old TCP flows cannot be restored.
 IP/prefix ownership and device slots must be released only after awaited teardown.

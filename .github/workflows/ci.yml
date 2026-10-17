@@ -36,7 +36,7 @@ jobs:
           path: floppa-face/dist
 
       - name: Build and verify static server binaries
-        run: bash scripts/build-server-musl.sh floppa-daemon floppa-server floppa-vless
+        run: bash scripts/build-server-musl.sh floppa-daemon floppa-server floppa-vless floppa-foldfin
 
   format:
     name: Format check
@@ -81,7 +81,7 @@ jobs:
           path: floppa-face/dist
 
       - name: Clippy (workspace)
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --features floppa-foldfin/node -- -D warnings
 
       # Prebuilt binary, so this costs seconds. One run at the root covers the workspace and the
       # two crates it excludes (floppa-client/src-tauri, tauri-plugin-vpn) — same as `just machete`.
@@ -137,10 +137,10 @@ jobs:
         run: cargo sqlx migrate run
 
       - name: Check sqlx cache is up to date
-        run: cargo sqlx prepare --workspace --check -- --all-targets
+        run: cargo sqlx prepare --workspace --check -- --all-targets --features floppa-foldfin/node
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --features floppa-foldfin/node
 
       - name: Check OpenAPI client is up to date
         run: |

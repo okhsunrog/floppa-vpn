@@ -9,7 +9,7 @@ build_dir=${FLOPPA_SERVER_BUILD_DIR:-$repo_dir/target/musl-server}
 rustup target add x86_64-unknown-linux-musl
 mode=build
 if [[ ${1:-} == --test ]]; then
-    mode=test
+    mode="test"
     shift
     : "${DATABASE_URL:?Set DATABASE_URL to an isolated test PostgreSQL instance}"
 fi
@@ -23,7 +23,7 @@ if [[ $# -eq 0 ]]; then
 fi
 for package in "${packages[@]}"; do
     case "$package" in
-        floppa-daemon|floppa-server|floppa-vless) ;;
+        floppa-daemon|floppa-server|floppa-vless|floppa-foldfin) ;;
         floppa-core)
             if [[ $mode != test ]]; then
                 echo "floppa-core is supported only in test mode" >&2
@@ -33,6 +33,8 @@ for package in "${packages[@]}"; do
         *) echo "Unsupported server package: $package" >&2; exit 1 ;;
     esac
 done
+foldfin_dir=$(realpath "$repo_dir/../rust/foldfin")
+[[ -f "$foldfin_dir/Cargo.toml" ]] || { echo "Foldfin source checkout missing: $foldfin_dir" >&2; exit 1; }
 mkdir -p "$build_dir"
 build_dir=$(realpath "$build_dir")
 
@@ -48,13 +50,16 @@ docker run --rm --init "${docker_args[@]}" -e BUILD_MODE="$mode" \
     -e CC_x86_64_unknown_linux_musl=musl-gcc \
     -v "$rustup_dir:/rustup:ro" -v "$cargo_dir/bin:/rust-bin:ro" \
     -v "$cargo_dir/registry:/cargo/registry" -v "$cargo_dir/git:/cargo/git" \
-    -v "$repo_dir:$repo_dir" -v "$git_dir:$git_dir:ro" -v "$build_dir:/build" \
+    -v "$foldfin_dir:$foldfin_dir:ro" -v "$repo_dir:$repo_dir" -v "$git_dir:$git_dir:ro" -v "$build_dir:/build" \
     -w "$repo_dir" floppa-server-build:musl bash -c '
         set -euo pipefail
         git config --global --add safe.directory "$PWD"
         export PATH=/rust-bin:$PATH
         args=()
-        for package in "$@"; do args+=(-p "$package"); done
+        for package in "$@"; do
+            args+=(-p "$package")
+            if [[ $package == floppa-foldfin ]]; then args+=(--features floppa-foldfin/node); fi
+        done
         if [[ $BUILD_MODE == test ]]; then
             cargo test --locked --release --target x86_64-unknown-linux-musl --target-dir /build/target "${args[@]}"
             exit

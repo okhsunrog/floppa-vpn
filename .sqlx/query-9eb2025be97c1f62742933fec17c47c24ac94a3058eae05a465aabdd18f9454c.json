@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT (\n            (SELECT COUNT(*) FROM vpn_device_slots WHERE user_id = $1)\n          + (SELECT COUNT(*) FROM peers\n             WHERE user_id = $1 AND sync_status != 'removed' AND installation_id IS NULL)\n        )::int\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "int4",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "9eb2025be97c1f62742933fec17c47c24ac94a3058eae05a465aabdd18f9454c"
+}
