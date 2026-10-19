@@ -1,10 +1,14 @@
 {
   lib,
   pkgs,
-  src,
+  resourceSrc,
+  version,
 }:
 let
-  resources = pkgs.callPackage ./resources.nix { inherit src; };
+  resources = pkgs.callPackage ./resources.nix {
+    src = resourceSrc;
+    inherit version;
+  };
 in
 {
   inherit resources;

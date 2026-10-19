@@ -2,6 +2,7 @@
   lib,
   stdenv,
   bun,
+  cacert,
   nodejs_24,
   autoPatchelfHook,
   src,
@@ -49,6 +50,7 @@ stdenv.mkDerivation {
   # Bun's lock includes optional musl binaries as well as glibc binaries.
   # They are never selected on this glibc platform.
   autoPatchelfIgnoreMissingDeps = [ "libc.musl-x86_64.so.1" ];
+  env.SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
   dontConfigure = true;
   buildPhase = ''
     export HOME="$TMPDIR"

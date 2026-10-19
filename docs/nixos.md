@@ -46,3 +46,20 @@ set `services.floppa-vpn.autostart = false` to omit this boot unit altogether.
 
 For local development, use the Git checkout (`nix build .#cli`), not an impure
 `path:` input containing ignored `.env` files, credentials or build output.
+
+Rust builds use Crane with separate dependency artifacts for the CLI workspace
+and the standalone Tauri workspace. `Cargo.lock`, compiler/profile/features and
+native build inputs determine those caches; ordinary application source edits
+do not rebuild all external Rust dependencies. The first build is still a full
+build, and final release linking (including GUI LTO) is not eliminated.
+
+Rust, frontend and privileged helper inputs are filtered independently. Updating
+web assets does not rebuild the CLI or its dependency cache. The GUI embeds the
+frontend only in its final application build. Git dependencies are vendored from
+their locked revisions; no additional aggregate Cargo hash is maintained.
+The Bun dependency output remains checksum-pinned.
+
+`nix build .#checks.x86_64-linux.gui` builds a verification GUI with a deliberately
+non-working example API URL. Use `lib.mkClient` with the real deployment URL for
+installation. Its dependency cache can also be built separately with
+`nix build .#checks.x86_64-linux.gui.cargoArtifacts`.

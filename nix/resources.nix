@@ -9,6 +9,7 @@
   procps,
   systemd,
   src,
+  version,
 }:
 let
   runtimePath = lib.makeBinPath [
@@ -22,9 +23,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "floppa-network-resources";
-  version =
-    (builtins.fromTOML (builtins.readFile "${src}/floppa-client/src-tauri/Cargo.toml")).package.version;
-  inherit src;
+  inherit src version;
   dontBuild = true;
   installPhase = ''
     helper="$out/lib/floppa-vpn/floppa-network-helper"
