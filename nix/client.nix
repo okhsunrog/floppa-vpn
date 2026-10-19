@@ -73,6 +73,10 @@ craneLib.buildPackage (
     env = args.env // {
       TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
     };
+    # Crane's automatic installer runs metadata in the root workspace, whose
+    # lock differs from this standalone GUI workspace's lock.
+    doNotPostBuildInstallCargoBinaries = true;
+    installPhaseCommand = "install -Dm755 target/release/floppa-client $out/bin/floppa-client";
     postInstall = ''
       install -Dm644 floppa-client/src-tauri/icons/128x128.png $out/share/icons/hicolor/128x128/apps/floppa-client.png
       install -Dm644 floppa-client/src-tauri/linux/floppa-client.desktop $out/share/applications/floppa-client.desktop
