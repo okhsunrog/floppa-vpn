@@ -36,6 +36,8 @@ let
     inherit src version;
     strictDeps = true;
     cargoExtraArgs = "--locked --manifest-path floppa-client/src-tauri/Cargo.toml --bin floppa-client --features tauri/custom-protocol";
+    # Cargo's nested workspace and Crane must use the same artifact directory.
+    env.CARGO_TARGET_DIR = "target";
     cargoVendorDir = import ./vendor.nix {
       inherit craneLib;
       cargoLock = lock;
@@ -68,7 +70,9 @@ craneLib.buildPackage (
       makeBinaryWrapper
     ];
     postPatch = common.postPatch + "cp -a ${frontend} floppa-client/dist";
-    env.TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
+    env = args.env // {
+      TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
+    };
     postInstall = ''
       install -Dm644 floppa-client/src-tauri/icons/128x128.png $out/share/icons/hicolor/128x128/apps/floppa-client.png
       install -Dm644 floppa-client/src-tauri/linux/floppa-client.desktop $out/share/applications/floppa-client.desktop
