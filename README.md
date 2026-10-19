@@ -11,6 +11,9 @@
 Linux clients support [route exclusions](docs/ROUTE-EXCLUSIONS.md) in Settings
 or with `floppa connect --routes routing.json`.
 
+[NixOS packages and module](docs/nixos.md) build the CLI and desktop client
+from source, with socket activation and standalone capability wrappers.
+
 ## Architecture
 
 Three tunnel protocols, two VPS regions:
