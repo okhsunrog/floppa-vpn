@@ -14,13 +14,34 @@ pub enum OwnerError {
 
 #[cfg(not(target_os = "windows"))]
 #[derive(Debug)]
-pub struct OwnerGuard(std::fs::File);
+pub struct OwnerGuard {
+    _file: std::fs::File,
+}
 
 #[cfg(not(target_os = "windows"))]
 impl OwnerGuard {
     fn lock(file: std::fs::File) -> Result<Self, OwnerError> {
+        // std's file locking is unsupported on Android. Use flock on both Linux and
+        // Android so host ownership tests exercise the same implementation as the app.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use std::os::fd::AsRawFd;
+            loop {
+                // SAFETY: file owns a valid descriptor for the duration of this call.
+                if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                    return Ok(Self { _file: file });
+                }
+                let error = std::io::Error::last_os_error();
+                match error.kind() {
+                    std::io::ErrorKind::Interrupted => continue,
+                    std::io::ErrorKind::WouldBlock => return Err(OwnerError::Busy),
+                    _ => return Err(error.into()),
+                }
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         match file.try_lock() {
-            Ok(()) => Ok(Self(file)),
+            Ok(()) => Ok(Self { _file: file }),
             Err(std::fs::TryLockError::WouldBlock) => Err(OwnerError::Busy),
             Err(std::fs::TryLockError::Error(e)) => Err(e.into()),
         }
@@ -71,10 +92,11 @@ impl OwnerGuard {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+// Linux/Android release flock when the owned descriptor closes, including process death.
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "android")))]
 impl Drop for OwnerGuard {
     fn drop(&mut self) {
-        let _ = self.0.unlock();
+        let _ = self._file.unlock();
     }
 }
 

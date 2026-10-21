@@ -136,3 +136,8 @@ pub struct MyEvent { pub message: String }
 - The published APK contains both `armeabi-v7a` (ARM32) and `arm64-v8a` (ARM64) native libraries.
 - Build the universal APK with `just build-android`; it writes `app-universal-release.apk`.
 - Android Rust checks in CI cover both ABIs with `cargo-ndk`.
+- Rust `File::try_lock` is unsupported on Android in the pinned toolchain. Tunnel
+  ownership uses `libc::flock` on Linux and Android; do not replace it with the std API.
+- Before publishing an Android release, install the signed APK on a device and verify
+  cold start, connect, disconnect, and restart with logcat recording. Cross-compilation
+  and Clippy alone do not validate Android runtime support.
