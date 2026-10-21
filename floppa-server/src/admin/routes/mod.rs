@@ -682,10 +682,10 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../migrations")]
-    async fn foldfin_api_issues_rotates_and_revokes_owned_credentials(pool: DbPool) {
+    async fn foldfin_api_enforces_plan_access_and_manages_owned_credentials(pool: DbPool) {
         use axum::http::Method;
         use serde_json::json;
-        let user = seed_user(&pool, 88112, false).await;
+        let user = seed_user(&pool, 88112, true).await;
         let plan: i32 = sqlx::query_scalar("SELECT id FROM plans WHERE name='premium'")
             .fetch_one(&pool)
             .await
@@ -712,8 +712,38 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let auth = token(user, false, Utc::now(), Some(session));
+        let auth = token(user, true, Utc::now(), Some(session));
         let router = create_router(test_state(pool.clone(), None));
+        // Even an administrator cannot use Foldfin on a plan without access.
+        let denied = plan_request(
+            &router,
+            Method::POST,
+            "/me/foldfin/config",
+            &auth,
+            json!({}),
+        )
+        .await;
+        assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            floppa_core::foldfin::list(&pool, user)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Reproduce the rollout's enabled admin plan in this isolated test database.
+        let admin_plan: i32 = sqlx::query_scalar(
+            "INSERT INTO plans(name,display_name,foldfin_enabled,is_public) VALUES('admin','Administrator',true,false) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE subscriptions SET plan_id=$2 WHERE user_id=$1")
+            .bind(user)
+            .bind(admin_plan)
+            .execute(&pool)
+            .await
+            .unwrap();
         let issued = plan_request(
             &router,
             Method::POST,
