@@ -16,26 +16,28 @@ export default defineConfig({
     tasks: {
       typecheck: {
         command: 'vue-tsc --build --force',
-        cache: true,
-        input: [{ auto: true }, '!node_modules/.tmp/**'],
-        output: [{ auto: true }, '!node_modules/.tmp/**'],
+        cache: {
+          input: [{ auto: true }, '!node_modules/.tmp/**'],
+          output: [{ auto: true }, '!node_modules/.tmp/**'],
+        },
       },
       build: {
         command: 'vp build',
-        cache: true,
+        cache: {
+          input: [
+            { auto: true },
+            '!node_modules/.nuxt-ui/**',
+            '!auto-imports.d.ts',
+            '!components.d.ts',
+          ],
+          output: [
+            { auto: true },
+            '!node_modules/.nuxt-ui/**',
+            '!auto-imports.d.ts',
+            '!components.d.ts',
+          ],
+        },
         dependsOn: ['typecheck', { task: 'typecheck', from: ['dependencies', 'devDependencies'] }],
-        input: [
-          { auto: true },
-          '!node_modules/.nuxt-ui/**',
-          '!auto-imports.d.ts',
-          '!components.d.ts',
-        ],
-        output: [
-          { auto: true },
-          '!node_modules/.nuxt-ui/**',
-          '!auto-imports.d.ts',
-          '!components.d.ts',
-        ],
       },
     },
   },

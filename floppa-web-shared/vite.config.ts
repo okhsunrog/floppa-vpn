@@ -5,15 +5,17 @@ export default defineConfig({
     tasks: {
       typecheck: {
         command: 'vue-tsc --build --force',
-        cache: true,
-        input: [{ auto: true }, '!node_modules/.tmp/**'],
-        output: [{ auto: true }, '!node_modules/.tmp/**'],
+        cache: {
+          input: [{ auto: true }, '!node_modules/.tmp/**'],
+          output: [{ auto: true }, '!node_modules/.tmp/**'],
+        },
       },
       test: {
         command: 'vp test',
-        cache: true,
+        cache: {
+          output: [],
+        },
         dependsOn: ['typecheck'],
-        output: [],
       },
     },
   },

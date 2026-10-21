@@ -117,7 +117,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@v1.21.2
         with:
           cache: true
 
@@ -155,7 +155,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@v1.21.2
         with:
           cache: true
 
@@ -212,7 +212,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: voidzero-dev/setup-vp@v1
+      - uses: voidzero-dev/setup-vp@v1.21.2
         with:
           cache: true
       - uses: extractions/setup-just@v4
