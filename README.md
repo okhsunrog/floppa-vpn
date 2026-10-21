@@ -170,6 +170,8 @@ it is what a native package or a local build, Windows and macOS use. See
 
 ### Android
 
+The published APK includes both ARM32 (`armeabi-v7a`) and ARM64 (`arm64-v8a`) libraries and requires Android 7.0 or newer (API 24). Build it locally with `just build-android`.
+
 ```mermaid
 graph LR
     subgraph "UI Process"

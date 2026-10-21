@@ -1,21 +1,35 @@
 {
-  "version": "0.6.6",
+  "version": "0.6.7",
   "sections": [
     {
-      "type": "fixed",
+      "type": "added",
       "items": [
         {
-          "en": "VLESS connections now correctly recognize IPv6 server addresses in square brackets, including addresses imported from vless:// links.",
-          "ru": "VLESS-подключения теперь правильно распознают IPv6-адреса серверов в квадратных скобках, в том числе импортированные из ссылок vless://."
-        },
-        {
-          "en": "On Linux, installing the package could leave the app stuck on Checking when the optional system VPN service was disabled and the user was not in the floppa group. The app can now detect that no service socket exists and run its own tunnel. Access to an enabled service remains restricted to authorized users.",
-          "ru": "На Linux после установки пакета приложение могло зависнуть на «Проверка», если необязательный системный VPN-сервис был выключен, а пользователь не входил в группу floppa. Теперь приложение может определить, что сокета сервиса нет, и запустить собственный туннель. Доступ к включённому сервису по-прежнему ограничен правами пользователя."
+          "en": "The Android APK now supports both 32-bit ARM (armeabi-v7a) and 64-bit ARM (arm64-v8a) devices.",
+          "ru": "APK для Android теперь поддерживает устройства с 32-разрядными ARM (armeabi-v7a) и 64-разрядными ARM (arm64-v8a) процессорами."
         }
       ]
     }
   ],
   "history": [
+    {
+      "version": "0.6.6",
+      "sections": [
+        {
+          "type": "fixed",
+          "items": [
+            {
+              "en": "VLESS connections now correctly recognize IPv6 server addresses in square brackets, including addresses imported from vless:// links.",
+              "ru": "VLESS-подключения теперь правильно распознают IPv6-адреса серверов в квадратных скобках, в том числе импортированные из ссылок vless://."
+            },
+            {
+              "en": "On Linux, installing the package could leave the app stuck on Checking when the optional system VPN service was disabled and the user was not in the floppa group. The app can now detect that no service socket exists and run its own tunnel. Access to an enabled service remains restricted to authorized users.",
+              "ru": "На Linux после установки пакета приложение могло зависнуть на «Проверка», если необязательный системный VPN-сервис был выключен, а пользователь не входил в группу floppa. Теперь приложение может определить, что сокета сервиса нет, и запустить собственный туннель. Доступ к включённому сервису по-прежнему ограничен правами пользователя."
+            }
+          ]
+        }
+      ]
+    },
     {
       "version": "0.6.5",
       "sections": [

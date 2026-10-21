@@ -103,8 +103,8 @@ client-check:
     # The plugin gets its own run: as a path dependency of the client it is compiled but not linted.
     if command -v cargo-ndk >/dev/null; then
         echo "clippy (client crates, Android)..."
-        cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --quiet --all-targets -- -D warnings
-        cargo ndk -t arm64-v8a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --quiet --all-targets -- -D warnings
+        cargo ndk -t arm64-v8a -t armeabi-v7a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --quiet --all-targets -- -D warnings
+        cargo ndk -t arm64-v8a -t armeabi-v7a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --quiet --all-targets -- -D warnings
     else
         echo "clippy (client crates, Android): skipped, cargo-ndk is not installed"
     fi
@@ -283,16 +283,16 @@ dev-mcp:
 bindings:
     cargo run --manifest-path floppa-client/src-tauri/Cargo.toml --example export_bindings
 
-android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release.apk"
+android_apk := "floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
 android_pkg := "dev.okhsunrog.floppa_vpn"
 
 # Optional: set ADB_DEVICE env var or pass device=SERIAL to target a specific device
 
 adb_cmd := if env("ADB_DEVICE", "") != "" { "adb -s " + env("ADB_DEVICE", "") } else { "adb" }
 
-# Build Android APK (release, aarch64)
+# Build one Android APK containing ARM32 and ARM64 libraries
 build-android:
-    cd floppa-client && vp exec tauri android build --target aarch64 --split-per-abi --apk
+    cd floppa-client && vpx tauri android build --target aarch64 armv7 --apk
 
 # Build and install Android APK on connected device
 deploy-android device="": build-android

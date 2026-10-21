@@ -5,7 +5,7 @@
 #   makepkg -p PKGBUILD-local -si
 
 pkgname=floppa-vpn-local
-pkgver=0.6.6
+pkgver=0.6.7
 pkgrel=1
 pkgdesc='Floppa VPN desktop client (AmneziaWG, WireGuard, VLESS+REALITY) built with Tauri (local build)'
 arch=('x86_64')

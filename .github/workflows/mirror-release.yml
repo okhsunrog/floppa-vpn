@@ -60,6 +60,8 @@ jobs:
           # Copy the first match for each platform to a version-less stable name.
           copy_one() {
             local glob="$1" dest="$2"
+            # Expand the filename pattern under nullglob.
+            # shellcheck disable=SC2206
             local matches=( $glob )
             if [ ${#matches[@]} -gt 0 ]; then
               cp "${matches[0]}" "../mirror/$dest"
@@ -68,7 +70,13 @@ jobs:
           }
 
           echo "Mapping assets:"
-          copy_one '*android-arm64.apk'      floppa-vpn-android-arm64.apk
+          # Allow re-mirroring older ARM64-only releases. Prefer the universal APK.
+          copy_one '*android-arm64.apk'      floppa-vpn-android.apk
+          copy_one '*android.apk'            floppa-vpn-android.apk
+          # Keep installed clients' existing download link working.
+          if [ -f ../mirror/floppa-vpn-android.apk ]; then
+            cp ../mirror/floppa-vpn-android.apk ../mirror/floppa-vpn-android-arm64.apk
+          fi
           copy_one '*linux-x86_64.deb'       floppa-vpn-linux-x86_64.deb
           copy_one '*windows-x86_64.exe'     floppa-vpn-windows-x86_64.exe
           copy_one '*windows-x86_64.msi'     floppa-vpn-windows-x86_64.msi
@@ -90,7 +98,7 @@ jobs:
           # latest.json: version + only the files we actually have.
           files='{}'
           add() { [ -f "$2" ] && files="$(echo "$files" | jq --arg k "$1" --arg v "$2" '. + {($k):$v}')"; }
-          add android        floppa-vpn-android-arm64.apk
+          add android        floppa-vpn-android.apk
           add linux_deb      floppa-vpn-linux-x86_64.deb
           add windows_exe    floppa-vpn-windows-x86_64.exe
           add windows_msi    floppa-vpn-windows-x86_64.msi

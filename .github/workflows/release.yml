@@ -70,7 +70,7 @@ jobs:
           storeFile=$KEYSTORE_PATH
           EOF
 
-      # The same recipe as local development, so the flags (arm64-only, split per ABI) and the
+      # The same recipe as local development, so the flags (ARM32 + ARM64 in one APK) and the
       # output path cannot drift between the two.
       - name: Build Android APK
         env:
@@ -86,17 +86,28 @@ jobs:
       - name: Android Lint (vpn plugin)
         run: just lint-kotlin
 
+      - name: Verify APK contains both ARM ABIs
+        run: |
+          APK="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk"
+          unzip -Z1 "$APK" > apk-contents.txt
+          for ABI in armeabi-v7a arm64-v8a; do
+            if ! grep -Fxq "lib/$ABI/libfloppa_client_lib.so" apk-contents.txt; then
+              echo "::error::APK is missing the $ABI client library"
+              exit 1
+            fi
+          done
+
       - name: Rename APK with version
         run: |
           VERSION=$(sed -n 's/.*version:[[:space:]]*"\([^"]*\)".*/\1/p' floppa-client/src-tauri/tauri.conf.json5 | head -1)
-          APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release"
-          mv "$APK_DIR/app-arm64-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android-arm64.apk"
+          APK_DIR="floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release"
+          mv "$APK_DIR/app-universal-release.apk" "$APK_DIR/floppa-vpn-${VERSION}-android.apk"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: android-apk
-          path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/arm64/release/floppa-vpn-*-android-arm64.apk
+          path: floppa-client/src-tauri/gen/android/app/build/outputs/apk/universal/release/floppa-vpn-*-android.apk
 
   linux:
     name: Linux

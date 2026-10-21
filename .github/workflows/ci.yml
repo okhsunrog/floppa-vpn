@@ -312,14 +312,14 @@ jobs:
       - name: Clippy (client, Android)
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: cargo ndk -t arm64-v8a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --all-targets -- -D warnings
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a --manifest-path floppa-client/src-tauri/Cargo.toml clippy --all-targets -- -D warnings
 
       # The plugin is a path dependency of the client, not a workspace member, so the step above
       # compiles its Android branch but applies no lints to it. This one does.
       - name: Clippy (vpn plugin, Android)
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
-        run: cargo ndk -t arm64-v8a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --all-targets -- -D warnings
+        run: cargo ndk -t arm64-v8a -t armeabi-v7a --manifest-path tauri-plugin-vpn/Cargo.toml clippy --all-targets -- -D warnings
 
   # The Windows platform layer is cfg-gated, so nothing on a Linux runner compiles it. Without
   # this job a Windows-only type error is not caught until release.yml runs on a tag.
