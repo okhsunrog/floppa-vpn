@@ -2,6 +2,15 @@
   "version": "0.6.7",
   "sections": [
     {
+      "type": "fixed",
+      "items": [
+        {
+          "en": "Fixed Android VPN service startup failing and leaving the app stuck on Checking because tunnel ownership used an unsupported file-locking API.",
+          "ru": "Исправлен сбой запуска VPN-сервиса на Android, из-за которого приложение зависало на «Проверка»: блокировка туннеля использовала неподдерживаемый API."
+        }
+      ]
+    },
+    {
       "type": "added",
       "items": [
         {
