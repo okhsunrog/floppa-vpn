@@ -3338,7 +3338,13 @@ mod tests {
     async fn foldfin_grant_counts_toward_wireguard_device_quota(pool: DbPool) {
         let config = test_config();
         let ctx = test_ctx(&pool, &config);
-        let plan: i32=sqlx::query_scalar("INSERT INTO plans(name,display_name,max_peers) VALUES('ff-quota','Quota',1) RETURNING id").fetch_one(&pool).await.unwrap();
+        // This isolated fixture needs Foldfin access so the test reaches the device quota check.
+        let plan: i32 = sqlx::query_scalar(
+            "INSERT INTO plans(name,display_name,max_peers,foldfin_enabled) VALUES('ff-quota','Quota',1,true) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         let user = seed_user(&pool, 48218).await;
         seed_subscription(&pool, user, plan).await;
         let node=serde_json::from_value(serde_json::json!({"endpoints":["localhost:443"],"server_name":"localhost","ipv4_pool":"10.33.0.0/24","routes":["0.0.0.0/0"],"dns":["1.1.1.1"]})).unwrap();

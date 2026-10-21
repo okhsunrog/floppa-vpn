@@ -56,6 +56,13 @@ jobs:
 
       - uses: extractions/setup-just@v4
 
+      # The Tauri Android Gradle plugin invokes `bun` directly to build each Rust ABI.
+      # setup-vp supplies the `vp` package manager but does not put Bun on Gradle's PATH.
+      - name: Install Bun for Android Gradle tasks
+        run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.0"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
       - name: Set up keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
