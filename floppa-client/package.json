@@ -13,7 +13,7 @@
     "@formkit/drag-and-drop": "^0.5.3",
     "@nuxt/ui": "^4.11.0",
     "@pinia/colada": "^1.4.2",
-    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-deep-link": "~2.4.9",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-fs": "^2.5.1",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.127",
-    "@tauri-apps/cli": "^2.11.4",
+    "@tauri-apps/cli": "^2.12.4",
     "@tsconfig/node22": "^22.0.6",
     "@types/node": "^26.4.0",
     "@vitejs/plugin-vue": "^6.0.8",
