@@ -3,7 +3,7 @@
 The implemented API, PostgreSQL grant model and regional node are documented in
 [FOLDFIN-SERVER.md](FOLDFIN-SERVER.md), including deployment and validation limits.
 
-The client now imports Foldfin JSON into the existing config store, selects it as
+The client fetches Foldfin configuration during the ordinary authenticated peer sync, stores it in the existing config store, selects it as
 `Protocol::Foldfin`, and runs the shared engine through `TunnelManager` and the
 connection actor. Routes, DNS, rollback, reconnection and platform consent remain
 owned by Floppa. No extra VPN process or reconnect loop is introduced.
@@ -17,7 +17,7 @@ separate from the resolved dial address. Foldfin is not implemented on Windows o
 macOS yet. Host Rustls and Android builds use certificate/name verification;
 TLS uses rustls. The former Chrome/BoringSSL backend has been removed.
 
-## Import and run
+## Provision and connect
 
 `floppa-vpn-core` and `floppa-foldfin` use the public
 [Foldfin repository](https://github.com/okhsunrog/foldfin), pinned to a full Git
@@ -25,11 +25,21 @@ revision. The root workspace and standalone Tauri workspace patch `h3`,
 `h3-datagram` and `h3-quinn` from the same revision. Update all Foldfin revisions
 and both lockfiles together. No adjacent Foldfin checkout is required.
 
-Import this document through the existing app import action or
-`floppa import <file>`. For a temporary configuration, use
-`floppa connect --config <file> --no-dns`. The normal service/standalone ownership
-selection applies; `--config` changes input, not ownership. Store the document privately:
-it contains a device bearer credential. The token below is a dummy example.
+Sign in and select a region through the normal Floppa flow. On Linux and Android,
+peer synchronization registers the installation and calls `/me/foldfin/config`.
+The returned configuration is stored through the tunnel actor and Foldfin becomes
+available in the ordinary protocol selector. No manual import is required.
+
+A refresh submits the stored credential to obtain current network metadata without
+rotating it. Only an explicit conflict causes one rotation attempt; an unanswered
+request preserves the cached configuration. The background provisioning watcher
+uses the same API after a Foldfin authorization rejection. A region with no node
+simply does not offer Foldfin. Logout and region changes use the existing Floppa
+flows. The RPC protocol is version 9, so app and service must be updated together.
+
+The CLI supports `floppa connect --protocol foldfin` with the same authenticated
+issuance path. The JSON below documents the wire/configuration format for development;
+it is not a setup step for users. Its credential is a dummy example.
 
 ```json
 {

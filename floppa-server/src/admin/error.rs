@@ -159,7 +159,7 @@ impl From<floppa_core::foldfin::Error> for ApiError {
             Error::Session => Self::bad_request("A live device-bound API session is required"),
             Error::Unavailable => Self {
                 error: "foldfin_unavailable".into(),
-                message: "Foldfin is not available in this region".into(),
+                message: "Foldfin is not available for this plan or region".into(),
                 status: StatusCode::SERVICE_UNAVAILABLE,
             },
             error @ Error::Config(_) => Self::internal(error),

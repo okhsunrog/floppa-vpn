@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed, watch } from 'vue'
+import { onMounted, computed, watch, ref } from 'vue'
 import { platform } from '@tauri-apps/plugin-os'
 import TunnelModeBadge from './TunnelModeBadge.vue'
 import vpnConnectedImg from '../assets/vpn-connected.png?inline'
@@ -42,16 +42,10 @@ watch(
   },
 )
 
-/**
- * The one thing the button reads.
- *
- * It used to also carry "we are talking to the server about a peer", from a flag that reached
- * only the label — so the button read "Connecting" with no spinner and stayed clickable. That
- * work is in Rust now and the tunnel's own phase covers it: a repair that leads anywhere ends in
- * a reconnect, which is busy for the ordinary reason. Anything that should make the button look
- * busy still has to arrive through here.
- */
-const busy = computed(() => vpn.isBusy)
+// Keep controls disabled while a region change replaces its credentials, as well as
+// while the tunnel actor is connecting or disconnecting.
+const syncingRegion = ref(false)
+const busy = computed(() => vpn.isBusy || syncingRegion.value)
 const showProtocolPicker = computed(
   () => !settingsStore.autoSelect && vpn.availableProtocols.length > 1,
 )
@@ -224,7 +218,18 @@ function selectProtocol(proto: Protocol) {
 }
 
 async function selectRegion(regionId: string) {
-  await regionStore.select(regionId)
+  if (busy.value) return
+  syncingRegion.value = true
+  try {
+    if (!(await regionStore.select(regionId))) return
+    // Grants and endpoints belong to the selected region. Do not keep an old-region
+    // credential selectable if the new region does not offer that protocol.
+    if (!(await vpn.forgetConfigs())) return
+    await setupAutoPeer()
+    await privateNetworks.refresh()
+  } finally {
+    syncingRegion.value = false
+  }
 }
 
 const healthDotClass = computed(() => {
@@ -500,7 +505,7 @@ const healthDotClass = computed(() => {
         :icon="vpn.isConnected ? 'i-lucide-power' : 'i-lucide-play'"
         :color="vpn.isConnected ? 'error' : 'success'"
         :loading="busy"
-        :disabled="!vpn.hasConfig || vpn.phase === 'unknown'"
+        :disabled="!vpn.hasConfig || vpn.phase === 'unknown' || syncingRegion"
         size="lg"
         class="w-full max-w-[200px] mt-2"
         @click="handleConnect"

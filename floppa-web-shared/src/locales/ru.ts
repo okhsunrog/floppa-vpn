@@ -381,6 +381,7 @@ export default {
     idAndTelegram: 'ID: {id} · TG: {tg}',
   },
   adminPlans: {
+    foldfinEnabled: 'Разрешить Foldfin',
     regions: 'Доступные регионы выхода',
     regionsHint:
       'Подписчики могут выбирать эти регионы. Europe обязательна как резервный выход. Доступ к приватным сетям настраивается отдельно.',

@@ -30,17 +30,15 @@
 //! it is missing — something else is wrong — and asking again would have the actor and the server
 //! taking turns making peers until the plan's limit stopped them.
 
-use floppa_api_client::{PeerProtocol, RepairOutcome, repair_peer};
+use floppa_api_client::{RepairOutcome, repair_peer};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-use crate::outcome::{OutcomePlan, peer_protocol, plan_outcome};
+use crate::outcome::{OutcomePlan, peer_protocol, plan_outcome, repair_candidate};
 use crate::server::{self, ActorSink};
 use floppa_vpn_core::actor::Spawn;
 use floppa_vpn_core::actor::handle::{IntentRequest, TunnelHandle};
-use floppa_vpn_core::actor::types::{
-    AttemptError, IntentEpoch, IntentView, TunnelParams, TunnelState,
-};
+use floppa_vpn_core::actor::types::{IntentEpoch, IntentView, TunnelParams, TunnelState};
 use floppa_vpn_core::protocol::Protocol;
 
 /// Start watching. Returns at once; the work happens on `spawn`.
@@ -165,11 +163,11 @@ async fn run(handle: TunnelHandle, app_version: &str) {
 #[derive(Default)]
 struct ProgressChecks {
     cycle: Option<(IntentEpoch, u64)>,
-    checked: Vec<(PeerProtocol, Instant)>,
-    recreated: Vec<PeerProtocol>,
+    checked: Vec<(Protocol, Instant)>,
+    recreated: Vec<Protocol>,
 }
 impl ProgressChecks {
-    fn candidate(&mut self, state: &TunnelState, now: Instant) -> Option<PeerProtocol> {
+    fn candidate(&mut self, state: &TunnelState, now: Instant) -> Option<Protocol> {
         let cycle = (state.epoch, state.outcome_serial);
         if self.cycle != Some(cycle) {
             self.cycle = Some(cycle);
@@ -182,8 +180,7 @@ impl ProgressChecks {
         let protocol = state
             .recovery_failures
             .iter()
-            .filter(|failure| matches!(failure.error, AttemptError::VerifyFailed))
-            .filter_map(|failure| peer_protocol(failure.protocol))
+            .filter_map(repair_candidate)
             .find(|protocol| {
                 !self.recreated.contains(protocol)
                     && !self.checked.iter().any(|(p, at)| {
@@ -209,8 +206,7 @@ fn live_intent(state: &TunnelState) -> Option<LiveIntent> {
 }
 
 /// Ask for a tunnel again, repaired protocol first.
-async fn ask_again(handle: &TunnelHandle, repaired: PeerProtocol, intent: LiveIntent) {
-    let repaired = protocol_of(repaired);
+async fn ask_again(handle: &TunnelHandle, repaired: Protocol, intent: LiveIntent) {
     let mut order = vec![repaired];
     order.extend(intent.order.into_iter().filter(|p| *p != repaired));
 
@@ -225,24 +221,27 @@ async fn ask_again(handle: &TunnelHandle, repaired: PeerProtocol, intent: LiveIn
     }
 }
 
-fn protocol_of(protocol: PeerProtocol) -> Protocol {
-    match protocol {
-        PeerProtocol::Wireguard => Protocol::WireGuard,
-        PeerProtocol::Amneziawg => Protocol::AmneziaWg,
-    }
-}
-
 /// Check the peer and replace it if it is gone. `None` when there was no way to even ask.
 async fn repair(
     handle: &TunnelHandle,
-    protocol: PeerProtocol,
+    protocol: Protocol,
     app_version: &str,
 ) -> Option<RepairOutcome> {
     let Some((api, identity)) = server::client(app_version) else {
         debug!("nobody is signed in on this device; the peer stays as it is");
         return None;
     };
-    let outcome = repair_peer(&api, &ActorSink(handle.clone()), &identity, protocol).await;
+    let sink = ActorSink(handle.clone());
+    if protocol == Protocol::Foldfin {
+        return Some(
+            match floppa_api_client::provision::refresh_foldfin(&api, &sink).await {
+                Ok(true) => RepairOutcome::Recreated,
+                Ok(false) => RepairOutcome::StillNoConfig,
+                Err(_) => RepairOutcome::Unreachable,
+            },
+        );
+    }
+    let outcome = repair_peer(&api, &sink, &identity, peer_protocol(protocol)?).await;
     debug!(%protocol, ?outcome, "the peer was looked at");
     Some(outcome)
 }
@@ -250,7 +249,7 @@ async fn repair(
 #[cfg(test)]
 mod progress_tests {
     use super::*;
-    use floppa_vpn_core::actor::types::{AttemptFailure, Link};
+    use floppa_vpn_core::actor::types::{AttemptError, AttemptFailure, Link};
 
     #[test]
     fn persistent_recovery_checks_each_failed_peer_with_a_bound_and_excludes_temporary_profiles() {
@@ -273,18 +272,18 @@ mod progress_tests {
         state.link = Link::Offline;
         assert_eq!(checks.candidate(&state, now), None);
         state.link = Link::Online;
-        assert_eq!(checks.candidate(&state, now), Some(PeerProtocol::Amneziawg));
-        assert_eq!(checks.candidate(&state, now), Some(PeerProtocol::Wireguard));
+        assert_eq!(checks.candidate(&state, now), Some(Protocol::AmneziaWg));
+        assert_eq!(checks.candidate(&state, now), Some(Protocol::WireGuard));
         assert_eq!(checks.candidate(&state, now), None);
-        checks.recreated.push(PeerProtocol::Amneziawg);
+        checks.recreated.push(Protocol::AmneziaWg);
         assert_eq!(
             checks.candidate(&state, now + Duration::from_secs(31)),
-            Some(PeerProtocol::Wireguard)
+            Some(Protocol::WireGuard)
         );
         state.epoch = IntentEpoch(2);
         assert_eq!(
             checks.candidate(&state, now + Duration::from_secs(32)),
-            Some(PeerProtocol::Amneziawg)
+            Some(Protocol::AmneziaWg)
         );
         state.intent = IntentView::Down;
         assert_eq!(

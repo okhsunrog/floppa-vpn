@@ -57,6 +57,9 @@ pub trait ConfigSink: Send + Sync {
 
     /// Whether any usable config is stored at all.
     async fn has_any(&self) -> bool;
+
+    /// Read only from the owning credential store; a failed read is not a missing token.
+    async fn foldfin_token(&self) -> Result<Option<String>, String>;
 }
 
 /// Why a sync did not finish the way it was meant to.
@@ -322,7 +325,69 @@ pub async fn sync_peers(
         Err(e) => debug!("the VLESS config is unavailable: {e}"),
     }
 
+    if matches!(identity.platform.as_str(), "android" | "linux") {
+        let result = sync_foldfin(api, sink).await;
+        if !result.is_ok() {
+            return result;
+        }
+    }
+
     SyncResult::Ok
+}
+
+/// Fetch Foldfin through the same authenticated sync and store as the other protocols.
+/// Retry a definitive conflict once, never an unanswered issuance request.
+pub async fn foldfin_config(
+    api: &dyn ProvisionApi,
+    token: Option<String>,
+) -> Result<String, ApiFailure> {
+    match api.foldfin_config(token, false).await {
+        Err(ApiFailure::Refused(r)) if r.is(ApiErrorCode::Conflict) => {
+            api.foldfin_config(None, true).await
+        }
+        result => result,
+    }
+}
+
+pub async fn sync_foldfin(api: &dyn ProvisionApi, sink: &dyn ConfigSink) -> SyncResult {
+    match refresh_foldfin(api, sink).await {
+        Ok(_) => SyncResult::Ok,
+        Err(result) => result,
+    }
+}
+
+/// Whether an available Foldfin configuration was refreshed. A successful refresh may
+/// change routes/revision without changing the credential, so repairs retry the new config.
+pub async fn refresh_foldfin(
+    api: &dyn ProvisionApi,
+    sink: &dyn ConfigSink,
+) -> Result<bool, SyncResult> {
+    let token = sink
+        .foldfin_token()
+        .await
+        .map_err(|_| SyncResult::Offline)?;
+    match foldfin_config(api, token).await {
+        Ok(config) => sink
+            .import(config)
+            .await
+            .map(|()| true)
+            .map_err(|detail| SyncResult::Failed(SyncError::CreateFailed { detail })),
+        Err(ApiFailure::Refused(r))
+            if r.is(ApiErrorCode::FoldfinUnavailable) || r.is(ApiErrorCode::NotFound) =>
+        {
+            Ok(false)
+        }
+        Err(ApiFailure::Unreachable(_)) => Err(SyncResult::Offline),
+        Err(ApiFailure::Refused(r)) => Err(SyncResult::Failed(
+            if r.is(ApiErrorCode::NoActiveSubscription) {
+                SyncError::NoSubscription
+            } else if r.is(ApiErrorCode::PeerLimitReached) {
+                SyncError::PeerLimitReached
+            } else {
+                SyncError::CreateFailed { detail: r.detail() }
+            },
+        )),
+    }
 }
 
 /// The other protocol. A device holds both where both are offered, so this is how the secondary is

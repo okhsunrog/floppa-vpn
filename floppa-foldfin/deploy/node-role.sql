@@ -4,7 +4,7 @@ CREATE ROLE foldfin_node LOGIN;
 GRANT CONNECT ON DATABASE floppa TO foldfin_node;
 GRANT USAGE ON SCHEMA public TO foldfin_node;
 GRANT SELECT ON foldfin_nodes, foldfin_devices, app_installations, sessions,
-    current_subscriptions, plan_regions, regions, plan_private_networks,
+    current_subscriptions, plans, plan_regions, regions, plan_private_networks,
     private_networks TO foldfin_node;
 GRANT UPDATE (applied_revision) ON foldfin_devices TO foldfin_node;
 GRANT UPDATE (last_sync_at) ON foldfin_nodes TO foldfin_node;

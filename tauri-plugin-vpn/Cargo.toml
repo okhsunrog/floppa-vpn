@@ -16,7 +16,7 @@ license = "GPL-3.0-or-later"
 links = "tauri-plugin-vpn"
 
 [dependencies]
-tauri = "2"
+tauri = "2.12.4"
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 log = "0.4"

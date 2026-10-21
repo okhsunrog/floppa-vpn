@@ -3560,6 +3560,9 @@
           "display_name": {
             "type": "string"
           },
+          "foldfin_enabled": {
+            "type": "boolean"
+          },
           "is_public": {
             "type": "boolean"
           },
@@ -3830,6 +3833,13 @@
           "rotate": {
             "type": "boolean",
             "description": "Explicitly invalidate the old credential. A lost response requires rotation."
+          },
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Previously issued credential, for a refresh that preserves active connections."
           }
         },
         "additionalProperties": false
@@ -4273,9 +4283,13 @@
           {
             "type": "object",
             "required": [
-              "region_ids"
+              "region_ids",
+              "foldfin_enabled"
             ],
             "properties": {
+              "foldfin_enabled": {
+                "type": "boolean"
+              },
               "region_ids": {
                 "type": "array",
                 "items": {
@@ -4797,6 +4811,12 @@
           "display_name": {
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "foldfin_enabled": {
+            "type": [
+              "boolean",
               "null"
             ]
           },

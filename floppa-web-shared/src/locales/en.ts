@@ -382,6 +382,7 @@ export default {
     idAndTelegram: 'ID: {id} · TG: {tg}',
   },
   adminPlans: {
+    foldfinEnabled: 'Allow Foldfin',
     regions: 'Available exit regions',
     regionsHint:
       'Subscribers can select these exit regions. Europe is the required fallback. Private network access is configured separately.',

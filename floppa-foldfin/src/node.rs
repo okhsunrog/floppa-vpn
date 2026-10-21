@@ -166,6 +166,7 @@ impl Node {
                     JOIN app_installations ai ON ai.id=d.installation_id AND ai.region_id=d.region_id
                     JOIN sessions s ON s.id=d.issued_by_session AND s.user_id=ai.user_id AND s.revoked_at IS NULL
                     JOIN current_subscriptions cs ON cs.user_id=ai.user_id AND cs.is_active
+                    JOIN plans p ON p.id=cs.plan_id AND p.foldfin_enabled
                     JOIN plan_regions pr ON pr.plan_id=cs.plan_id AND pr.region_id=d.region_id
                     JOIN regions r ON r.id=d.region_id AND r.is_active
                     WHERE d.region_id=$1 AND d.revoked_at IS NULL ORDER BY d.id LIMIT 4097

@@ -7,6 +7,19 @@
         {
           "en": "The Android APK now supports both 32-bit ARM (armeabi-v7a) and 64-bit ARM (arm64-v8a) devices.",
           "ru": "APK для Android теперь поддерживает устройства с 32-разрядными ARM (armeabi-v7a) и 64-разрядными ARM (arm64-v8a) процессорами."
+        },
+        {
+          "en": "Experimental Foldfin connections can now be configured through the client account. Foldfin is initially enabled only for the administrator plan.",
+          "ru": "Экспериментальные подключения Foldfin теперь можно настроить через аккаунт в приложении. Foldfin изначально включён только для администраторского тарифа."
+        }
+      ]
+    },
+    {
+      "type": "changed",
+      "items": [
+        {
+          "en": "Updated the app runtime to stable Tauri 2.12, replacing the temporary Git build.",
+          "ru": "Приложение переведено на стабильный Tauri 2.12 вместо временной сборки из Git."
         }
       ]
     }

@@ -19,6 +19,16 @@ async fn rotation_ownership_logout_and_region_change(pool: DbPool) {
         foldfin::issue(&pool, user, session, false).await,
         Err(Error::Exists)
     ));
+    let refreshed =
+        foldfin::issue_with_token(&pool, user, session, false, issued.config["token"].as_str())
+            .await
+            .unwrap();
+    assert_eq!(refreshed.config, issued.config);
+    assert_eq!(refreshed.revision, issued.revision);
+    assert!(matches!(
+        foldfin::issue_with_token(&pool, user, session, false, Some("wrong")).await,
+        Err(Error::Exists)
+    ));
     let rotated = foldfin::issue(&pool, user, session, true).await.unwrap();
     assert_eq!(issued.device_id, rotated.device_id);
     assert_eq!(
@@ -231,4 +241,41 @@ async fn policy_changes_publish_revision_but_expiry_extension_does_not(pool: DbP
         foldfin::list(&pool, user).await.unwrap()[0].revision,
         before + 1
     );
+}
+
+#[sqlx::test(migrations = "../migrations")]
+async fn plan_access_defaults_closed_and_revokes_existing_credentials(pool: DbPool) {
+    let (user, plan) = seed(&pool, 2).await;
+    let (_, session) = device(&pool, user, "gated").await;
+    let session = session.parse().unwrap();
+    let default_enabled: bool = sqlx::query_scalar("INSERT INTO plans(name,display_name) VALUES('ordinary','Ordinary') RETURNING foldfin_enabled")
+        .fetch_one(&pool).await.unwrap();
+    assert!(!default_enabled);
+    let issued = foldfin::issue(&pool, user, session, false).await.unwrap();
+    sqlx::query("UPDATE plans SET foldfin_enabled=false WHERE id=$1")
+        .bind(plan)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        foldfin::list(&pool, user).await.unwrap()[0]
+            .revoked_at
+            .is_some()
+    );
+    assert!(matches!(
+        foldfin::issue_with_token(&pool, user, session, false, issued.config["token"].as_str())
+            .await,
+        Err(Error::Unavailable)
+    ));
+    assert!(matches!(
+        foldfin::issue(&pool, user, session, true).await,
+        Err(Error::Unavailable)
+    ));
+    sqlx::query("UPDATE plans SET foldfin_enabled=true WHERE id=$1")
+        .bind(plan)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let fresh = foldfin::issue(&pool, user, session, false).await.unwrap();
+    assert_ne!(fresh.config["token"], issued.config["token"]);
 }

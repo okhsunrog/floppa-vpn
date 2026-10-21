@@ -50,7 +50,8 @@ use crate::store::ConfigError;
 /// [`VpnRpc::set_session`], which a desktop client does have to call. Three added
 /// [`VpnRpc::resume`]. Four added the reconnect-on-boot preference. Six adds route exclusions
 /// and saved settings reads; five was the withdrawn destination-policy implementation.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// Nine adds credential retrieval for Foldfin configuration refresh.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Why a session could not be handed over.
 ///
@@ -175,6 +176,7 @@ pub trait VpnRpc {
     /// it comes back as [`IntentError::CycleStillRunning`], which is not a failure of anything.
     async fn await_cycle(epoch: IntentEpoch) -> Result<CycleOutcome, IntentError>;
 
+    async fn foldfin_token() -> Result<Option<String>, ConfigError>;
     async fn import_config(raw: String) -> Result<Protocol, ConfigError>;
 
     async fn clear_configs() -> Result<(), IntentError>;

@@ -92,6 +92,9 @@ pub struct MyEvent { pub message: String }
 
 ## Version Compatibility (Important)
 
+- Use the stable Tauri 2.12 release line for Rust, the JS API, and the CLI.
+- Tauri 2.12 includes the Android activity lifecycle fix and the newer Tao Wayland input fix;
+  the temporary Tauri Git patches are no longer needed. Keep the Foldfin HTTP/3 patches.
 - Keep plugin versions aligned between NPM and Rust crates (same major/minor). Examples:
   - `@tauri-apps/plugin-fs` v2.4.x ↔ `tauri-plugin-fs` 2.4.x
   - `@tauri-apps/plugin-os` v2.3.x ↔ `tauri-plugin-os` 2.3.x

@@ -15,10 +15,10 @@ pub enum OutcomePlan {
     Ignore,
     /// A protocol failed to verify on a cycle that *did* connect over another one. Its peer may
     /// have been deleted; check, and recreate it if so. Quiet: the tunnel is up.
-    Repair { protocol: PeerProtocol },
+    Repair { protocol: Protocol },
     /// The same check on a cycle that connected over nothing. If the peer was indeed gone, a
     /// reconnect is owed once a new one exists.
-    Reprovision { protocol: PeerProtocol },
+    Reprovision { protocol: Protocol },
 }
 
 /// Decide what a finished cycle means for the peers on the server.
@@ -43,7 +43,7 @@ pub fn plan_outcome(outcome: &CycleOutcome) -> OutcomePlan {
         },
         // A tunnel that was up and then died: whatever was carrying it is the candidate. VLESS
         // has no per-device peer, so it never is one.
-        CycleOutcome::LostGaveUp { protocol, .. } => match peer_protocol(*protocol) {
+        CycleOutcome::LostGaveUp { protocol, .. } => match repair_protocol(*protocol) {
             Some(protocol) => OutcomePlan::Reprovision { protocol },
             None => OutcomePlan::Ignore,
         },
@@ -54,11 +54,25 @@ pub fn plan_outcome(outcome: &CycleOutcome) -> OutcomePlan {
 }
 
 /// The first protocol in `failures` that failed *verification* and has a peer to lose.
-fn first_verify_failure(failures: &[AttemptFailure]) -> Option<PeerProtocol> {
-    failures
-        .iter()
-        .find(|f| matches!(f.error, AttemptError::VerifyFailed))
-        .and_then(|f| peer_protocol(f.protocol))
+pub(crate) fn repair_candidate(failure: &AttemptFailure) -> Option<Protocol> {
+    match (&failure.error, failure.protocol) {
+        (
+            AttemptError::Backend {
+                error: floppa_vpn_core::backend::BackendError::ConnectionRejected { .. },
+            },
+            Protocol::Foldfin,
+        ) => Some(Protocol::Foldfin),
+        (AttemptError::VerifyFailed, protocol) => repair_protocol(protocol),
+        _ => None,
+    }
+}
+
+fn repair_protocol(protocol: Protocol) -> Option<Protocol> {
+    (protocol != Protocol::Vless).then_some(protocol)
+}
+
+fn first_verify_failure(failures: &[AttemptFailure]) -> Option<Protocol> {
+    failures.iter().find_map(repair_candidate)
 }
 
 /// This client's protocol as the server's, where the server has one for it.
@@ -76,6 +90,32 @@ pub fn peer_protocol(protocol: Protocol) -> Option<PeerProtocol> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn foldfin_rejection_uses_the_existing_repair_path() {
+        let rejected = failure(
+            Protocol::Foldfin,
+            AttemptError::Backend {
+                error: floppa_vpn_core::backend::BackendError::ConnectionRejected {
+                    detail: "denied".into(),
+                },
+            },
+        );
+        assert_eq!(
+            plan_outcome(&CycleOutcome::Exhausted {
+                failures: vec![rejected]
+            }),
+            OutcomePlan::Reprovision {
+                protocol: Protocol::Foldfin
+            }
+        );
+        assert_eq!(
+            plan_outcome(&CycleOutcome::Exhausted {
+                failures: vec![failure(Protocol::Foldfin, AttemptError::TimedOut)]
+            }),
+            OutcomePlan::Ignore
+        );
+    }
 
     fn failure(protocol: Protocol, error: AttemptError) -> AttemptFailure {
         AttemptFailure {
@@ -95,7 +135,7 @@ mod tests {
         assert_eq!(
             plan_outcome(&outcome),
             OutcomePlan::Repair {
-                protocol: PeerProtocol::Amneziawg
+                protocol: Protocol::AmneziaWg
             }
         );
     }
@@ -122,7 +162,7 @@ mod tests {
         assert_eq!(
             plan_outcome(&outcome),
             OutcomePlan::Reprovision {
-                protocol: PeerProtocol::Amneziawg
+                protocol: Protocol::AmneziaWg
             }
         );
     }

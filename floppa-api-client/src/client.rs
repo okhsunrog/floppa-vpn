@@ -74,6 +74,7 @@ pub enum ApiErrorCode {
     PeerLimitReached,
     RegionNotAvailable,
     VlessNotConfigured,
+    FoldfinUnavailable,
 }
 
 impl FromStr for ApiErrorCode {
@@ -102,6 +103,7 @@ impl FromStr for ApiErrorCode {
             "peer_limit_reached" => Self::PeerLimitReached,
             "region_not_available" => Self::RegionNotAvailable,
             "vless_not_configured" => Self::VlessNotConfigured,
+            "foldfin_unavailable" => Self::FoldfinUnavailable,
             _ => return Err(()),
         })
     }
@@ -188,6 +190,12 @@ pub trait ProvisionApi: Send + Sync {
     async fn peer_config(&self, id: i64) -> Result<String, ApiFailure>;
 
     async fn create_peer(&self, req: &CreatePeerRequest) -> Result<CreatePeerResponse, ApiFailure>;
+
+    async fn foldfin_config(
+        &self,
+        token: Option<String>,
+        rotate: bool,
+    ) -> Result<String, ApiFailure>;
 
     async fn vless_config(&self) -> Result<VlessConfigResponse, ApiFailure>;
 
@@ -379,6 +387,24 @@ impl ProvisionApi for ApiClient {
                 .send(self.client.post(self.url("/me/peers")).json(req))
                 .await?,
         )
+    }
+
+    async fn foldfin_config(
+        &self,
+        token: Option<String>,
+        rotate: bool,
+    ) -> Result<String, ApiFailure> {
+        let response: crate::schema::IssueResponse = parse(
+            &self
+                .send(self.client.post(self.url("/me/foldfin/config")).json(
+                    &crate::schema::IssueRequest {
+                        token,
+                        rotate: Some(rotate),
+                    },
+                ))
+                .await?,
+        )?;
+        Ok(serde_json::json!({"protocol": "foldfin", "config": response.config}).to_string())
     }
 
     async fn vless_config(&self) -> Result<VlessConfigResponse, ApiFailure> {

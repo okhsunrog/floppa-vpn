@@ -150,6 +150,10 @@ impl FoldfinVpnConfig {
         })
     }
 
+    pub(crate) fn token(&self) -> &str {
+        &self.0.token
+    }
+
     pub fn endpoint(&self) -> &str {
         &self.0.endpoints[0]
     }

@@ -682,10 +682,10 @@ mod tests {
     }
 
     #[sqlx::test(migrations = "../migrations")]
-    async fn foldfin_api_issues_rotates_and_revokes_owned_credentials(pool: DbPool) {
+    async fn foldfin_api_enforces_plan_access_and_manages_owned_credentials(pool: DbPool) {
         use axum::http::Method;
         use serde_json::json;
-        let user = seed_user(&pool, 88112, false).await;
+        let user = seed_user(&pool, 88112, true).await;
         let plan: i32 = sqlx::query_scalar("SELECT id FROM plans WHERE name='premium'")
             .fetch_one(&pool)
             .await
@@ -712,8 +712,38 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let auth = token(user, false, Utc::now(), Some(session));
+        let auth = token(user, true, Utc::now(), Some(session));
         let router = create_router(test_state(pool.clone(), None));
+        // Even an administrator cannot use Foldfin on a plan without access.
+        let denied = plan_request(
+            &router,
+            Method::POST,
+            "/me/foldfin/config",
+            &auth,
+            json!({}),
+        )
+        .await;
+        assert_eq!(denied.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            floppa_core::foldfin::list(&pool, user)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Reproduce the rollout's enabled admin plan in this isolated test database.
+        let admin_plan: i32 = sqlx::query_scalar(
+            "INSERT INTO plans(name,display_name,foldfin_enabled,is_public) VALUES('admin','Administrator',true,false) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE subscriptions SET plan_id=$2 WHERE user_id=$1")
+            .bind(user)
+            .bind(admin_plan)
+            .execute(&pool)
+            .await
+            .unwrap();
         let issued = plan_request(
             &router,
             Method::POST,
@@ -935,6 +965,17 @@ mod tests {
         let created = json_body(created).await;
         assert_eq!(created["region_ids"], json!(["europe", "singapore"]));
         let uri = format!("/plans/{}", created["id"]);
+        assert_eq!(created["foldfin_enabled"], false);
+        let enabled = plan_request(
+            &router,
+            Method::PATCH,
+            &uri,
+            &auth,
+            json!({"foldfin_enabled":true}),
+        )
+        .await;
+        assert_eq!(enabled.status(), StatusCode::OK);
+        assert_eq!(json_body(enabled).await["foldfin_enabled"], true);
 
         // Invalid grants roll back other fields in the same PATCH.
         for invalid in [json!([]), json!(["europe", "unknown"])] {
@@ -943,7 +984,7 @@ mod tests {
                 Method::PATCH,
                 &uri,
                 &auth,
-                json!({"display_name":"Must roll back", "region_ids":invalid}),
+                json!({"display_name":"Must roll back", "region_ids":invalid, "foldfin_enabled":false}),
             )
             .await;
             assert_eq!(response.status(), StatusCode::BAD_REQUEST);
@@ -956,6 +997,7 @@ mod tests {
             .iter()
             .find(|p| p["id"] == created["id"])
             .unwrap();
+        assert_eq!(plan["foldfin_enabled"], true);
         assert_eq!(plan["display_name"], "Region test");
         assert_eq!(plan["region_ids"], created["region_ids"]);
 
