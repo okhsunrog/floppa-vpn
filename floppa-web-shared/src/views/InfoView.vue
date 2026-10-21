@@ -53,7 +53,7 @@ const downloadsBase = computed(() => {
 })
 
 const downloads = computed(() => [
-  { key: 'android', icon: 'i-lucide-smartphone', file: 'floppa-vpn-android-arm64.apk' },
+  { key: 'android', icon: 'i-lucide-smartphone', file: 'floppa-vpn-android.apk' },
   { key: 'windows', icon: 'i-lucide-monitor', file: 'floppa-vpn-windows-x86_64.exe' },
   { key: 'linux', icon: 'i-lucide-laptop', file: 'floppa-vpn-linux-x86_64.deb' },
 ])

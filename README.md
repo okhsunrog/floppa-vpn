@@ -11,6 +11,9 @@
 Linux clients support [route exclusions](docs/ROUTE-EXCLUSIONS.md) in Settings
 or with `floppa connect --routes routing.json`.
 
+[NixOS packages and module](docs/nixos.md) build the CLI and desktop client
+from source, with socket activation and standalone capability wrappers.
+
 ## Architecture
 
 Three tunnel protocols, two VPS regions:
@@ -166,6 +169,8 @@ it is what a native package or a local build, Windows and macOS use. See
 [`docs/DESKTOP-TUNNEL-SERVICE.md`](docs/DESKTOP-TUNNEL-SERVICE.md).
 
 ### Android
+
+The published APK includes both ARM32 (`armeabi-v7a`) and ARM64 (`arm64-v8a`) libraries and requires Android 7.0 or newer (API 24). Build it locally with `just build-android`.
 
 ```mermaid
 graph LR
