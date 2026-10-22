@@ -221,6 +221,8 @@ struct FakePlatform {
     crash_attempts: AtomicBool,
     /// How many times DNS has been put back, so a recovery from the journal is observable.
     dns_restores: AtomicUsize,
+    fail_dns_capture: AtomicBool,
+    fail_dns_apply: AtomicBool,
 }
 
 impl FakePlatform {
@@ -232,6 +234,8 @@ impl FakePlatform {
             released: Notify::new(),
             crash_attempts: AtomicBool::new(false),
             dns_restores: AtomicUsize::new(0),
+            fail_dns_capture: AtomicBool::new(false),
+            fail_dns_apply: AtomicBool::new(false),
         }
     }
 
@@ -335,6 +339,9 @@ impl Platform for FakePlatform {
         _: &InterfaceName,
         _: Option<u32>,
     ) -> Result<DnsSnapshot, PlatformError> {
+        if self.fail_dns_capture.load(Ordering::SeqCst) {
+            return Err(PlatformError::Failed("DNS capture failed".into()));
+        }
         Ok(DnsSnapshot::Resolvectl)
     }
     async fn configure_dns(
@@ -343,6 +350,9 @@ impl Platform for FakePlatform {
         _: &[IpAddr],
         _: Option<u32>,
     ) -> Result<(), PlatformError> {
+        if self.fail_dns_apply.load(Ordering::SeqCst) {
+            return Err(PlatformError::Failed("DNS apply failed".into()));
+        }
         Ok(())
     }
     async fn restore_dns(
@@ -391,6 +401,53 @@ fn up() -> IntentRequest {
     IntentRequest::Up {
         order: vec![Protocol::WireGuard],
         params: TunnelParams::default(),
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn dns_capture_and_apply_failures_abort_and_unwind_by_default() {
+    for capture in [true, false] {
+        let h = Harness::spawn(policy());
+        h.platform.fail_dns_capture.store(capture, Ordering::SeqCst);
+        h.platform.fail_dns_apply.store(!capture, Ordering::SeqCst);
+        let epoch = h.set(up()).await;
+        let CycleOutcome::Exhausted { failures } = h.outcome(epoch).await else {
+            panic!("a DNS failure must not establish the tunnel");
+        };
+        assert!(matches!(
+            failures[0].error,
+            AttemptError::Platform {
+                step: crate::rollback::StepKind::Dns,
+                ..
+            }
+        ));
+        assert!(h.backend.running().is_none());
+        assert_eq!(h.backend.stops(), 1);
+        // Apply can fail after a partial mutation and still needs undo. Capture has
+        // not touched DNS, so only the preceding network steps need undo.
+        assert_eq!(
+            h.platform.dns_restores.load(Ordering::SeqCst),
+            usize::from(!capture)
+        );
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn dns_failure_tolerance_requires_an_explicit_policy() {
+    for capture in [true, false] {
+        let mut h = Harness::spawn(Policy {
+            dns_failure: DnsFailurePolicy::Tolerate,
+            ..policy()
+        });
+        h.platform.fail_dns_capture.store(capture, Ordering::SeqCst);
+        h.platform.fail_dns_apply.store(!capture, Ordering::SeqCst);
+        h.connect().await;
+        let epoch = h.set(IntentRequest::Down).await;
+        assert_eq!(h.outcome(epoch).await, CycleOutcome::Down);
+        assert_eq!(
+            h.platform.dns_restores.load(Ordering::SeqCst),
+            usize::from(!capture)
+        );
     }
 }
 

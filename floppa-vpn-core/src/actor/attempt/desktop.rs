@@ -263,7 +263,12 @@ pub(super) async fn ladder(
                     }
                 }
             }
-            Err(e) => error!("failed to capture DNS state, leaving DNS untouched: {e}"),
+            Err(e) => {
+                error!("failed to capture DNS state, leaving DNS untouched: {e}");
+                if matches!(ctx.policy.dns_failure, DnsFailurePolicy::Fatal) {
+                    return Err(platform_error(StepKind::Dns, e));
+                }
+            }
         }
     }
 

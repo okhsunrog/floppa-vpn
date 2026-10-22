@@ -55,39 +55,6 @@ impl LinuxPlatform {
         Self
     }
 
-    /// Is systemd-resolved the thing that owns name resolution right now?
-    ///
-    /// Asked at the moment DNS is about to be touched, not at startup, and asked of the system
-    /// rather than of `$PATH`: on Arch, Debian and Ubuntu Server the `resolvectl` binary is
-    /// installed whether or not the service runs. Deciding by the binary meant `resolvectl dns`
-    /// failed on those hosts, the default `Tolerate` policy shrugged, and the tunnel came up with
-    /// the system's DNS untouched — while the `/etc/resolv.conf` path that would have worked was
-    /// unreachable.
-    fn systemd_resolved_active() -> bool {
-        // The documented sign: /etc/resolv.conf is (a possibly relative) symlink into resolved's
-        // runtime directory.
-        if let Ok(real) = std::fs::canonicalize(RESOLV_CONF)
-            && real.starts_with("/run/systemd/resolve")
-        {
-            debug!("systemd-resolved owns {RESOLV_CONF}");
-            return true;
-        }
-        // Otherwise ask the service itself; `status` fails when it is not running.
-        let running = Command::new("resolvectl")
-            .arg("status")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if running {
-            debug!("systemd-resolved is running; using resolvectl for DNS");
-        } else {
-            debug!("systemd-resolved not active; will replace {RESOLV_CONF} directly");
-        }
-        running
-    }
-
     /// Whether this process is already root.
     ///
     /// It decides whether polkit is involved at all. A desktop app runs as the user and asks
@@ -491,9 +458,6 @@ impl Platform for LinuxPlatform {
         _iface: &InterfaceName,
         _if_index: Option<u32>,
     ) -> Result<DnsSnapshot, PlatformError> {
-        if Self::systemd_resolved_active() {
-            return Ok(DnsSnapshot::Resolvectl);
-        }
         // The exact file/link snapshot is captured by the privileged helper before mutation.
         Ok(DnsSnapshot::ResolvConf {
             content: None,
@@ -513,15 +477,10 @@ impl Platform for LinuxPlatform {
         }
         info!("Configuring DNS servers: {servers:?}");
 
-        if Self::systemd_resolved_active() {
-            let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
-            let mut args: Vec<&str> = vec!["set-dns", iface.as_str()];
-            args.extend(strs.iter().map(|s| s.as_str()));
-            return self.run_helper(&args, None).await;
-        }
-
+        // Choose and journal the backend together in the privileged helper. Recovery uses
+        // that journal even if the system's DNS owner changes before disconnect.
         let strs: Vec<String> = servers.iter().map(|s| s.to_string()).collect();
-        let mut args = vec!["set-dns-file"];
+        let mut args = vec!["set-dns-auto", iface.as_str()];
         args.extend(strs.iter().map(String::as_str));
         self.run_helper(&args, None).await
     }
@@ -545,7 +504,6 @@ impl Platform for LinuxPlatform {
     }
 }
 
-const RESOLV_CONF: &str = "/etc/resolv.conf";
 /// Parse the first `via` next hop out of `ip route show default` output.
 ///
 /// A next hop that is not an address is an error, not a gateway: the string used to be passed on

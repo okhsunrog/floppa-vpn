@@ -77,7 +77,7 @@ impl Default for Policy {
             jitter_seed: 0,
             unwind_tries: 3,
             undo_retries: 2,
-            dns_failure: DnsFailurePolicy::Tolerate,
+            dns_failure: DnsFailurePolicy::Fatal,
             settle_timeout: Duration::from_secs(15),
         }
     }
