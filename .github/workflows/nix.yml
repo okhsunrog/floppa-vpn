@@ -22,19 +22,19 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: cachix/install-nix-action@d9186cbdca7adedf113a159fa91f725a27866771 # v31
-      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+      - uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7
         with:
           primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-${{ github.sha }}
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-
             nix-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
       - name: Check generated Bun dependency fetches
         run: |
           nix run .#bun2nix -- -c ../ -o nix/bun.nix
           nix fmt nix/bun.nix
           git diff --exit-code -- nix/bun.nix
       - name: Build clients and keep dependency artifacts rooted
+        id: clients
         run: |
           nix build -L .#cli .#cli.cargoArtifacts \
             .#checks.x86_64-linux.gui .#checks.x86_64-linux.gui.cargoArtifacts \
@@ -43,6 +43,12 @@ jobs:
         run: |
           if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
           nix build -L .#checks.x86_64-linux.service
+      - name: Save successful builds even when the VM test fails
+        if: ${{ !cancelled() && steps.clients.outcome == 'success' }}
+        uses: nix-community/cache-nix-action/save@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-${{ github.sha }}
+          gc-max-store-size-linux: 8G
 
   cache-boundaries:
     name: Nix cache boundaries
