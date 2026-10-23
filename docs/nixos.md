@@ -62,6 +62,9 @@ build, and final release linking (including GUI LTO) is not eliminated. Dependen
 derivations use a stable version; the GUI application's version is normalized
 only in its dummy dependency manifest and lock. Real application manifests and
 versions remain intact in the final build.
+GTK/GApps wrapping runs in a separate derivation after Rust compilation, so its
+additional native inputs cannot invalidate GTK build-script fingerprints from
+the dependency cache.
 
 Rust, frontend and privileged helper inputs are filtered independently. Updating
 web assets does not rebuild the CLI or its dependency cache. The GUI embeds the

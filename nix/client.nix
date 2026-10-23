@@ -65,43 +65,58 @@ let
       ;
     gui = true;
   };
-in
-craneLib.buildPackage (
-  args
-  // {
-    inherit cargoArtifacts;
-    nativeBuildInputs = args.nativeBuildInputs ++ [
-      wrapGAppsHook3
-      makeBinaryWrapper
-    ];
-    postPatch = "cp -a ${frontend} floppa-client/dist";
-    env =
-      args.env
-      // common.env
-      // {
-        TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
+  unwrapped = craneLib.buildPackage (
+    args
+    // {
+      inherit cargoArtifacts;
+      postPatch = "cp -a ${frontend} floppa-client/dist";
+      env =
+        args.env
+        // common.env
+        // {
+          TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
+        };
+      # Crane's automatic installer runs metadata in the root workspace, whose
+      # lock differs from this standalone GUI workspace's lock.
+      doNotPostBuildInstallCargoBinaries = true;
+      installPhaseCommand = "install -Dm755 target/release/floppa-client $out/bin/floppa-client";
+      postInstall = ''
+        install -Dm644 floppa-client/src-tauri/icons/128x128.png $out/share/icons/hicolor/128x128/apps/floppa-client.png
+        install -Dm644 floppa-client/src-tauri/linux/floppa-client.desktop $out/share/applications/floppa-client.desktop
+        sed -i '/NoDisplay=true/d' $out/share/applications/floppa-client.desktop
+      '';
+      meta = {
+        description = "Floppa VPN desktop client";
+        mainProgram = "floppa-client";
+        license = lib.licenses.gpl3Plus;
+        platforms = [ "x86_64-linux" ];
       };
-    # Crane's automatic installer runs metadata in the root workspace, whose
-    # lock differs from this standalone GUI workspace's lock.
-    doNotPostBuildInstallCargoBinaries = true;
-    installPhaseCommand = "install -Dm755 target/release/floppa-client $out/bin/floppa-client";
-    postInstall = ''
-      install -Dm644 floppa-client/src-tauri/icons/128x128.png $out/share/icons/hicolor/128x128/apps/floppa-client.png
-      install -Dm644 floppa-client/src-tauri/linux/floppa-client.desktop $out/share/applications/floppa-client.desktop
-      sed -i '/NoDisplay=true/d' $out/share/applications/floppa-client.desktop
-      gappsWrapperArgs+=(--prefix PATH : '${common.runtimePath}')
-      # Tray support dlopens this library rather than linking it directly.
-      gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : '${lib.makeLibraryPath [ libayatana-appindicator ]}')
-    '';
-    passthru = {
-      inherit frontend cargoArtifacts;
-      inherit (common) resources;
-    };
-    meta = {
-      description = "Floppa VPN desktop client";
-      mainProgram = "floppa-client";
-      license = lib.licenses.gpl3Plus;
-      platforms = [ "x86_64-linux" ];
-    };
-  }
-)
+    }
+  );
+in
+pkgs.stdenvNoCC.mkDerivation {
+  pname = "floppa-client";
+  inherit version;
+  dontUnpack = true;
+  strictDeps = true;
+  nativeBuildInputs = [
+    wrapGAppsHook3
+    makeBinaryWrapper
+  ];
+  inherit (args) buildInputs;
+  installPhase = ''
+    runHook preInstall
+    mkdir -p "$out"
+    cp -r ${unwrapped}/. "$out/"
+    chmod -R u+w "$out"
+    gappsWrapperArgs+=(--prefix PATH : '${common.runtimePath}')
+    # Tray support dlopens this library rather than linking it directly.
+    gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : '${lib.makeLibraryPath [ libayatana-appindicator ]}')
+    runHook postInstall
+  '';
+  passthru = {
+    inherit frontend cargoArtifacts unwrapped;
+    inherit (common) resources;
+  };
+  inherit (unwrapped) meta;
+}
