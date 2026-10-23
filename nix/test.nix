@@ -19,7 +19,7 @@ pkgs.testers.runNixOSTest {
     # No interactive desktop in this VM; grant only the packaged helper action.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
-        if (action.id == "dev.okhsunrog.floppa-vpn.network-config" && subject.user == "alice")
+        if (action.id == "dev.okhsunrog.floppa-vpn.network-config-v2" && subject.user == "alice")
           return polkit.Result.YES;
       });
     '';
@@ -47,7 +47,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("su - bob -c '/run/wrappers/bin/floppa status'")
     machine.succeed("getcap /run/wrappers/bin/floppa | grep cap_net_admin")
     # A standalone process must never try to install into /usr on NixOS.
-    machine.succeed("test -x ${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper")
+    machine.succeed("test -x ${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper-v2")
     machine.succeed("systemctl stop floppa-vpn.socket floppa-vpn.service")
     machine.succeed("su - alice -c '/run/wrappers/bin/floppa status' 2>&1 | grep -i standalone")
     # Reproduce an upgrade from the old Bash helper: seven duplicate rules and
@@ -64,8 +64,20 @@ pkgs.testers.runNixOSTest {
     machine.succeed("pkill -INT -u alice -f 'floppa.* connect' || true")
     machine.wait_until_fails("ip link show floppa0", timeout=30)
 
-    helper = "${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper"
+    helper = "${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper-v2"
     machine.succeed(f"{helper} check-policy")
+    # An old GUI's self-installer may still write the unversioned paths. It must
+    # never replace the new executable or its polkit action.
+    machine.succeed("mkdir -p /usr/lib /usr/share/polkit-1/actions")
+    machine.succeed(f"{helper} install")
+    native_helper = "/usr/lib/floppa-vpn/floppa-network-helper-v2"
+    native_policy = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy"
+    machine.succeed(f"cmp {helper} {native_helper}")
+    machine.succeed("printf '#!/bin/bash\\nexit 1\\n' > /usr/lib/floppa-vpn/floppa-network-helper")
+    machine.succeed("printf 'legacy policy' > /usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy")
+    machine.succeed(f"cmp {helper} {native_helper}")
+    machine.succeed(f"test $({native_helper} protocol-version) = 2")
+    machine.succeed(f"grep 'network-config-v2' {native_policy}")
     # Real resolved per-link state: changing another link's DHCP-style DNS must
     # survive disconnect. Run both the apply and the recovery through the helper.
     machine.succeed(f"{helper} ensure-tun floppa0 0")

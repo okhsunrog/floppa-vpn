@@ -25,8 +25,8 @@ use tracing::{debug, info};
 const UNDO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Path to the installed network helper
-const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper";
-const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy";
+const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper-v2";
+const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy";
 
 // Build-time packaging contract. Never accept privileged executable paths from the
 // runtime environment. Native packages can keep the portable installation path.

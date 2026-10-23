@@ -6,7 +6,7 @@
   <vendor>Floppa VPN</vendor>
   <vendor_url>https://floppa.okhsunrog.dev</vendor_url>
 
-  <action id="dev.okhsunrog.floppa-vpn.network-config">
+  <action id="dev.okhsunrog.floppa-vpn.network-config-v2">
     <description>Configure Floppa VPN network</description>
     <message>Floppa VPN needs to configure the network interface</message>
     <defaults>
@@ -14,7 +14,7 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>yes</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/floppa-vpn/floppa-network-helper</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/floppa-vpn/floppa-network-helper-v2</annotate>
     <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
   </action>
 </policyconfig>

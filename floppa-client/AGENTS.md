@@ -146,7 +146,9 @@ pub struct MyEvent { pub message: String }
 
 `floppa-network-helper` is a separate Rust workspace binary. Native Linux bundles
 must first build `cargo build --release --locked -p floppa -p floppa-network-helper`;
-the deb/rpm file maps install the helper and polkit policy. Nix builds it separately
+the deb/rpm file maps install the versioned `floppa-network-helper-v2` and
+`dev.okhsunrog.floppa-vpn.network-v2.policy`. Keep these paths distinct from the
+legacy GUI's unversioned self-installer targets. Nix builds it separately
 with a fixed tool search path. Never restore an embedded Bash helper fallback.
 For standalone GUI source development, install the helper explicitly with
 `sudo target/debug/floppa-network-helper install` after building it without test

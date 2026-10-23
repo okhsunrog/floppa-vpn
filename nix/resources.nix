@@ -31,13 +31,13 @@ craneLib.buildPackage (
     inherit cargoArtifacts;
     passthru = { inherit cargoArtifacts; };
     postInstall = ''
-      helper="$out/lib/floppa-vpn/floppa-network-helper"
-      policy="$out/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy"
+      helper="$out/lib/floppa-vpn/floppa-network-helper-v2"
+      policy="$out/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy"
       install -Dm755 "$out/bin/floppa-network-helper" "$helper"
       rm "$out/bin/floppa-network-helper"
       rmdir "$out/bin"
       install -Dm644 floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy "$policy"
-      substituteInPlace "$policy" --replace-fail /usr/lib/floppa-vpn/floppa-network-helper "$helper"
+      substituteInPlace "$policy" --replace-fail /usr/lib/floppa-vpn/floppa-network-helper-v2 "$helper"
     '';
   }
 )

@@ -264,12 +264,12 @@ fn install() -> Result<()> {
     journal::secure_dir(Path::new("/usr/lib/floppa-vpn"), 0o755)?;
     let bytes = std::fs::read(std::env::current_exe()?)?;
     journal::atomic_write(
-        Path::new("/usr/lib/floppa-vpn/floppa-network-helper"),
+        Path::new("/usr/lib/floppa-vpn/floppa-network-helper-v2"),
         &bytes,
         0o755,
     )?;
     journal::atomic_write(
-        Path::new("/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy"),
+        Path::new("/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy"),
         include_bytes!("../../floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy"),
         0o644,
     )

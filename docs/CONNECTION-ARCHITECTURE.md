@@ -698,7 +698,12 @@ polkit policy; Nix собирает отдельную derivation. Встрое�
 автоматическая установка удалены. Для исходников: `cargo build -p floppa
 -p floppa-network-helper`; root CLI находит соседний helper. Для desktop-разработки
 helper устанавливается явно: `sudo target/debug/floppa-network-helper install`.
-NixOS использует только собранные пути из store.
+NixOS использует только собранные пути из store. Нативный путь
+`/usr/lib/floppa-vpn/floppa-network-helper-v2`, файл policy
+`dev.okhsunrog.floppa-vpn.network-v2.policy` и action `network-config-v2` включают
+версию протокола. Старый GUI может переустановить свой unversioned Bash-helper,
+но не перезаписать новый executable или его policy. Общий журнал и блокировка
+при этом остаются прежними: разные версии не получают независимых владельцев сети.
 
 Модули helper разделяют проверку аргументов, долговечный журнал, исполнение команд,
 policy routing, TUN/маршруты и DNS. Вход не принимает пути к журналу, произвольные
