@@ -6,14 +6,14 @@
   nodejs_24,
   autoPatchelfHook,
   src,
+  dependencySrc,
   apiUrl,
 }:
 let
   modules = stdenv.mkDerivation {
     pname = "floppa-node-modules";
-    version =
-      (builtins.fromTOML (builtins.readFile "${src}/floppa-client/src-tauri/Cargo.toml")).package.version;
-    inherit src;
+    version = "0";
+    src = dependencySrc;
     nativeBuildInputs = [ bun ];
     dontConfigure = true;
     dontFixup = true;
@@ -33,7 +33,7 @@ let
       rm -rf "$out/node_modules/.cache"
     '';
     outputHashMode = "recursive";
-    outputHash = "sha256-HUGqdjQ5HHEMOV+STXpFbDZFWyk28di5GBRt8ISzEak=";
+    outputHash = "sha256-bpijSsMiHwWi0b2rIH1rhWZ63fYAWrHc+HxLvqSBaaU=";
   };
 in
 stdenv.mkDerivation {

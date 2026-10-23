@@ -18,27 +18,39 @@
       version =
         (builtins.fromTOML (builtins.readFile "${self}/floppa-client/src-tauri/Cargo.toml"))
         .package.version;
-      mkPackages = pkgs: {
-        craneLib = crane.mkLib pkgs;
-        src = sources.rust;
-        resourceSrc = sources.resources;
-        inherit version;
-      };
+      mkPackages =
+        pkgs: kind:
+        let
+          craneLib = crane.mkLib pkgs;
+          manifestSrc = sources.${kind + "Manifests"};
+        in
+        {
+          inherit craneLib manifestSrc;
+          src = import ./nix/rust-source.nix {
+            inherit pkgs craneLib;
+            manifests = manifestSrc;
+            code = sources.${kind + "Code"};
+          };
+          resourceSrc = sources.resources;
+          inherit version;
+        };
     in
     {
       packages.${system} = {
         default = self.packages.${system}.cli;
-        cli = pkgs.callPackage ./nix/cli.nix (mkPackages pkgs);
+        cli = self.lib.mkCli { inherit pkgs; };
       };
       # The endpoint is deployment configuration, not a credential. Keep it out
       # of this generic source, just as in the existing release/PKGBUILD flow.
+      lib.mkCli = { pkgs }: pkgs.callPackage ./nix/cli.nix (mkPackages pkgs "cli");
       lib.mkClient =
         { pkgs, apiUrl }:
         pkgs.callPackage ./nix/client.nix (
-          (mkPackages pkgs)
+          (mkPackages pkgs "gui")
           // {
             inherit apiUrl;
             frontendSrc = sources.frontend;
+            frontendDependencySrc = sources.frontendDependencies;
           }
         );
       checks.${system} = {

@@ -13,12 +13,17 @@ in
     enable = lib.mkEnableOption "Floppa VPN socket-activated tunnel service and standalone clients";
     package = lib.mkOption {
       type = lib.types.package;
-      default = self.packages.${pkgs.stdenv.hostPlatform.system}.cli;
+      default = self.lib.mkCli { inherit pkgs; };
     };
     guiPackage = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;
       description = "GUI built with lib.mkClient and a deployment API endpoint.";
+    };
+    keepBuildDependencies = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Keep Crane dependency artifacts in the system closure to speed up local rebuilds after garbage collection.";
     };
     users = lib.mkOption {
       type = lib.types.listOf lib.types.str;
@@ -32,6 +37,10 @@ in
     };
   };
   config = lib.mkIf cfg.enable {
+    system.extraDependencies = lib.optionals cfg.keepBuildDependencies (
+      [ cfg.package.cargoArtifacts ]
+      ++ lib.optional (cfg.guiPackage != null) cfg.guiPackage.cargoArtifacts
+    );
     services.resolved.enable = lib.mkDefault true;
     networking.networkmanager.dns = lib.mkIf config.networking.networkmanager.enable (
       lib.mkDefault "systemd-resolved"

@@ -18,9 +18,32 @@ let
         ) paths;
     };
   workspace = builtins.fromTOML (builtins.readFile "${src}/Cargo.toml");
+  shared = [
+    "floppa-api-client"
+    "floppa-core"
+    "floppa-foldfin"
+    "floppa-net"
+    "floppa-provision"
+    "floppa-tunnel-config"
+    "floppa-vpn-core"
+  ];
+  manifests = [
+    "Cargo.toml"
+    "Cargo.lock"
+    ".cargo"
+  ]
+  ++ map (member: "${member}/Cargo.toml") workspace.workspace.members;
 in
 {
-  rust = select (
+  cliManifests = select (
+    workspace.workspace.members
+    ++ [
+      "Cargo.toml"
+      "Cargo.lock"
+      ".cargo"
+    ]
+  );
+  guiManifests = select (
     workspace.workspace.members
     ++ [
       "Cargo.toml"
@@ -30,6 +53,22 @@ in
       "floppa-client/src-tauri"
     ]
   );
+  cliCode = select (manifests ++ shared ++ [ "floppa" ]);
+  guiCode = select (
+    manifests
+    ++ shared
+    ++ [
+      "tauri-plugin-vpn"
+      "floppa-client/src-tauri"
+    ]
+  );
+  frontendDependencies = select [
+    "package.json"
+    "bun.lock"
+    "floppa-web-shared/package.json"
+    "floppa-face/package.json"
+    "floppa-client/package.json"
+  ];
   frontend = select [
     "package.json"
     "bun.lock"

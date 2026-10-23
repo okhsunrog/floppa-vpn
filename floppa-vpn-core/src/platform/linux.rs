@@ -32,6 +32,28 @@ const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.
 const HELPER_CONTENT: &str = include_str!("../../resources/linux/floppa-network-helper");
 const POLICY_CONTENT: &str = include_str!("../../resources/linux/dev.okhsunrog.floppa-vpn.policy");
 
+// Build-time packaging contract. Never accept privileged executable paths from the
+// runtime environment. Native packages can keep the portable installation path.
+const PACKAGED_HELPER: Option<&str> = option_env!("FLOPPA_PACKAGED_HELPER");
+const PACKAGED_POLICY: Option<&str> = option_env!("FLOPPA_PACKAGED_POLICY");
+
+fn check_packaged_resources(helper: &str, policy: &str) -> Result<(), PlatformError> {
+    for (path, executable) in [(helper, true), (policy, false)] {
+        let metadata = std::fs::metadata(path).map_err(|e| {
+            PlatformError::Unavailable(format!("packaged network resource {path} unavailable: {e}"))
+        })?;
+        if !std::path::Path::new(path).is_absolute()
+            || !metadata.is_file()
+            || (executable && metadata.mode() & 0o111 == 0)
+        {
+            return Err(PlatformError::Unavailable(format!(
+                "invalid packaged network resource: {path}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Linux platform implementation.
 ///
 /// Deliberately holds no undo state: what was applied lives in the caller's rollback stack. The
@@ -93,6 +115,15 @@ impl LinuxPlatform {
     /// Check if the polkit policy and helper are installed and up-to-date.
     /// If not, write them to temp files and use pkexec to install (one password prompt).
     fn ensure_polkit_installed() -> Result<(), PlatformError> {
+        match (PACKAGED_HELPER, PACKAGED_POLICY) {
+            (Some(helper), Some(policy)) => return check_packaged_resources(helper, policy),
+            (None, None) => {}
+            _ => {
+                return Err(PlatformError::Unavailable(
+                    "package must configure both network helper and polkit policy".into(),
+                ));
+            }
+        }
         if Self::running_as_root() {
             // Nothing to install: the helper is only ever reached through polkit, and root does
             // not go through polkit.
@@ -167,9 +198,8 @@ impl LinuxPlatform {
     /// active desktop sessions. Runs on tokio's process reactor rather than blocking a worker
     /// thread, so a slow pkexec stalls only this call; `timeout` bounds the wait for undo paths.
     ///
-    /// As root the helper is run from a temporary copy of the embedded script rather than from
-    /// `/usr/lib`: a root process should not need to install anything into the system to
-    /// configure its own network, and a command-line run leaves nothing behind.
+    /// Packaged root processes execute the build-time helper path directly. Portable root
+    /// processes use a temporary copy of the embedded script, without installing into `/usr/lib`.
     async fn run_helper(
         &self,
         args: &[&str],
@@ -179,7 +209,8 @@ impl LinuxPlatform {
 
         // Held for the whole call: dropping it removes the script, and the command is still
         // running.
-        let root_helper = if Self::running_as_root() {
+        let root = Self::running_as_root();
+        let root_helper = if root && PACKAGED_HELPER.is_none() {
             Some(Self::helper_script()?)
         } else {
             None
@@ -187,9 +218,10 @@ impl LinuxPlatform {
 
         let mut command = match &root_helper {
             Some(path) => tokio::process::Command::new(path.as_os_str()),
+            None if root => tokio::process::Command::new(PACKAGED_HELPER.unwrap_or(HELPER_PATH)),
             None => {
                 let mut c = tokio::process::Command::new("pkexec");
-                c.arg(HELPER_PATH);
+                c.arg(PACKAGED_HELPER.unwrap_or(HELPER_PATH));
                 c
             }
         };
@@ -215,7 +247,7 @@ impl LinuxPlatform {
         // Only meaningful for the polkit path: pkexec exits 126 when authorisation is declined or
         // dismissed, and 127 when the helper could not be launched at all. Both are pointless to
         // retry with another protocol. Run directly, those codes are the helper's own.
-        if root_helper.is_some() {
+        if root {
             return Err(PlatformError::Failed(format!(
                 "network helper failed: {stderr}"
             )));
@@ -517,6 +549,25 @@ fn parse_default_gateway(route_output: &str) -> Result<Option<Gateway>, Platform
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packaged_resources_must_exist_and_helper_must_be_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let helper = dir.path().join("helper");
+        let policy = dir.path().join("policy");
+        let validate =
+            || check_packaged_resources(helper.to_str().unwrap(), policy.to_str().unwrap());
+        assert!(validate().is_err());
+        std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(&policy, "packaged policy").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(validate().is_err());
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(validate().is_ok());
+        std::fs::remove_file(&policy).unwrap();
+        assert!(validate().is_err());
+    }
 
     #[test]
     fn gateway_is_the_first_via() {

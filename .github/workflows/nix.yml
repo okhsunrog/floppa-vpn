@@ -1,0 +1,50 @@
+name: Nix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Nix packages and service
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@d9186cbdca7adedf113a159fa91f725a27866771 # v31
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-${{ github.sha }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-
+            nix-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
+      - name: Build clients and keep dependency artifacts rooted
+        run: |
+          nix build -L .#cli .#cli.cargoArtifacts \
+            .#checks.x86_64-linux.gui .#checks.x86_64-linux.gui.cargoArtifacts \
+            --out-link result-clients
+      - name: Test service, packaged helper and resolver recovery
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+          nix build -L .#checks.x86_64-linux.service
+
+  cache-boundaries:
+    name: Nix cache boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: cachix/install-nix-action@d9186cbdca7adedf113a159fa91f725a27866771 # v31
+      - uses: astral-sh/setup-uv@v7
+      - name: Check source and release-version isolation
+        run: uv run --no-project python scripts/tests/nix-cache.py

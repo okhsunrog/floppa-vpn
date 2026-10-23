@@ -10,8 +10,10 @@
   wrapGAppsHook3,
   makeBinaryWrapper,
   src,
+  manifestSrc,
   resourceSrc,
   frontendSrc,
+  frontendDependencySrc,
   version,
   apiUrl,
 }:
@@ -26,10 +28,13 @@ let
   };
   frontend = pkgs.callPackage ./frontend.nix {
     src = frontendSrc;
+    dependencySrc = frontendDependencySrc;
     inherit apiUrl;
   };
   lock = builtins.toFile "floppa-gui-Cargo.lock" (
-    builtins.unsafeDiscardStringContext (builtins.readFile "${src}/floppa-client/src-tauri/Cargo.lock")
+    builtins.unsafeDiscardStringContext (
+      builtins.readFile "${manifestSrc}/floppa-client/src-tauri/Cargo.lock"
+    )
   );
   args = {
     pname = "floppa-client";
@@ -51,15 +56,15 @@ let
     ];
     doCheck = false;
   };
-  cargoArtifacts = craneLib.buildDepsOnly (
-    args
-    // {
-      dummySrc = craneLib.mkDummySrc {
-        inherit src;
-        extraDummyScript = "cp ${lock} $out/floppa-client/src-tauri/Cargo.lock";
-      };
-    }
-  );
+  cargoArtifacts = import ./dependencies.nix {
+    inherit
+      lib
+      craneLib
+      manifestSrc
+      args
+      ;
+    gui = true;
+  };
 in
 craneLib.buildPackage (
   args
@@ -69,10 +74,13 @@ craneLib.buildPackage (
       wrapGAppsHook3
       makeBinaryWrapper
     ];
-    postPatch = common.postPatch + "cp -a ${frontend} floppa-client/dist";
-    env = args.env // {
-      TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
-    };
+    postPatch = "cp -a ${frontend} floppa-client/dist";
+    env =
+      args.env
+      // common.env
+      // {
+        TAURI_CONFIG = builtins.toJSON { build.frontendDist = "../dist"; };
+      };
     # Crane's automatic installer runs metadata in the root workspace, whose
     # lock differs from this standalone GUI workspace's lock.
     doNotPostBuildInstallCargoBinaries = true;

@@ -3,6 +3,7 @@
   lib,
   bash,
   coreutils,
+  gnugrep,
   iproute2,
   nftables,
   util-linux,
@@ -14,6 +15,7 @@
 let
   runtimePath = lib.makeBinPath [
     coreutils
+    gnugrep
     iproute2
     nftables
     util-linux

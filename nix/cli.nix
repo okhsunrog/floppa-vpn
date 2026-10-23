@@ -6,6 +6,7 @@
   openssl,
   makeBinaryWrapper,
   src,
+  manifestSrc,
   resourceSrc,
   version,
 }:
@@ -25,19 +26,26 @@ let
     cargoExtraArgs = "--locked -p floppa";
     cargoVendorDir = import ./vendor.nix {
       inherit craneLib;
-      cargoLock = "${src}/Cargo.lock";
+      cargoLock = "${manifestSrc}/Cargo.lock";
     };
     nativeBuildInputs = [ pkg-config ];
     buildInputs = [ openssl ];
   };
-  cargoArtifacts = craneLib.buildDepsOnly args;
+  cargoArtifacts = import ./dependencies.nix {
+    inherit
+      lib
+      craneLib
+      manifestSrc
+      args
+      ;
+  };
 in
 craneLib.buildPackage (
   args
   // {
     inherit cargoArtifacts;
     nativeBuildInputs = args.nativeBuildInputs ++ [ makeBinaryWrapper ];
-    inherit (common) postPatch;
+    inherit (common) env;
     postInstall = ''
       mkdir -p $out/lib/systemd/system $out/lib/sysusers.d $out/lib/tmpfiles.d
       cp floppa/resources/systemd/* $out/lib/systemd/system/
