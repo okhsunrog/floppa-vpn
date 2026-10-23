@@ -71,8 +71,18 @@ web assets does not rebuild the CLI or its dependency cache. The GUI embeds the
 frontend only in its final application build. Git dependencies are vendored from
 their locked revisions; no additional aggregate Cargo hash is maintained.
 Unused workspace members are represented by Crane stubs, retaining Cargo metadata
-without depending on server implementation files. The Bun dependency output
-remains checksum-pinned and depends only on workspace package manifests and lock.
+without depending on server implementation files. Bun2nix fetches individual
+dependency archives using the integrity hashes in the lock; no hash of an
+installed node_modules tree is maintained. Workspace source code is excluded
+from that download cache. node_modules is installed offline inside the build.
+After updating bun.lock, regenerate the fetch expressions and format them:
+
+```sh
+nix run .#bun2nix -- -c ../ -o nix/bun.nix
+nix fmt nix/bun.nix
+```
+
+CI checks that this generated file is up to date.
 
 The NixOS module builds the CLI and GUI against the caller's `pkgs`; standalone
 consumers can also use `lib.mkCli { inherit pkgs; }`.

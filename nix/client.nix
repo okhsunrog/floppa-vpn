@@ -13,7 +13,7 @@
   manifestSrc,
   resourceSrc,
   frontendSrc,
-  frontendDependencySrc,
+  bun2nix,
   version,
   apiUrl,
 }:
@@ -28,8 +28,8 @@ let
   };
   frontend = pkgs.callPackage ./frontend.nix {
     src = frontendSrc;
-    dependencySrc = frontendDependencySrc;
     inherit apiUrl;
+    inherit bun2nix;
   };
   lock = builtins.toFile "floppa-gui-Cargo.lock" (
     builtins.unsafeDiscardStringContext (

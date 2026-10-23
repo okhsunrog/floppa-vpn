@@ -29,6 +29,11 @@ jobs:
             nix-${{ runner.os }}-${{ hashFiles('flake.lock', '**/Cargo.lock') }}-
             nix-${{ runner.os }}-
           gc-max-store-size-linux: 8G
+      - name: Check generated Bun dependency fetches
+        run: |
+          nix run .#bun2nix -- -c ../ -o nix/bun.nix
+          nix fmt nix/bun.nix
+          git diff --exit-code -- nix/bun.nix
       - name: Build clients and keep dependency artifacts rooted
         run: |
           nix build -L .#cli .#cli.cargoArtifacts \

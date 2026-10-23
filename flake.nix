@@ -2,11 +2,14 @@
   description = "Floppa VPN Linux packages and NixOS integration";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/fe13242281a67641c0102cdb1087f0ebe586c7df";
   inputs.crane.url = "github:ipetkov/crane";
+  inputs.bun2nix.url = "github:nix-community/bun2nix";
+  inputs.bun2nix.inputs.nixpkgs.follows = "nixpkgs";
   outputs =
     {
       self,
       nixpkgs,
       crane,
+      bun2nix,
     }:
     let
       system = "x86_64-linux";
@@ -39,6 +42,7 @@
       packages.${system} = {
         default = self.packages.${system}.cli;
         cli = self.lib.mkCli { inherit pkgs; };
+        bun2nix = bun2nix.packages.${system}.default;
       };
       # The endpoint is deployment configuration, not a credential. Keep it out
       # of this generic source, just as in the existing release/PKGBUILD flow.
@@ -50,7 +54,7 @@
           // {
             inherit apiUrl;
             frontendSrc = sources.frontend;
-            frontendDependencySrc = sources.frontendDependencies;
+            bun2nix = bun2nix.packages.${pkgs.stdenv.hostPlatform.system}.default;
           }
         );
       checks.${system} = {

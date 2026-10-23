@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
           cliDeps = f.packages.x86_64-linux.cli.cargoArtifacts.drvPath;
           gui = f.checks.x86_64-linux.gui.drvPath;
           guiDeps = f.checks.x86_64-linux.gui.cargoArtifacts.drvPath;
-          nodeModules = f.checks.x86_64-linux.gui.frontend.nodeModules.drvPath;
+          bunDeps = f.checks.x86_64-linux.gui.frontend.bunDependencies.drvPath;
         }''' % json.dumps(f'path:{source}')
         return json.loads(subprocess.check_output(
             ['nix', 'eval', '--json', '--impure', '--expr', expression], text=True))
@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
     original = core.read_text()
     core.write_text(original + '\n// Cache boundary probe.\n')
     changed = evaluate()
-    for key in ('cliDeps', 'guiDeps', 'nodeModules'):
+    for key in ('cliDeps', 'guiDeps', 'bunDeps'):
         assert changed[key] == baseline[key], (key, 'core edit invalidates dependencies')
     for key in ('cli', 'gui'):
         assert changed[key] != baseline[key], (key, 'core edit must rebuild client')
@@ -59,7 +59,7 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
         f'name = "floppa-client"\nversion = "{version}"',
         'name = "floppa-client"\nversion = "99.0.0"'))
     changed = evaluate()
-    for key in ('cliDeps', 'guiDeps', 'nodeModules'):
+    for key in ('cliDeps', 'guiDeps', 'bunDeps'):
         assert changed[key] == baseline[key], (key, 'release version invalidates dependencies')
     assert changed['gui'] != baseline['gui'], 'application version must update the GUI'
     print('PASS: server isolation, client source invalidation, stable Rust and Bun dependencies across releases')

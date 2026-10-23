@@ -62,13 +62,6 @@ in
       "floppa-client/src-tauri"
     ]
   );
-  frontendDependencies = select [
-    "package.json"
-    "bun.lock"
-    "floppa-web-shared/package.json"
-    "floppa-face/package.json"
-    "floppa-client/package.json"
-  ];
   frontend = select [
     "package.json"
     "bun.lock"

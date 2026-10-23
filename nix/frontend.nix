@@ -6,34 +6,25 @@
   nodejs_24,
   autoPatchelfHook,
   src,
-  dependencySrc,
+  bun2nix,
   apiUrl,
 }:
 let
-  modules = stdenv.mkDerivation {
-    pname = "floppa-node-modules";
-    version = "0";
-    src = dependencySrc;
-    nativeBuildInputs = [ bun ];
-    dontConfigure = true;
-    dontFixup = true;
-    buildPhase = ''
-      export HOME="$TMPDIR"
-      # Fixed-output dependency bootstrap: Vite+ is itself among the packages
-      # being fetched and is not available until this step has completed.
-      bun install --frozen-lockfile --ignore-scripts --no-progress
-    '';
-    installPhase = ''
-      mkdir -p "$out"
-      cp -a node_modules "$out/"
-      for workspace in floppa-client floppa-face floppa-web-shared; do
-        mkdir -p "$out/$workspace"
-        cp -a "$workspace/node_modules" "$out/$workspace/"
-      done
-      rm -rf "$out/node_modules/.cache"
-    '';
-    outputHashMode = "recursive";
-    outputHash = "sha256-bpijSsMiHwWi0b2rIH1rhWZ63fYAWrHc+HxLvqSBaaU=";
+  dependencies = bun2nix.fetchBunDeps {
+    # Workspaces are supplied by src, not downloaded dependencies. Excluding
+    # them keeps their source edits out of the external dependency cache.
+    bunNix =
+      {
+        fetchurl,
+        fetchgit,
+        fetchFromGitHub,
+        ...
+      }:
+      import ./bun.nix {
+        inherit fetchurl fetchgit fetchFromGitHub;
+        copyPathToStore = _: null;
+      };
+    patchShebangs = false;
   };
 in
 stdenv.mkDerivation {
@@ -43,6 +34,7 @@ stdenv.mkDerivation {
   inherit src;
   nativeBuildInputs = [
     nodejs_24
+    bun2nix.hook
     bun
     autoPatchelfHook
   ];
@@ -51,10 +43,20 @@ stdenv.mkDerivation {
   # They are never selected on this glibc platform.
   autoPatchelfIgnoreMissingDeps = [ "libc.musl-x86_64.so.1" ];
   env.SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
+  bunDeps = dependencies;
+  bunInstallFlags = [
+    "--frozen-lockfile"
+    "--linker=isolated"
+    "--backend=copyfile"
+  ];
+  dontRunLifecycleScripts = true;
+  dontUseBunPatch = true;
+  dontUseBunBuild = true;
+  dontUseBunCheck = true;
+  dontUseBunInstall = true;
   dontConfigure = true;
   buildPhase = ''
     export HOME="$TMPDIR"
-    cp -a ${modules}/. .
     chmod -R u+w .
     patchShebangs node_modules
     autoPatchelf node_modules
@@ -65,5 +67,5 @@ stdenv.mkDerivation {
   '';
   env.VITE_API_URL = apiUrl;
   installPhase = ''cp -a dist "$out"'';
-  passthru.nodeModules = modules;
+  passthru.bunDependencies = dependencies;
 }
