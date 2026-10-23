@@ -43,6 +43,12 @@ in
       ++ lib.optional (cfg.guiPackage != null) cfg.guiPackage.cargoArtifacts
     );
     services.resolved.enable = lib.mkDefault true;
+    # dhcpcd's resolvconf hook otherwise reverts per-link DNS when it discovers
+    # a TUN without carrier. Reserve both the staging and final helper names.
+    networking.dhcpcd.denyInterfaces = [
+      "floppa*"
+      "flpt*"
+    ];
     networking.networkmanager.dns = lib.mkIf config.networking.networkmanager.enable (
       lib.mkDefault "systemd-resolved"
     );

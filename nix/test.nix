@@ -16,6 +16,9 @@ pkgs.testers.runNixOSTest {
       isNormalUser = true;
       uid = 1001;
     };
+    # This dummy link models an upstream managed by the test itself. Floppa's
+    # TUN exclusions must come from the production module, not this fixture.
+    networking.dhcpcd.denyInterfaces = [ "upstream0" ];
     # No interactive desktop in this VM; grant only the packaged helper action.
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
@@ -86,6 +89,13 @@ pkgs.testers.runNixOSTest {
     machine.succeed(f"{helper} set-dns-auto floppa0 1.1.1.1")
     machine.succeed("resolvectl dns floppa0 | grep 1.1.1.1")
     machine.succeed("resolvectl domain floppa0 | grep '~\\.'")
+    # Restart the real DHCP client while the tunnel owns per-link DNS. It must
+    # ignore both temporary flpt* and final floppa* links, including discovery.
+    machine.succeed("systemctl restart dhcpcd.service")
+    machine.wait_for_unit("dhcpcd.service")
+    machine.succeed("resolvectl dns floppa0 | grep 1.1.1.1")
+    dhcp_log = machine.succeed("journalctl -b -u dhcpcd.service --no-pager")
+    assert "floppa0" not in dhcp_log and "flpt" not in dhcp_log, dhcp_log
     machine.succeed("resolvectl dns upstream0 198.51.100.53")
     machine.succeed(f"{helper} recover-network")
     machine.succeed("resolvectl dns upstream0 | grep 198.51.100.53")
