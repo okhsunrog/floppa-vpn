@@ -39,6 +39,7 @@ in
   config = lib.mkIf cfg.enable {
     system.extraDependencies = lib.optionals cfg.keepBuildDependencies (
       [ cfg.package.cargoArtifacts ]
+      ++ lib.optional (cfg.package.resources ? cargoArtifacts) cfg.package.resources.cargoArtifacts
       ++ lib.optional (cfg.guiPackage != null) cfg.guiPackage.cargoArtifacts
     );
     services.resolved.enable = lib.mkDefault true;

@@ -18,18 +18,20 @@ assert os.readlink('/proc/self/ns/mnt') != os.readlink('/proc/1/ns/mnt'), 'refus
 subprocess.run(['mount', '--make-rprivate', '/'], check=True)
 subprocess.run(['mount', '-t', 'sysfs', 'sysfs', '/sys'], check=True)
 subprocess.run(['mount', '-t', 'tmpfs', 'tmpfs', '/var/lib'], check=True)
-HELPER = Path(__file__).resolve().parents[2] / 'floppa-vpn-core/resources/linux/floppa-network-helper'
+HELPER = Path(os.environ.get('FLOPPA_TEST_HELPER', str(Path(__file__).resolve().parents[2] / 'target/debug/floppa-network-helper')))
 MARK = 0x666C6F70
 TABLE = str(MARK)
 
 def run(*args, check=True):
-    return subprocess.run(args, check=check, text=True, capture_output=True).stdout.strip()
+    result = subprocess.run(args, text=True, capture_output=True)
+    assert not check or result.returncode == 0, (args, result.stdout, result.stderr)
+    return result.stdout.strip()
 
 def ip(*args):
     return run('ip', *args)
 
 def helper(*args):
-    return run('bash', str(HELPER), *args)
+    return run(str(HELPER), *args)
 
 def route(destination, dev, marked=False):
     args = ['-j', 'route', 'get', destination]
@@ -101,7 +103,7 @@ try:
     helper('check-policy')
     helper('add-routes', 'floppa0', *routes)
     helper('add-policy', '1', '1')
-    collision = subprocess.run(['bash', str(HELPER), 'check-policy'], capture_output=True)
+    collision = subprocess.run([str(HELPER), 'check-policy'], capture_output=True)
     assert collision.returncode != 0 and b'already in use' in collision.stderr
     for destination in ['203.0.113.77', '2001:db8:99::77']:
         route(destination, 'floppa0')

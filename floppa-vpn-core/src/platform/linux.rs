@@ -1,6 +1,6 @@
 //! Linux platform implementation for VPN operations
 //!
-//! Uses a privileged helper script (`floppa-network-helper`) run via pkexec.
+//! Uses a privileged Rust helper (`floppa-network-helper`) run via pkexec.
 //! A polkit policy (`dev.okhsunrog.floppa-vpn.policy`) allows the helper to
 //! run without a password prompt for active desktop sessions.
 
@@ -13,7 +13,6 @@ use floppa_tunnel_config::route;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
-use std::process::Command;
 use std::time::Duration;
 use tracing::{debug, info};
 
@@ -25,12 +24,9 @@ use tracing::{debug, info};
 /// reported as residual rather than waited for forever.
 const UNDO_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Path to the installed network helper script
+/// Path to the installed network helper
 const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper";
 const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy";
-
-const HELPER_CONTENT: &str = include_str!("../../resources/linux/floppa-network-helper");
-const POLICY_CONTENT: &str = include_str!("../../resources/linux/dev.okhsunrog.floppa-vpn.policy");
 
 // Build-time packaging contract. Never accept privileged executable paths from the
 // runtime environment. Native packages can keep the portable installation path.
@@ -68,9 +64,9 @@ impl LinuxPlatform {
     }
 
     async fn ensure_helper(&self) -> Result<(), PlatformError> {
-        tokio::task::spawn_blocking(Self::ensure_polkit_installed)
+        tokio::task::spawn_blocking(Self::check_helper_installed)
             .await
-            .map_err(|e| PlatformError::Unavailable(format!("helper install task panicked: {e}")))?
+            .map_err(|e| PlatformError::Unavailable(format!("helper check task panicked: {e}")))?
     }
 
     pub fn new() -> Self {
@@ -90,106 +86,61 @@ impl LinuxPlatform {
         unsafe { libc::geteuid() == 0 }
     }
 
-    /// The embedded helper script, written to a private temp file so root can run it directly.
-    ///
-    /// Kept alive by the caller for exactly as long as the command runs, and removed on drop:
-    /// a script that outlived its use would be a root-owned executable sitting in `/tmp`.
-    fn helper_script() -> Result<tempfile::TempPath, PlatformError> {
-        // Executable, and run through its own shebang rather than through `sh`: the helper is a
-        // bash script, and `sh` on Debian and Ubuntu is dash, which refuses its very first line
-        // (`set -o pipefail`). Owner-only, because it runs as root.
-        let file = tempfile::Builder::new()
-            .prefix("floppa-helper-")
-            .permissions(std::os::unix::fs::PermissionsExt::from_mode(0o700))
-            .tempfile()
-            .map_err(|e| PlatformError::Failed(format!("failed to create temp helper: {e}")))?;
-        // The handle is dropped before the content is written and before anything execs it: a
-        // file still open for writing cannot be executed (`ETXTBSY`). `TempPath` keeps the
-        // delete-on-drop without keeping the descriptor.
-        let path = file.into_temp_path();
-        std::fs::write(&path, HELPER_CONTENT)
-            .map_err(|e| PlatformError::Failed(format!("failed to write temp helper: {e}")))?;
-        Ok(path)
+    fn helper_path() -> std::path::PathBuf {
+        if let Some(helper) = PACKAGED_HELPER {
+            return helper.into();
+        }
+        // Source builds and portable root CLI bundles may ship the binary next to floppa.
+        // An unprivileged client always uses the administrator-installed polkit target.
+        if Self::running_as_root()
+            && let Ok(executable) = std::env::current_exe()
+            && let Some(parent) = executable.parent()
+        {
+            let sibling = parent.join("floppa-network-helper");
+            if sibling.is_file() {
+                return sibling;
+            }
+        }
+        HELPER_PATH.into()
     }
 
-    /// Check if the polkit policy and helper are installed and up-to-date.
-    /// If not, write them to temp files and use pkexec to install (one password prompt).
-    fn ensure_polkit_installed() -> Result<(), PlatformError> {
+    fn check_helper_installed() -> Result<(), PlatformError> {
         match (PACKAGED_HELPER, PACKAGED_POLICY) {
-            (Some(helper), Some(policy)) => return check_packaged_resources(helper, policy),
-            (None, None) => {}
+            (Some(helper), Some(policy)) => check_packaged_resources(helper, policy)?,
+            (None, None) => {
+                if !Self::running_as_root() {
+                    check_packaged_resources(HELPER_PATH, POLICY_PATH)?;
+                    for path in [HELPER_PATH, POLICY_PATH] {
+                        let metadata = std::fs::metadata(path).map_err(|e| {
+                            PlatformError::Unavailable(format!("network resource {path}: {e}"))
+                        })?;
+                        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+                            return Err(PlatformError::Unavailable(format!(
+                                "network resource {path} must be root-owned and not writable by other users"
+                            )));
+                        }
+                    }
+                }
+            }
             _ => {
                 return Err(PlatformError::Unavailable(
                     "package must configure both network helper and polkit policy".into(),
                 ));
             }
         }
-        if Self::running_as_root() {
-            // Nothing to install: the helper is only ever reached through polkit, and root does
-            // not go through polkit.
-            debug!("running as root; the polkit helper is not needed");
-            return Ok(());
-        }
-
-        let helper_ok = std::fs::read_to_string(HELPER_PATH).is_ok_and(|c| c == HELPER_CONTENT);
-        let policy_ok = std::fs::read_to_string(POLICY_PATH).is_ok_and(|c| c == POLICY_CONTENT);
-
-        if helper_ok && policy_ok {
-            debug!("Polkit policy and helper already installed");
-            return Ok(());
-        }
-
-        info!("Installing polkit policy and network helper...");
-
-        // Write embedded files to temp files with random names (prevents TOCTOU attacks)
-        let tmp_helper = tempfile::Builder::new()
-            .prefix("floppa-helper-")
-            .tempfile()
-            .map_err(|e| PlatformError::Failed(format!("failed to create temp helper: {e}")))?;
-        let tmp_policy = tempfile::Builder::new()
-            .prefix("floppa-policy-")
-            .tempfile()
-            .map_err(|e| PlatformError::Failed(format!("failed to create temp policy: {e}")))?;
-
-        std::fs::write(tmp_helper.path(), HELPER_CONTENT)
-            .map_err(|e| PlatformError::Failed(format!("failed to write temp helper: {e}")))?;
-        std::fs::write(tmp_policy.path(), POLICY_CONTENT)
-            .map_err(|e| PlatformError::Failed(format!("failed to write temp policy: {e}")))?;
-
-        // Single pkexec call to install both files
-        let script = format!(
-            "mkdir -p /usr/lib/floppa-vpn && \
-             install -m 755 {} {} && \
-             install -m 644 {} {}",
-            tmp_helper.path().display(),
-            HELPER_PATH,
-            tmp_policy.path().display(),
-            POLICY_PATH,
-        );
-
-        let output = Command::new("pkexec")
-            .args(["sh", "-c", &script])
+        let output = std::process::Command::new(Self::helper_path())
+            .arg("protocol-version")
             .output()
-            .map_err(|e| PlatformError::Unavailable(format!("failed to run pkexec: {e}")))?;
-
-        // tmp_helper and tmp_policy are automatically cleaned up on drop
-
-        if output.status.success() {
-            info!("Polkit policy and helper installed successfully");
-            return Ok(());
+            .map_err(|e| PlatformError::Unavailable(format!(
+                "Rust network helper is unavailable: {e}; install the matching floppa-network-helper package or run its install command as root"
+            )))?;
+        if !output.status.success() || output.stdout != b"2\n" {
+            return Err(PlatformError::Unavailable(
+                "network helper protocol mismatch; install the matching Rust floppa-network-helper"
+                    .into(),
+            ));
         }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        // Same codes as `run_helper`: 126 is a declined or dismissed dialog, 127 is pkexec itself
-        // being unusable. Reported apart because "you said no" is not "your system is broken".
-        Err(match output.status.code() {
-            Some(126) => PlatformError::PermissionDenied(if stderr.is_empty() {
-                "authorisation declined".to_string()
-            } else {
-                stderr
-            }),
-            _ => PlatformError::Unavailable(format!("pkexec install failed: {stderr}")),
-        })
+        Ok(())
     }
 
     /// Run the network helper, through polkit or directly.
@@ -198,8 +149,8 @@ impl LinuxPlatform {
     /// active desktop sessions. Runs on tokio's process reactor rather than blocking a worker
     /// thread, so a slow pkexec stalls only this call; `timeout` bounds the wait for undo paths.
     ///
-    /// Packaged root processes execute the build-time helper path directly. Portable root
-    /// processes use a temporary copy of the embedded script, without installing into `/usr/lib`.
+    /// Packaged processes use the build-time path. Portable root bundles use a sibling
+    /// binary; desktop clients use the administrator-installed polkit target.
     async fn run_helper(
         &self,
         args: &[&str],
@@ -207,23 +158,14 @@ impl LinuxPlatform {
     ) -> Result<(), PlatformError> {
         debug!("Running helper: {:?}", args);
 
-        // Held for the whole call: dropping it removes the script, and the command is still
-        // running.
         let root = Self::running_as_root();
-        let root_helper = if root && PACKAGED_HELPER.is_none() {
-            Some(Self::helper_script()?)
+        let helper = Self::helper_path();
+        let mut command = if root {
+            tokio::process::Command::new(&helper)
         } else {
-            None
-        };
-
-        let mut command = match &root_helper {
-            Some(path) => tokio::process::Command::new(path.as_os_str()),
-            None if root => tokio::process::Command::new(PACKAGED_HELPER.unwrap_or(HELPER_PATH)),
-            None => {
-                let mut c = tokio::process::Command::new("pkexec");
-                c.arg(PACKAGED_HELPER.unwrap_or(HELPER_PATH));
-                c
-            }
+            let mut command = tokio::process::Command::new("pkexec");
+            command.arg(&helper);
+            command
         };
         command.args(args).kill_on_drop(true);
         let spawned = command.output();
@@ -363,17 +305,7 @@ impl Platform for LinuxPlatform {
         }
     }
 
-    /// Install the privileged helper if it is missing or outdated, and report whether it is usable.
-    ///
-    /// Deliberately here and not in the constructor. Installing runs `pkexec`, which raises an
-    /// authentication dialog — and the constructor runs during app startup, on the thread that has
-    /// not built the window yet, so a machine needing the helper sat on a password prompt with
-    /// nothing on screen to explain it. This is the first step of an attempt, which is exactly when
-    /// the user has asked for something that needs the privilege.
-    ///
-    /// Re-checked per attempt rather than remembered: when nothing needs installing this is two
-    /// file reads, and when the user dismisses the dialog, pressing Connect again asks again
-    /// instead of failing from a decision cached at startup.
+    /// Verify the packaged helper and protocol before any privileged mutation.
     async fn preflight(&self) -> Result<(), PlatformError> {
         crate::socket_mark::preflight()
             .map_err(|e| PlatformError::PermissionDenied(e.to_string()))?;
@@ -383,7 +315,10 @@ impl Platform for LinuxPlatform {
             .await?;
         self.run_helper(&["check-policy"], None)
             .await
-            .map_err(|e| PlatformError::Unavailable(e.to_string()))
+            .map_err(|error| match error {
+                PlatformError::Failed(detail) => PlatformError::Unavailable(detail),
+                other => other,
+            })
     }
 
     async fn prepare_link(&self, iface: &InterfaceName) -> Result<(), PlatformError> {

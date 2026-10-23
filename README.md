@@ -149,7 +149,7 @@ graph LR
         Commands["Tauri Commands"]
         Backend["InProcessBackend"]
         Tunnel["gotatun tunnel<br/>(Mullvad WireGuard)"]
-        Platform["Platform trait<br/>Linux: pkexec + helper script<br/>Windows: netsh"]
+        Platform["Platform trait<br/>Linux: pkexec + Rust helper<br/>Windows: netsh"]
     end
 
     WebView -- "tauri-specta" --> Commands
@@ -159,7 +159,7 @@ graph LR
     Platform -- "routes, DNS,<br/>TUN device" --> OS["OS Network Stack"]
 ```
 
-Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a polkit helper script for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI); a 0600 file in the config directory is the fallback while the keyring is unavailable, and whichever copy was written last wins (the file is migrated into the keyring and removed once it is usable again). Graceful cleanup on exit restores DNS and routes.
+Single-process: gotatun runs the WireGuard tunnel in-process. The `Platform` trait handles OS-specific network setup — Linux uses a separate Rust polkit helper for privilege escalation, Windows uses `netsh`. Config is persisted in the OS keyring (secret-service / DPAPI); a 0600 file in the config directory is the fallback while the keyring is unavailable, and whichever copy was written last wins (the file is migrated into the keyring and removed once it is usable again). Graceful cleanup on exit restores DNS and routes.
 
 On Linux there is a second, preferred arrangement: **`floppa service`**, a root systemd service that
 holds the actor in a process outliving every client, so the tunnel survives closing the app. Clients

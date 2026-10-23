@@ -29,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
           gui = f.checks.x86_64-linux.gui.drvPath;
           guiDeps = f.checks.x86_64-linux.gui.cargoArtifacts.drvPath;
           bunDeps = f.checks.x86_64-linux.gui.frontend.bunDependencies.drvPath;
+          helper = f.packages.x86_64-linux.cli.resources.drvPath;
         }''' % json.dumps(f'path:{source}')
         return json.loads(subprocess.check_output(
             ['nix', 'eval', '--json', '--impure', '--expr', expression], text=True))
@@ -49,6 +50,16 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
     for key in ('cli', 'gui'):
         assert changed[key] != baseline[key], (key, 'core edit must rebuild client')
     core.write_text(original)
+
+    helper = source / 'floppa-network-helper/src/main.rs'
+    original = helper.read_text()
+    helper.write_text(original + '\n// Helper source cache probe.\n')
+    changed = evaluate()
+    for key in ('cliDeps', 'guiDeps', 'bunDeps'):
+        assert changed[key] == baseline[key], (key, 'helper edit invalidates dependencies')
+    for key in ('helper', 'cli', 'gui'):
+        assert changed[key] != baseline[key], (key, 'helper edit must update packaged executable path')
+    helper.write_text(original)
 
     manifest = source / 'floppa-client/src-tauri/Cargo.toml'
     lock = source / 'floppa-client/src-tauri/Cargo.lock'

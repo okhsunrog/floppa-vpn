@@ -93,9 +93,8 @@ impl<'de> Deserialize<'de> for Preference {
 #[error("invalid interface name `{0}` (expected floppa<N>)")]
 pub struct InvalidInterfaceName(pub String);
 
-/// Validated against the privileged helper's own `^floppa[0-9]+$` check
-/// (`resources/linux/floppa-network-helper`), so a name the helper would refuse cannot be
-/// constructed here.
+/// Matches the Rust helper allowlist in `floppa-network-helper/src/validate.rs`:
+/// floppa followed by digits, within Linux's 15-byte interface-name limit.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct InterfaceName(String);
 
@@ -104,9 +103,9 @@ impl InterfaceName {
 
     pub fn new(s: impl Into<String>) -> Result<Self, InvalidInterfaceName> {
         let s = s.into();
-        let ok = s
-            .strip_prefix("floppa")
-            .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()));
+        let ok = s.len() <= 15
+            && s.strip_prefix("floppa")
+                .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()));
         if ok {
             Ok(Self(s))
         } else {
@@ -181,6 +180,9 @@ mod tests {
         assert!(InterfaceName::new("floppa0x").is_err());
         assert!(InterfaceName::new("wg0").is_err());
         assert!(InterfaceName::new("../floppa0").is_err());
+        assert!(InterfaceName::new("floppa123456789").is_ok());
+        assert!(InterfaceName::new("floppa1234567890").is_err());
+        assert!(InterfaceName::new("floppa12345678901").is_err());
     }
 
     #[test]

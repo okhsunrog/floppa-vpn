@@ -132,6 +132,8 @@
         files: {
           "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
           "/usr/bin/floppa": "../../target/release/floppa",
+          "/usr/lib/floppa-vpn/floppa-network-helper": "../../target/release/floppa-network-helper",
+          "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy": "../../floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy",
           "/usr/lib/systemd/system/floppa-vpn.socket": "../../floppa/resources/systemd/floppa-vpn.socket",
           "/usr/lib/systemd/system/floppa-vpn.service": "../../floppa/resources/systemd/floppa-vpn.service",
           "/usr/lib/systemd/system/floppa-vpn-autostart.service": "../../floppa/resources/systemd/floppa-vpn-autostart.service",
@@ -146,6 +148,8 @@
         files: {
           "/usr/share/applications/floppa-client.desktop": "linux/floppa-client.desktop",
           "/usr/bin/floppa": "../../target/release/floppa",
+          "/usr/lib/floppa-vpn/floppa-network-helper": "../../target/release/floppa-network-helper",
+          "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy": "../../floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy",
           "/usr/lib/systemd/system/floppa-vpn.socket": "../../floppa/resources/systemd/floppa-vpn.socket",
           "/usr/lib/systemd/system/floppa-vpn.service": "../../floppa/resources/systemd/floppa-vpn.service",
           "/usr/lib/systemd/system/floppa-vpn-autostart.service": "../../floppa/resources/systemd/floppa-vpn-autostart.service",

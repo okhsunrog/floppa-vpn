@@ -40,10 +40,12 @@ the `floppa` group. Socket marking remains mandatory. The store is immutable:
 there is no `setcap` or privileged first-run installation into `/usr`.
 The packaging contract uses compile-time `FLOPPA_PACKAGED_HELPER` and
 `FLOPPA_PACKAGED_POLICY` paths. Both must be provided together. Packaged clients
-validate the installed resources and report missing files instead of invoking
-the portable installer. Root executes the store helper directly; unprivileged
-standalone uses pkexec. Runtime environment variables cannot select privileged
+validate the installed resources and helper protocol before use. Root executes the
+store helper directly; unprivileged standalone uses pkexec. Runtime environment variables cannot select privileged
 executables. No Rust source substitution or embedded-resource rewriting is used.
+The helper is a separate Crane-built Rust executable. Its compile-time tool path
+contains only iproute2, nftables and systemd; Bash, grep and coreutils are not
+runtime dependencies of the helper. Its build dependencies are cached separately.
 
 Persistent service configuration, session and connection intent live in
 `/var/lib/floppa-vpn`, owned by root (directory mode 0700). Client preferences

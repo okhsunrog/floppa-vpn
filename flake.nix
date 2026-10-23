@@ -34,7 +34,11 @@
             manifests = manifestSrc;
             code = sources.${kind + "Code"};
           };
-          resourceSrc = sources.resources;
+          resourceSrc = import ./nix/rust-source.nix {
+            inherit pkgs craneLib;
+            manifests = sources.cliManifests;
+            code = sources.resources;
+          };
           inherit version;
         };
     in

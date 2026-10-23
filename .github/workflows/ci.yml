@@ -149,6 +149,30 @@ jobs:
           git diff --exit-code -- floppa-web-shared/openapi.json floppa-web-shared/src/client/ \
             || (echo "::error::OpenAPI client is stale. Run 'just openapi' and commit the changes." && exit 1)
 
+  linux-network-helper:
+    name: Linux helper recovery and migration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v10.3.0
+      - name: Install isolated network test tools
+        run: sudo apt-get update && sudo apt-get install -y iproute2 nftables util-linux
+      - name: Check helper and build namespace-only fault test binary
+        run: |
+          cargo test --locked -p floppa-network-helper
+          cargo clippy --locked -p floppa-network-helper --all-targets --all-features -- -D warnings
+          cargo build --locked -p floppa-network-helper --features test-hooks
+      - name: Exercise real kernel operations, crash recovery and legacy upgrade
+        run: |
+          for test in linux-shared-recovery linux-policy-routing linux-helper-faults; do
+            sudo unshare --mount --net env FLOPPA_TEST_PATH="$PATH" "$(command -v uv)" run --no-project python "scripts/tests/$test.py"
+          done
+          cargo test --locked -p floppa-tunnel-config --test exclusions -- --include-ignored
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest

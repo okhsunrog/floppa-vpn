@@ -49,7 +49,12 @@ fn linux_network_handover() {
         &[net("194.186.63.0/24")],
     );
     let result = std::process::Command::new("sudo")
-        .args(["-n", "unshare", "--net", "bash"])
+        .args(["-n", "unshare", "--mount", "--net", "env"])
+        .arg(format!(
+            "FLOPPA_TEST_PATH={}",
+            std::env::var("PATH").unwrap()
+        ))
+        .arg("bash")
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../tests/routing/exclusions.sh"

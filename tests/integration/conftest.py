@@ -255,6 +255,7 @@ def gotatun_container(docker_image, wg_config_path, tunnel_binary, server_ip):
     try:
         # Copy binary and config into container
         docker_cp(tunnel_binary, name, "/test/floppa")
+        docker_cp(str(Path(tunnel_binary).with_name("floppa-network-helper")), name, "/test/floppa-network-helper")
         docker_exec(name, ["chmod", "+x", "/test/floppa"])
         docker_cp(wg_config_path, name, "/test/wg0.conf")
 

@@ -141,3 +141,16 @@ pub struct MyEvent { pub message: String }
 - Before publishing an Android release, install the signed APK on a device and verify
   cold start, connect, disconnect, and restart with logcat recording. Cross-compilation
   and Clippy alone do not validate Android runtime support.
+
+## Linux network helper
+
+`floppa-network-helper` is a separate Rust workspace binary. Native Linux bundles
+must first build `cargo build --release --locked -p floppa -p floppa-network-helper`;
+the deb/rpm file maps install the helper and polkit policy. Nix builds it separately
+with a fixed tool search path. Never restore an embedded Bash helper fallback.
+For standalone GUI source development, install the helper explicitly with
+`sudo target/debug/floppa-network-helper install` after building it without test
+features. Root CLI source runs can use a helper beside the CLI executable.
+`test-hooks` binaries are exclusively for private mount/network namespace tests;
+never install or package them. See the Linux recovery section in
+`docs/CONNECTION-ARCHITECTURE.md` before changing privileged operations.

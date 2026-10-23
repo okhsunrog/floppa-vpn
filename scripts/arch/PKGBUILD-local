@@ -58,7 +58,7 @@ build() {
   # The tunnel service: a separate crate that `tauri build` does not build, picked up from
   # `target/release` by the bundler's file map (see `bundle.linux.deb.files`).
   cd "${_repodir}"
-  cargo build --release --locked -p floppa
+  cargo build --release --locked -p floppa -p floppa-network-helper
 
   cd "${_repodir}/floppa-client"
 

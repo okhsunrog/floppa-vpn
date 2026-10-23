@@ -2,12 +2,13 @@
   lib,
   pkgs,
   resourceSrc,
+  craneLib,
   version,
 }:
 let
   resources = pkgs.callPackage ./resources.nix {
     src = resourceSrc;
-    inherit version;
+    inherit version craneLib;
   };
 in
 {

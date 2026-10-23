@@ -407,7 +407,7 @@ test-speed-limit:
 
 # Build the floppa command-line client
 build-cli:
-    cargo build --release -p floppa
+    cargo build --release -p floppa -p floppa-network-helper
 
 # Build floppa-vless binary in release mode
 build-vless:

@@ -50,6 +50,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test -x ${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper")
     machine.succeed("systemctl stop floppa-vpn.socket floppa-vpn.service")
     machine.succeed("su - alice -c '/run/wrappers/bin/floppa status' 2>&1 | grep -i standalone")
+    # Reproduce an upgrade from the old Bash helper: seven duplicate rules and
+    # no policy journal. The real client preflight must recover this automatically.
+    legacy_policy = "add table inet floppa_policy\\nadd chain inet floppa_policy prerouting { type filter hook prerouting priority mangle; policy accept; }\\nadd rule inet floppa_policy prerouting ct mark 0x666c6f70 meta mark set ct mark\\nadd chain inet floppa_policy postrouting { type filter hook postrouting priority mangle; policy accept; }\\nadd rule inet floppa_policy postrouting meta mark 0x666c6f70 ct mark set meta mark\\n"
+    machine.succeed("printf '" + legacy_policy * 7 + "' | ${pkgs.nftables}/bin/nft -f -")
+    machine.fail("test -e /var/lib/floppa-vpn/network-rollback-v1/policy")
     # Exercise the real standalone helper and external UDP socket. No provider,
     # enrollment, internet endpoint or production credentials are involved.
     machine.succeed("su - alice -c '/run/wrappers/bin/floppa connect --config /etc/floppa-test.conf --interface floppa0 --no-dns' > /tmp/standalone.log 2>&1 &")

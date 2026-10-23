@@ -23,6 +23,7 @@ let
       lib
       pkgs
       resourceSrc
+      craneLib
       version
       ;
   };

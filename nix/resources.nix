@@ -1,39 +1,43 @@
 {
-  stdenvNoCC,
   lib,
-  bash,
-  coreutils,
-  gnugrep,
+  craneLib,
   iproute2,
   nftables,
-  util-linux,
-  procps,
   systemd,
   src,
   version,
 }:
 let
-  runtimePath = lib.makeBinPath [
-    coreutils
-    gnugrep
-    iproute2
-    nftables
-    util-linux
-    procps
-    systemd
-  ];
+  args = {
+    pname = "floppa-network-resources";
+    inherit src version;
+    strictDeps = true;
+    cargoExtraArgs = "--locked -p floppa-network-helper";
+    cargoVendorDir = import ./vendor.nix {
+      inherit craneLib;
+      cargoLock = "${src}/Cargo.lock";
+    };
+    env.FLOPPA_HELPER_PATH = lib.makeBinPath [
+      iproute2
+      nftables
+      systemd
+    ];
+  };
+  cargoArtifacts = craneLib.buildDepsOnly (args // { version = "0"; });
 in
-stdenvNoCC.mkDerivation {
-  pname = "floppa-network-resources";
-  inherit src version;
-  dontBuild = true;
-  installPhase = ''
-    helper="$out/lib/floppa-vpn/floppa-network-helper"
-    policy="$out/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy"
-    install -Dm755 floppa-vpn-core/resources/linux/floppa-network-helper "$helper"
-    substituteInPlace "$helper" --replace-fail '#!/bin/bash' '#!${bash}/bin/bash'
-    sed -i '2i export PATH="${runtimePath}"' "$helper"
-    install -Dm644 floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy "$policy"
-    substituteInPlace "$policy" --replace-fail /usr/lib/floppa-vpn/floppa-network-helper "$helper"
-  '';
-}
+craneLib.buildPackage (
+  args
+  // {
+    inherit cargoArtifacts;
+    passthru = { inherit cargoArtifacts; };
+    postInstall = ''
+      helper="$out/lib/floppa-vpn/floppa-network-helper"
+      policy="$out/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.policy"
+      install -Dm755 "$out/bin/floppa-network-helper" "$helper"
+      rm "$out/bin/floppa-network-helper"
+      rmdir "$out/bin"
+      install -Dm644 floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy "$policy"
+      substituteInPlace "$policy" --replace-fail /usr/lib/floppa-vpn/floppa-network-helper "$helper"
+    '';
+  }
+)

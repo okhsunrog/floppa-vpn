@@ -82,8 +82,11 @@ in
     "floppa-client/src-tauri/Cargo.toml"
     "floppa-client/src-tauri/tauri.conf.json5"
   ];
-  resources = select [
-    "floppa-vpn-core/resources/linux/floppa-network-helper"
-    "floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy"
-  ];
+  resources = select (
+    manifests
+    ++ [
+      "floppa-network-helper"
+      "floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy"
+    ]
+  );
 }

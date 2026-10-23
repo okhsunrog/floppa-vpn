@@ -1570,6 +1570,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "floppa-network-helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "floppa-provision"
 version = "0.1.0"
 dependencies = [
@@ -1988,7 +2000,7 @@ dependencies = [
  "tracing",
  "tun",
  "typed-builder",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
  "wintun-bindings",
  "x25519-dalek 2.0.1",
  "zerocopy",
@@ -2866,9 +2878,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.189"
+version = "0.2.191"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libdbus-sys"

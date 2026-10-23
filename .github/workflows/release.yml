@@ -144,7 +144,7 @@ jobs:
       # straight off this path. Building it after the bundle would produce a package without the
       # service in it, and nothing would say so.
       - name: Build the tunnel service
-        run: cargo build --release --locked -p floppa
+        run: cargo build --release --locked -p floppa -p floppa-network-helper
 
       - name: Build Linux client
         env:
