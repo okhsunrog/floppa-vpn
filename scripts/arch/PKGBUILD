@@ -2,7 +2,7 @@
 
 pkgname=floppa-vpn
 pkgver=0.6.7
-pkgrel=1
+pkgrel=2
 pkgdesc='Floppa VPN desktop client (AmneziaWG, WireGuard, VLESS+REALITY) built with Tauri'
 arch=('x86_64')
 url='https://github.com/okhsunrog/floppa-vpn'
@@ -18,6 +18,7 @@ options=(!lto !debug)
 depends=(
   'cairo'
   'desktop-file-utils'
+  'xdg-utils'
   'gdk-pixbuf2'
   'glib2'
   'gtk3'
@@ -27,6 +28,7 @@ depends=(
   'webkit2gtk-4.1'
   'libappindicator-gtk3'
   'libcap'
+  'polkit'
   'iproute2'
   'util-linux'
   'coreutils'
@@ -51,12 +53,19 @@ build() {
   # The tunnel service. A separate crate, so `tauri build` does not build it, and the bundler's
   # file map picks it up from here — see `bundle.linux.deb.files` in tauri.conf.json5.
   cd "${srcdir}/floppa-vpn-${pkgver}"
-  cargo build --release --locked -p floppa -p floppa-network-helper
+  # Published tags before the Rust helper (including v0.6.7) only have the CLI.
+  # The next release builds both; its Tauri file map requires the helper binary.
+  local -a rust_packages=(-p floppa)
+  if [[ -f floppa-network-helper/Cargo.toml ]]; then
+    rust_packages+=(-p floppa-network-helper)
+  fi
+  cargo build --release --locked "${rust_packages[@]}"
 
-  cd "${srcdir}/floppa-vpn-${pkgver}/floppa-client"
-
+  # Bun bootstraps the project-local Vite+ from bun.lock. No global vp is required.
   bun install --frozen-lockfile
-  bun tauri build --bundles deb --ci
+  export PATH="$PWD/node_modules/.bin:$PATH"
+  cd floppa-client
+  vp exec tauri build --bundles deb --ci
 }
 
 package() {

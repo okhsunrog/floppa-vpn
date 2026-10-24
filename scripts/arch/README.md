@@ -31,6 +31,23 @@ cd scripts/arch
 makepkg -p PKGBUILD-local -si
 ```
 
+All recipes bootstrap the lockfile-pinned project-local Vite+ with
+`bun install --frozen-lockfile`, then put the workspace's `node_modules/.bin`
+on `PATH` for `vp exec tauri build` and Tauri's build hooks. The declared Bun and
+Node.js build dependencies are sufficient; no global Vite+ installation or AUR
+Vite+ package is needed.
+
+The release recipe still downloads the published tag selected by `pkgver`.
+Until the next release, use the git or local recipe to include the new Rust
+network helper and recovery fixes. The release recipe supports the existing
+`v0.6.7` sources without that crate and builds it when present in newer tags.
+When preparing the next release, update `pkgver` and reset `pkgrel` to `1`.
+
+`polkit` supplies `pkexec` for standalone networking, and `desktop-file-utils`
+and `xdg-utils` supply `update-desktop-database` and `xdg-mime` for registering
+`floppa://` links. All three are runtime dependencies, even on desktops that
+already provide them indirectly.
+
 `floppa-vpn.install` applies `CAP_NET_ADMIN` to `/usr/bin/floppa-client` and
 `/usr/bin/floppa` after install/upgrade. Package archives do not preserve these
 file capabilities, so the install hook assigns them to the installed files.

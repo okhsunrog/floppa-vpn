@@ -20,6 +20,7 @@ conflicts=('floppa-vpn')
 depends=(
   'cairo'
   'desktop-file-utils'
+  'xdg-utils'
   'gdk-pixbuf2'
   'glib2'
   'gtk3'
@@ -29,6 +30,7 @@ depends=(
   'webkit2gtk-4.1'
   'libappindicator-gtk3'
   'libcap'
+  'polkit'
   'iproute2'
   'util-linux'
   'coreutils'
@@ -60,10 +62,11 @@ build() {
   cd "${_repodir}"
   cargo build --release --locked -p floppa -p floppa-network-helper
 
-  cd "${_repodir}/floppa-client"
-
-  vp install --frozen-lockfile
-  vpx tauri build --bundles deb --ci
+  # Bun bootstraps the project-local Vite+ from bun.lock. No global vp is required.
+  bun install --frozen-lockfile
+  export PATH="$PWD/node_modules/.bin:$PATH"
+  cd floppa-client
+  vp exec tauri build --bundles deb --ci
 }
 
 package() {

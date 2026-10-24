@@ -230,8 +230,9 @@ jobs:
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed \
             base-devel rust nodejs openssl appmenu-gtk-module librsvg unzip \
-            cairo desktop-file-utils gdk-pixbuf2 glib2 gtk3 hicolor-icon-theme \
-            libsoup3 pango webkit2gtk-4.1 libappindicator-gtk3 libcap
+            cairo desktop-file-utils xdg-utils gdk-pixbuf2 glib2 gtk3 hicolor-icon-theme \
+            libsoup3 pango webkit2gtk-4.1 libappindicator-gtk3 libcap \
+            polkit iproute2 util-linux coreutils nftables procps-ng
           export BUN_INSTALL=/usr/local
           curl -fsSL https://bun.sh/install | bash
 
@@ -251,6 +252,20 @@ jobs:
           chown -R builder:builder .
           cd scripts/arch
           su builder -c "VITE_API_URL='${VITE_API_URL}' makepkg -d --noconfirm"
+
+      - name: Verify packaged network helper and runtime dependencies
+        run: |
+          package=$(find scripts/arch -maxdepth 1 -name 'floppa-vpn-*.pkg.tar.zst' -print -quit)
+          test -n "$package"
+          bsdtar -tf "$package" > "$RUNNER_TEMP/floppa-package-files"
+          grep -Fx 'usr/bin/floppa-client' "$RUNNER_TEMP/floppa-package-files"
+          grep -Fx 'usr/bin/floppa' "$RUNNER_TEMP/floppa-package-files"
+          grep -Fx 'usr/lib/floppa-vpn/floppa-network-helper-v2' "$RUNNER_TEMP/floppa-package-files"
+          grep -Fx 'usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy' "$RUNNER_TEMP/floppa-package-files"
+          bsdtar -xOf "$package" .PKGINFO > "$RUNNER_TEMP/floppa-package-info"
+          grep -Fx 'depend = polkit' "$RUNNER_TEMP/floppa-package-info"
+          grep -Fx 'depend = desktop-file-utils' "$RUNNER_TEMP/floppa-package-info"
+          grep -Fx 'depend = xdg-utils' "$RUNNER_TEMP/floppa-package-info"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v7
