@@ -72,6 +72,41 @@ h('recover-network')
 h('check-policy')
 assert mark_path.read_text() == mark  # No guessed sysctl without a snapshot.
 
+# A journal token still identifies our table after rules/chains have disappeared.
+for removal in ('flush table inet floppa_policy',
+                'flush table inet floppa_policy\ndelete chain inet floppa_policy prerouting\ndelete chain inet floppa_policy postrouting'):
+    h('add-policy', '1', '1')
+    nft(removal)
+    clean()
+    assert mark_path.read_text() == mark
+
+# Missing content is acceptable with the journal token; foreign content is not.
+h('add-policy', '1', '1')
+nft('add chain inet floppa_policy foreign')
+before = run(real_nft, '-j', 'list', 'table', 'inet', 'floppa_policy').stdout
+assert h('recover-policy', check=False).returncode != 0
+assert run(real_nft, '-j', 'list', 'table', 'inet', 'floppa_policy').stdout == before
+assert not any(r['priority'] in (31000, 31010) for f in ('-4', '-6')
+               for r in json.loads(ip('-j', f, 'rule', 'show')))
+assert mark_path.read_text() == mark
+assert (state / 'policy').exists()
+nft('delete chain inet floppa_policy foreign')
+clean()
+
+# An ambiguous collision in IPv4 cannot block cleanup of IPv6 or our nft table.
+h('add-policy', '1', '1')
+ip('rule', 'add', 'priority', '31010', 'lookup', 'main')
+before = ip('-j', '-4', 'rule', 'show')
+assert h('recover-policy', check=False).returncode != 0
+assert ip('-j', '-4', 'rule', 'show') == before
+assert not any(r['priority'] in (31000, 31010)
+               for r in json.loads(ip('-j', '-6', 'rule', 'show')))
+assert run(real_nft, 'list', 'table', 'inet', 'floppa_policy', check=False).returncode != 0
+assert mark_path.read_text().strip() == '1'  # IPv4 policy still needs this setting.
+ip('rule', 'del', 'priority', '31010', 'lookup', 'main')
+clean()
+assert mark_path.read_text() == mark
+
 # Only a complete, unmarked, known legacy layout can be adopted without a journal.
 for extra in ('add rule inet floppa_policy prerouting accept\n',
               'add chain inet floppa_policy foreign\n'):
@@ -85,6 +120,10 @@ ip('rule', 'add', 'priority', '31010', 'lookup', 'main')
 assert h('recover-network', check=False).returncode != 0
 ip('rule', 'del', 'priority', '31010')
 h('recover-network')
+nft(legacy)
+nft('flush table inet floppa_policy')
+assert h('recover-network', check=False).returncode != 0  # No token/record: no partial adoption.
+nft('delete table inet floppa_policy')
 
 # Real old NUL-separated policy/routes/link records remain recoverable.
 ip('tuntap', 'add', 'dev', 'floppa0', 'mode', 'tun', 'user', '1000')
@@ -163,11 +202,13 @@ clean()
 # A foreign route added to the reserved table is preserved and remains actionable.
 h('ensure-tun', 'floppa0', '1000')
 h('configure', 'floppa0', '10.0.0.2/32')
-h('add-routes', 'floppa0', '10.50.0.0/16')
+h('add-routes', 'floppa0', '10.50.0.0/16', '::/1')
 ip('route', 'add', '10.60.0.0/16', 'dev', 'floppa0', 'table', '1718382448')
 assert h('recover-routes', check=False).returncode != 0
 assert (state / 'routes').exists()
 assert '10.60.0.0/16' in ip('route', 'show', 'table', '1718382448')
+assert not any(str(r.get('table')) == '1718382448'
+               for r in json.loads(ip('-j', '-N', '-6', 'route', 'show', 'table', 'all')))
 ip('route', 'del', '10.60.0.0/16', 'dev', 'floppa0', 'table', '1718382448')
 clean()
 
@@ -188,6 +229,17 @@ assert (state / 'policy').exists()
 nft('delete table inet floppa_policy')
 clean()
 
+# A vanished link needs no deletion, even if an unrelated DNS record is damaged.
+h('ensure-tun', 'floppa0', '1000')
+ip('tuntap', 'del', 'dev', 'floppa0', 'mode', 'tun')
+(state / 'dns').write_text('truncated')
+(state / 'dns').chmod(0o600)
+h('recover-link')
+assert not (state / 'link').exists()
+assert (state / 'dns').read_text() == 'truncated'
+(state / 'dns').unlink()
+clean()
+
 # Missing utilities / bad JSON are failures, never an empty ruleset. No grep dependency.
 bin_dir = Path('/etc/test-bin')
 bin_dir.mkdir()
@@ -205,6 +257,23 @@ assert h('recover-policy', check=False).returncode != 0
 assert (state / 'policy').read_bytes() == saved
 (bin_dir / 'nft').unlink()
 (bin_dir / 'nft').symlink_to(real_nft)
+clean()
+
+# A transient command failure recovers automatically in the same preflight invocation.
+(bin_dir / 'nft').unlink()
+(bin_dir / 'nft').symlink_to(real_nft)
+h('add-policy', '1', '0')
+(bin_dir / 'nft').unlink()
+(bin_dir / 'nft').write_text(f'''#!{bash}
+if [[ ! -e /etc/nft-failed-once ]]; then
+  : > /etc/nft-failed-once
+  exit 1
+fi
+exec {real_nft} "$@"
+''')
+(bin_dir / 'nft').chmod(0o755)
+result = h('recover-network')
+assert 'Retrying incomplete network recovery' in result.stderr
 clean()
 
 # SIGKILL of the parent must not release the journal lock while nft is still applying.

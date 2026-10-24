@@ -14,6 +14,9 @@ fn expr(pre: bool) -> Value {
 /// Full structural match, not a name/prefix check. Ignore only nft object handles.
 /// Legacy duplicates are accepted, but extra expressions, chains, sets and comments are not.
 pub fn table_identity(value: &Value) -> Result<Option<String>> {
+    validate_table(value, true)
+}
+fn validate_table(value: &Value, require_complete: bool) -> Result<Option<String>> {
     let entries = value["nftables"]
         .as_array()
         .context("missing nftables array")?;
@@ -83,7 +86,7 @@ pub fn table_identity(value: &Value) -> Result<Option<String>> {
         }
     }
     ensure!(
-        table && chains.iter().all(|v| *v) && rules.iter().all(|n| *n > 0),
+        table && (!require_complete || (chains.iter().all(|v| *v) && rules.iter().all(|n| *n > 0))),
         "incomplete Floppa table"
     );
     Ok(comment)
@@ -260,57 +263,80 @@ impl Helper {
         if boot != self.boot {
             return self.journal.clear("policy");
         }
-        // Validate every owned object before undo. A collision never authorizes deletion.
-        let table = self.tables()?;
-        if let Some(table) = &table {
-            let comment = table_identity(table)?;
-            ensure!(
-                comment == token.as_ref().map(|t| format!("floppa-v2:{t}")),
-                "nft table ownership changed; keeping recovery record"
-            );
-        }
+        // Failure in one address family or nft must not strand independent routing state.
+        // Within a family, validate all reserved rules before any deletion: an ambiguous
+        // collision can otherwise make a selector delete a foreign rule at the same priority.
+        let mut errors = Vec::new();
+        let mut ipv4_recovered = !ipv4;
         for (f, enabled) in [("-4", ipv4), ("-6", ipv6)] {
             if enabled {
-                let rules = self.rules(f)?;
-                ensure!(
-                    rules
-                        .iter()
-                        .filter(|r| reserved_rule(r))
-                        .all(|r| owned_rule(r, token.is_none())),
-                    "foreign reserved rule; keeping recovery record"
-                );
-            }
-        }
-        for (f, enabled) in [("-4", ipv4), ("-6", ipv6)] {
-            if enabled {
-                for r in self.rules(f)?.iter().filter(|r| reserved_rule(r)) {
-                    ensure!(
-                        owned_rule(r, token.is_none()),
-                        "routing rule changed during recovery"
-                    );
-                    self.rule_command(f, "del", r["priority"].as_u64().unwrap(), token.is_none())?;
+                match self.recover_rules(f, token.is_none()) {
+                    Ok(()) if f == "-4" => ipv4_recovered = true,
+                    Ok(()) => (),
+                    Err(e) => errors.push(format!("{f} rules: {e:#}")),
                 }
+            }
+        }
+        let table_result = (|| -> Result<()> {
+            if let Some(table) = self.tables()? {
+                // A journal token proves which table was created even if its known rules
+                // have since been flushed. Unknown objects still prohibit deletion. Legacy
+                // tables lack that identity and must retain the complete known layout.
+                let comment = validate_table(&table, token.is_none())?;
                 ensure!(
-                    !self.rules(f)?.iter().any(reserved_rule),
-                    "reserved rules remain"
+                    comment == token.as_ref().map(|t| format!("floppa-v2:{t}")),
+                    "nft table ownership changed; keeping recovery record"
                 );
+                self.delete_table(&table)?;
+            }
+            Ok(())
+        })();
+        if let Err(e) = table_result {
+            errors.push(format!("nft table: {e:#}"));
+        }
+        // Keep the mark setting while IPv4 rules may still rely on it. An unrelated nft
+        // failure need not prevent restoring it once IPv4 policy routing has been undone.
+        if ipv4_recovered && let Some(mark) = old_mark {
+            let result = (|| -> Result<()> {
+                let current =
+                    std::fs::read_to_string("/proc/sys/net/ipv4/conf/all/src_valid_mark")?;
+                if current.trim() == "1" {
+                    std::fs::write(
+                        "/proc/sys/net/ipv4/conf/all/src_valid_mark",
+                        format!("{mark}\n"),
+                    )?;
+                }
+                Ok(())
+            })();
+            if let Err(e) = result {
+                errors.push(format!("src_valid_mark: {e:#}"));
             }
         }
-        if let Some(table) = table {
-            self.delete_table(&table)?;
-        }
-        if let Some(mark) = old_mark {
-            let current = std::fs::read_to_string("/proc/sys/net/ipv4/conf/all/src_valid_mark")?;
-            // A changed value belongs to the administrator; don't overwrite it.
-            if current.trim() == "1" {
-                std::fs::write(
-                    "/proc/sys/net/ipv4/conf/all/src_valid_mark",
-                    format!("{mark}\n"),
-                )?;
-            }
-        }
+        ensure!(
+            errors.is_empty(),
+            "incomplete policy recovery: {}",
+            errors.join("; ")
+        );
         crate::checkpoint("policy-restored");
         self.journal.clear("policy")
+    }
+    fn recover_rules(&self, family: &str, legacy: bool) -> Result<()> {
+        let rules = self.rules(family)?;
+        ensure!(
+            rules
+                .iter()
+                .filter(|r| reserved_rule(r))
+                .all(|r| owned_rule(r, legacy)),
+            "foreign reserved rule; keeping recovery record"
+        );
+        for r in rules.iter().filter(|r| reserved_rule(r)) {
+            self.rule_command(family, "del", r["priority"].as_u64().unwrap(), legacy)?;
+        }
+        ensure!(
+            !self.rules(family)?.iter().any(reserved_rule),
+            "reserved rules remain"
+        );
+        Ok(())
     }
     fn delete_table(&self, table: &Value) -> Result<()> {
         // Delete by kernel handle, never by a name that may have been reused after inspection.

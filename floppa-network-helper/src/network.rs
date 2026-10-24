@@ -78,6 +78,15 @@ impl Helper {
         if boot != self.boot {
             return self.journal.clear("link");
         }
+        let mut present = false;
+        for name in std::iter::once(&iface).chain(temporary.iter()) {
+            present |= self.link(name)?.is_some();
+        }
+        if !present {
+            // There is nothing left to delete. Broken DNS/routing recovery should not
+            // preserve a stale link record that no longer has any kernel object behind it.
+            return self.journal.clear("link");
+        }
         // Do not remove a link still needed for retrying per-link DNS or route recovery.
         ensure!(
             self.journal.load("dns")?.is_none()
@@ -163,73 +172,91 @@ impl Helper {
         if boot != self.boot {
             return self.journal.clear("routes");
         }
+        let mut errors = Vec::new();
         for f in ["-4", "-6"] {
-            let routes = self.routes(f)?;
-            let routes: Vec<_> = routes.iter().filter(|r| reserved_route(r)).collect();
-            // An empty table needs no live link (it may already have disappeared).
-            if !routes.is_empty() {
-                if let Some(index) = index {
-                    ensure!(self.index(&iface)? == index, "route interface was replaced");
-                }
-                for r in &routes {
-                    ensure!(r["dev"] == iface, "foreign device in reserved route table");
-                    let dest = r["dst"].as_str().context("missing route destination")?;
-                    let dest = if dest == "default" {
-                        if f == "-4" { "0.0.0.0/0" } else { "::/0" }
-                    } else {
-                        dest
-                    };
-                    if let Some(planned) = &destinations {
-                        ensure!(
-                            planned.iter().any(|p| canonical(p) == canonical(dest)),
-                            "unrecorded route in reserved table"
-                        );
-                        ensure!(
-                            r["protocol"] == "186" || r["protocol"] == 186,
-                            "route protocol changed"
-                        );
-                    } else {
-                        ensure!(
-                            r.get("protocol").is_none()
-                                || r["protocol"] == "3"
-                                || r["protocol"] == 3
-                                || r["protocol"] == "boot",
-                            "foreign legacy route protocol"
-                        );
-                    }
-                    ensure!(
-                        r.as_object().context("route object")?.keys().all(|k| [
-                            "dst", "dev", "table", "protocol", "scope", "flags", "pref", "metric"
-                        ]
-                        .contains(&k.as_str())),
-                        "foreign route attributes"
-                    );
-                    ensure!(
-                        r.get("metric").is_none() || (f == "-6" && r["metric"] == 1024),
-                        "route metric changed"
-                    );
-                    ensure!(
-                        r["flags"]
-                            .as_array()
-                            .is_some_and(|f| f.iter().all(|v| v == "linkdown")),
-                        "foreign route flags"
-                    );
-                }
-                for r in routes {
-                    let dest = r["dst"].as_str().unwrap();
-                    let mut args = vec![f, "route", "del", dest, "dev", &iface, "table", TABLE];
-                    if destinations.is_some() {
-                        args.extend(["proto", "186"]);
-                    }
-                    self.cmd.ip(&args)?;
-                }
-                ensure!(
-                    !self.routes(f)?.iter().any(reserved_route),
-                    "reserved routes remain"
-                );
+            if let Err(e) = self.recover_route_family(f, &iface, index, destinations.as_deref()) {
+                errors.push(format!("{f} routes: {e:#}"));
             }
         }
+        ensure!(
+            errors.is_empty(),
+            "incomplete route recovery: {}",
+            errors.join("; ")
+        );
         self.journal.clear("routes")
+    }
+    fn recover_route_family(
+        &self,
+        f: &str,
+        iface: &str,
+        index: Option<u32>,
+        destinations: Option<&[String]>,
+    ) -> Result<()> {
+        let routes = self.routes(f)?;
+        let routes: Vec<_> = routes.iter().filter(|r| reserved_route(r)).collect();
+        // An empty table needs no live link (it may already have disappeared).
+        if !routes.is_empty() {
+            if let Some(index) = index {
+                ensure!(self.index(iface)? == index, "route interface was replaced");
+            }
+            for r in &routes {
+                ensure!(r["dev"] == iface, "foreign device in reserved route table");
+                let dest = r["dst"].as_str().context("missing route destination")?;
+                let dest = if dest == "default" {
+                    if f == "-4" { "0.0.0.0/0" } else { "::/0" }
+                } else {
+                    dest
+                };
+                if let Some(planned) = &destinations {
+                    ensure!(
+                        planned.iter().any(|p| canonical(p) == canonical(dest)),
+                        "unrecorded route in reserved table"
+                    );
+                    ensure!(
+                        r["protocol"] == "186" || r["protocol"] == 186,
+                        "route protocol changed"
+                    );
+                } else {
+                    ensure!(
+                        r.get("protocol").is_none()
+                            || r["protocol"] == "3"
+                            || r["protocol"] == 3
+                            || r["protocol"] == "boot",
+                        "foreign legacy route protocol"
+                    );
+                }
+                ensure!(
+                    r.as_object().context("route object")?.keys().all(|k| [
+                        "dst", "dev", "table", "protocol", "scope", "flags", "pref", "metric"
+                    ]
+                    .contains(&k.as_str())),
+                    "foreign route attributes"
+                );
+                ensure!(
+                    r.get("metric").is_none() || (f == "-6" && r["metric"] == 1024),
+                    "route metric changed"
+                );
+                ensure!(
+                    r["flags"]
+                        .as_array()
+                        .is_some_and(|f| f.iter().all(|v| v == "linkdown")),
+                    "foreign route flags"
+                );
+            }
+            for r in routes {
+                let dest = r["dst"].as_str().unwrap();
+                let mut args = vec![f, "route", "del", dest, "dev", iface, "table", TABLE];
+                if destinations.is_some() {
+                    args.extend(["proto", "186"]);
+                }
+                self.cmd.ip(&args)?;
+            }
+            ensure!(
+                !self.routes(f)?.iter().any(reserved_route),
+                "reserved routes remain"
+            );
+        }
+        Ok(())
     }
     pub fn flush_address(&self, iface: &str, address: &str) -> Result<()> {
         if self.link(iface)?.is_none() {

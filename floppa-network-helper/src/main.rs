@@ -107,27 +107,7 @@ fn run() -> Result<()> {
             "policy" => ctx.recover_policy(),
             "routes" => ctx.recover_routes(),
             "link" => ctx.recover_link(),
-            "network" => {
-                // One failed undo must not strand the unrelated components. Link deletion
-                // waits for its dependencies, and every failed record remains retryable.
-                let mut errors = Vec::new();
-                for (name, result) in [
-                    ("dns", ctx.recover_dns()),
-                    ("policy", ctx.recover_policy()),
-                    ("routes", ctx.recover_routes()),
-                    ("link", ctx.recover_link()),
-                ] {
-                    if let Err(e) = result {
-                        errors.push(format!("{name}: {e:#}"));
-                    }
-                }
-                ensure!(
-                    errors.is_empty(),
-                    "incomplete network recovery: {}",
-                    errors.join("; ")
-                );
-                Ok(())
-            }
+            "network" => ctx.recover_network(),
             _ => unreachable!(),
         },
         Operation::Tun(iface, uid) => ctx.ensure_tun(&iface, uid),
@@ -153,6 +133,34 @@ fn run() -> Result<()> {
             }
         }
         Operation::FileDns(servers) => ctx.set_dns_file(&servers),
+    }
+}
+#[cfg(target_os = "linux")]
+impl Context {
+    fn recover_network(&self) -> Result<()> {
+        for attempt in 0..3 {
+            // One failed undo must not strand the unrelated components. Link deletion
+            // waits for its dependencies, and every failed record remains retryable.
+            let mut errors = Vec::new();
+            for (name, result) in [
+                ("dns", self.recover_dns()),
+                ("policy", self.recover_policy()),
+                ("routes", self.recover_routes()),
+                ("link", self.recover_link()),
+            ] {
+                if let Err(e) = result {
+                    errors.push(format!("{name}: {e:#}"));
+                }
+            }
+            if errors.is_empty() {
+                return Ok(());
+            }
+            let detail = errors.join("; ");
+            ensure!(attempt < 2, "incomplete network recovery: {detail}");
+            eprintln!("Retrying incomplete network recovery: {detail}");
+            std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
+        }
+        unreachable!()
     }
 }
 #[cfg(target_os = "linux")]
