@@ -38,11 +38,15 @@ No additional Nix-specific tunnel owner or configuration format is introduced.
 `/run/wrappers/bin/floppa` and `floppa-client` grant `CAP_NET_ADMIN` to members of
 the `floppa` group. Socket marking remains mandatory. The store is immutable:
 there is no `setcap` or privileged first-run installation into `/usr`.
-The packaging contract uses compile-time `FLOPPA_PACKAGED_HELPER` and
-`FLOPPA_PACKAGED_POLICY` paths. Both must be provided together. Packaged clients
-validate the installed resources and helper protocol before use. Root executes the
-store helper directly; unprivileged standalone uses pkexec. Runtime environment variables cannot select privileged
-executables. No Rust source substitution or embedded-resource rewriting is used.
+The packaging contract compiles only the stable `FLOPPA_PACKAGED_LAYOUT=relative-v2`
+layout. A separate assembly derivation copies the compiled executable and installs
+helper/policy symlinks under its `lib/floppa-vpn`. The client resolves these relative
+to `current_exe`, checks root ownership and protected ancestors of both the symlink
+and canonical paths, and verifies the helper protocol. Root executes the canonical
+store helper directly; unprivileged standalone passes that same path to pkexec.
+Runtime environment variables cannot select privileged executables. Missing or
+unsafe bundled resources produce an error without falling back to another helper.
+No Rust source substitution or embedded-resource rewriting is used.
 The helper is a separate Crane-built Rust executable. Its compile-time tool path
 contains only iproute2, nftables and systemd; Bash, grep and coreutils are not
 runtime dependencies of the helper. Its build dependencies are cached separately.
@@ -67,6 +71,15 @@ versions remain intact in the final build.
 GTK/GApps wrapping runs in a separate derivation after Rust compilation, so its
 additional native inputs cannot invalidate GTK build-script fingerprints from
 the dependency cache.
+
+Both CLI and GUI expose their resource-independent compiled result as `unwrapped`.
+Changing the helper or its polkit policy rebuilds the helper and final package
+assembly, leaving both clients' `unwrapped.drvPath` unchanged: no Rust compilation
+or release/LTO linking is needed for that update. Final packages retain a reference
+to `unwrapped` under `nix-support`, keeping that compiled result alive across GC
+while the package is installed. The first transition to this layout still rebuilds
+the clients once; changes to application code or embedded GUI assets still rebuild
+the affected application.
 
 Rust, frontend and privileged helper inputs are filtered independently. Updating
 web assets does not rebuild the CLI or its dependency cache. The GUI embeds the

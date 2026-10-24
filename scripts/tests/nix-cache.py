@@ -26,8 +26,10 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
         expression = '''let f = builtins.getFlake %s; in {
           cli = f.packages.x86_64-linux.cli.drvPath;
           cliDeps = f.packages.x86_64-linux.cli.cargoArtifacts.drvPath;
+          cliRust = f.packages.x86_64-linux.cli.unwrapped.drvPath;
           gui = f.checks.x86_64-linux.gui.drvPath;
           guiDeps = f.checks.x86_64-linux.gui.cargoArtifacts.drvPath;
+          guiRust = f.checks.x86_64-linux.gui.unwrapped.drvPath;
           bunDeps = f.checks.x86_64-linux.gui.frontend.bunDependencies.drvPath;
           helper = f.packages.x86_64-linux.cli.resources.drvPath;
         }''' % json.dumps(f'path:{source}')
@@ -47,19 +49,23 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
     changed = evaluate()
     for key in ('cliDeps', 'guiDeps', 'bunDeps'):
         assert changed[key] == baseline[key], (key, 'core edit invalidates dependencies')
-    for key in ('cli', 'gui'):
+    for key in ('cli', 'gui', 'cliRust', 'guiRust'):
         assert changed[key] != baseline[key], (key, 'core edit must rebuild client')
     core.write_text(original)
 
-    helper = source / 'floppa-network-helper/src/main.rs'
-    original = helper.read_text()
-    helper.write_text(original + '\n// Helper source cache probe.\n')
-    changed = evaluate()
-    for key in ('cliDeps', 'guiDeps', 'bunDeps'):
-        assert changed[key] == baseline[key], (key, 'helper edit invalidates dependencies')
-    for key in ('helper', 'cli', 'gui'):
-        assert changed[key] != baseline[key], (key, 'helper edit must update packaged executable path')
-    helper.write_text(original)
+    for path, probe in [
+        ('floppa-network-helper/src/main.rs', '\n// Helper source cache probe.\n'),
+        ('floppa-vpn-core/resources/linux/dev.okhsunrog.floppa-vpn.policy', '\n<!-- Policy cache probe. -->\n'),
+    ]:
+        resource = source / path
+        original = resource.read_text()
+        resource.write_text(original + probe)
+        changed = evaluate()
+        for key in ('cliDeps', 'guiDeps', 'bunDeps', 'cliRust', 'guiRust'):
+            assert changed[key] == baseline[key], (path, key, 'resource edit recompiles clients')
+        for key in ('helper', 'cli', 'gui'):
+            assert changed[key] != baseline[key], (path, key, 'resource edit must update assembly')
+        resource.write_text(original)
 
     manifest = source / 'floppa-client/src-tauri/Cargo.toml'
     lock = source / 'floppa-client/src-tauri/Cargo.lock'
@@ -73,4 +79,4 @@ with tempfile.TemporaryDirectory(prefix='floppa-nix-cache-') as temporary:
     for key in ('cliDeps', 'guiDeps', 'bunDeps'):
         assert changed[key] == baseline[key], (key, 'release version invalidates dependencies')
     assert changed['gui'] != baseline['gui'], 'application version must update the GUI'
-    print('PASS: server isolation, client source invalidation, stable Rust and Bun dependencies across releases')
+    print('PASS: server isolation, helper/policy edits only rebuild assembly, stable Rust and Bun dependencies across releases')

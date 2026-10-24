@@ -1,7 +1,7 @@
 { lib, src }:
 let
-  select =
-    paths:
+  selectExcept =
+    excluded: paths:
     lib.cleanSourceWith {
       inherit src;
       name = "source";
@@ -10,13 +10,16 @@ let
         let
           relative = lib.removePrefix "${src}/" path;
         in
-        lib.any (
+        !(lib.any (entry: relative == entry || lib.hasPrefix "${entry}/" relative) excluded)
+        && lib.any (
           selected:
           relative == selected
           || lib.hasPrefix "${selected}/" relative
           || (type == "directory" && lib.hasPrefix "${relative}/" selected)
         ) paths;
     };
+  select = selectExcept [ ];
+  clientCode = selectExcept [ "floppa-vpn-core/resources/linux" ];
   workspace = builtins.fromTOML (builtins.readFile "${src}/Cargo.toml");
   shared = [
     "floppa-api-client"
@@ -53,8 +56,8 @@ in
       "floppa-client/src-tauri"
     ]
   );
-  cliCode = select (manifests ++ shared ++ [ "floppa" ]);
-  guiCode = select (
+  cliCode = clientCode (manifests ++ shared ++ [ "floppa" ]);
+  guiCode = clientCode (
     manifests
     ++ shared
     ++ [

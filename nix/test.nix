@@ -53,6 +53,16 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test -x ${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper-v2")
     machine.succeed("systemctl stop floppa-vpn.socket floppa-vpn.service")
     machine.succeed("su - alice -c '/run/wrappers/bin/floppa status' 2>&1 | grep -i standalone")
+    # Relative resources must be trusted even for a root process. A copied bundle
+    # under a writable/user-owned parent must not select a privileged executable.
+    machine.succeed("mkdir -p /opt/floppa-test/bin /opt/floppa-test/lib/floppa-vpn")
+    machine.succeed("cp ${self.packages.x86_64-linux.cli.unwrapped}/bin/floppa /opt/floppa-test/bin/floppa")
+    machine.succeed("ln -s ${self.packages.x86_64-linux.cli.resources}/lib/floppa-vpn/floppa-network-helper-v2 /opt/floppa-test/lib/floppa-vpn/floppa-network-helper-v2")
+    machine.succeed("ln -s ${self.packages.x86_64-linux.cli.resources}/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy /opt/floppa-test/lib/floppa-vpn/network-v2.policy")
+    machine.succeed("chown alice /opt/floppa-test/lib")
+    machine.fail("timeout 5 /opt/floppa-test/bin/floppa connect --config /etc/floppa-test.conf --interface floppa0 --no-dns > /tmp/untrusted-bundle.log 2>&1")
+    machine.succeed("grep 'must be root-owned' /tmp/untrusted-bundle.log")
+    machine.fail("ip link show floppa0")
     # Reproduce an upgrade from the old Bash helper: seven duplicate rules and
     # no policy journal. The real client preflight must recover this automatically.
     legacy_policy = "add table inet floppa_policy\\nadd chain inet floppa_policy prerouting { type filter hook prerouting priority mangle; policy accept; }\\nadd rule inet floppa_policy prerouting ct mark 0x666c6f70 meta mark set ct mark\\nadd chain inet floppa_policy postrouting { type filter hook postrouting priority mangle; policy accept; }\\nadd rule inet floppa_policy postrouting meta mark 0x666c6f70 ct mark set meta mark\\n"
@@ -60,7 +70,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("test -e /var/lib/floppa-vpn/network-rollback-v1/policy")
     # Exercise the real standalone helper and external UDP socket. No provider,
     # enrollment, internet endpoint or production credentials are involved.
-    machine.succeed("su - alice -c '/run/wrappers/bin/floppa connect --config /etc/floppa-test.conf --interface floppa0 --no-dns' > /tmp/standalone.log 2>&1 &")
+    machine.succeed("su - alice -c 'env FLOPPA_PACKAGED_HELPER=/untrusted/helper FLOPPA_PACKAGED_POLICY=/untrusted/policy FLOPPA_PACKAGED_LAYOUT=invalid /run/wrappers/bin/floppa connect --config /etc/floppa-test.conf --interface floppa0 --no-dns' > /tmp/standalone.log 2>&1 &")
     machine.wait_until_succeeds("ip link show floppa0", timeout=30)
     machine.wait_until_succeeds("ss -uanep | grep 'fwmark:0x666c6f70'", timeout=30)
     machine.succeed("grep -i standalone /tmp/standalone.log")

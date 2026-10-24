@@ -13,6 +13,7 @@ use floppa_tunnel_config::route;
 use ipnetwork::IpNetwork;
 use std::net::IpAddr;
 use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tracing::{debug, info};
 
@@ -28,26 +29,84 @@ const UNDO_TIMEOUT: Duration = Duration::from_secs(30);
 const HELPER_PATH: &str = "/usr/lib/floppa-vpn/floppa-network-helper-v2";
 const POLICY_PATH: &str = "/usr/share/polkit-1/actions/dev.okhsunrog.floppa-vpn.network-v2.policy";
 
-// Build-time packaging contract. Never accept privileged executable paths from the
-// runtime environment. Native packages can keep the portable installation path.
-const PACKAGED_HELPER: Option<&str> = option_env!("FLOPPA_PACKAGED_HELPER");
-const PACKAGED_POLICY: Option<&str> = option_env!("FLOPPA_PACKAGED_POLICY");
+// Only the layout is compiled in. Helper content/store hashes belong to the cheap
+// package assembly step. Never accept privileged paths from argv or runtime env.
+const PACKAGED_LAYOUT: Option<&str> = option_env!("FLOPPA_PACKAGED_LAYOUT");
 
-fn check_packaged_resources(helper: &str, policy: &str) -> Result<(), PlatformError> {
+fn check_packaged_resources(helper: &Path, policy: &Path) -> Result<(), PlatformError> {
     for (path, executable) in [(helper, true), (policy, false)] {
         let metadata = std::fs::metadata(path).map_err(|e| {
-            PlatformError::Unavailable(format!("packaged network resource {path} unavailable: {e}"))
+            PlatformError::Unavailable(format!(
+                "packaged network resource {} unavailable: {e}",
+                path.display()
+            ))
         })?;
-        if !std::path::Path::new(path).is_absolute()
+        if !path.is_absolute()
             || !metadata.is_file()
             || (executable && metadata.mode() & 0o111 == 0)
         {
             return Err(PlatformError::Unavailable(format!(
-                "invalid packaged network resource: {path}"
+                "invalid packaged network resource: {}",
+                path.display()
             )));
         }
     }
     Ok(())
+}
+
+fn check_root_owned_path(path: &Path) -> Result<(), PlatformError> {
+    for component in path.ancestors() {
+        let metadata = std::fs::symlink_metadata(component).map_err(|e| {
+            PlatformError::Unavailable(format!("network resource {}: {e}", component.display()))
+        })?;
+        // Sticky root directories such as /nix/store protect their root-owned children.
+        // Symlink permissions have no meaning; their owner and both path chains do.
+        let protected = metadata.file_type().is_symlink()
+            || metadata.mode() & 0o022 == 0
+            || (metadata.is_dir() && metadata.mode() & 0o1000 != 0);
+        if metadata.uid() != 0 || !protected {
+            return Err(PlatformError::Unavailable(format!(
+                "network resource path {} must be root-owned and protected from other users",
+                component.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn relative_resources(executable: &Path) -> Result<(PathBuf, PathBuf), PlatformError> {
+    let package = executable.parent().and_then(Path::parent).ok_or_else(|| {
+        PlatformError::Unavailable("cannot locate packaged network resources".into())
+    })?;
+    let helper = package.join("lib/floppa-vpn/floppa-network-helper-v2");
+    let policy = package.join("lib/floppa-vpn/network-v2.policy");
+    check_packaged_resources(&helper, &policy)?;
+    let resolve = |path: &Path| -> Result<PathBuf, PlatformError> {
+        check_root_owned_path(path)?;
+        let canonical = std::fs::canonicalize(path).map_err(|e| {
+            PlatformError::Unavailable(format!("network resource {}: {e}", path.display()))
+        })?;
+        check_root_owned_path(&canonical)?;
+        Ok(canonical)
+    };
+    // pkexec's action identifies the canonical helper in the resources output, not
+    // the symlink in the CLI/GUI package. Missing/unsafe bundles never fall back.
+    Ok((resolve(&helper)?, resolve(&policy)?))
+}
+
+fn packaged_resources() -> Result<Option<(PathBuf, PathBuf)>, PlatformError> {
+    match PACKAGED_LAYOUT {
+        None => Ok(None),
+        Some("relative-v2") => {
+            let executable = std::env::current_exe().map_err(|e| {
+                PlatformError::Unavailable(format!("cannot locate packaged executable: {e}"))
+            })?;
+            relative_resources(&executable).map(Some)
+        }
+        Some(layout) => Err(PlatformError::Unavailable(format!(
+            "unknown network resource layout: {layout}"
+        ))),
+    }
 }
 
 /// Linux platform implementation.
@@ -86,9 +145,9 @@ impl LinuxPlatform {
         unsafe { libc::geteuid() == 0 }
     }
 
-    fn helper_path() -> std::path::PathBuf {
-        if let Some(helper) = PACKAGED_HELPER {
-            return helper.into();
+    fn helper_path() -> Result<PathBuf, PlatformError> {
+        if let Some((helper, _)) = packaged_resources()? {
+            return Ok(helper);
         }
         // Source builds and portable root CLI bundles may ship the binary next to floppa.
         // An unprivileged client always uses the administrator-installed polkit target.
@@ -98,18 +157,18 @@ impl LinuxPlatform {
         {
             let sibling = parent.join("floppa-network-helper");
             if sibling.is_file() {
-                return sibling;
+                return Ok(sibling);
             }
         }
-        HELPER_PATH.into()
+        Ok(HELPER_PATH.into())
     }
 
     fn check_helper_installed() -> Result<(), PlatformError> {
-        match (PACKAGED_HELPER, PACKAGED_POLICY) {
-            (Some(helper), Some(policy)) => check_packaged_resources(helper, policy)?,
-            (None, None) => {
+        match packaged_resources()? {
+            Some(_) => (),
+            None => {
                 if !Self::running_as_root() {
-                    check_packaged_resources(HELPER_PATH, POLICY_PATH)?;
+                    check_packaged_resources(Path::new(HELPER_PATH), Path::new(POLICY_PATH))?;
                     for path in [HELPER_PATH, POLICY_PATH] {
                         let metadata = std::fs::metadata(path).map_err(|e| {
                             PlatformError::Unavailable(format!("network resource {path}: {e}"))
@@ -122,13 +181,8 @@ impl LinuxPlatform {
                     }
                 }
             }
-            _ => {
-                return Err(PlatformError::Unavailable(
-                    "package must configure both network helper and polkit policy".into(),
-                ));
-            }
         }
-        let output = std::process::Command::new(Self::helper_path())
+        let output = std::process::Command::new(Self::helper_path()?)
             .arg("protocol-version")
             .output()
             .map_err(|e| PlatformError::Unavailable(format!(
@@ -149,7 +203,7 @@ impl LinuxPlatform {
     /// active desktop sessions. Runs on tokio's process reactor rather than blocking a worker
     /// thread, so a slow pkexec stalls only this call; `timeout` bounds the wait for undo paths.
     ///
-    /// Packaged processes use the build-time path. Portable root bundles use a sibling
+    /// Packaged processes use trusted relative resources. Portable root bundles use a sibling
     /// binary; desktop clients use the administrator-installed polkit target.
     async fn run_helper(
         &self,
@@ -159,7 +213,7 @@ impl LinuxPlatform {
         debug!("Running helper: {:?}", args);
 
         let root = Self::running_as_root();
-        let helper = Self::helper_path();
+        let helper = Self::helper_path()?;
         let mut command = if root {
             tokio::process::Command::new(&helper)
         } else {
@@ -491,8 +545,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let helper = dir.path().join("helper");
         let policy = dir.path().join("policy");
-        let validate =
-            || check_packaged_resources(helper.to_str().unwrap(), policy.to_str().unwrap());
+        let validate = || check_packaged_resources(&helper, &policy);
         assert!(validate().is_err());
         std::fs::write(&helper, "#!/bin/sh\nexit 0\n").unwrap();
         std::fs::write(&policy, "packaged policy").unwrap();

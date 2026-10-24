@@ -110,6 +110,9 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p "$out"
     cp -r ${unwrapped}/. "$out/"
     chmod -R u+w "$out"
+    mkdir -p "$out/nix-support"
+    ln -s ${unwrapped} "$out/nix-support/unwrapped"
+    ${common.installResources}
     gappsWrapperArgs+=(--prefix PATH : '${common.runtimePath}')
     # Tray support dlopens this library rather than linking it directly.
     gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : '${lib.makeLibraryPath [ libayatana-appindicator ]}')

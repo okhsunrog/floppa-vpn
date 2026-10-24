@@ -698,7 +698,16 @@ polkit policy; Nix собирает отдельную derivation. Встрое�
 автоматическая установка удалены. Для исходников: `cargo build -p floppa
 -p floppa-network-helper`; root CLI находит соседний helper. Для desktop-разработки
 helper устанавливается явно: `sudo target/debug/floppa-network-helper install`.
-NixOS использует только собранные пути из store. Нативный путь
+NixOS компилирует только стабильное имя раскладки `relative-v2`. Rust-сборки
+CLI/GUI не зависят от store-пути helper: отдельный шаг упаковки копирует бинарник
+и создаёт ссылки на helper/policy в `lib/floppa-vpn` своего output. Приложение
+находит их относительно `current_exe`, проверяет root-владение и защиту от записи
+на обоих путях (до и после разрешения symlink), затем передаёт pkexec канонический
+store-путь, совпадающий с polkit policy. Пути из runtime environment не принимаются;
+повреждённая раскладка не переключается молча на другой helper. Binary wrappers
+и capability-wrapper сохраняются. Изменение helper/policy меняет финальную
+упаковку, но не вызывает компиляцию или линковку Rust CLI/GUI; это проверяется по
+`unwrapped.drvPath` в `scripts/tests/nix-cache.py`. Нативный путь
 `/usr/lib/floppa-vpn/floppa-network-helper-v2`, файл policy
 `dev.okhsunrog.floppa-vpn.network-v2.policy` и action `network-config-v2` включают
 версию протокола. Старый GUI может переустановить свой unversioned Bash-helper,
