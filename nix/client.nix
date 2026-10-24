@@ -7,6 +7,7 @@
   gtk3,
   webkitgtk_4_1,
   libayatana-appindicator,
+  desktop-file-utils,
   wrapGAppsHook3,
   makeBinaryWrapper,
   src,
@@ -113,7 +114,10 @@ pkgs.stdenvNoCC.mkDerivation {
     mkdir -p "$out/nix-support"
     ln -s ${unwrapped} "$out/nix-support/unwrapped"
     ${common.installResources}
-    gappsWrapperArgs+=(--prefix PATH : '${common.runtimePath}')
+    # Tauri registers floppa:// links at runtime with update-desktop-database.
+    gappsWrapperArgs+=(--prefix PATH : '${common.runtimePath}:${
+      lib.makeBinPath [ desktop-file-utils ]
+    }')
     # Tray support dlopens this library rather than linking it directly.
     gappsWrapperArgs+=(--prefix LD_LIBRARY_PATH : '${lib.makeLibraryPath [ libayatana-appindicator ]}')
     runHook postInstall
